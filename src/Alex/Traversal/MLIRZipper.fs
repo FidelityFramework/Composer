@@ -178,6 +178,9 @@ type MLIRState = {
     /// Map from mutable binding NodeId to its alloca SSA pointer
     /// Used by VarRef/Set/AddressOf to access the stack slot
     MutableAllocas: Map<int, string * string>  // NodeId -> (allocaSSA, elementType)
+    /// Pre-computed map from loop body NodeId to list of modified variable names
+    /// Used for SCF iter_args generation - computed ONCE before transfer begins
+    ModifiedVarsInLoopBodies: Map<int, string list>
 }
 
 module MLIRState =
@@ -202,6 +205,7 @@ module MLIRState =
         SCFIterArgs = Map.empty
         AddressedMutables = Set.empty
         MutableAllocas = Map.empty
+        ModifiedVarsInLoopBodies = Map.empty
     }
 
     /// Create state with entry point Lambda IDs
@@ -226,10 +230,15 @@ module MLIRState =
         SCFIterArgs = Map.empty
         AddressedMutables = Set.empty
         MutableAllocas = Map.empty
+        ModifiedVarsInLoopBodies = Map.empty
     }
 
-    /// Create state with entry points and addressed mutables info
-    let createWithAnalysis (entryPointLambdaIds: Set<int>) (addressedMutables: Set<int>) : MLIRState = {
+    /// Create state with entry points and full mutability analysis result
+    let createWithAnalysis
+        (entryPointLambdaIds: Set<int>)
+        (addressedMutables: Set<int>)
+        (modifiedVarsInLoopBodies: Map<int, string list>)
+        : MLIRState = {
         SSACounter = 0
         LabelCounter = 0
         LambdaCounter = 0
@@ -249,6 +258,7 @@ module MLIRState =
         SCFIterArgs = Map.empty
         AddressedMutables = addressedMutables
         MutableAllocas = Map.empty
+        ModifiedVarsInLoopBodies = modifiedVarsInLoopBodies
     }
 
     /// Check if a mutable binding needs alloca (its address is taken)
@@ -262,6 +272,12 @@ module MLIRState =
     /// Look up alloca for an addressed mutable binding
     let lookupMutableAlloca (bindingNodeId: int) (state: MLIRState) : (string * string) option =
         Map.tryFind bindingNodeId state.MutableAllocas
+
+    /// Look up pre-computed modified variables for a loop body
+    /// Returns the list of variable names that are modified in the given loop body
+    let lookupModifiedVarsInLoop (bodyNodeId: int) (state: MLIRState) : string list =
+        Map.tryFind bodyNodeId state.ModifiedVarsInLoopBodies
+        |> Option.defaultValue []
 
     /// Store pre-analyzed iter_args for a loop (called BEFORE guard/body traversal)
     let storeIterArgs (loopNodeId: string) (iterArgs: (string * string * string * string) list) (state: MLIRState) : MLIRState =
@@ -517,12 +533,16 @@ module MLIRZipper =
         CompletedFunctions = []
     }
 
-    /// Create with entry points and addressed mutables analysis
-    let createWithAnalysis (entryPointLambdaIds: Set<int>) (addressedMutables: Set<int>) : MLIRZipper = {
+    /// Create with entry points and full mutability analysis result
+    let createWithAnalysis
+        (entryPointLambdaIds: Set<int>)
+        (addressedMutables: Set<int>)
+        (modifiedVarsInLoopBodies: Map<int, string list>)
+        : MLIRZipper = {
         Focus = AtModule
         Path = Top
         CurrentOps = []
-        State = MLIRState.createWithAnalysis entryPointLambdaIds addressedMutables
+        State = MLIRState.createWithAnalysis entryPointLambdaIds addressedMutables modifiedVarsInLoopBodies
         Globals = []
         CompletedFunctions = []
     }
@@ -921,6 +941,11 @@ module MLIRZipper =
     /// Look up alloca for an addressed mutable binding
     let lookupMutableAlloca (bindingNodeId: int) (zipper: MLIRZipper) : (string * string) option =
         MLIRState.lookupMutableAlloca bindingNodeId zipper.State
+
+    /// Look up pre-computed modified variables for a loop body
+    /// Returns the list of variable names that are modified in the given loop body
+    let lookupModifiedVarsInLoop (bodyNodeId: int) (zipper: MLIRZipper) : string list =
+        MLIRState.lookupModifiedVarsInLoop bodyNodeId zipper.State
 
     /// Witness an alloca for a mutable local variable
     /// Emits: %c1 = arith.constant 1 : i64

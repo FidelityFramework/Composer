@@ -14,7 +14,8 @@ open System.IO
 let lowerMLIRToLLVM (mlirPath: string) (llvmPath: string) : Result<unit, string> =
     try
         // Step 1: mlir-opt to convert to LLVM dialect
-        let mlirOptArgs = sprintf "%s --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts" mlirPath
+        // Conversion order: scf -> cf -> func -> arith -> llvm, then cleanup casts
+        let mlirOptArgs = sprintf "%s --convert-scf-to-cf --convert-cf-to-llvm --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts" mlirPath
         let mlirOptProcess = new System.Diagnostics.Process()
         mlirOptProcess.StartInfo.FileName <- "mlir-opt"
         mlirOptProcess.StartInfo.Arguments <- mlirOptArgs

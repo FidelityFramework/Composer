@@ -12,6 +12,7 @@
 module Alex.CodeGeneration.TypeMapping
 
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
+open Alex.CodeGeneration.MLIRTypes
 
 //-------------------------------------------------------------------------
 // Platform Context for NTU Layout Resolution
@@ -355,3 +356,69 @@ let oneConstant (mlirType: string) : string =
     | "f32" -> "1.0"
     | "f64" -> "1.0"
     | _ -> "1"
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NativeType to MLIRType Conversion
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Map FNCS NativeType to MLIR type
+/// This is the canonical conversion used throughout Alex
+let rec mapNativeType (ty: NativeType) : MLIRType =
+    match ty with
+    // Applied types - match on type constructor name
+    | NativeType.TApp(tycon, _args) ->
+        match tycon.Name with
+        | "unit" -> Unit
+        | "bool" -> Integer I1
+        | "int8" | "sbyte" -> Integer I8
+        | "uint8" | "byte" -> Integer I8
+        | "int16" -> Integer I16
+        | "uint16" -> Integer I16
+        | "int" | "int32" -> Integer I32
+        | "uint" | "uint32" -> Integer I32
+        | "int64" -> Integer I64
+        | "uint64" -> Integer I64
+        | "nativeint" -> Integer I64  // Platform dependent
+        | "unativeint" -> Integer I64
+        | "float32" | "single" -> Float F32
+        | "float" | "double" -> Float F64
+        | "char" -> Integer I32  // Unicode codepoint
+        | "string" -> NativeStrType  // Fat pointer {ptr: *u8, len: i64}
+        | "Ptr" | "nativeptr" -> Pointer
+        | "array" -> Pointer
+        | "list" -> Pointer
+        | "option" | "voption" -> Pointer  // TODO: Value type layout
+        | _ -> Pointer  // Default to pointer for unknown applied types
+
+    // Function types
+    | NativeType.TFun _ -> Pointer  // Function pointer + closure
+
+    // Tuple types
+    | NativeType.TTuple _ -> Pointer  // TODO: Proper struct layout
+
+    // Type variables (erased)
+    | NativeType.TVar _ -> Pointer
+
+    // Byref types
+    | NativeType.TByref _ -> Pointer
+
+    // Native pointers
+    | NativeType.TNativePtr _ -> Pointer
+
+    // Forall types - look at body
+    | NativeType.TForall(_, body) -> mapNativeType body
+
+    // Record types
+    | NativeType.TRecord _ -> Pointer
+
+    // Union types
+    | NativeType.TUnion _ -> Pointer
+
+    // Anonymous record types
+    | NativeType.TAnon _ -> Pointer
+
+    // Measure types - strip measure
+    | NativeType.TMeasure _ -> Integer I32  // Usually applied to a numeric type
+
+    // Error type
+    | NativeType.TError _ -> Pointer

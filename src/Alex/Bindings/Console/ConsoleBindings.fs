@@ -344,11 +344,17 @@ let witnessConsoleReadln (platform: TargetPlatform) (prim: PlatformPrimitive) (z
         let bytesReadSSA, zipper5 = witnessUnixReadSyscall syscallNum fdSSA (Integer I64) bufPtrSSA Pointer bufSizeSSA (Integer I64) zipper4
 
         // Strip trailing newline if present (adjust length by -1 if last char is \n)
-        // For simplicity, just use bytesRead - 1 (assumes newline)
+        // Clamp to 0 to handle EOF (when read returns 0, we get max(0-1, 0) = 0)
         let oneSSA, zipper6 = MLIRZipper.witnessConstant 1L I64 zipper5
-        let adjLenSSA, zipper7 = MLIRZipper.yieldSSA zipper6
-        let subText = sprintf "%s = arith.subi %s, %s : i64" adjLenSSA bytesReadSSA oneSSA
-        let zipper8 = MLIRZipper.witnessOpWithResult subText adjLenSSA (Integer I64) zipper7
+        let rawLenSSA, zipper7 = MLIRZipper.yieldSSA zipper6
+        let subText = sprintf "%s = arith.subi %s, %s : i64" rawLenSSA bytesReadSSA oneSSA
+        let zipper8 = MLIRZipper.witnessOpWithResult subText rawLenSSA (Integer I64) zipper7
+        
+        // Clamp length to >= 0 to handle EOF gracefully
+        let zeroSSA, zipper8a = MLIRZipper.witnessConstant 0L I64 zipper8
+        let adjLenSSA, zipper8b = MLIRZipper.yieldSSA zipper8a
+        let maxText = sprintf "%s = arith.maxsi %s, %s : i64" adjLenSSA rawLenSSA zeroSSA
+        let zipper8 = MLIRZipper.witnessOpWithResult maxText adjLenSSA (Integer I64) zipper8b
 
         // Construct fat pointer (string) from buffer and length
         let undefSSA, zipper9 = MLIRZipper.yieldSSA zipper8

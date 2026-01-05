@@ -76,6 +76,26 @@
 
       <!-- Alex Preprocessing - SSA assignment before emission -->
       <Compile Include="Alex/Preprocessing/SSAAssignment.fs" />
+      <Compile Include="Alex/Preprocessing/MutabilityAnalysis.fs" />
+      <Compile Include="Alex/Preprocessing/SaturateApplications.fs" />
+
+      <!-- Alex Patterns - Active patterns for semantic classification -->
+      <Compile Include="Alex/Patterns/SemanticPatterns.fs" />
+
+      <!-- Alex Templates - Quotation-based MLIR templates -->
+      <Compile Include="Alex/Templates/TemplateTypes.fs" />
+      <Compile Include="Alex/Templates/ArithTemplates.fs" />
+      <Compile Include="Alex/Templates/MemoryTemplates.fs" />
+      <Compile Include="Alex/Templates/ControlFlowTemplates.fs" />
+      <Compile Include="Alex/Templates/LLVMTemplates.fs" />
+
+      <!-- Alex Witnesses - Category-based MLIR generation -->
+      <Compile Include="Alex/Witnesses/LiteralWitness.fs" />
+      <Compile Include="Alex/Witnesses/BindingWitness.fs" />
+      <Compile Include="Alex/Witnesses/ApplicationWitness.fs" />
+      <Compile Include="Alex/Witnesses/ControlFlowWitness.fs" />
+      <Compile Include="Alex/Witnesses/MemoryWitness.fs" />
+      <Compile Include="Alex/Witnesses/LambdaWitness.fs" />
 
       <!-- Alex Traversal - FNCS SemanticGraph → MLIRZipper (witnessing fold) -->
       <Compile Include="Alex/Traversal/FNCSTransfer.fs" />

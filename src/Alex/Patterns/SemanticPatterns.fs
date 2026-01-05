@@ -1,0 +1,294 @@
+/// Semantic Patterns - Active patterns for semantic classification
+///
+/// ARCHITECTURAL FOUNDATION:
+/// This module provides typed active patterns that replace string matching
+/// on operator and function names. Instead of matching on "op_Addition",
+/// we pattern match on (|ArithAdd|_|) which is:
+/// - Type-safe (compiler checks exhaustiveness)
+/// - Self-documenting (patterns describe intent)
+/// - Composable (patterns can be nested)
+/// - Extensible (add new patterns without changing existing code)
+module Alex.Patterns.SemanticPatterns
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Binary Arithmetic Operators
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Binary arithmetic operation kinds (for template dispatch)
+type BinaryArithOp =
+    | Add
+    | Sub
+    | Mul
+    | Div
+    | Mod
+    | BitAnd
+    | BitOr
+    | BitXor
+    | ShiftLeft
+    | ShiftRight
+
+/// Comparison operation kinds (for template dispatch)
+type CompareOp =
+    | Lt | Le | Gt | Ge | Eq | Ne
+
+/// Active pattern to classify binary arithmetic by operator name
+let (|BinaryArith|_|) (opName: string) =
+    match opName with
+    | "op_Addition" -> Some Add
+    | "op_Subtraction" -> Some Sub
+    | "op_Multiply" -> Some Mul
+    | "op_Division" -> Some Div
+    | "op_Modulus" -> Some Mod
+    | "op_BitwiseAnd" -> Some BitAnd
+    | "op_BitwiseOr" -> Some BitOr
+    | "op_ExclusiveOr" -> Some BitXor
+    | "op_LeftShift" -> Some ShiftLeft
+    | "op_RightShift" -> Some ShiftRight
+    | _ -> None
+
+/// Active pattern to classify comparison by operator name
+let (|Compare|_|) (opName: string) =
+    match opName with
+    | "op_LessThan" -> Some Lt
+    | "op_LessThanOrEqual" -> Some Le
+    | "op_GreaterThan" -> Some Gt
+    | "op_GreaterThanOrEqual" -> Some Ge
+    | "op_Equality" -> Some Eq
+    | "op_Inequality" -> Some Ne
+    | _ -> None
+
+/// Active pattern for arithmetic that returns the appropriate op based on type
+let (|ArithBinaryOp|_|) (opName: string, isInt: bool) =
+    match opName, isInt with
+    | "op_Addition", true -> Some ("arith.addi", false)
+    | "op_Subtraction", true -> Some ("arith.subi", false)
+    | "op_Multiply", true -> Some ("arith.muli", false)
+    | "op_Division", true -> Some ("arith.divsi", false)
+    | "op_Modulus", true -> Some ("arith.remsi", false)
+    | "op_Addition", false -> Some ("arith.addf", false)
+    | "op_Subtraction", false -> Some ("arith.subf", false)
+    | "op_Multiply", false -> Some ("arith.mulf", false)
+    | "op_Division", false -> Some ("arith.divf", false)
+    | _ -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Comparison Operators
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Integer comparison predicates (for arith.cmpi)
+type IntCmpPred =
+    | SLT   // signed less than
+    | SLE   // signed less than or equal
+    | SGT   // signed greater than
+    | SGE   // signed greater than or equal
+    | EQ    // equal
+    | NE    // not equal
+
+/// Float comparison predicates (for arith.cmpf)
+type FloatCmpPred =
+    | OLT   // ordered less than
+    | OLE   // ordered less than or equal
+    | OGT   // ordered greater than
+    | OGE   // ordered greater than or equal
+    | OEQ   // ordered equal
+    | ONE   // ordered not equal
+
+/// Active pattern for comparison operations
+let (|CmpBinaryOp|_|) (opName: string, isInt: bool) =
+    match opName, isInt with
+    // Integer comparisons
+    | "op_LessThan", true -> Some ("arith.cmpi", "slt")
+    | "op_LessThanOrEqual", true -> Some ("arith.cmpi", "sle")
+    | "op_GreaterThan", true -> Some ("arith.cmpi", "sgt")
+    | "op_GreaterThanOrEqual", true -> Some ("arith.cmpi", "sge")
+    | "op_Equality", true -> Some ("arith.cmpi", "eq")
+    | "op_Inequality", true -> Some ("arith.cmpi", "ne")
+    // Float comparisons
+    | "op_LessThan", false -> Some ("arith.cmpf", "olt")
+    | "op_LessThanOrEqual", false -> Some ("arith.cmpf", "ole")
+    | "op_GreaterThan", false -> Some ("arith.cmpf", "ogt")
+    | "op_GreaterThanOrEqual", false -> Some ("arith.cmpf", "oge")
+    | "op_Equality", false -> Some ("arith.cmpf", "oeq")
+    | "op_Inequality", false -> Some ("arith.cmpf", "one")
+    | _ -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bitwise Operators
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Active pattern for bitwise binary operations
+let (|BitwiseBinaryOp|_|) (opName: string) =
+    match opName with
+    | "op_BitwiseAnd" -> Some "arith.andi"
+    | "op_BitwiseOr" -> Some "arith.ori"
+    | "op_ExclusiveOr" -> Some "arith.xori"
+    | "op_LeftShift" -> Some "arith.shli"
+    | "op_RightShift" -> Some "arith.shrsi"  // signed right shift
+    | _ -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Unary Operators
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Unary operation kinds
+type UnaryOpKind =
+    | BoolNot       // Logical not (XOR with true)
+    | IntNegate     // Integer negation (0 - x)
+    | BitwiseNot    // Bitwise complement (XOR with -1)
+
+/// Active pattern for unary operations
+let (|UnaryOp|_|) (opName: string) =
+    match opName with
+    | "not" -> Some BoolNot
+    | "op_UnaryNegation" -> Some IntNegate
+    | "op_OnesComplement" -> Some BitwiseNot
+    | _ -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NativePtr Operations
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// NativePtr operation kinds (type-safe dispatch)
+type NativePtrOpKind =
+    | PtrToNativeInt    // ptr -> nativeint (ptrtoint)
+    | PtrOfNativeInt    // nativeint -> ptr (inttoptr)
+    | PtrToVoidPtr      // 'a nativeptr -> voidptr (no-op cast)
+    | PtrOfVoidPtr      // voidptr -> 'a nativeptr (no-op cast)
+    | PtrGet            // indexed load: ptr[idx]
+    | PtrSet            // indexed store: ptr[idx] <- value
+    | PtrStackAlloc     // stack allocation
+    | PtrCopy           // memcpy
+    | PtrFill           // memset
+    | PtrAdd            // pointer arithmetic
+
+/// Active pattern for NativePtr operations with typed dispatch
+let (|NativePtrOp|_|) (name: string) =
+    if not (name.StartsWith("NativePtr.")) then None
+    else
+        match name.Substring(10) with
+        | "toNativeInt" -> Some PtrToNativeInt
+        | "ofNativeInt" -> Some PtrOfNativeInt
+        | "toVoidPtr" -> Some PtrToVoidPtr
+        | "ofVoidPtr" -> Some PtrOfVoidPtr
+        | "get" -> Some PtrGet
+        | "set" -> Some PtrSet
+        | "stackalloc" -> Some PtrStackAlloc
+        | "copy" -> Some PtrCopy
+        | "fill" -> Some PtrFill
+        | "add" -> Some PtrAdd
+        | _ -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Built-in Operator Classification
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Check if a name is a primitive operator (op_*)
+let (|PrimitiveOp|_|) (name: string) =
+    if name.StartsWith("op_") then Some name else None
+
+/// Check if a name is a Sys operation
+let (|SysOp|_|) (name: string) =
+    if name.StartsWith("Sys.") then Some (name.Substring(4)) else None
+
+/// Check if a name is a Console operation
+let (|ConsoleOp|_|) (name: string) =
+    if name.StartsWith("Console.") then Some (name.Substring(8)) else None
+
+/// Platform intrinsic - unified pattern for Sys, Console, and other platform operations
+/// Returns (module, operation) tuple for dispatch to platform bindings
+let (|PlatformIntrinsic|_|) (name: string) =
+    match name with
+    | SysOp op -> Some ("Sys", op)
+    | ConsoleOp op -> Some ("Console", op)
+    | _ -> None
+
+/// Check if a name is an Unchecked operation
+let (|UncheckedOp|_|) (name: string) =
+    if name.StartsWith("Unchecked.") then Some (name.Substring(10)) else None
+
+/// Conversion function names
+let private conversionFunctions = 
+    set ["int"; "int8"; "int16"; "int32"; "int64";
+         "byte"; "uint8"; "uint16"; "uint32"; "uint64";
+         "float"; "float32"; "double"; "single"; "decimal";
+         "nativeint"; "unativeint"; "char"; "string"]
+
+/// Check if a name is a type conversion function
+let (|ConversionOp|_|) (name: string) =
+    if Set.contains name conversionFunctions then Some name else None
+
+/// Option/ValueOption constructors
+let (|OptionConstructor|_|) (name: string) =
+    match name with
+    | "Some" | "None" | "ValueSome" | "ValueNone" -> Some name
+    | _ -> None
+
+/// Box/unbox operations
+let (|BoxOp|_|) (name: string) =
+    match name with
+    | "box" | "unbox" -> Some name
+    | _ -> None
+
+/// Printf family functions
+let (|PrintfOp|_|) (name: string) =
+    match name with
+    | "printf" | "printfn" | "sprintf" | "failwith" | "failwithf" -> Some name
+    | _ -> None
+
+/// Array operations
+let (|ArrayOp|_|) (name: string) =
+    match name with
+    | "Array.zeroCreate" | "Array.length" | "Array.get" | "Array.set" -> Some name
+    | _ -> None
+
+/// Other built-in functions
+let (|OtherBuiltin|_|) (name: string) =
+    match name with
+    | "ignore" | "raise" | "reraise" | "typeof" | "sizeof" | "nameof" -> Some name
+    | _ -> None
+
+/// Master pattern: Is this a built-in operator or function?
+let (|BuiltInOperator|_|) (name: string) =
+    match name with
+    | PrimitiveOp _ -> Some name
+    | NativePtrOp _ -> Some name
+    | SysOp _ -> Some name
+    | UncheckedOp _ -> Some name
+    | ConversionOp _ -> Some name
+    | OptionConstructor _ -> Some name
+    | BoxOp _ -> Some name
+    | PrintfOp _ -> Some name
+    | ArrayOp _ -> Some name
+    | OtherBuiltin _ -> Some name
+    | "not" -> Some name  // Boolean not
+    | _ -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Type Classification Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Check if a type string represents an integer type
+let (|IntegerType|FloatType|BoolType|OtherType|) (tyStr: string) =
+    match tyStr with
+    | "i8" | "i16" | "i32" | "i64" -> IntegerType
+    | "f32" | "f64" -> FloatType
+    | "i1" -> BoolType
+    | _ -> OtherType
+
+/// Check if type is integer
+let isIntegerType (tyStr: string) =
+    match tyStr with
+    | IntegerType -> true
+    | _ -> false
+
+/// Check if type is float
+let isFloatType (tyStr: string) =
+    match tyStr with
+    | FloatType -> true
+    | _ -> false
+
+/// Check if type is boolean
+let isBoolType (tyStr: string) =
+    match tyStr with
+    | BoolType -> true
+    | _ -> false

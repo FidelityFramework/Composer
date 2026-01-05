@@ -71,6 +71,7 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.TypeDef _ -> false
     | SemanticKind.MemberDef _ -> false
     | SemanticKind.TypeAnnotation _ -> true  // Passes through the inner value
+    | SemanticKind.PatternBinding _ -> true  // Pattern binding introduces a variable
     | SemanticKind.Error _ -> false
 
 /// Result of SSA assignment pass

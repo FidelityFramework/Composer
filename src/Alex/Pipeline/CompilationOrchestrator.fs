@@ -128,43 +128,8 @@ let generateMLIRFromFNCS (projectResult: ProjectCheckResult) (targetTriple: stri
             let nodeCount = Map.count graph.Nodes
             let entryCount = List.length graph.EntryPoints
 
-            printfn "[FNCS] SemanticGraph: %d nodes, %d entry points" nodeCount entryCount
-
-            // Debug: Print node details for small graphs
-            if nodeCount <= 30 then
-                printfn "[FNCS] Node details:"
-                for kvp in graph.Nodes do
-                    let id = nodeIdToInt kvp.Key
-                    let node = kvp.Value
-                    let kindStr =
-                        match node.Kind with
-                        | FNCSSemanticGraph.SemanticKind.ModuleDef(name, children) ->
-                            sprintf "ModuleDef(%s, children=%d)" name (List.length children)
-                        | FNCSSemanticGraph.SemanticKind.Binding(name, isMut, isRec, _isEntryPoint) ->
-                            sprintf "Binding(%s, mutable=%b, rec=%b)" name isMut isRec
-                        | FNCSSemanticGraph.SemanticKind.Literal v ->
-                            sprintf "Literal(%A)" v
-                        | FNCSSemanticGraph.SemanticKind.Application(func, args) ->
-                            sprintf "Application(func=%d, args=%d)" (nodeIdToInt func) (List.length args)
-                        | FNCSSemanticGraph.SemanticKind.VarRef(name, _) ->
-                            sprintf "VarRef(%s)" name
-                        | FNCSSemanticGraph.SemanticKind.Lambda(params', _) ->
-                            sprintf "Lambda(params=%d)" (List.length params')
-                        | FNCSSemanticGraph.SemanticKind.Sequential nodes ->
-                            sprintf "Sequential(count=%d)" (List.length nodes)
-                        | k -> sprintf "%A" k
-                    let childIds = node.Children |> List.map nodeIdToInt
-                    printfn "  [%d] %s (children: %A)" id kindStr childIds
-
             // Generate MLIR via witness-based transfer (codata architecture)
             let mlirContent, transferErrors = transferGraphWithDiagnostics graph isFreestanding
-
-            printfn "[FNCS] Transfer complete"
-
-            if not (List.isEmpty transferErrors) then
-                printfn "[FNCS] Transfer warnings:"
-                for err in transferErrors do
-                    printfn "[FNCS]   %s" err
 
             {
                 Content = mlirContent
@@ -178,9 +143,6 @@ let generateMLIR (projectResult: ProjectCheckResult) (targetTriple: string) (isF
     try
         generateMLIRFromFNCS projectResult targetTriple isFreestanding
     with ex ->
-        printfn "[FNCS] Exception during FNCS processing: %s" ex.Message
-        printfn "[FNCS] Falling back to placeholder..."
-
         let mainContent = """module {
   // Fallback - FNCS processing failed
   llvm.func @main() -> i32 attributes {sym_visibility = "public"} {
@@ -223,8 +185,6 @@ let compileProject (options: CompilationOptions) : int =
         let intermediatesDir = Path.Combine(buildDir, "intermediates")
         Directory.CreateDirectory(intermediatesDir) |> ignore
         FNCSPhaseConfig.enableAllPhases intermediatesDir
-        printfn "[FNCS] Phase emission enabled → %s" intermediatesDir
-        printfn ""
 
     // Step 1: Load and check project via FNCS ProjectChecker
     let projectResult =
@@ -276,10 +236,6 @@ let compileProject (options: CompilationOptions) : int =
             Core.Timing.timePhase "MLIR" "MLIR Generation" (fun () ->
                 generateMLIR result targetTriple isFreestanding)
 
-        printfn "[MLIR] Collected %d functions:" mlirResult.CollectedFunctions.Length
-        for funcInfo in mlirResult.CollectedFunctions do
-            printfn "  - %s" funcInfo
-
         if mlirResult.HasErrors then
             printfn ""
             printfn "[MLIR] Emission errors detected:"
@@ -292,7 +248,6 @@ let compileProject (options: CompilationOptions) : int =
         | Some dir ->
             let mlirPath = Path.Combine(dir, config.Name + ".mlir")
             File.WriteAllText(mlirPath, mlirResult.Content)
-            printfn "[MLIR] Wrote: %s" mlirPath
 
             if options.EmitMLIROnly then
                 printfn ""
@@ -321,8 +276,6 @@ let compileProject (options: CompilationOptions) : int =
                     Core.Timing.printSummary()
                     1
                 | Ok () ->
-                    printfn "[LLVM] Wrote: %s" llPath
-
                     if options.EmitLLVMOnly then
                         printfn ""
                         printfn "Stopped after LLVM IR generation (--emit-llvm)"
@@ -340,9 +293,8 @@ let compileProject (options: CompilationOptions) : int =
                             Core.Timing.printSummary()
                             1
                         | Ok () ->
-                            printfn "[LINK] Wrote: %s" outputPath
                             printfn ""
-                            printfn "Compilation successful!"
+                            printfn "Compilation successful: %s" outputPath
                             Core.Timing.printSummary()
                             0
 
@@ -386,8 +338,7 @@ let compileProject (options: CompilationOptions) : int =
                         Core.Timing.printSummary()
                         1
                     | Ok () ->
-                        printfn "[LINK] Wrote: %s" outputPath
                         printfn ""
-                        printfn "Compilation successful!"
+                        printfn "Compilation successful: %s" outputPath
                         Core.Timing.printSummary()
                         0
