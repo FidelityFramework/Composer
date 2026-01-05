@@ -38,26 +38,9 @@
 
       <!-- FNCS Integration (thin layer receiving SemanticGraph) -->
       <Compile Include="Core/FNCS/Integration.fs" />
-      <!-- ProjectLoader removed - replaced by FNCS ProjectChecker module -->
-      <!-- TomlParser removed - replaced by Fidelity.Toml via FNCS -->
-
-      <!-- Lowering Nanopasses - TODO: Port to FNCS types -->
-      <!-- NOTE: Nanopasses temporarily excluded pending FNCS integration -->
-      <!-- Obsolete (absorbed into FNCS): DetectPlatformBindings, ProvisionalCallGraph, DefUseEdges, ClassifyOperations -->
-      <!-- Pending port: FlattenApplications, ReducePipeOperators, ReduceAlloyOperators, ConstantPropagation -->
-      <!-- Pending port: LowerStringLength, LowerStructConstructors, LowerInterpolatedStrings, DetectInlineFunctions -->
-
-      <!-- Metadata Processing - TODO: Port to FNCS -->
-      <!-- <Compile Include="Core/Meta/Parser.fs" /> -->
-      <!-- <Compile Include="Core/Meta/AlloyHints.fs" /> -->
-
       <!-- Platform Templates -->
       <Compile Include="Core/Templates/TemplateTypes.fs" />
       <Compile Include="Core/Templates/TemplateLoader.fs" />
-
-      <!-- Ingestion Pipeline (orchestrates FNCS + lowering nanopasses) -->
-      <!-- Original IngestionPipeline.fs depends on FCS - needs complete rewrite -->
-      <!-- <Compile Include="Core/IngestionPipeline.fs" /> -->
 
       <!-- Alex CodeGeneration (types first, then zipper, then type mapping) -->
       <Compile Include="Alex/CodeGeneration/MLIRTypes.fs" />
@@ -75,9 +58,9 @@
       <Compile Include="Alex/CodeGeneration/TypeMapping.fs" />
 
       <!-- Alex Preprocessing - SSA assignment before emission -->
+      <!-- NOTE: SaturateApplications.fs removed - transforms moved to FNCS -->
       <Compile Include="Alex/Preprocessing/SSAAssignment.fs" />
       <Compile Include="Alex/Preprocessing/MutabilityAnalysis.fs" />
-      <Compile Include="Alex/Preprocessing/SaturateApplications.fs" />
 
       <!-- Alex Patterns - Active patterns for semantic classification -->
       <Compile Include="Alex/Patterns/SemanticPatterns.fs" />

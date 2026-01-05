@@ -25,7 +25,7 @@ module CFWitness = Alex.Witnesses.ControlFlowWitness
 module MemWitness = Alex.Witnesses.MemoryWitness
 module LambdaWitness = Alex.Witnesses.LambdaWitness
 module MutAnalysis = Alex.Preprocessing.MutabilityAnalysis
-module SatApps = Alex.Preprocessing.SaturateApplications
+// NOTE: SatApps removed - application saturation now happens in FNCS during type checking
 open Alex.Patterns.SemanticPatterns
 
 // ═══════════════════════════════════════════════════════════════════
@@ -254,8 +254,9 @@ let private transferGraphCore
     (collectErrors: bool)
     : string * string list =
 
-    // Nanopass: Saturate applications (reduce pipes, flatten curried apps)
-    let graph = SatApps.saturateApplications graph
+    // NOTE: Application saturation (pipes, curried apps) now happens in FNCS during type checking.
+    // The SemanticGraph received here is already fully saturated.
+    // See: ~/repos/fsnative/src/Compiler/Checking.Native/CheckExpressions.fs (SynExpr.App handling)
 
     // Initialize platform bindings
     Alex.Bindings.Console.ConsoleBindings.registerBindings()
