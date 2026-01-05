@@ -1,0 +1,12 @@
+[package]
+name = "AddNumbers"
+description = "Demonstrates SRTP arithmetic and numeric-to-string conversion"
+
+[compilation]
+memory_model = "stack_only"
+target = "native"
+
+[build]
+sources = ["AddNumbers.fs"]
+output = "addnumbers"
+output_kind = "console"
