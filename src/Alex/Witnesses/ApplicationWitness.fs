@@ -7,6 +7,7 @@ module Alex.Witnesses.ApplicationWitness
 
 open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
+open FSharp.Native.Compiler.Checking.Native.NativeGlobals
 open Alex.CodeGeneration.MLIRTypes
 open Alex.Traversal.MLIRZipper
 open Alex.Bindings.BindingTypes
@@ -151,13 +152,13 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
             else
                 witnessPlatformBinding entryPoint argSSAs returnType zipper
 
-        | SemanticKind.Intrinsic intrinsicName ->
+        | SemanticKind.Intrinsic intrinsicInfo ->
             let argSSAs =
                 argNodeIds
                 |> List.choose (fun nodeId ->
                     MLIRZipper.recallNodeSSA (string (NodeId.value nodeId)) zipper)
 
-            match intrinsicName, argSSAs with
+            match intrinsicInfo, argSSAs with
             // NativePtr operations - type-safe dispatch via NativePtrOpKind
             | NativePtrOp op, argSSAs ->
                 match op, argSSAs with
@@ -225,13 +226,124 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
                 | _, _ ->
                     zipper, TRError (sprintf "NativePtr operation arity mismatch: %A" op)
 
-            // Platform intrinsics (Sys.*, Console.*, etc.)
-            | (intrinsicName & PlatformIntrinsic _), argSSAs ->
+            // Sys intrinsics - direct syscall dispatch
+            | SysOp opName, argSSAs ->
                 let argSSAsWithTypes =
                     argSSAs |> List.map (fun (ssa, tyStr) -> (ssa, Serialize.deserializeType tyStr))
-                witnessPlatformBinding intrinsicName argSSAsWithTypes returnType zipper
+                witnessPlatformBinding opName argSSAsWithTypes returnType zipper
 
-            | "NativeStr.fromPointer", [(ptrSSA, _); (lenSSA, _)] ->
+            // Console intrinsics - higher-level I/O that lowers to Sys calls
+            | ConsoleOp "write", [(strSSA, _)] ->
+                // Console.write: extract pointer/length from fat string, call Sys.write(1, ptr, len)
+                let ptrSSA, zipper1 = MLIRZipper.yieldSSA zipper
+                let extractPtr = sprintf "%s = llvm.extractvalue %s[0] : %s" ptrSSA strSSA NativeStrTypeStr
+                let zipper2 = MLIRZipper.witnessOpWithResult extractPtr ptrSSA Pointer zipper1
+
+                let lenSSA, zipper3 = MLIRZipper.yieldSSA zipper2
+                let extractLen = sprintf "%s = llvm.extractvalue %s[1] : %s" lenSSA strSSA NativeStrTypeStr
+                let zipper4 = MLIRZipper.witnessOpWithResult extractLen lenSSA (Integer I64) zipper3
+
+                // fd = 1 (stdout)
+                let fdSSA, zipper5 = MLIRZipper.yieldSSA zipper4
+                let fdText = sprintf "%s = arith.constant 1 : i32" fdSSA
+                let zipper6 = MLIRZipper.witnessOpWithResult fdText fdSSA (Integer I32) zipper5
+
+                // Call Sys.write via platform binding
+                let argSSAsWithTypes = [(fdSSA, Integer I32); (ptrSSA, Pointer); (lenSSA, Integer I64)]
+                witnessPlatformBinding "Sys.write" argSSAsWithTypes returnType zipper6
+
+            | ConsoleOp "writeln", [(strSSA, _)] ->
+                // Console.writeln: write the string, then write newline
+                let ptrSSA, zipper1 = MLIRZipper.yieldSSA zipper
+                let extractPtr = sprintf "%s = llvm.extractvalue %s[0] : %s" ptrSSA strSSA NativeStrTypeStr
+                let zipper2 = MLIRZipper.witnessOpWithResult extractPtr ptrSSA Pointer zipper1
+
+                let lenSSA, zipper3 = MLIRZipper.yieldSSA zipper2
+                let extractLen = sprintf "%s = llvm.extractvalue %s[1] : %s" lenSSA strSSA NativeStrTypeStr
+                let zipper4 = MLIRZipper.witnessOpWithResult extractLen lenSSA (Integer I64) zipper3
+
+                // fd = 1 (stdout)
+                let fdSSA, zipper5 = MLIRZipper.yieldSSA zipper4
+                let fdText = sprintf "%s = arith.constant 1 : i32" fdSSA
+                let zipper6 = MLIRZipper.witnessOpWithResult fdText fdSSA (Integer I32) zipper5
+
+                // Write the string
+                let argSSAsWithTypes = [(fdSSA, Integer I32); (ptrSSA, Pointer); (lenSSA, Integer I64)]
+                // Sys.write returns bytes written (i32 after platform binding truncation)
+                let zipper7, _ = witnessPlatformBinding "Sys.write" argSSAsWithTypes Types.int32Type zipper6
+
+                // Write newline: allocate newline char on stack, write it
+                let nlSSA, zipper8 = MLIRZipper.yieldSSA zipper7
+                let nlText = sprintf "%s = arith.constant 10 : i8" nlSSA  // '\n' = 10
+                let zipper9 = MLIRZipper.witnessOpWithResult nlText nlSSA (Integer I8) zipper8
+
+                let oneSSA, zipper10 = MLIRZipper.yieldSSA zipper9
+                let oneText = sprintf "%s = arith.constant 1 : i64" oneSSA
+                let zipper11 = MLIRZipper.witnessOpWithResult oneText oneSSA (Integer I64) zipper10
+
+                let nlBufSSA, zipper12 = MLIRZipper.yieldSSA zipper11
+                let allocaText = sprintf "%s = llvm.alloca %s x i8 : (i64) -> !llvm.ptr" nlBufSSA oneSSA
+                let zipper13 = MLIRZipper.witnessOpWithResult allocaText nlBufSSA Pointer zipper12
+
+                let storeText = sprintf "llvm.store %s, %s : i8, !llvm.ptr" nlSSA nlBufSSA
+                let zipper14 = MLIRZipper.witnessVoidOp storeText zipper13
+
+                // Write the newline
+                let nlArgSSAs = [(fdSSA, Integer I32); (nlBufSSA, Pointer); (oneSSA, Integer I64)]
+                witnessPlatformBinding "Sys.write" nlArgSSAs returnType zipper14
+
+            | ConsoleOp "readln", ([] | [_]) ->  // Takes unit arg (or elided)
+                // Console.readln: read a line from stdin into a buffer, return as string
+                // For now, allocate a fixed buffer and read into it
+                let bufSizeSSA, zipper1 = MLIRZipper.yieldSSA zipper
+                let bufSizeText = sprintf "%s = arith.constant 256 : i64" bufSizeSSA
+                let zipper2 = MLIRZipper.witnessOpWithResult bufSizeText bufSizeSSA (Integer I64) zipper1
+
+                let bufSSA, zipper3 = MLIRZipper.yieldSSA zipper2
+                let allocaText = sprintf "%s = llvm.alloca %s x i8 : (i64) -> !llvm.ptr" bufSSA bufSizeSSA
+                let zipper4 = MLIRZipper.witnessOpWithResult allocaText bufSSA Pointer zipper3
+
+                // fd = 0 (stdin)
+                let fdSSA, zipper5 = MLIRZipper.yieldSSA zipper4
+                let fdText = sprintf "%s = arith.constant 0 : i32" fdSSA
+                let zipper6 = MLIRZipper.witnessOpWithResult fdText fdSSA (Integer I32) zipper5
+
+                // Call Sys.read
+                let argSSAsWithTypes = [(fdSSA, Integer I32); (bufSSA, Pointer); (bufSizeSSA, Integer I64)]
+                // Sys.read returns bytes read (i32 after platform binding truncation)
+                let zipper7, readResult = witnessPlatformBinding "Sys.read" argSSAsWithTypes Types.int32Type zipper6
+
+                // Get bytes read (strip newline)
+                // Platform binding returns i32, extend to i64 for length arithmetic
+                let bytesReadSSA32 = match readResult with TRValue (ssa, _) -> ssa | _ -> "%err"
+                let bytesReadSSA, zipper8 = MLIRZipper.yieldSSA zipper7
+                let extText = sprintf "%s = arith.extsi %s : i32 to i64" bytesReadSSA bytesReadSSA32
+                let zipper9 = MLIRZipper.witnessOpWithResult extText bytesReadSSA (Integer I64) zipper8
+
+                let oneSSA, zipper10 = MLIRZipper.yieldSSA zipper9
+                let oneText = sprintf "%s = arith.constant 1 : i64" oneSSA
+                let zipper11 = MLIRZipper.witnessOpWithResult oneText oneSSA (Integer I64) zipper10
+
+                let lenSSA, zipper12 = MLIRZipper.yieldSSA zipper11
+                let subText = sprintf "%s = arith.subi %s, %s : i64" lenSSA bytesReadSSA oneSSA
+                let zipper13 = MLIRZipper.witnessOpWithResult subText lenSSA (Integer I64) zipper12
+
+                // Build fat string struct
+                let undefSSA, zipper14 = MLIRZipper.yieldSSA zipper13
+                let undefText = sprintf "%s = llvm.mlir.undef : %s" undefSSA NativeStrTypeStr
+                let zipper15 = MLIRZipper.witnessOpWithResult undefText undefSSA NativeStrType zipper14
+
+                let withPtrSSA, zipper16 = MLIRZipper.yieldSSA zipper15
+                let insertPtrText = sprintf "%s = llvm.insertvalue %s, %s[0] : %s" withPtrSSA bufSSA undefSSA NativeStrTypeStr
+                let zipper17 = MLIRZipper.witnessOpWithResult insertPtrText withPtrSSA NativeStrType zipper16
+
+                let fatPtrSSA, zipper18 = MLIRZipper.yieldSSA zipper17
+                let insertLenText = sprintf "%s = llvm.insertvalue %s, %s[1] : %s" fatPtrSSA lenSSA withPtrSSA NativeStrTypeStr
+                let zipper19 = MLIRZipper.witnessOpWithResult insertLenText fatPtrSSA NativeStrType zipper18
+
+                zipper19, TRValue (fatPtrSSA, NativeStrTypeStr)
+
+            | NativeStrOp "fromPointer", [(ptrSSA, _); (lenSSA, _)] ->
                 let undefSSA, zipper1 = MLIRZipper.yieldSSA zipper
                 let undefText = sprintf "%s = llvm.mlir.undef : %s" undefSSA NativeStrTypeStr
                 let zipper2 = MLIRZipper.witnessOpWithResult undefText undefSSA NativeStrType zipper1
@@ -250,7 +362,7 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
 
                 zipper8, TRValue (fatPtrSSA, NativeStrTypeStr)
 
-            | "NativeDefault.zeroed", [] ->
+            | NativeDefaultOp "zeroed", [] ->
                 let zeroSSA, zipper' = MLIRZipper.yieldSSA zipper
                 let mlirRetType = mapType returnType
                 let mlirTypeStr = Serialize.mlirType mlirRetType
@@ -269,7 +381,7 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
                 let zipper'' = MLIRZipper.witnessOpWithResult zeroText zeroSSA mlirRetType zipper'
                 zipper'', TRValue (zeroSSA, mlirTypeStr)
 
-            | "String.concat2", [(str1SSA, _); (str2SSA, _)] ->
+            | StringOp "concat2", [(str1SSA, _); (str2SSA, _)] ->
                 let ptr1SSA, zipper1 = MLIRZipper.yieldSSA zipper
                 let extractPtr1 = sprintf "%s = llvm.extractvalue %s[0] : !llvm.struct<(ptr, i64)>" ptr1SSA str1SSA
                 let zipper2 = MLIRZipper.witnessOpWithResult extractPtr1 ptr1SSA Pointer zipper1
@@ -318,10 +430,10 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
 
                 zipper22, TRValue (resultSSA, NativeStrTypeStr)
 
-            | intrinsicName, [] ->
-                zipper, TRValue ("$intrinsic:" + intrinsicName, "func")
-            | _ ->
-                zipper, TRError (sprintf "Unknown intrinsic: %s with %d args" intrinsicName (List.length argSSAs))
+            | info, [] ->
+                zipper, TRValue ("$intrinsic:" + info.FullName, "func")
+            | info, _ ->
+                zipper, TRError (sprintf "Unknown intrinsic: %s with %d args" info.FullName (List.length argSSAs))
 
         | SemanticKind.VarRef (name, defId) ->
             let argSSAsAndTypes =

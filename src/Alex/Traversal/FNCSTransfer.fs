@@ -76,12 +76,12 @@ let witnessNode (graph: SemanticGraph) (node: SemanticNode) (zipper: MLIRZipper)
         zipper, TRVoid
 
     // Compiler intrinsics (e.g., NativePtr.toNativeInt)
-    | SemanticKind.Intrinsic intrinsicName ->
+    | SemanticKind.Intrinsic intrinsicInfo ->
         // Intrinsic node itself produces a function value
         // The Application will handle generating actual MLIR code
         // Bind a marker so Application can recognize and handle it
-        let zipper' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) ("$intrinsic:" + intrinsicName) "func" zipper
-        zipper', TRValue ("$intrinsic:" + intrinsicName, "func")
+        let zipper' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) ("$intrinsic:" + intrinsicInfo.FullName) "func" zipper
+        zipper', TRValue ("$intrinsic:" + intrinsicInfo.FullName, "func")
 
     // Function applications
     | SemanticKind.Application (funcId, argIds) ->

@@ -845,21 +845,6 @@ module MLIRZipper =
 
             regionText, { zipper with CurrentOps = remainingOps; State = newState }
 
-    /// Emit an SCF operation with regions, given pre-extracted region content
-    let witnessSCFOp (header: string) (regions: string list list) (results: (string * MLIRType) list) (zipper: MLIRZipper) : MLIRZipper =
-        // Build the operation text with nested regions
-        let indent = "    "
-        let formatRegion (regionOps: string list) =
-            regionOps |> List.map (fun op -> indent + op) |> String.concat "\n"
-
-        let regionsText =
-            regions
-            |> List.map (fun region -> "{\n" + formatRegion region + "\n  }")
-            |> String.concat " "
-
-        let fullText = sprintf "%s %s" header regionsText
-        witnessOp fullText results zipper
-
     /// Begin tracking an SCF region - for use with foldWithSCFRegions hook
     /// Marks current ops count and sets tracking state
     let beginSCFRegion (parentNodeId: string) (regionKind: SCFRegionKind) (zipper: MLIRZipper) : MLIRZipper =
@@ -947,20 +932,6 @@ module MLIRZipper =
     let lookupModifiedVarsInLoop (bodyNodeId: int) (zipper: MLIRZipper) : string list =
         MLIRState.lookupModifiedVarsInLoop bodyNodeId zipper.State
 
-    /// Witness an alloca for a mutable local variable
-    /// Emits: %c1 = arith.constant 1 : i64
-    ///        %ptr = llvm.alloca %c1 x elementType : (i64) -> !llvm.ptr
-    let witnessAlloca (elementType: MLIRType) (zipper: MLIRZipper) : string * MLIRZipper =
-        let typeStr = Serialize.mlirType elementType
-        // First emit constant 1 for the count
-        let countSSA, zipper1 = yieldSSA zipper
-        let countOp = sprintf "%s = arith.constant 1 : i64" countSSA
-        let zipper2 = witnessOpWithResult countOp countSSA (Integer I64) zipper1
-        // Then emit the alloca
-        let allocaSSA, zipper3 = yieldSSA zipper2
-        let allocaOp = sprintf "%s = llvm.alloca %s x %s : (i64) -> !llvm.ptr" allocaSSA countSSA typeStr
-        allocaSSA, witnessOpWithResult allocaOp allocaSSA Pointer zipper3
-
     /// Witness an alloca with string type (for when type is already serialized)
     /// Emits: %c1 = arith.constant 1 : i64
     ///        %ptr = llvm.alloca %c1 x elementType : (i64) -> !llvm.ptr
@@ -979,14 +950,6 @@ module MLIRZipper =
     let witnessStore (valueSSA: string) (valueType: string) (ptrSSA: string) (zipper: MLIRZipper) : MLIRZipper =
         let op = sprintf "llvm.store %s, %s : %s, !llvm.ptr" valueSSA ptrSSA valueType
         witnessVoidOp op zipper
-
-    /// Witness a load from an alloca
-    /// Emits: %value = llvm.load %ptr : !llvm.ptr -> type
-    let witnessLoad (ptrSSA: string) (resultType: MLIRType) (zipper: MLIRZipper) : string * MLIRZipper =
-        let resultSSA, zipper1 = yieldSSA zipper
-        let typeStr = Serialize.mlirType resultType
-        let op = sprintf "%s = llvm.load %s : !llvm.ptr -> %s" resultSSA ptrSSA typeStr
-        resultSSA, witnessOpWithResult op resultSSA resultType zipper1
 
     /// Witness a load with string type (for when type is already serialized)
     /// Emits: %value = llvm.load %ptr : !llvm.ptr -> type
@@ -1230,13 +1193,6 @@ module MLIRZipper =
         let text = sprintf "%s = %s %s, %s : %s" ssaName op lhs rhs tyStr
         ssaName, witnessOpWithResult text ssaName ty zipper'
 
-    /// Witness comparison operation
-    let witnessCmpi (pred: string) (lhs: string) (rhs: string) (opType: MLIRType) (zipper: MLIRZipper) : string * MLIRZipper =
-        let ssaName, zipper' = yieldSSA zipper
-        let tyStr = Serialize.mlirType opType
-        let text = sprintf "%s = arith.cmpi %s, %s, %s : %s" ssaName pred lhs rhs tyStr
-        ssaName, witnessOpWithResult text ssaName (Integer I1) zipper'
-
     /// Witness function call
     let witnessCall (funcName: string) (args: string list) (argTypes: MLIRType list) (resultType: MLIRType) (zipper: MLIRZipper) : string * MLIRZipper =
         let ssaName, zipper' = yieldSSA zipper
@@ -1299,13 +1255,6 @@ module MLIRZipper =
         let text = sprintf "%s = llvm.call @%s(%s) : (%s) -> %s" ssaName funcName argsStr typesStr actualRetStr
         ssaName, witnessOpWithResult text ssaName actualRetType zipper''
 
-    /// Witness void function call
-    let witnessCallVoid (funcName: string) (args: string list) (argTypes: MLIRType list) (zipper: MLIRZipper) : MLIRZipper =
-        let argsStr = String.concat ", " args
-        let typesStr = argTypes |> List.map Serialize.mlirType |> String.concat ", "
-        let text = sprintf "llvm.call @%s(%s) : (%s) -> ()" funcName argsStr typesStr
-        witnessVoidOp text zipper
-
     /// Witness indirect function call (call through function pointer)
     let witnessIndirectCall (funcPtr: string) (args: string list) (argTypes: MLIRType list) (resultType: MLIRType) (zipper: MLIRZipper) : string * MLIRZipper =
         // First, emit addressof for any arguments that are function symbols (@name)
@@ -1357,22 +1306,6 @@ module MLIRZipper =
                        ssaName constraints argsStr typesStr retStr
         ssaName, witnessOpWithResult text ssaName resultType zipper'
 
-    /// Witness branch instruction
-    let witnessBranch (target: string) (zipper: MLIRZipper) : MLIRZipper =
-        let text = sprintf "llvm.br ^%s" target
-        witnessVoidOp text zipper
-
-    /// Witness conditional branch
-    let witnessCondBranch (cond: string) (trueTarget: string) (falseTarget: string) (zipper: MLIRZipper) : MLIRZipper =
-        let text = sprintf "llvm.cond_br %s, ^%s, ^%s" cond trueTarget falseTarget
-        witnessVoidOp text zipper
-
-    /// Witness return
-    let witnessReturn (value: string) (ty: MLIRType) (zipper: MLIRZipper) : MLIRZipper =
-        let tyStr = Serialize.mlirType ty
-        let text = sprintf "llvm.return %s : %s" value tyStr
-        witnessVoidOp text zipper
-
     /// Witness unreachable (for exit syscall paths)
     let witnessUnreachable (zipper: MLIRZipper) : MLIRZipper =
         witnessVoidOp "llvm.unreachable" zipper
@@ -1402,39 +1335,6 @@ module MLIRZipper =
         { zipper with
             CompletedFunctions = func :: zipper.CompletedFunctions
             State = state2 }
-
-    /// Witness a lambda function definition
-    /// For non-capturing lambdas, generates a function and returns its name as a pointer
-    /// parameters: list of (name, type) for lambda parameters
-    /// bodyOps: list of operations that form the lambda body
-    /// returnType: the return type of the lambda
-    let witnessLambda (parameters: (string * MLIRType) list) (bodyOps: MLIROp list) (returnType: MLIRType) (zipper: MLIRZipper) : string * MLIRZipper =
-        // Generate unique lambda name
-        let lambdaName, zipper1 = yieldLambdaName zipper
-        
-        // Create the function definition
-        let func: MLIRFunc = {
-            Name = lambdaName
-            Parameters = parameters
-            ReturnType = returnType
-            Blocks = [{
-                Label = "entry"
-                Arguments = []
-                Operations = bodyOps
-            }]
-            Attributes = []
-            IsInternal = true
-        }
-        
-        // Add to completed functions
-        let zipper2 = addCompletedFunction func zipper1
-        
-        // Get address of the lambda function as a pointer
-        let ptrSSA, zipper3 = yieldSSA zipper2
-        let text = sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" ptrSSA lambdaName
-        let zipper4 = witnessOpWithResult text ptrSSA Pointer zipper3
-        
-        ptrSSA, zipper4
 
     // ─────────────────────────────────────────────────────────────────
     // Freestanding Entry Point Wrapper

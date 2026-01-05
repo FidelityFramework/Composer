@@ -18,6 +18,7 @@ open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.CodeGeneration.MLIRTypes
 open Alex.Traversal.MLIRZipper
 module MutAnalysis = Alex.Preprocessing.MutabilityAnalysis
+module PatternAnalysis = Alex.Preprocessing.PatternBindingAnalysis
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Type Mapping Helper (delegated to TypeMapping module)
@@ -92,33 +93,10 @@ let emitInlineStrlen (ptrSSA: string) (zipper: MLIRZipper) : string * MLIRZipper
     (lenSSA, z12)
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Pattern Binding Extraction for Match
+// Pattern Binding Emission
+// NOTE: Pattern binding ANALYSIS is in PatternAnalysis module (preprocessing)
+// This section handles EMISSION of bindings to MLIR
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Extract variable bindings from a pattern
-/// Returns list of (varName, varType) pairs
-let rec extractPatternBindings (pattern: Pattern) : (string * NativeType) list =
-    match pattern with
-    | Pattern.Var (name, ty) -> [(name, ty)]
-    | Pattern.Tuple elements ->
-        elements |> List.collect extractPatternBindings
-    | Pattern.As (inner, _name) ->
-        // As pattern binds the whole value AND the inner pattern
-        extractPatternBindings inner
-    | Pattern.Union (_, Some payload, _) ->
-        extractPatternBindings payload
-    | Pattern.Record (fields, _) ->
-        fields |> List.collect (fun (_, p) -> extractPatternBindings p)
-    | Pattern.Array elements ->
-        elements |> List.collect extractPatternBindings
-    | Pattern.Or (p1, _p2) ->
-        // Both branches should bind same vars
-        extractPatternBindings p1
-    | Pattern.And (p1, p2) ->
-        extractPatternBindings p1 @ extractPatternBindings p2
-    | Pattern.Const _ | Pattern.Wildcard | Pattern.Null | Pattern.IsType _ | Pattern.Exception _ ->
-        []
-    | Pattern.Union (_, None, _) -> []
 
 /// Emit pattern bindings for a match case
 /// For array pattern [|x|], extracts array[0] and binds to x

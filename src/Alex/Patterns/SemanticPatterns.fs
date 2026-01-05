@@ -148,6 +148,8 @@ let (|UnaryOp|_|) (opName: string) =
 // NativePtr Operations
 // ═══════════════════════════════════════════════════════════════════════════
 
+open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+
 /// NativePtr operation kinds (type-safe dispatch)
 type NativePtrOpKind =
     | PtrToNativeInt    // ptr -> nativeint (ptrtoint)
@@ -161,11 +163,11 @@ type NativePtrOpKind =
     | PtrFill           // memset
     | PtrAdd            // pointer arithmetic
 
-/// Active pattern for NativePtr operations with typed dispatch
-let (|NativePtrOp|_|) (name: string) =
-    if not (name.StartsWith("NativePtr.")) then None
+/// Active pattern for NativePtr operations with typed dispatch (using IntrinsicInfo)
+let (|NativePtrOp|_|) (info: IntrinsicInfo) =
+    if info.Module <> IntrinsicModule.NativePtr then None
     else
-        match name.Substring(10) with
+        match info.Operation with
         | "toNativeInt" -> Some PtrToNativeInt
         | "ofNativeInt" -> Some PtrOfNativeInt
         | "toVoidPtr" -> Some PtrToVoidPtr
@@ -186,25 +188,40 @@ let (|NativePtrOp|_|) (name: string) =
 let (|PrimitiveOp|_|) (name: string) =
     if name.StartsWith("op_") then Some name else None
 
-/// Check if a name is a Sys operation
-let (|SysOp|_|) (name: string) =
-    if name.StartsWith("Sys.") then Some (name.Substring(4)) else None
+/// Check if intrinsic is a Sys operation (using IntrinsicInfo)
+let (|SysOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Sys then Some info.Operation else None
 
-/// Check if a name is a Console operation
-let (|ConsoleOp|_|) (name: string) =
-    if name.StartsWith("Console.") then Some (name.Substring(8)) else None
+/// Check if intrinsic is a Console operation (using IntrinsicInfo)
+let (|ConsoleOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Console then Some info.Operation else None
 
 /// Platform intrinsic - unified pattern for Sys, Console, and other platform operations
 /// Returns (module, operation) tuple for dispatch to platform bindings
-let (|PlatformIntrinsic|_|) (name: string) =
-    match name with
-    | SysOp op -> Some ("Sys", op)
-    | ConsoleOp op -> Some ("Console", op)
+let (|PlatformIntrinsic|_|) (info: IntrinsicInfo) =
+    match info.Category with
+    | IntrinsicCategory.Platform -> Some (info.Module, info.Operation)
     | _ -> None
 
-/// Check if a name is an Unchecked operation
-let (|UncheckedOp|_|) (name: string) =
-    if name.StartsWith("Unchecked.") then Some (name.Substring(10)) else None
+/// Check if intrinsic is a NativeStr operation (using IntrinsicInfo)
+let (|NativeStrOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.NativeStr then Some info.Operation else None
+
+/// Check if intrinsic is a NativeDefault operation (using IntrinsicInfo)
+let (|NativeDefaultOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.NativeDefault then Some info.Operation else None
+
+/// Check if intrinsic is a String operation (using IntrinsicInfo)
+let (|StringOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.String then Some info.Operation else None
+
+/// Check if intrinsic is an Array operation (using IntrinsicInfo)
+let (|ArrayOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Array then Some info.Operation else None
+
+/// Check if intrinsic is an Unchecked operation (using IntrinsicInfo)
+let (|UncheckedOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Unchecked then Some info.Operation else None
 
 /// Conversion function names
 let private conversionFunctions = 
@@ -235,8 +252,8 @@ let (|PrintfOp|_|) (name: string) =
     | "printf" | "printfn" | "sprintf" | "failwith" | "failwithf" -> Some name
     | _ -> None
 
-/// Array operations
-let (|ArrayOp|_|) (name: string) =
+/// Array operation names (for name-based recognition in BuiltInOperator)
+let (|ArrayOpName|_|) (name: string) =
     match name with
     | "Array.zeroCreate" | "Array.length" | "Array.get" | "Array.set" -> Some name
     | _ -> None
@@ -247,20 +264,19 @@ let (|OtherBuiltin|_|) (name: string) =
     | "ignore" | "raise" | "reraise" | "typeof" | "sizeof" | "nameof" -> Some name
     | _ -> None
 
-/// Master pattern: Is this a built-in operator or function?
+/// Master pattern: Is this identifier a built-in operator or function?
+/// NOTE: This is NAME-based recognition for identifier resolution, distinct from
+/// IntrinsicInfo-based patterns which classify structured intrinsic nodes.
 let (|BuiltInOperator|_|) (name: string) =
     match name with
-    | PrimitiveOp _ -> Some name
-    | NativePtrOp _ -> Some name
-    | SysOp _ -> Some name
-    | UncheckedOp _ -> Some name
-    | ConversionOp _ -> Some name
-    | OptionConstructor _ -> Some name
-    | BoxOp _ -> Some name
-    | PrintfOp _ -> Some name
-    | ArrayOp _ -> Some name
-    | OtherBuiltin _ -> Some name
-    | "not" -> Some name  // Boolean not
+    | PrimitiveOp _ -> Some name        // op_Addition, op_Multiply, etc.
+    | ConversionOp _ -> Some name       // int, float, byte, etc.
+    | OptionConstructor _ -> Some name  // Some, None, etc.
+    | BoxOp _ -> Some name              // box, unbox
+    | PrintfOp _ -> Some name           // printf, printfn, sprintf, etc.
+    | ArrayOpName _ -> Some name        // Array.zeroCreate, Array.length, etc.
+    | OtherBuiltin _ -> Some name       // ignore, raise, typeof, etc.
+    | "not" -> Some name                // Boolean not
     | _ -> None
 
 // ═══════════════════════════════════════════════════════════════════════════

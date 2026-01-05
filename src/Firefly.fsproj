@@ -61,6 +61,7 @@
       <!-- NOTE: SaturateApplications.fs removed - transforms moved to FNCS -->
       <Compile Include="Alex/Preprocessing/SSAAssignment.fs" />
       <Compile Include="Alex/Preprocessing/MutabilityAnalysis.fs" />
+      <Compile Include="Alex/Preprocessing/PatternBindingAnalysis.fs" />
 
       <!-- Alex Patterns - Active patterns for semantic classification -->
       <Compile Include="Alex/Patterns/SemanticPatterns.fs" />
