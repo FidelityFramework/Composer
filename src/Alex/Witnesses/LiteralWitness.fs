@@ -7,6 +7,9 @@ module Alex.Witnesses.LiteralWitness
 open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open Alex.CodeGeneration.MLIRTypes
 open Alex.Traversal.MLIRZipper
+open Alex.Templates.TemplateTypes
+open Alex.Templates.ArithTemplates
+open Alex.Templates.MemoryTemplates
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN WITNESS FUNCTION
@@ -62,13 +65,15 @@ let witness (lit: LiteralValue) (zipper: MLIRZipper) : MLIRZipper * TransferResu
 
     | LiteralValue.Float32 f ->
         let ssaName, zipper' = MLIRZipper.yieldSSA zipper
-        let text = sprintf "%s = arith.constant %e : f32" ssaName (float f)
+        let constParams = { Result = ssaName; Value = sprintf "%e" (float f); Type = "f32" }
+        let text = render Quot.Constant.floatConst constParams
         let zipper'' = MLIRZipper.witnessOpWithResult text ssaName (Float F32) zipper'
         zipper'', TRValue (ssaName, "f32")
 
     | LiteralValue.Float64 f ->
         let ssaName, zipper' = MLIRZipper.yieldSSA zipper
-        let text = sprintf "%s = arith.constant %e : f64" ssaName f
+        let constParams = { Result = ssaName; Value = sprintf "%e" f; Type = "f64" }
+        let text = render Quot.Constant.floatConst constParams
         let zipper'' = MLIRZipper.witnessOpWithResult text ssaName (Float F64) zipper'
         zipper'', TRValue (ssaName, "f64")
 
@@ -78,17 +83,19 @@ let witness (lit: LiteralValue) (zipper: MLIRZipper) : MLIRZipper * TransferResu
         let ptrSSA, zipper2 = MLIRZipper.witnessAddressOf globalName zipper1
         let lenSSA, zipper3 = MLIRZipper.witnessConstant (int64 s.Length) I64 zipper2
         
-        // Build fat pointer struct
+        // Build fat pointer struct using templates
         let undefSSA, zipper4 = MLIRZipper.yieldSSA zipper3
-        let undefText = sprintf "%s = llvm.mlir.undef : %s" undefSSA NativeStrTypeStr
+        let undefText = render Quot.Aggregate.undef {| Result = undefSSA; Type = NativeStrTypeStr |}
         let zipper5 = MLIRZipper.witnessOpWithResult undefText undefSSA NativeStrType zipper4
         
         let withPtrSSA, zipper6 = MLIRZipper.yieldSSA zipper5
-        let insertPtrText = sprintf "%s = llvm.insertvalue %s, %s[0] : %s" withPtrSSA ptrSSA undefSSA NativeStrTypeStr
+        let insertPtrParams : Quot.Aggregate.InsertParams = { Result = withPtrSSA; Value = ptrSSA; Aggregate = undefSSA; Index = 0; AggType = NativeStrTypeStr }
+        let insertPtrText = render Quot.Aggregate.insertValue insertPtrParams
         let zipper7 = MLIRZipper.witnessOpWithResult insertPtrText withPtrSSA NativeStrType zipper6
         
         let fatPtrSSA, zipper8 = MLIRZipper.yieldSSA zipper7
-        let insertLenText = sprintf "%s = llvm.insertvalue %s, %s[1] : %s" fatPtrSSA lenSSA withPtrSSA NativeStrTypeStr
+        let insertLenParams : Quot.Aggregate.InsertParams = { Result = fatPtrSSA; Value = lenSSA; Aggregate = withPtrSSA; Index = 1; AggType = NativeStrTypeStr }
+        let insertLenText = render Quot.Aggregate.insertValue insertLenParams
         let zipper9 = MLIRZipper.witnessOpWithResult insertLenText fatPtrSSA NativeStrType zipper8
         
         zipper9, TRValue (fatPtrSSA, NativeStrTypeStr)

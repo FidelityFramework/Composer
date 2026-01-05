@@ -237,3 +237,147 @@ let intCompareTemplate op = cmpI (signedPredicate op)
 
 /// Select float comparison template from CompareOp witness
 let floatCompareTemplate op = cmpF (orderedPredicate op)
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUOTATION-BASED TEMPLATES (Phase 5: Multi-Target Generation)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These MLIRTemplate definitions use F# quotations for inspectability.
+// The quotation structure can be analyzed for:
+// - MLIR text generation (current)
+// - TableGen definitions (future)
+// - C++ code generation (future)
+// - Documentation extraction (future)
+
+/// Quotation-based templates organized by category
+module Quot =
+    
+    /// Integer binary operations with full metadata
+    module IntBinary =
+        let addI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.addi %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "addi"
+            IsTerminator = false
+            Category = "binary"
+        }
+        
+        let subI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.subi %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "subi"
+            IsTerminator = false
+            Category = "binary"
+        }
+        
+        let mulI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.muli %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "muli"
+            IsTerminator = false
+            Category = "binary"
+        }
+        
+        let divSI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.divsi %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "divsi"
+            IsTerminator = false
+            Category = "binary"
+        }
+        
+        let remSI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.remsi %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "remsi"
+            IsTerminator = false
+            Category = "binary"
+        }
+    
+    /// Integer bitwise operations
+    module IntBitwise =
+        let andI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.andi %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "andi"
+            IsTerminator = false
+            Category = "bitwise"
+        }
+        
+        let orI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.ori %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "ori"
+            IsTerminator = false
+            Category = "bitwise"
+        }
+        
+        let xorI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.xori %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "xori"
+            IsTerminator = false
+            Category = "bitwise"
+        }
+        
+        let shlI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.shli %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "shli"
+            IsTerminator = false
+            Category = "bitwise"
+        }
+        
+        let shrSI : MLIRTemplate<BinaryOpParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.shrsi %s, %s : %s" p.Result p.Lhs p.Rhs p.Type @>
+            Dialect = "arith"
+            OpName = "shrsi"
+            IsTerminator = false
+            Category = "bitwise"
+        }
+    
+    /// Type conversion operations
+    module Conversion =
+        let extSI : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.extsi %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "extsi"
+            IsTerminator = false
+            Category = "conversion"
+        }
+        
+        let extUI : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.extui %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "extui"
+            IsTerminator = false
+            Category = "conversion"
+        }
+        
+        let truncI : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.trunci %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "trunci"
+            IsTerminator = false
+            Category = "conversion"
+        }
+    
+    /// Constants
+    module Constant =
+        let intConst : MLIRTemplate<ConstantParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.constant %s : %s" p.Result p.Value p.Type @>
+            Dialect = "arith"
+            OpName = "constant"
+            IsTerminator = false
+            Category = "constant"
+        }
+        
+        /// Float constant uses the same format as intConst but semantically typed
+        let floatConst : MLIRTemplate<ConstantParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.constant %s : %s" p.Result p.Value p.Type @>
+            Dialect = "arith"
+            OpName = "constant"
+            IsTerminator = false
+            Category = "constant"
+        }

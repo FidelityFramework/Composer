@@ -36,6 +36,25 @@ type Template<'Params> = {
     Description: string
 }
 
+/// An MLIR template with operation-level metadata for multi-target generation.
+/// This is the primary template type for Phase 5+ quotation inspection.
+type MLIRTemplate<'Params> = {
+    /// The quotation encoding the operation - inspectable for multi-target
+    Quotation: Expr<'Params -> string>
+    
+    /// MLIR dialect (e.g., "arith", "llvm", "scf", "cf")
+    Dialect: string
+    
+    /// Operation name within the dialect (e.g., "addi", "load", "if")
+    OpName: string
+    
+    /// Whether this operation is a block terminator
+    IsTerminator: bool
+    
+    /// Category for grouping (e.g., "binary", "memory", "control")
+    Category: string
+}
+
 /// A simple template that directly provides the MLIR string generator
 /// (for cases where quotation inspection is not needed)
 type SimpleTemplate<'Params> = {
@@ -63,6 +82,7 @@ let template dialect category description (quotation: Expr<'Params -> string>) :
     }
 
 /// Create a simple template (no quotation inspection needed)
+/// Note: Prefer MLIRTemplate for new code - SimpleTemplate exists for compatibility
 let simple dialect category (render: 'Params -> string) : SimpleTemplate<'Params> =
     {
         Render = render
@@ -84,6 +104,13 @@ let renderMLIR (template: Template<'Params>) (args: 'Params) : string =
 /// Render a simple template
 let renderSimple (template: SimpleTemplate<'Params>) (args: 'Params) : string =
     template.Render args
+
+/// Render an MLIRTemplate - evaluates quotation for MLIR text generation
+/// Future: This function will be extended to support multi-target rendering
+/// by analyzing the quotation structure instead of just evaluating it.
+let render (template: MLIRTemplate<'Params>) (args: 'Params) : string =
+    let func = Microsoft.FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation template.Quotation :?> ('Params -> string)
+    func args
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMMON PARAMETER TYPES

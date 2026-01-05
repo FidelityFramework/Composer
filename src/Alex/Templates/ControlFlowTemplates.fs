@@ -215,3 +215,209 @@ let callVoid = simple "func" "call" (fun (callee: string, args: (string * string
     let argsStr = args |> List.map fst |> String.concat ", "
     let argTypesStr = args |> List.map snd |> String.concat ", "
     sprintf "func.call @%s(%s) : (%s) -> ()" callee argsStr argTypesStr)
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUOTATION-BASED TEMPLATES (Phase 5)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Quotation-based templates for inspectability and multi-target generation
+module Quot =
+    open Microsoft.FSharp.Quotations
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // SCF Structured Control Flow
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module SCF =
+        /// Parameters for scf.if header
+        type IfHeaderParams = {
+            Condition: string
+            ResultTypes: string  // comma-separated or empty
+        }
+        
+        /// Parameters for scf.while header
+        type WhileHeaderParams = {
+            IterArgs: string  // formatted iter_args
+            ResultTypes: string  // comma-separated or empty
+        }
+        
+        /// Parameters for scf.for header
+        type ForHeaderParams = {
+            InductionVar: string
+            LowerBound: string
+            UpperBound: string
+            Step: string
+            IterArgs: string
+            ResultTypes: string
+        }
+        
+        /// scf.if with optional result types
+        let ifHeader : MLIRTemplate<IfHeaderParams> = {
+            Quotation = <@ fun p -> 
+                if p.ResultTypes = "" then sprintf "scf.if %s {" p.Condition
+                else sprintf "scf.if %s -> (%s) {" p.Condition p.ResultTypes @>
+            Dialect = "scf"
+            OpName = "if"
+            IsTerminator = false
+            Category = "control"
+        }
+        
+        /// else block opener
+        let elseBlock : MLIRTemplate<unit> = {
+            Quotation = <@ fun () -> "} else {" @>
+            Dialect = "scf"
+            OpName = "else"
+            IsTerminator = false
+            Category = "control"
+        }
+        
+        /// scf.while header
+        let whileHeader : MLIRTemplate<WhileHeaderParams> = {
+            Quotation = <@ fun p ->
+                if p.ResultTypes = "" then sprintf "scf.while (%s) {" p.IterArgs
+                else sprintf "scf.while (%s) -> (%s) {" p.IterArgs p.ResultTypes @>
+            Dialect = "scf"
+            OpName = "while"
+            IsTerminator = false
+            Category = "control"
+        }
+        
+        /// scf.condition (while loop condition)
+        let condition : MLIRTemplate<{| Condition: string; PassedArgs: string |}> = {
+            Quotation = <@ fun p -> sprintf "scf.condition(%s) %s" p.Condition p.PassedArgs @>
+            Dialect = "scf"
+            OpName = "condition"
+            IsTerminator = true  // terminates before region
+            Category = "control"
+        }
+        
+        /// scf.for header
+        let forHeader : MLIRTemplate<ForHeaderParams> = {
+            Quotation = <@ fun p ->
+                let iterPart = if p.IterArgs = "" then "" else sprintf " iter_args(%s)" p.IterArgs
+                let retPart = if p.ResultTypes = "" then "" else sprintf " -> (%s)" p.ResultTypes
+                sprintf "scf.for %s = %s to %s step %s%s%s {" 
+                    p.InductionVar p.LowerBound p.UpperBound p.Step iterPart retPart @>
+            Dialect = "scf"
+            OpName = "for"
+            IsTerminator = false
+            Category = "control"
+        }
+        
+        /// scf.yield (terminates SCF regions)
+        let yield_ : MLIRTemplate<{| Values: string |}> = {
+            Quotation = <@ fun p -> 
+                if p.Values = "" then "scf.yield"
+                else sprintf "scf.yield %s" p.Values @>
+            Dialect = "scf"
+            OpName = "yield"
+            IsTerminator = true
+            Category = "control"
+        }
+        
+        /// Region/block close
+        let close : MLIRTemplate<unit> = {
+            Quotation = <@ fun () -> "}" @>
+            Dialect = "scf"
+            OpName = "close"
+            IsTerminator = false
+            Category = "control"
+        }
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // CF Unstructured Control Flow
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module CF =
+        /// Unconditional branch
+        let br : MLIRTemplate<BranchParams> = {
+            Quotation = <@ fun p ->
+                if List.isEmpty p.Args then sprintf "cf.br ^%s" p.Target
+                else sprintf "cf.br ^%s(%s)" p.Target (String.concat ", " p.Args) @>
+            Dialect = "cf"
+            OpName = "br"
+            IsTerminator = true
+            Category = "branch"
+        }
+        
+        /// Conditional branch
+        let condBr : MLIRTemplate<CondBranchParams> = {
+            Quotation = <@ fun p ->
+                let trueArgs = if List.isEmpty p.TrueArgs then "" else sprintf "(%s)" (String.concat ", " p.TrueArgs)
+                let falseArgs = if List.isEmpty p.FalseArgs then "" else sprintf "(%s)" (String.concat ", " p.FalseArgs)
+                sprintf "cf.cond_br %s, ^%s%s, ^%s%s" p.Condition p.TrueTarget trueArgs p.FalseTarget falseArgs @>
+            Dialect = "cf"
+            OpName = "cond_br"
+            IsTerminator = true
+            Category = "branch"
+        }
+        
+        /// Block label
+        let blockLabel : MLIRTemplate<{| Name: string; Args: string |}> = {
+            Quotation = <@ fun p ->
+                if p.Args = "" then sprintf "^%s:" p.Name
+                else sprintf "^%s(%s):" p.Name p.Args @>
+            Dialect = "cf"
+            OpName = "block"
+            IsTerminator = false
+            Category = "label"
+        }
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // Func Dialect
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module Func =
+        /// Parameters for function definition
+        type FuncDefParams = {
+            Name: string
+            Args: string  // formatted (name: type, ...)
+            ReturnType: string  // or empty
+            Visibility: string  // "public" or "private"
+        }
+        
+        /// Function definition header
+        let funcDef : MLIRTemplate<FuncDefParams> = {
+            Quotation = <@ fun p ->
+                let retPart = if p.ReturnType = "" then "" else sprintf " -> %s" p.ReturnType
+                sprintf "func.func %s @%s(%s)%s {" p.Visibility p.Name p.Args retPart @>
+            Dialect = "func"
+            OpName = "func"
+            IsTerminator = false
+            Category = "definition"
+        }
+        
+        /// Return with value
+        let retValue : MLIRTemplate<{| Value: string; Type: string |}> = {
+            Quotation = <@ fun p -> sprintf "func.return %s : %s" p.Value p.Type @>
+            Dialect = "func"
+            OpName = "return"
+            IsTerminator = true
+            Category = "terminator"
+        }
+        
+        /// Return void
+        let retVoid : MLIRTemplate<unit> = {
+            Quotation = <@ fun () -> "func.return" @>
+            Dialect = "func"
+            OpName = "return"
+            IsTerminator = true
+            Category = "terminator"
+        }
+        
+        /// Function call
+        let call : MLIRTemplate<CallParams> = {
+            Quotation = <@ fun p ->
+                let argsStr = p.Args |> List.map fst |> String.concat ", "
+                let argTypesStr = p.Args |> List.map snd |> String.concat ", "
+                match p.Result, p.ReturnType with
+                | Some result, Some retType ->
+                    sprintf "%s = func.call @%s(%s) : (%s) -> %s" result p.Callee argsStr argTypesStr retType
+                | _ ->
+                    sprintf "func.call @%s(%s) : (%s) -> ()" p.Callee argsStr argTypesStr @>
+            Dialect = "func"
+            OpName = "call"
+            IsTerminator = false
+            Category = "call"
+        }

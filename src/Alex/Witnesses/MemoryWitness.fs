@@ -13,6 +13,8 @@ open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.CodeGeneration.MLIRTypes
 open Alex.Traversal.MLIRZipper
+open Alex.Templates.TemplateTypes
+open Alex.Templates.MemoryTemplates
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Type Mapping Helper (delegated to TypeMapping module)
@@ -43,15 +45,17 @@ let witnessIndexGet
     
     match MLIRZipper.recallNodeSSA (string (NodeId.value collectionId)) zipper,
           MLIRZipper.recallNodeSSA (string (NodeId.value indexId)) zipper with
-    | Some (collSSA, collType), Some (indexSSA, _) ->
+    | Some (collSSA, _collType), Some (indexSSA, _) ->
         // Generate GEP (getelementptr) for array access
         let ssaName, zipper' = MLIRZipper.yieldSSA zipper
         let elemType = Serialize.mlirType (mapType node.Type)
-        let text = sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr" ssaName collSSA indexSSA
+        let gepParams = { Result = ssaName; Base = collSSA; Offset = indexSSA; ElementType = "i8" }
+        let text = render Quot.Gep.i64 gepParams
         let zipper'' = MLIRZipper.witnessOpWithResult text ssaName Pointer zipper'
         // Load the element
         let loadSSA, zipper''' = MLIRZipper.yieldSSA zipper''
-        let loadText = sprintf "%s = llvm.load %s : !llvm.ptr -> %s" loadSSA ssaName elemType
+        let loadParams = { Result = loadSSA; Pointer = ssaName; Type = elemType }
+        let loadText = render Quot.Core.load loadParams
         let zipper4 = MLIRZipper.witnessOpWithResult loadText loadSSA (mapType node.Type) zipper'''
         let zipper5 = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) loadSSA elemType zipper4
         zipper5, TRValue (loadSSA, elemType)
@@ -72,10 +76,12 @@ let witnessIndexSet
     | Some (collSSA, _), Some (indexSSA, _), Some (valueSSA, valueType) ->
         // Generate GEP for array access
         let ptrSSA, zipper' = MLIRZipper.yieldSSA zipper
-        let gepText = sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr" ptrSSA collSSA indexSSA
+        let gepParams = { Result = ptrSSA; Base = collSSA; Offset = indexSSA; ElementType = "i8" }
+        let gepText = render Quot.Gep.i64 gepParams
         let zipper'' = MLIRZipper.witnessOpWithResult gepText ptrSSA Pointer zipper'
         // Store the value
-        let storeText = sprintf "llvm.store %s, %s : %s, !llvm.ptr" valueSSA ptrSSA valueType
+        let storeParams = { Value = valueSSA; Pointer = ptrSSA; Type = valueType }
+        let storeText = render Quot.Core.store storeParams
         let zipper''' = MLIRZipper.witnessVoidOp storeText zipper''
         zipper''', TRVoid
     | _ ->
@@ -272,13 +278,15 @@ let witnessFieldGet
             match fieldName with
             | "Pointer" ->
                 let resultSSA, zipper' = MLIRZipper.yieldSSA zipper
-                let extractText = sprintf "%s = llvm.extractvalue %s[0] : %s" resultSSA exprSSA NativeStrTypeStr
+                let extractParams : Quot.Aggregate.ExtractParams = { Result = resultSSA; Aggregate = exprSSA; Index = 0; AggType = NativeStrTypeStr }
+                let extractText = render Quot.Aggregate.extractValue extractParams
                 let zipper'' = MLIRZipper.witnessOpWithResult extractText resultSSA Pointer zipper'
                 let zipper''' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) resultSSA "!llvm.ptr" zipper''
                 zipper''', TRValue (resultSSA, "!llvm.ptr")
             | "Length" ->
                 let resultSSA, zipper' = MLIRZipper.yieldSSA zipper
-                let extractText = sprintf "%s = llvm.extractvalue %s[1] : %s" resultSSA exprSSA NativeStrTypeStr
+                let extractParams : Quot.Aggregate.ExtractParams = { Result = resultSSA; Aggregate = exprSSA; Index = 1; AggType = NativeStrTypeStr }
+                let extractText = render Quot.Aggregate.extractValue extractParams
                 let zipper'' = MLIRZipper.witnessOpWithResult extractText resultSSA (Integer I64) zipper'
                 let zipper''' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) resultSSA "i64" zipper''
                 zipper''', TRValue (resultSSA, "i64")
@@ -287,7 +295,8 @@ let witnessFieldGet
         else
             // Generic field access for other struct types
             let resultSSA, zipper' = MLIRZipper.yieldSSA zipper
-            let loadText = sprintf "%s = llvm.load %s : !llvm.ptr -> !llvm.ptr" resultSSA exprSSA
+            let loadParams = { Result = resultSSA; Pointer = exprSSA; Type = "!llvm.ptr" }
+            let loadText = render Quot.Core.load loadParams
             let zipper'' = MLIRZipper.witnessOpWithResult loadText resultSSA Pointer zipper'
             let zipper''' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) resultSSA "!llvm.ptr" zipper''
             zipper''', TRValue (resultSSA, "!llvm.ptr")
@@ -306,7 +315,8 @@ let witnessFieldSet
           MLIRZipper.recallNodeSSA (string (NodeId.value valueId)) zipper with
     | Some (exprSSA, _), Some (valueSSA, valueType) ->
         // Store value at field offset
-        let storeText = sprintf "llvm.store %s, %s : %s, !llvm.ptr" valueSSA exprSSA valueType
+        let storeParams = { Value = valueSSA; Pointer = exprSSA; Type = valueType }
+        let storeText = render Quot.Core.store storeParams
         let zipper' = MLIRZipper.witnessVoidOp storeText zipper
         zipper', TRVoid
     | _ ->

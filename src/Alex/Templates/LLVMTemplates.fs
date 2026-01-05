@@ -181,3 +181,173 @@ module LinuxX64Syscalls =
     let mmap = 9
     let munmap = 11
     let brk = 12
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUOTATION-BASED TEMPLATES (Phase 5)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Quotation-based templates for inspectability and multi-target generation
+module Quot =
+    open Microsoft.FSharp.Quotations
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // Memory Operations
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module Memory =
+        /// Allocate stack memory
+        let alloca : MLIRTemplate<AllocaParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.alloca %s x %s : (i64) -> !llvm.ptr" p.Result p.Count p.ElementType @>
+            Dialect = "llvm"
+            OpName = "alloca"
+            IsTerminator = false
+            Category = "memory"
+        }
+        
+        /// Load from pointer
+        let load : MLIRTemplate<LoadParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.load %s : !llvm.ptr -> %s" p.Result p.Pointer p.Type @>
+            Dialect = "llvm"
+            OpName = "load"
+            IsTerminator = false
+            Category = "memory"
+        }
+        
+        /// Store to pointer
+        let store : MLIRTemplate<StoreParams> = {
+            Quotation = <@ fun p -> sprintf "llvm.store %s, %s : %s, !llvm.ptr" p.Value p.Pointer p.Type @>
+            Dialect = "llvm"
+            OpName = "store"
+            IsTerminator = false
+            Category = "memory"
+        }
+        
+        /// Get element pointer (pointer arithmetic)
+        let gep : MLIRTemplate<GepParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, %s" p.Result p.Base p.Offset p.ElementType @>
+            Dialect = "llvm"
+            OpName = "getelementptr"
+            IsTerminator = false
+            Category = "memory"
+        }
+        
+        /// Addressof global
+        let addressof : MLIRTemplate<{| Result: string; GlobalName: string |}> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" p.Result p.GlobalName @>
+            Dialect = "llvm"
+            OpName = "mlir.addressof"
+            IsTerminator = false
+            Category = "memory"
+        }
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // Struct Operations
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module Struct =
+        /// Parameters for struct field extraction
+        type ExtractValueParams = {
+            Result: string
+            Aggregate: string
+            Index: int
+            AggregateType: string
+        }
+        
+        /// Parameters for struct field insertion
+        type InsertValueParams = {
+            Result: string
+            Value: string
+            Aggregate: string
+            Index: int
+            AggregateType: string
+        }
+        
+        /// Extract value from aggregate (struct)
+        let extractValue : MLIRTemplate<ExtractValueParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.extractvalue %s[%d] : %s" p.Result p.Aggregate p.Index p.AggregateType @>
+            Dialect = "llvm"
+            OpName = "extractvalue"
+            IsTerminator = false
+            Category = "struct"
+        }
+        
+        /// Insert value into aggregate (struct)
+        let insertValue : MLIRTemplate<InsertValueParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.insertvalue %s, %s[%d] : %s" p.Result p.Value p.Aggregate p.Index p.AggregateType @>
+            Dialect = "llvm"
+            OpName = "insertvalue"
+            IsTerminator = false
+            Category = "struct"
+        }
+        
+        /// Undefined value (for struct construction)
+        let undef : MLIRTemplate<{| Result: string; Type: string |}> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.mlir.undef : %s" p.Result p.Type @>
+            Dialect = "llvm"
+            OpName = "mlir.undef"
+            IsTerminator = false
+            Category = "struct"
+        }
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // Control Flow
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module Control =
+        /// Return with value
+        let retValue : MLIRTemplate<{| Value: string; Type: string |}> = {
+            Quotation = <@ fun p -> sprintf "llvm.return %s : %s" p.Value p.Type @>
+            Dialect = "llvm"
+            OpName = "return"
+            IsTerminator = true
+            Category = "control"
+        }
+        
+        /// Return void
+        let retVoid : MLIRTemplate<unit> = {
+            Quotation = <@ fun () -> "llvm.return" @>
+            Dialect = "llvm"
+            OpName = "return"
+            IsTerminator = true
+            Category = "control"
+        }
+        
+        /// Unreachable terminator
+        let unreachable : MLIRTemplate<unit> = {
+            Quotation = <@ fun () -> "llvm.unreachable" @>
+            Dialect = "llvm"
+            OpName = "unreachable"
+            IsTerminator = true
+            Category = "control"
+        }
+    
+    // ───────────────────────────────────────────────────────────────────────
+    // Global Definitions
+    // ───────────────────────────────────────────────────────────────────────
+    
+    module Global =
+        /// Parameters for string constant
+        type StringConstParams = {
+            Name: string
+            Value: string
+            Length: int
+        }
+        
+        /// Global string constant
+        let stringConst : MLIRTemplate<StringConstParams> = {
+            Quotation = <@ fun p -> sprintf "llvm.mlir.global internal constant @%s(\"%s\\00\") : !llvm.array<%d x i8>" p.Name p.Value p.Length @>
+            Dialect = "llvm"
+            OpName = "mlir.global"
+            IsTerminator = false
+            Category = "global"
+        }
+        
+        /// Null pointer constant
+        let nullPtr : MLIRTemplate<{| Result: string |}> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.mlir.null : !llvm.ptr" p.Result @>
+            Dialect = "llvm"
+            OpName = "mlir.null"
+            IsTerminator = false
+            Category = "global"
+        }
