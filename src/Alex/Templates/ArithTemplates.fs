@@ -8,7 +8,6 @@
 module Alex.Templates.ArithTemplates
 
 open Alex.Templates.TemplateTypes
-module Patterns = Alex.Patterns.SemanticPatterns
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INTEGER BINARY OPERATIONS
@@ -77,15 +76,15 @@ let cmpIPredicateStr = function
 let cmpI predicate = simple "arith" "compare" (fun (p: CompareParams) ->
     sprintf "%s = arith.cmpi %s, %s, %s : %s" p.Result (cmpIPredicateStr predicate) p.Lhs p.Rhs p.Type)
 
-/// Map Patterns.CompareOp to signed predicate
-let signedPredicate (op: Patterns.CompareOp) : CmpIPredicate =
+/// Map CompareOp to signed predicate
+let signedPredicate (op: CompareOp) : CmpIPredicate =
     match op with
-    | Patterns.Lt -> Slt 
-    | Patterns.Le -> Sle 
-    | Patterns.Gt -> Sgt 
-    | Patterns.Ge -> Sge 
-    | Patterns.Eq -> Eq 
-    | Patterns.Ne -> Ne
+    | CompareOp.Lt -> Slt 
+    | CompareOp.Le -> Sle 
+    | CompareOp.Gt -> Sgt 
+    | CompareOp.Ge -> Sge 
+    | CompareOp.Eq -> CmpIPredicate.Eq 
+    | CompareOp.Ne -> CmpIPredicate.Ne
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FLOAT BINARY OPERATIONS
@@ -129,15 +128,15 @@ let cmpFPredicateStr = function
 let cmpF predicate = simple "arith" "compare" (fun (p: CompareParams) ->
     sprintf "%s = arith.cmpf %s, %s, %s : %s" p.Result (cmpFPredicateStr predicate) p.Lhs p.Rhs p.Type)
 
-/// Map Patterns.CompareOp to ordered float predicate
-let orderedPredicate (op: Patterns.CompareOp) : CmpFPredicate =
+/// Map CompareOp to ordered float predicate
+let orderedPredicate (op: CompareOp) : CmpFPredicate =
     match op with
-    | Patterns.Lt -> OLt 
-    | Patterns.Le -> OLe 
-    | Patterns.Gt -> OGt 
-    | Patterns.Ge -> OGe 
-    | Patterns.Eq -> OEq 
-    | Patterns.Ne -> ONE
+    | CompareOp.Lt -> OLt 
+    | CompareOp.Le -> OLe 
+    | CompareOp.Gt -> OGt 
+    | CompareOp.Ge -> OGe 
+    | CompareOp.Eq -> OEq 
+    | CompareOp.Ne -> ONE
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UNARY OPERATIONS
@@ -210,26 +209,26 @@ let truncF = simple "arith" "conversion" (fun (p: ConversionParams) ->
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Select integer binary template from BinaryArithOp witness
-let intBinaryTemplate (op: Patterns.BinaryArithOp) =
+let intBinaryTemplate (op: BinaryArithOp) =
     match op with
-    | Patterns.Add -> addI
-    | Patterns.Sub -> subI
-    | Patterns.Mul -> mulI
-    | Patterns.Div -> divSI
-    | Patterns.Mod -> remSI
-    | Patterns.BitAnd -> andI
-    | Patterns.BitOr -> orI
-    | Patterns.BitXor -> xorI
-    | Patterns.ShiftLeft -> shlI
-    | Patterns.ShiftRight -> shrSI
+    | Add -> addI
+    | Sub -> subI
+    | Mul -> mulI
+    | Div -> divSI
+    | Mod -> remSI
+    | BitAnd -> andI
+    | BitOr -> orI
+    | BitXor -> xorI
+    | ShiftLeft -> shlI
+    | ShiftRight -> shrSI
 
 /// Select float binary template from BinaryArithOp witness
-let floatBinaryTemplate (op: Patterns.BinaryArithOp) =
+let floatBinaryTemplate (op: BinaryArithOp) =
     match op with
-    | Patterns.Add -> addF
-    | Patterns.Sub -> subF
-    | Patterns.Mul -> mulF
-    | Patterns.Div -> divF
+    | Add -> addF
+    | Sub -> subF
+    | Mul -> mulF
+    | Div -> divF
     | _ -> failwith "Unsupported float operation"
 
 /// Select integer comparison template from CompareOp witness
@@ -359,6 +358,15 @@ module Quot =
             Quotation = <@ fun p -> sprintf "%s = arith.trunci %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
             Dialect = "arith"
             OpName = "trunci"
+            IsTerminator = false
+            Category = "conversion"
+        }
+        
+        /// Extend float precision (f32 to f64)
+        let extF : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.extf %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "extf"
             IsTerminator = false
             Category = "conversion"
         }

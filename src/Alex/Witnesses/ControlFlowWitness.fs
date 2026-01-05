@@ -17,8 +17,13 @@ open FSharp.Native.Compiler.Checking.Native.NativeTypes
 // RegionKind is available via SemanticGraph
 open Alex.CodeGeneration.MLIRTypes
 open Alex.Traversal.MLIRZipper
+open Alex.Templates.TemplateTypes
+open Alex.Templates.MemoryTemplates
 module MutAnalysis = Alex.Preprocessing.MutabilityAnalysis
 module PatternAnalysis = Alex.Preprocessing.PatternBindingAnalysis
+module ArithTemplates = Alex.Templates.ArithTemplates
+module LLVMTemplates = Alex.Templates.LLVMTemplates
+module ControlFlowTemplates = Alex.Templates.ControlFlowTemplates
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Type Mapping Helper (delegated to TypeMapping module)
@@ -181,7 +186,8 @@ let emitPatternBindings
         let bindSingleVar name varTy z =
             // Extract payload i64 from struct
             let payload64SSA, z1 = MLIRZipper.yieldSSA z
-            let extractText = sprintf "%s = llvm.extractvalue %s[1] : !llvm.struct<(i32, i64)>" payload64SSA scrutineeSSA
+            let extractParams : Quot.Aggregate.ExtractParams = { Result = payload64SSA; Aggregate = scrutineeSSA; Index = 1; AggType = "!llvm.struct<(i32, i64)>" }
+            let extractText = render Quot.Aggregate.extractValue extractParams
             let z2 = MLIRZipper.witnessOpWithResult extractText payload64SSA (Integer I64) z1
 
             // Convert payload to target type based on pattern variable type
@@ -191,13 +197,15 @@ let emitPatternBindings
                 | Integer I32 ->
                     // i64 -> i32: truncate
                     let truncSSA, z = MLIRZipper.yieldSSA z2
-                    let truncText = sprintf "%s = arith.trunci %s : i64 to i32" truncSSA payload64SSA
+                    let truncParams : ConversionParams = { Result = truncSSA; Operand = payload64SSA; FromType = "i64"; ToType = "i32" }
+                    let truncText = render ArithTemplates.Quot.Conversion.truncI truncParams
                     let z' = MLIRZipper.witnessOpWithResult truncText truncSSA (Integer I32) z
                     truncSSA, z'
                 | Float F64 ->
                     // i64 -> f64: bitcast
                     let castSSA, z = MLIRZipper.yieldSSA z2
-                    let castText = sprintf "%s = llvm.bitcast %s : i64 to f64" castSSA payload64SSA
+                    let castParams : Quot.Conversion.BitcastParams = { Result = castSSA; Operand = payload64SSA; FromType = "i64"; ToType = "f64" }
+                    let castText = render Quot.Conversion.bitcast castParams
                     let z' = MLIRZipper.witnessOpWithResult castText castSSA (Float F64) z
                     castSSA, z'
                 | _ ->
@@ -574,7 +582,8 @@ let witnessMatch
         | Some (scrutineeSSA, _) ->
             // Extract tag from scrutinee union struct at index 0
             let tagSSA, zipper1 = MLIRZipper.yieldSSA zipper
-            let extractTagText = sprintf "%s = llvm.extractvalue %s[0] : !llvm.struct<(i32, i64)>" tagSSA scrutineeSSA
+            let extractTagParams : Quot.Aggregate.ExtractParams = { Result = tagSSA; Aggregate = scrutineeSSA; Index = 0; AggType = "!llvm.struct<(i32, i64)>" }
+            let extractTagText = render Quot.Aggregate.extractValue extractTagParams
             let zipper2 = MLIRZipper.witnessOpWithResult extractTagText tagSSA (Integer I32) zipper1
 
             // Generate constant 0 for case 0's tag (first case index)
@@ -582,7 +591,8 @@ let witnessMatch
 
             // Compare: tag == 0 (matches case 0)
             let condSSA, zipper4 = MLIRZipper.yieldSSA zipper3
-            let cmpText = sprintf "%s = arith.cmpi eq, %s, %s : i32" condSSA tagSSA case0TagSSA
+            let cmpParams : ArithTemplates.Quot.Compare.CmpParams = { Result = condSSA; Predicate = "eq"; Lhs = tagSSA; Rhs = case0TagSSA; Type = "i32" }
+            let cmpText = render ArithTemplates.Quot.Compare.cmpI cmpParams
             let zipper5 = MLIRZipper.witnessOpWithResult cmpText condSSA (Integer I1) zipper4
 
             // Get captured regions for case bodies

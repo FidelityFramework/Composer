@@ -9,6 +9,10 @@ open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.CodeGeneration.MLIRTypes
 open Alex.Traversal.MLIRZipper
+open Alex.Templates.TemplateTypes
+
+module ArithTemplates = Alex.Templates.ArithTemplates
+module LLVMTemplates = Alex.Templates.LLVMTemplates
 
 /// Map FNCS NativeType to MLIR type - delegates to canonical implementation
 let private mapType = Alex.CodeGeneration.TypeMapping.mapNativeType
@@ -105,12 +109,14 @@ let private witnessInFunctionScope
             let zeroSSA, z = MLIRZipper.yieldSSA zipper
             if declaredRetType = "!llvm.ptr" then
                 // For pointer returns, use llvm.mlir.zero for null pointer
-                let zeroText = sprintf "%s = llvm.mlir.zero : !llvm.ptr" zeroSSA
+                let zeroParams = {| Result = zeroSSA; Type = "!llvm.ptr" |}
+                let zeroText = render LLVMTemplates.Quot.Global.zeroInit zeroParams
                 let z' = MLIRZipper.witnessOpWithResult zeroText zeroSSA Pointer z
                 zeroSSA, "!llvm.ptr", z'
             else
                 // For integer returns, use arith.constant 0
-                let zeroText = sprintf "%s = arith.constant 0 : %s" zeroSSA declaredRetType
+                let constParams : ConstantParams = { Result = zeroSSA; Value = "0"; Type = declaredRetType }
+                let zeroText = render ArithTemplates.Quot.Constant.intConst constParams
                 let z' = MLIRZipper.witnessOpWithResult zeroText zeroSSA (Integer I32) z
                 zeroSSA, declaredRetType, z'
     
@@ -121,20 +127,23 @@ let private witnessInFunctionScope
         if declaredRetType = "i32" && bodyType = "!llvm.ptr" then
             // Unit function with side-effecting body - ignore result, return 0
             let zeroSSA, z = MLIRZipper.yieldSSA zipperWithBody
-            let zeroText = sprintf "%s = arith.constant 0 : i32" zeroSSA
+            let constParams : ConstantParams = { Result = zeroSSA; Value = "0"; Type = "i32" }
+            let zeroText = render ArithTemplates.Quot.Constant.intConst constParams
             let z' = MLIRZipper.witnessOpWithResult zeroText zeroSSA (Integer I32) z
             zeroSSA, "i32", z'
         elif declaredRetType = "!llvm.ptr" && (bodyType = "i32" || bodyType.StartsWith("i")) then
             // Function returns ptr but body computed an integer - return null ptr
             let nullSSA, z = MLIRZipper.yieldSSA zipperWithBody
-            let nullText = sprintf "%s = llvm.mlir.zero : !llvm.ptr" nullSSA
+            let nullParams = {| Result = nullSSA; Type = "!llvm.ptr" |}
+            let nullText = render LLVMTemplates.Quot.Global.zeroInit nullParams
             let z' = MLIRZipper.witnessOpWithResult nullText nullSSA Pointer z
             nullSSA, "!llvm.ptr", z'
         else
             bodySSA, bodyType, zipperWithBody
     
     // Add return instruction to end the function body
-    let returnText = sprintf "llvm.return %s : %s" returnSSA returnType
+    let retParams = {| Value = returnSSA; Type = returnType |}
+    let returnText = render LLVMTemplates.Quot.Control.retValue retParams
     let zipper1 = MLIRZipper.witnessVoidOp returnText zipperForReturn
     
     // Exit function scope - this creates the MLIRFunc with all accumulated body ops
@@ -178,8 +187,9 @@ let private witnessFallback
             undefSSA, Serialize.mlirType returnType
     
     // Create return operation
+    let retParams = {| Value = bodySSA; Type = bodyType |}
     let retOp: MLIROp = {
-        Text = sprintf "llvm.return %s : %s" bodySSA bodyType
+        Text = render LLVMTemplates.Quot.Control.retValue retParams
         Results = []
     }
     

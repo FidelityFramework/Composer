@@ -42,8 +42,15 @@
       <Compile Include="Core/Templates/TemplateTypes.fs" />
       <Compile Include="Core/Templates/TemplateLoader.fs" />
 
-      <!-- Alex CodeGeneration (types first, then zipper, then type mapping) -->
+      <!-- Alex CodeGeneration (types first) -->
       <Compile Include="Alex/CodeGeneration/MLIRTypes.fs" />
+
+      <!-- Alex Templates - Quotation-based MLIR templates (before MLIRZipper so it can use them) -->
+      <Compile Include="Alex/Templates/TemplateTypes.fs" />
+      <Compile Include="Alex/Templates/ArithTemplates.fs" />
+      <Compile Include="Alex/Templates/MemoryTemplates.fs" />
+      <Compile Include="Alex/Templates/ControlFlowTemplates.fs" />
+      <Compile Include="Alex/Templates/LLVMTemplates.fs" />
 
       <!-- Alex Traversal - MLIRZipper MUST come before bindings that use it -->
       <Compile Include="Alex/Traversal/MLIRZipper.fs" />
@@ -66,12 +73,9 @@
       <!-- Alex Patterns - Active patterns for semantic classification -->
       <Compile Include="Alex/Patterns/SemanticPatterns.fs" />
 
-      <!-- Alex Templates - Quotation-based MLIR templates -->
-      <Compile Include="Alex/Templates/TemplateTypes.fs" />
-      <Compile Include="Alex/Templates/ArithTemplates.fs" />
-      <Compile Include="Alex/Templates/MemoryTemplates.fs" />
-      <Compile Include="Alex/Templates/ControlFlowTemplates.fs" />
-      <Compile Include="Alex/Templates/LLVMTemplates.fs" />
+      <!-- Alex XParsec - Composable PSG pattern matchers -->
+      <Compile Include="Alex/XParsec/PSGCombinators.fs" />
+      <Compile Include="Alex/XParsec/MLIREmitters.fs" />
 
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="Alex/Witnesses/LiteralWitness.fs" />

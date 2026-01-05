@@ -16,6 +16,9 @@ open Alex.Traversal.MLIRZipper
 open Alex.Templates.TemplateTypes
 open Alex.Templates.MemoryTemplates
 
+module ArithTemplates = Alex.Templates.ArithTemplates
+module LLVMTemplates = Alex.Templates.LLVMTemplates
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Type Mapping Helper (delegated to TypeMapping module)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -340,7 +343,14 @@ let witnessTraitCall
         // For now, emit a call to the trait member name
         // TODO: Proper SRTP resolution from Baker/type checker
         let resultSSA, zipper' = MLIRZipper.yieldSSA zipper
-        let callText = sprintf "%s = llvm.call @%s(%s) : (%s) -> !llvm.ptr" resultSSA memberName argSSA argType
+        let callParams : LLVMTemplates.Quot.Control.CallParams = {
+            Result = resultSSA
+            Callee = memberName
+            Args = argSSA
+            ArgTypes = argType
+            ReturnType = "!llvm.ptr"
+        }
+        let callText = render LLVMTemplates.Quot.Control.call callParams
         let zipper'' = MLIRZipper.witnessOpWithResult callText resultSSA Pointer zipper'
         let zipper''' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) resultSSA "!llvm.ptr" zipper''
         zipper''', TRValue (resultSSA, "!llvm.ptr")
@@ -376,7 +386,8 @@ let witnessUnionCase
 
         // Step 2: Create tag constant and insert at index 0
         let tagSSA, zipper3 = MLIRZipper.yieldSSA zipper2
-        let tagConstText = sprintf "%s = arith.constant %d : i32" tagSSA caseIndex
+        let tagConstParams : ConstantParams = { Result = tagSSA; Value = string caseIndex; Type = "i32" }
+        let tagConstText = render ArithTemplates.Quot.Constant.intConst tagConstParams
         let zipper4 = MLIRZipper.witnessOpWithResult tagConstText tagSSA (Integer I32) zipper3
 
         let withTagSSA, zipper5 = MLIRZipper.yieldSSA zipper4
@@ -409,22 +420,26 @@ let witnessUnionCase
                             payloadSSA, zipper6
                         else
                             let extSSA, z = MLIRZipper.yieldSSA zipper6
-                            let extText = sprintf "%s = arith.extsi %s : i32 to i64" extSSA payloadSSA
+                            let extParams : ConversionParams = { Result = extSSA; Operand = payloadSSA; FromType = "i32"; ToType = "i64" }
+                            let extText = render ArithTemplates.Quot.Conversion.extSI extParams
                             let z' = MLIRZipper.witnessOpWithResult extText extSSA (Integer I64) z
                             extSSA, z'
                     | "f64" ->
                         // Double - bitcast to i64
                         let castSSA, z = MLIRZipper.yieldSSA zipper6
-                        let castText = sprintf "%s = llvm.bitcast %s : f64 to i64" castSSA payloadSSA
+                        let castParams : Quot.Conversion.BitcastParams = { Result = castSSA; Operand = payloadSSA; FromType = "f64"; ToType = "i64" }
+                        let castText = render Quot.Conversion.bitcast castParams
                         let z' = MLIRZipper.witnessOpWithResult castText castSSA (Integer I64) z
                         castSSA, z'
                     | "f32" ->
                         // Float - extend to f64 then bitcast
                         let extSSA, z1 = MLIRZipper.yieldSSA zipper6
-                        let extText = sprintf "%s = arith.extf %s : f32 to f64" extSSA payloadSSA
+                        let extParams : ConversionParams = { Result = extSSA; Operand = payloadSSA; FromType = "f32"; ToType = "f64" }
+                        let extText = render ArithTemplates.Quot.Conversion.extF extParams
                         let z2 = MLIRZipper.witnessOpWithResult extText extSSA (Float F64) z1
                         let castSSA, z3 = MLIRZipper.yieldSSA z2
-                        let castText = sprintf "%s = llvm.bitcast %s : f64 to i64" castSSA extSSA
+                        let castParams : Quot.Conversion.BitcastParams = { Result = castSSA; Operand = extSSA; FromType = "f64"; ToType = "i64" }
+                        let castText = render Quot.Conversion.bitcast castParams
                         let z4 = MLIRZipper.witnessOpWithResult castText castSSA (Integer I64) z3
                         castSSA, z4
                     | _ ->

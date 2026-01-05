@@ -22,6 +22,11 @@
 module Alex.Traversal.MLIRZipper
 
 open Alex.CodeGeneration.MLIRTypes
+open Alex.Templates.TemplateTypes
+
+module ArithTemplates = Alex.Templates.ArithTemplates
+module LLVMTemplates = Alex.Templates.LLVMTemplates
+module MemTemplates = Alex.Templates.MemoryTemplates
 
 // ═══════════════════════════════════════════════════════════════════
 // MLIR Structure Types - What we're building
@@ -938,24 +943,28 @@ module MLIRZipper =
     let witnessAllocaStr (elementTypeStr: string) (zipper: MLIRZipper) : string * MLIRZipper =
         // First emit constant 1 for the count
         let countSSA, zipper1 = yieldSSA zipper
-        let countOp = sprintf "%s = arith.constant 1 : i64" countSSA
+        let countParams : ConstantParams = { Result = countSSA; Value = "1"; Type = "i64" }
+        let countOp = render ArithTemplates.Quot.Constant.intConst countParams
         let zipper2 = witnessOpWithResult countOp countSSA (Integer I64) zipper1
         // Then emit the alloca
         let allocaSSA, zipper3 = yieldSSA zipper2
-        let allocaOp = sprintf "%s = llvm.alloca %s x %s : (i64) -> !llvm.ptr" allocaSSA countSSA elementTypeStr
+        let allocaParams : AllocaParams = { Result = allocaSSA; Count = countSSA; ElementType = elementTypeStr }
+        let allocaOp = render LLVMTemplates.Quot.Memory.alloca allocaParams
         allocaSSA, witnessOpWithResult allocaOp allocaSSA Pointer zipper3
 
     /// Witness a store to an alloca
     /// Emits: llvm.store %value, %ptr : type, !llvm.ptr
     let witnessStore (valueSSA: string) (valueType: string) (ptrSSA: string) (zipper: MLIRZipper) : MLIRZipper =
-        let op = sprintf "llvm.store %s, %s : %s, !llvm.ptr" valueSSA ptrSSA valueType
+        let storeParams : StoreParams = { Value = valueSSA; Pointer = ptrSSA; Type = valueType }
+        let op = render LLVMTemplates.Quot.Memory.store storeParams
         witnessVoidOp op zipper
 
     /// Witness a load with string type (for when type is already serialized)
     /// Emits: %value = llvm.load %ptr : !llvm.ptr -> type
     let witnessLoadStr (ptrSSA: string) (resultTypeStr: string) (zipper: MLIRZipper) : string * MLIRZipper =
         let resultSSA, zipper1 = yieldSSA zipper
-        let op = sprintf "%s = llvm.load %s : !llvm.ptr -> %s" resultSSA ptrSSA resultTypeStr
+        let loadParams : LoadParams = { Result = resultSSA; Pointer = ptrSSA; Type = resultTypeStr }
+        let op = render LLVMTemplates.Quot.Memory.load loadParams
         // Parse the type string back to MLIRType for witnessOpWithResult
         let resultType = Serialize.deserializeType resultTypeStr
         resultSSA, witnessOpWithResult op resultSSA resultType zipper1
@@ -1177,13 +1186,14 @@ module MLIRZipper =
     let witnessConstant (value: int64) (ty: IntegerBitWidth) (zipper: MLIRZipper) : string * MLIRZipper =
         let ssaName, zipper' = yieldSSA zipper
         let tyStr = Serialize.integerBitWidth ty
-        let text = sprintf "%s = arith.constant %d : %s" ssaName value tyStr
+        let constParams : ConstantParams = { Result = ssaName; Value = string value; Type = tyStr }
+        let text = render ArithTemplates.Quot.Constant.intConst constParams
         ssaName, witnessOpWithResult text ssaName (Integer ty) zipper'
 
     /// Witness addressof for a string literal, yielding pointer SSA
     let witnessAddressOf (globalName: string) (zipper: MLIRZipper) : string * MLIRZipper =
         let ssaName, zipper' = yieldSSA zipper
-        let text = sprintf "%s = llvm.mlir.addressof @%s : !llvm.ptr" ssaName globalName
+        let text = render LLVMTemplates.Quot.Memory.addressof {| Result = ssaName; GlobalName = globalName |}
         ssaName, witnessOpWithResult text ssaName Pointer zipper'
 
     /// Witness binary arithmetic operation

@@ -275,6 +275,23 @@ module Quot =
             IsTerminator = false
             Category = "conversion"
         }
+        
+        /// Parameters for bitcast (reinterpret bits)
+        type BitcastParams = {
+            Result: string
+            Operand: string
+            FromType: string
+            ToType: string
+        }
+        
+        /// Bitcast (reinterpret bits without changing)
+        let bitcast : MLIRTemplate<BitcastParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.bitcast %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "llvm"
+            OpName = "bitcast"
+            IsTerminator = false
+            Category = "conversion"
+        }
     
     // ───────────────────────────────────────────────────────────────────────
     // Aggregate (Struct) Operations

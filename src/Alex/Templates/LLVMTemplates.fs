@@ -321,6 +321,24 @@ module Quot =
             IsTerminator = true
             Category = "control"
         }
+        
+        /// Parameters for function call with result
+        type CallParams = {
+            Result: string
+            Callee: string
+            Args: string
+            ArgTypes: string
+            ReturnType: string
+        }
+        
+        /// Function call with result
+        let call : MLIRTemplate<CallParams> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.call @%s(%s) : (%s) -> %s" p.Result p.Callee p.Args p.ArgTypes p.ReturnType @>
+            Dialect = "llvm"
+            OpName = "call"
+            IsTerminator = false
+            Category = "control"
+        }
     
     // ───────────────────────────────────────────────────────────────────────
     // Global Definitions
@@ -348,6 +366,15 @@ module Quot =
             Quotation = <@ fun p -> sprintf "%s = llvm.mlir.null : !llvm.ptr" p.Result @>
             Dialect = "llvm"
             OpName = "mlir.null"
+            IsTerminator = false
+            Category = "global"
+        }
+        
+        /// Zero-initialized value (for any type)
+        let zeroInit : MLIRTemplate<{| Result: string; Type: string |}> = {
+            Quotation = <@ fun p -> sprintf "%s = llvm.mlir.zero : %s" p.Result p.Type @>
+            Dialect = "llvm"
+            OpName = "mlir.zero"
             IsTerminator = false
             Category = "global"
         }

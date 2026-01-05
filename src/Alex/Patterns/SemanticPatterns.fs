@@ -10,26 +10,14 @@
 /// - Extensible (add new patterns without changing existing code)
 module Alex.Patterns.SemanticPatterns
 
+open Alex.Templates.TemplateTypes
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Binary Arithmetic Operators
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Binary arithmetic operation kinds (for template dispatch)
-type BinaryArithOp =
-    | Add
-    | Sub
-    | Mul
-    | Div
-    | Mod
-    | BitAnd
-    | BitOr
-    | BitXor
-    | ShiftLeft
-    | ShiftRight
-
-/// Comparison operation kinds (for template dispatch)
-type CompareOp =
-    | Lt | Le | Gt | Ge | Eq | Ne
+// Note: BinaryArithOp and CompareOp are canonical in TemplateTypes
+// This module re-exports them for pattern matching convenience
 
 /// Active pattern to classify binary arithmetic by operator name
 let (|BinaryArith|_|) (opName: string) =
@@ -222,16 +210,6 @@ let (|ArrayOp|_|) (info: IntrinsicInfo) =
 /// Check if intrinsic is an Unchecked operation (using IntrinsicInfo)
 let (|UncheckedOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Unchecked then Some info.Operation else None
-
-/// Check if intrinsic is a Format operation (using IntrinsicInfo)
-/// Format module provides value → string conversions (e.g., Format.int, Format.float)
-let (|FormatOp|_|) (info: IntrinsicInfo) =
-    if info.Module = IntrinsicModule.Format then Some info.Operation else None
-
-/// Check if intrinsic is a Parse operation (using IntrinsicInfo)
-/// Parse module provides string → value conversions (e.g., Parse.int, Parse.float)
-let (|ParseOp|_|) (info: IntrinsicInfo) =
-    if info.Module = IntrinsicModule.Parse then Some info.Operation else None
 
 /// Conversion function names
 let private conversionFunctions = 

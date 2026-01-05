@@ -140,6 +140,19 @@ type CompareParams = {
     Type: string
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OPERATION KIND TYPES (shared between Templates and Patterns)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Binary arithmetic operation kinds (for template dispatch)
+type BinaryArithOp =
+    | Add | Sub | Mul | Div | Mod
+    | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight
+
+/// Comparison operation kinds
+type CompareOp =
+    | Lt | Le | Gt | Ge | Eq | Ne
+
 /// Parameters for constant/literal operations
 type ConstantParams = {
     Result: string

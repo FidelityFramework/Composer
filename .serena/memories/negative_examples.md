@@ -360,7 +360,47 @@ The typed tree (`FSharpExpr`) contains SRTP resolution information. When F# comp
 
 ---
 
-## The Acid Test
+#---
+
+## Mistake 13: Transform Logic in the Emission Layer (January 2026 Refactoring)
+
+During the MLIR Transform Refactoring (Phases 1-10), we discovered and documented these patterns:
+
+**Marker strings as workarounds**:
+```fsharp
+// TECHNICAL DEBT - Marker strings for incomplete FNCS transforms
+let marker = sprintf "$pipe:%s:%s" argSSA argType
+let marker = sprintf "$partial:%s:%s" funcName argsEncoded
+let marker = sprintf "$platform:%s:%s" entryPoint argsEncoded
+```
+
+**Why these exist**: FNCS doesn't yet fully reduce pipe operators or provide complete intrinsic metadata. Alex uses markers to encode information about partially-processed constructs.
+
+**The Fix**: Complete FNCS transforms upstream so Alex never sees these patterns:
+- Pipe reduction in FNCS → no `$pipe:` markers
+- Full intrinsic metadata → no `$platform:` lookups by name
+- Application saturation → no `$partial:` markers
+
+**When you see marker strings**: They indicate incomplete upstream transforms. Don't add more markers - fix FNCS.
+
+**sprintf vs Templates**:
+```fsharp
+// WRONG - sprintf scattered throughout witnesses
+sprintf "%s = arith.addi %s, %s : %s" res lhs rhs ty
+
+// RIGHT - Template-based emission
+let params = { Result = res; Lhs = lhs; Rhs = rhs; Type = ty }
+render ArithTemplates.Quot.Binary.addI params
+```
+
+**Current metrics** (January 2026):
+- 57 sprintf remaining in Witnesses (down from 138)
+- 47 sprintf remaining in MLIRZipper (down from 53)
+- Remaining sprintf: SCF nested regions, error messages, markers
+
+---
+
+# The Acid Test
 
 Before committing any change, ask:
 
