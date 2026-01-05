@@ -203,6 +203,16 @@ let (|NativeDefaultOp|_|) (info: IntrinsicInfo) =
 let (|StringOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.String then Some info.Operation else None
 
+/// Check if intrinsic is a Format operation (using IntrinsicInfo)
+/// Format intrinsics convert values to strings: int->string, float->string, etc.
+let (|FormatOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Format then Some info.Operation else None
+
+/// Check if intrinsic is a Parse operation (using IntrinsicInfo)
+/// Parse intrinsics convert strings to values: string->int, string->float, etc.
+let (|ParseOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Parse then Some info.Operation else None
+
 /// Check if intrinsic is an Array operation (using IntrinsicInfo)
 let (|ArrayOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Array then Some info.Operation else None

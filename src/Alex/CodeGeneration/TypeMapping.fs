@@ -405,8 +405,11 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
     // Tuple types
     | NativeType.TTuple _ -> Pointer  // TODO: Proper struct layout
 
-    // Type variables (erased)
-    | NativeType.TVar _ -> Pointer
+    // Type variables - check if bound to a concrete type
+    | NativeType.TVar tvar ->
+        match tvar.Parent with
+        | TypeParamState.Bound boundTy -> mapNativeType boundTy
+        | TypeParamState.Unbound -> Pointer  // Unbound: default to pointer
 
     // Byref types
     | NativeType.TByref _ -> Pointer
