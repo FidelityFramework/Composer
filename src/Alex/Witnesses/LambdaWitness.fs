@@ -94,10 +94,26 @@ let private witnessInFunctionScope
         | None -> funcName  // Use the current function name as fallback
     
     // Determine the declared return type from the Lambda's F# type
-    let declaredRetType = 
-        match node.Type with
-        | NativeType.TFun (_, retTy) -> Serialize.mlirType (mapType retTy)
-        | _ -> "i32"
+    // For curried functions, peel all TFun layers to get the final return type
+    let declaredRetType =
+        // Get param count from the lambda's parameters
+        let paramCount =
+            match node.Kind with
+            | SemanticKind.Lambda (params', _) -> List.length params'
+            | _ -> 0
+
+        // Peel TFun layers based on param count (or peel one for unit lambdas)
+        let rec extractFinalReturnType (ty: NativeType) (count: int) : NativeType =
+            match ty with
+            | NativeType.TFun(_, resultTy) when count > 0 ->
+                extractFinalReturnType resultTy (count - 1)
+            | NativeType.TFun(_, resultTy) when paramCount = 0 ->
+                // Unit lambda: peel the unit->result layer
+                resultTy
+            | _ -> ty
+
+        let finalRetTy = extractFinalReturnType node.Type paramCount
+        Serialize.mlirType (mapType finalRetTy)
     
     // Look up the body's SSA result (already processed in post-order, inside function scope)
     // Thread the zipper through in case we need to generate a default value
