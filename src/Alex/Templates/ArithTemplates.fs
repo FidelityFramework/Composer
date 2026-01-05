@@ -370,6 +370,33 @@ module Quot =
             IsTerminator = false
             Category = "conversion"
         }
+        
+        /// Truncate float precision (f64 to f32)
+        let truncF : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.truncf %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "truncf"
+            IsTerminator = false
+            Category = "conversion"
+        }
+        
+        /// Signed integer to float (int -> float)
+        let siToFP : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.sitofp %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "sitofp"
+            IsTerminator = false
+            Category = "conversion"
+        }
+        
+        /// Float to signed integer (float -> int)
+        let fpToSI : MLIRTemplate<ConversionParams> = {
+            Quotation = <@ fun p -> sprintf "%s = arith.fptosi %s : %s to %s" p.Result p.Operand p.FromType p.ToType @>
+            Dialect = "arith"
+            OpName = "fptosi"
+            IsTerminator = false
+            Category = "conversion"
+        }
     
     /// Constants
     module Constant =

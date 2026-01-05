@@ -493,6 +493,120 @@ let emitFloatToString (floatSSA: string) (floatType: string) (zipper: MLIRZipper
     (finalStrSSA, z64)
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PARSE INTRINSIC HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Emit inline string-to-integer conversion using scf.while loop
+/// Converts a fat string (!llvm.struct<(ptr, i64)>) to an integer
+/// Algorithm: iterate through chars, accumulate result = result * 10 + (char - '0'), handle sign
+let emitStringToInt (strSSA: string) (zipper: MLIRZipper) : string * MLIRZipper =
+    // Extract ptr and len from string struct
+    let ptrSSA, z1 = MLIRZipper.yieldSSA zipper
+    let extractPtrParams : Quot.Aggregate.ExtractParams = { Result = ptrSSA; Aggregate = strSSA; Index = 0; AggType = NativeStrTypeStr }
+    let extractPtr = render Quot.Aggregate.extractValue extractPtrParams
+    let z2 = MLIRZipper.witnessOpWithResult extractPtr ptrSSA Pointer z1
+
+    let lenSSA, z3 = MLIRZipper.yieldSSA z2
+    let extractLenParams : Quot.Aggregate.ExtractParams = { Result = lenSSA; Aggregate = strSSA; Index = 1; AggType = NativeStrTypeStr }
+    let extractLen = render Quot.Aggregate.extractValue extractLenParams
+    let z4 = MLIRZipper.witnessOpWithResult extractLen lenSSA (Integer I64) z3
+
+    // Constants
+    let zeroSSA, z5 = MLIRZipper.yieldSSA z4
+    let zeroText = sprintf "%s = arith.constant 0 : i64" zeroSSA
+    let z6 = MLIRZipper.witnessOpWithResult zeroText zeroSSA (Integer I64) z5
+
+    let oneSSA, z7 = MLIRZipper.yieldSSA z6
+    let oneText = sprintf "%s = arith.constant 1 : i64" oneSSA
+    let z8 = MLIRZipper.witnessOpWithResult oneText oneSSA (Integer I64) z7
+
+    let tenSSA, z9 = MLIRZipper.yieldSSA z8
+    let tenText = sprintf "%s = arith.constant 10 : i64" tenSSA
+    let z10 = MLIRZipper.witnessOpWithResult tenText tenSSA (Integer I64) z9
+
+    let asciiZeroSSA, z11 = MLIRZipper.yieldSSA z10
+    let asciiZeroText = sprintf "%s = arith.constant 48 : i64" asciiZeroSSA  // '0' = 48
+    let z12 = MLIRZipper.witnessOpWithResult asciiZeroText asciiZeroSSA (Integer I64) z11
+
+    let minusCharSSA, z13 = MLIRZipper.yieldSSA z12
+    let minusCharText = sprintf "%s = arith.constant 45 : i8" minusCharSSA  // '-' = 45
+    let z14 = MLIRZipper.witnessOpWithResult minusCharText minusCharSSA (Integer I8) z13
+
+    // Check if first char is '-'
+    let firstCharSSA, z15 = MLIRZipper.yieldSSA z14
+    let firstCharText = sprintf "%s = llvm.load %s : !llvm.ptr -> i8" firstCharSSA ptrSSA
+    let z16 = MLIRZipper.witnessOpWithResult firstCharText firstCharSSA (Integer I8) z15
+
+    let isNegSSA, z17 = MLIRZipper.yieldSSA z16
+    let isNegText = sprintf "%s = arith.cmpi eq, %s, %s : i8" isNegSSA firstCharSSA minusCharSSA
+    let z18 = MLIRZipper.witnessOpWithResult isNegText isNegSSA (Integer I1) z17
+
+    // Start index: 1 if negative, 0 otherwise
+    let startIdxSSA, z19 = MLIRZipper.yieldSSA z18
+    let startIdxText = sprintf "%s = arith.select %s, %s, %s : i64" startIdxSSA isNegSSA oneSSA zeroSSA
+    let z20 = MLIRZipper.witnessOpWithResult startIdxText startIdxSSA (Integer I64) z19
+
+    // Digit parsing loop using scf.while
+    // State: (result: i64, index: i64)
+    // Guard: index < len
+    // Body: result = result * 10 + (char - '0'), index++
+    let loopResultSSA, z21 = MLIRZipper.yieldSSA z20
+    let resArg = sprintf "%s_res" (loopResultSSA.TrimStart('%'))
+    let idxArg = sprintf "%s_idx" (loopResultSSA.TrimStart('%'))
+
+    // Build loop operations as strings
+    let condSSA = sprintf "%s_cond" (loopResultSSA.TrimStart('%'))
+    let condText = sprintf "%%%s = arith.cmpi slt, %%%s, %s : i64" condSSA idxArg lenSSA
+
+    let gepSSA = sprintf "%s_gep" (loopResultSSA.TrimStart('%'))
+    let gepText = sprintf "%%%s = llvm.getelementptr %s[%%%s] : (!llvm.ptr, i64) -> !llvm.ptr, i8" gepSSA ptrSSA idxArg
+
+    let charSSA = sprintf "%s_char" (loopResultSSA.TrimStart('%'))
+    let charText = sprintf "%%%s = llvm.load %%%s : !llvm.ptr -> i8" charSSA gepSSA
+
+    let char64SSA = sprintf "%s_char64" (loopResultSSA.TrimStart('%'))
+    let char64Text = sprintf "%%%s = arith.extui %%%s : i8 to i64" char64SSA charSSA
+
+    let digitSSA = sprintf "%s_digit" (loopResultSSA.TrimStart('%'))
+    let digitText = sprintf "%%%s = arith.subi %%%s, %s : i64" digitSSA char64SSA asciiZeroSSA
+
+    let mulSSA = sprintf "%s_mul" (loopResultSSA.TrimStart('%'))
+    let mulText = sprintf "%%%s = arith.muli %%%s, %s : i64" mulSSA resArg tenSSA
+
+    let newResSSA = sprintf "%s_newres" (loopResultSSA.TrimStart('%'))
+    let newResText = sprintf "%%%s = arith.addi %%%s, %%%s : i64" newResSSA mulSSA digitSSA
+
+    let newIdxSSA = sprintf "%s_newidx" (loopResultSSA.TrimStart('%'))
+    let newIdxText = sprintf "%%%s = arith.addi %%%s, %s : i64" newIdxSSA idxArg oneSSA
+
+    // Emit the scf.while loop
+    let whileText =
+        sprintf "%s:2 = scf.while (%%%s = %s, %%%s = %s) : (i64, i64) -> (i64, i64) {\n  %s\n  scf.condition(%%%s) %%%s, %%%s : i64, i64\n} do {\n^bb0(%%%s: i64, %%%s: i64):\n  %s\n  %s\n  %s\n  %s\n  %s\n  %s\n  %s\n  scf.yield %%%s, %%%s : i64, i64\n}"
+            loopResultSSA resArg zeroSSA idxArg startIdxSSA
+            condText condSSA resArg idxArg
+            resArg idxArg
+            gepText charText char64Text digitText mulText newResText newIdxText
+            newResSSA newIdxSSA
+
+    let z22 = MLIRZipper.witnessOpWithResult whileText loopResultSSA (Integer I64) z21
+
+    // Get final result from loop (first element)
+    let parsedSSA, z23 = MLIRZipper.yieldSSA z22
+    let parsedText = sprintf "%s = arith.addi %s#0, %s : i64" parsedSSA loopResultSSA zeroSSA  // Just copy result[0]
+    let z24 = MLIRZipper.witnessOpWithResult parsedText parsedSSA (Integer I64) z23
+
+    // Apply negative sign if needed: result = select(isNeg, -result, result)
+    let negatedSSA, z25 = MLIRZipper.yieldSSA z24
+    let negatedText = sprintf "%s = arith.subi %s, %s : i64" negatedSSA zeroSSA parsedSSA
+    let z26 = MLIRZipper.witnessOpWithResult negatedText negatedSSA (Integer I64) z25
+
+    let finalSSA, z27 = MLIRZipper.yieldSSA z26
+    let finalText = sprintf "%s = arith.select %s, %s, %s : i64" finalSSA isNegSSA negatedSSA parsedSSA
+    let z28 = MLIRZipper.witnessOpWithResult finalText finalSSA (Integer I64) z27
+
+    (finalSSA, z28)
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM BINDING DISPATCH
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -722,63 +836,8 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
                 witnessPlatformBinding "Sys.write" nlArgSSAs returnType zipper14
 
             | ConsoleOp "readln", ([] | [_]) ->  // Takes unit arg (or elided)
-                // Console.readln: read a line from stdin into a buffer, return as string
-                // For now, allocate a fixed buffer and read into it
-                let bufSizeSSA, zipper1 = MLIRZipper.yieldSSA zipper
-                let bufSizeParams : ConstantParams = { Result = bufSizeSSA; Value = "256"; Type = "i64" }
-                let bufSizeText = render Quot.Constant.intConst bufSizeParams
-                let zipper2 = MLIRZipper.witnessOpWithResult bufSizeText bufSizeSSA (Integer I64) zipper1
-
-                let bufSSA, zipper3 = MLIRZipper.yieldSSA zipper2
-                let allocaParams : AllocaParams = { Result = bufSSA; Count = bufSizeSSA; ElementType = "i8" }
-                let allocaText = render Quot.Core.alloca allocaParams
-                let zipper4 = MLIRZipper.witnessOpWithResult allocaText bufSSA Pointer zipper3
-
-                // fd = 0 (stdin)
-                let fdSSA, zipper5 = MLIRZipper.yieldSSA zipper4
-                let fdParams : ConstantParams = { Result = fdSSA; Value = "0"; Type = "i32" }
-                let fdText = render Quot.Constant.intConst fdParams
-                let zipper6 = MLIRZipper.witnessOpWithResult fdText fdSSA (Integer I32) zipper5
-
-                // Call Sys.read
-                let argSSAsWithTypes = [(fdSSA, Integer I32); (bufSSA, Pointer); (bufSizeSSA, Integer I64)]
-                // Sys.read returns bytes read (i32 after platform binding truncation)
-                let zipper7, readResult = witnessPlatformBinding "Sys.read" argSSAsWithTypes Types.int32Type zipper6
-
-                // Get bytes read (strip newline)
-                // Platform binding returns i32, extend to i64 for length arithmetic
-                let bytesReadSSA32 = match readResult with TRValue (ssa, _) -> ssa | _ -> "%err"
-                let bytesReadSSA, zipper8 = MLIRZipper.yieldSSA zipper7
-                let extParams : ConversionParams = { Result = bytesReadSSA; Operand = bytesReadSSA32; FromType = "i32"; ToType = "i64" }
-                let extText = render Quot.Conversion.extSI extParams
-                let zipper9 = MLIRZipper.witnessOpWithResult extText bytesReadSSA (Integer I64) zipper8
-
-                let oneSSA, zipper10 = MLIRZipper.yieldSSA zipper9
-                let oneParams : ConstantParams = { Result = oneSSA; Value = "1"; Type = "i64" }
-                let oneText = render Quot.Constant.intConst oneParams
-                let zipper11 = MLIRZipper.witnessOpWithResult oneText oneSSA (Integer I64) zipper10
-
-                let lenSSA, zipper12 = MLIRZipper.yieldSSA zipper11
-                let subParams : BinaryOpParams = { Result = lenSSA; Lhs = bytesReadSSA; Rhs = oneSSA; Type = "i64" }
-                let subText = render Quot.IntBinary.subI subParams
-                let zipper13 = MLIRZipper.witnessOpWithResult subText lenSSA (Integer I64) zipper12
-
-                // Build fat string struct
-                let undefSSA, zipper14 = MLIRZipper.yieldSSA zipper13
-                let undefText = render Quot.Aggregate.undef {| Result = undefSSA; Type = NativeStrTypeStr |}
-                let zipper15 = MLIRZipper.witnessOpWithResult undefText undefSSA NativeStrType zipper14
-
-                let withPtrSSA, zipper16 = MLIRZipper.yieldSSA zipper15
-                let insertPtrParams : Quot.Aggregate.InsertParams = { Result = withPtrSSA; Value = bufSSA; Aggregate = undefSSA; Index = 0; AggType = NativeStrTypeStr }
-                let insertPtrText = render Quot.Aggregate.insertValue insertPtrParams
-                let zipper17 = MLIRZipper.witnessOpWithResult insertPtrText withPtrSSA NativeStrType zipper16
-
-                let fatPtrSSA, zipper18 = MLIRZipper.yieldSSA zipper17
-                let insertLenParams : Quot.Aggregate.InsertParams = { Result = fatPtrSSA; Value = lenSSA; Aggregate = withPtrSSA; Index = 1; AggType = NativeStrTypeStr }
-                let insertLenText = render Quot.Aggregate.insertValue insertLenParams
-                let zipper19 = MLIRZipper.witnessOpWithResult insertLenText fatPtrSSA NativeStrType zipper18
-
-                zipper19, TRValue (fatPtrSSA, NativeStrTypeStr)
+                // Dispatch to platform binding (character-by-character reading in ConsoleBindings)
+                witnessPlatformBinding "Console.readln" [] Types.stringType zipper
 
             | NativeStrOp "fromPointer", [(ptrSSA, _); (lenSSA, _)] ->
                 let undefSSA, zipper1 = MLIRZipper.yieldSSA zipper
@@ -836,6 +895,44 @@ let witness (funcNodeId: NodeId) (argNodeIds: NodeId list) (returnType: NativeTy
             | FormatOp "float", [(floatSSA, floatType)] ->
                 let resultSSA, zipper' = emitFloatToString floatSSA floatType zipper
                 zipper', TRValue (resultSSA, NativeStrTypeStr)
+
+            // Parse intrinsics - convert strings to values
+            // Uses platform helpers (emitted once at module level)
+            | ParseOp "int", [(strSSA, _)] ->
+                let resultSSA, zipper1 = Alex.Bindings.PlatformHelpers.emitParseIntCall strSSA zipper
+                zipper1, TRValue (resultSSA, "i64")
+
+            | ParseOp "float", [(strSSA, _)] ->
+                let resultSSA, zipper1 = Alex.Bindings.PlatformHelpers.emitParseFloatCall strSSA zipper
+                zipper1, TRValue (resultSSA, "f64")
+
+            // Convert intrinsics - numeric type conversions
+            | ConvertOp "toFloat", [(argSSA, argType)] ->
+                // int -> float conversion (sitofp)
+                let resultSSA, zipper' = MLIRZipper.yieldSSA zipper
+                let fromType = if argType = "i32" then "i32" else "i64"  // Support both i32 and i64 input
+                let convParams : ConversionParams = { Result = resultSSA; Operand = argSSA; FromType = fromType; ToType = "f64" }
+                let convText = render Quot.Conversion.siToFP convParams
+                let zipper'' = MLIRZipper.witnessOpWithResult convText resultSSA (Float F64) zipper'
+                zipper'', TRValue (resultSSA, "f64")
+
+            | ConvertOp "toInt", [(argSSA, argType)] ->
+                // float -> int conversion (fptosi)
+                let resultSSA, zipper' = MLIRZipper.yieldSSA zipper
+                let fromType = if argType = "f32" then "f32" else "f64"  // Support both f32 and f64 input
+                let convParams : ConversionParams = { Result = resultSSA; Operand = argSSA; FromType = fromType; ToType = "i64" }
+                let convText = render Quot.Conversion.fpToSI convParams
+                let zipper'' = MLIRZipper.witnessOpWithResult convText resultSSA (Integer I64) zipper'
+                zipper'', TRValue (resultSSA, "i64")
+
+            | StringOp "contains", [(strSSA, _); (charSSA, charType)] ->
+                // String.contains : string -> char -> bool
+                // char is i32 (Unicode), helper expects i8 - truncate for ASCII chars
+                let char8SSA, zipper1 = MLIRZipper.yieldSSA zipper
+                let truncText = sprintf "%s = arith.trunci %s : i32 to i8" char8SSA charSSA
+                let zipper2 = MLIRZipper.witnessOpWithResult truncText char8SSA (Integer I8) zipper1
+                let resultSSA, zipper3 = Alex.Bindings.PlatformHelpers.emitStringContainsCharCall strSSA char8SSA zipper2
+                zipper3, TRValue (resultSSA, "i1")
 
             | StringOp "concat2", [(str1SSA, _); (str2SSA, _)] ->
                 // Extract ptr and len from first string

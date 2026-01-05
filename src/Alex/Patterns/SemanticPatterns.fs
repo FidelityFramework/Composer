@@ -213,6 +213,11 @@ let (|FormatOp|_|) (info: IntrinsicInfo) =
 let (|ParseOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Parse then Some info.Operation else None
 
+/// Check if intrinsic is a Convert operation (using IntrinsicInfo)
+/// Convert intrinsics perform numeric type conversions: int->float, float->int, etc.
+let (|ConvertOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Convert then Some info.Operation else None
+
 /// Check if intrinsic is an Array operation (using IntrinsicInfo)
 let (|ArrayOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Array then Some info.Operation else None

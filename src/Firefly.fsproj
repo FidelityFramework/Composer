@@ -60,6 +60,7 @@
       <Compile Include="Alex/Bindings/Console/ConsoleBindings.fs" />
       <Compile Include="Alex/Bindings/Time/TimeBindings.fs" />
       <Compile Include="Alex/Bindings/Process/ProcessBindings.fs" />
+      <Compile Include="Alex/Bindings/PlatformHelpers.fs" />
 
       <!-- Alex CodeGeneration - TypeMapping uses FNCS types -->
       <Compile Include="Alex/CodeGeneration/TypeMapping.fs" />

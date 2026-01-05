@@ -300,12 +300,22 @@ let preBindParams (zipper: MLIRZipper) (node: SemanticNode) : MLIRZipper =
                 mlirPs, bindings, false
 
         // Return type: main always returns i32
+        // For curried functions, we need to peel off ALL parameter layers to get the final return type
         let returnType =
             if isMain then Integer I32
             else
-                match node.Type with
-                | NativeType.TFun (_, retTy) -> mapType retTy
-                | _ -> mapType node.Type
+                // Extract final return type by peeling off one TFun layer per parameter
+                // Special case: unit lambdas (params' = []) need to peel the unit->result layer
+                let rec extractFinalReturnType (ty: NativeType) (paramCount: int) : NativeType =
+                    match ty with
+                    | NativeType.TFun(_, resultTy) when paramCount > 0 ->
+                        extractFinalReturnType resultTy (paramCount - 1)
+                    | NativeType.TFun(_, resultTy) when List.isEmpty params' ->
+                        // Unit lambda: params' is empty but we need to peel the outer TFun
+                        resultTy
+                    | _ -> ty
+                let finalRetTy = extractFinalReturnType node.Type (List.length params')
+                mapType finalRetTy
 
         // Enter function scope - main is NOT internal (must be exported)
         let zipper2 =

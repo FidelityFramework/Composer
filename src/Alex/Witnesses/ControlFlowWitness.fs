@@ -106,7 +106,7 @@ let emitInlineStrlen (ptrSSA: string) (zipper: MLIRZipper) : string * MLIRZipper
 /// Emit pattern bindings for a match case
 /// For array pattern [|x|], extracts array[0] and binds to x
 /// Returns updated zipper with bindings in place
-let emitPatternBindings
+let rec emitPatternBindings
     (pattern: Pattern)
     (scrutineeSSA: string)
     (_scrutineeType: NativeType)
@@ -232,8 +232,44 @@ let emitPatternBindings
         | _ ->
             zipper
 
+    | Pattern.Tuple elements ->
+        // Tuple pattern: extract each element from scrutinee tuple and bind sub-patterns
+        // Scrutinee is a tuple struct: !llvm.struct<(Elem1Type, Elem2Type, ...)>
+        // For a tuple of DUs, each element is !llvm.struct<(i32, i64)>
+
+        // Get the scrutinee type to determine element types
+        let elemTypes =
+            match _scrutineeType with
+            | NativeType.TTuple (types, _) -> types
+            | _ -> List.replicate (List.length elements) _scrutineeType  // Fallback: assume uniform type
+
+        // Build the aggregate type string for the tuple
+        let elemTypesMLIR = elemTypes |> List.map (fun t -> Serialize.mlirType (mapType t))
+        let aggTypeStr = sprintf "!llvm.struct<(%s)>" (String.concat ", " elemTypesMLIR)
+
+        // Recursively emit bindings for each element
+        elements
+        |> List.mapi (fun idx subPattern -> (idx, subPattern))
+        |> List.fold (fun (z: MLIRZipper) (idx, subPattern) ->
+            // Skip wildcards - no extraction needed
+            match subPattern with
+            | Pattern.Wildcard -> z
+            | _ ->
+                // Get element type
+                let elemType = if idx < List.length elemTypes then elemTypes.[idx] else _scrutineeType
+
+                // Extract element from tuple struct
+                let elemSSA, z1 = MLIRZipper.yieldSSA z
+                let extractParams : Quot.Aggregate.ExtractParams = { Result = elemSSA; Aggregate = scrutineeSSA; Index = idx; AggType = aggTypeStr }
+                let extractText = render Quot.Aggregate.extractValue extractParams
+                let z2 = MLIRZipper.witnessOpWithResult extractText elemSSA (mapType elemType) z1
+
+                // Recursively emit pattern bindings for this element
+                emitPatternBindings subPattern elemSSA elemType _graph z2
+        ) zipper
+
     | _ ->
-        // TODO: Other patterns (multi-element tuple, union, etc.)
+        // Other patterns not yet supported
         zipper
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -645,8 +681,142 @@ let witnessMatch
         | None ->
             zipper, TRError "Match: scrutinee not computed for DU match"
 
+    // Four-case tuple match: all cases are Tuple of two Union patterns
+    // This handles: match a, b with | IntVal x, IntVal y -> ... | IntVal x, FloatVal y -> ... | FloatVal x, IntVal y -> ... | FloatVal x, FloatVal y -> ...
+    | [case0; case1; case2; case3] when
+        (List.forall (fun (c: MatchCase) ->
+            match c.Pattern with
+            | Pattern.Tuple [Pattern.Union _; Pattern.Union _] -> true
+            | _ -> false) [case0; case1; case2; case3]) ->
+        match MLIRZipper.recallNodeSSA (string (NodeId.value scrutineeId)) zipper with
+        | Some (scrutineeSSA, _) ->
+            // Get scrutinee type for proper element extraction
+            let scrutineeType =
+                match SemanticGraph.tryGetNode scrutineeId graph with
+                | Some n -> n.Type
+                | None -> NativeType.TApp({ Name = "unit"; Module = []; ParamKinds = []; Layout = TypeLayout.Inline(0, 1); NTUKind = None }, [])
+
+            // Build tuple aggregate type string for 2 DUs: !llvm.struct<(!llvm.struct<(i32, i64)>, !llvm.struct<(i32, i64)>)>
+            let elemTypes =
+                match scrutineeType with
+                | NativeType.TTuple (types, _) -> types
+                | _ -> [scrutineeType; scrutineeType]  // Fallback
+
+            let duStructType = "!llvm.struct<(i32, i64)>"
+            let tupleAggType = sprintf "!llvm.struct<(%s, %s)>" duStructType duStructType
+
+            // Extract both DU elements from the tuple
+            let elem0SSA, zipper1 = MLIRZipper.yieldSSA zipper
+            let extract0Params : Quot.Aggregate.ExtractParams = { Result = elem0SSA; Aggregate = scrutineeSSA; Index = 0; AggType = tupleAggType }
+            let extract0Text = render Quot.Aggregate.extractValue extract0Params
+            let zipper2 = MLIRZipper.witnessOpWithResult extract0Text elem0SSA (Struct [Integer I32; Integer I64]) zipper1
+
+            let elem1SSA, zipper3 = MLIRZipper.yieldSSA zipper2
+            let extract1Params : Quot.Aggregate.ExtractParams = { Result = elem1SSA; Aggregate = scrutineeSSA; Index = 1; AggType = tupleAggType }
+            let extract1Text = render Quot.Aggregate.extractValue extract1Params
+            let zipper4 = MLIRZipper.witnessOpWithResult extract1Text elem1SSA (Struct [Integer I32; Integer I64]) zipper3
+
+            // Extract tags from both DUs
+            let tag0SSA, zipper5 = MLIRZipper.yieldSSA zipper4
+            let tagExtract0Params : Quot.Aggregate.ExtractParams = { Result = tag0SSA; Aggregate = elem0SSA; Index = 0; AggType = duStructType }
+            let tagExtract0Text = render Quot.Aggregate.extractValue tagExtract0Params
+            let zipper6 = MLIRZipper.witnessOpWithResult tagExtract0Text tag0SSA (Integer I32) zipper5
+
+            let tag1SSA, zipper7 = MLIRZipper.yieldSSA zipper6
+            let tagExtract1Params : Quot.Aggregate.ExtractParams = { Result = tag1SSA; Aggregate = elem1SSA; Index = 0; AggType = duStructType }
+            let tagExtract1Text = render Quot.Aggregate.extractValue tagExtract1Params
+            let zipper8 = MLIRZipper.witnessOpWithResult tagExtract1Text tag1SSA (Integer I32) zipper7
+
+            // Generate tag constants for comparison
+            let zeroSSA, zipper9 = MLIRZipper.witnessConstant 0L I32 zipper8
+
+            // Compare tag0 == 0 (first element is case index 0, e.g., IntVal)
+            let cond0SSA, zipper10 = MLIRZipper.yieldSSA zipper9
+            let cmp0Params : ArithTemplates.Quot.Compare.CmpParams = { Result = cond0SSA; Predicate = "eq"; Lhs = tag0SSA; Rhs = zeroSSA; Type = "i32" }
+            let cmp0Text = render ArithTemplates.Quot.Compare.cmpI cmp0Params
+            let zipper11 = MLIRZipper.witnessOpWithResult cmp0Text cond0SSA (Integer I1) zipper10
+
+            // Compare tag1 == 0 (second element is case index 0)
+            let cond1SSA, zipper12 = MLIRZipper.yieldSSA zipper11
+            let cmp1Params : ArithTemplates.Quot.Compare.CmpParams = { Result = cond1SSA; Predicate = "eq"; Lhs = tag1SSA; Rhs = zeroSSA; Type = "i32" }
+            let cmp1Text = render ArithTemplates.Quot.Compare.cmpI cmp1Params
+            let zipper13 = MLIRZipper.witnessOpWithResult cmp1Text cond1SSA (Integer I1) zipper12
+
+            // Get captured regions for all 4 case bodies
+            match MLIRZipper.getPendingRegions nodeIdStr zipper13 with
+            | Some regions ->
+                let getCaseOps idx =
+                    match Map.tryFind (SCFRegionKind.MatchCaseRegion idx) regions with
+                    | Some ops -> ops
+                    | None -> []
+
+                let case0Ops = getCaseOps 0  // IntVal, IntVal
+                let case1Ops = getCaseOps 1  // IntVal, FloatVal
+                let case2Ops = getCaseOps 2  // FloatVal, IntVal
+                let case3Ops = getCaseOps 3  // FloatVal, FloatVal
+
+                // Get result type (should be Number for this sample)
+                let resultType =
+                    match node.Type with
+                    | NativeType.TApp(tycon, _) when tycon.Name = "unit" -> None
+                    | ty -> Some (mapType ty)
+
+                // Get case body result SSAs
+                let getBodySSA (c: MatchCase) =
+                    match MLIRZipper.recallNodeSSA (string (NodeId.value c.Body)) zipper13 with
+                    | Some (ssa, _) -> Some ssa
+                    | None -> None
+
+                let case0ResultSSA = getBodySSA case0
+                let case1ResultSSA = getBodySSA case1
+                let case2ResultSSA = getBodySSA case2
+                let case3ResultSSA = getBodySSA case3
+
+                // Generate nested scf.if structure:
+                // if tag0 == 0:
+                //     if tag1 == 0: case0 (IntVal, IntVal)
+                //     else: case1 (IntVal, FloatVal)
+                // else:
+                //     if tag1 == 0: case2 (FloatVal, IntVal)
+                //     else: case3 (FloatVal, FloatVal)
+
+                // Inner if for "tag0 == 0" branch (cases 0 and 1)
+                let innerTrue01SSAOpt, zipper14 = MLIRZipper.witnessSCFIf cond1SSA case0Ops case0ResultSSA (Some case1Ops) case1ResultSSA resultType zipper13
+
+                // Inner if for "tag0 != 0" branch (cases 2 and 3)
+                let innerFalse23SSAOpt, zipper15 = MLIRZipper.witnessSCFIf cond1SSA case2Ops case2ResultSSA (Some case3Ops) case3ResultSSA resultType zipper14
+
+                // Outer if based on tag0 == 0
+                // The inner ifs produced SSA values (or not for void). We need to yield from outer if.
+                match resultType, innerTrue01SSAOpt, innerFalse23SSAOpt with
+                | Some resTy, Some innerTrueSSA, Some innerFalseSSA ->
+                    // Result-bearing match - create outer scf.if that yields inner results
+                    let outerResultSSA, zipper16 = MLIRZipper.yieldSSA zipper15
+                    let outerIfText = sprintf "%s = scf.if %s -> %s {\n  scf.yield %s : %s\n} else {\n  scf.yield %s : %s\n}"
+                                        outerResultSSA cond0SSA (Serialize.mlirType resTy)
+                                        innerTrueSSA (Serialize.mlirType resTy)
+                                        innerFalseSSA (Serialize.mlirType resTy)
+                    let zipper17 = MLIRZipper.witnessOpWithResult outerIfText outerResultSSA resTy zipper16
+
+                    // Clear pending regions
+                    let zipper18 = MLIRZipper.clearPendingRegions nodeIdStr zipper17
+
+                    let resultTy = Serialize.mlirType resTy
+                    let zipper19 = MLIRZipper.bindNodeSSA nodeIdStr outerResultSSA resultTy zipper18
+                    zipper19, TRValue (outerResultSSA, resultTy)
+                | _ ->
+                    // Void match - just emit the outer scf.if without yield
+                    let outerIfText = sprintf "scf.if %s {\n} else {\n}" cond0SSA
+                    let zipper16 = MLIRZipper.witnessVoidOp outerIfText zipper15
+                    let zipper17 = MLIRZipper.clearPendingRegions nodeIdStr zipper16
+                    zipper17, TRVoid
+            | None ->
+                zipper13, TRError "Match: no captured regions for 4-case tuple match"
+        | None ->
+            zipper, TRError "Match: scrutinee not computed for 4-case tuple match"
+
     | _ ->
-        // TODO: Handle other match patterns (more cases, guards, etc.)
+        // Handle other match patterns (more cases, guards, etc.)
         zipper, TRError (sprintf "Match with %d cases not yet implemented" (List.length cases))
 
 

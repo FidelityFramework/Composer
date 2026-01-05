@@ -495,6 +495,9 @@ type MLIRZipper = {
     Globals: MLIRGlobal list
     /// Completed lambda functions (accumulated during traversal)
     CompletedFunctions: MLIRFunc list
+    /// Platform helper functions (emitted once at module level)
+    /// These are func.func definitions that implement Parse, Format, etc.
+    PlatformHelpers: Set<string>
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -515,6 +518,7 @@ module MLIRZipper =
         State = MLIRState.create ()
         Globals = []
         CompletedFunctions = []
+        PlatformHelpers = Set.empty
     }
 
     /// Create with initial state (for continuing from previous context)
@@ -525,6 +529,7 @@ module MLIRZipper =
         State = state
         Globals = []
         CompletedFunctions = []
+        PlatformHelpers = Set.empty
     }
 
     /// Create with entry point Lambda IDs
@@ -536,6 +541,7 @@ module MLIRZipper =
         State = MLIRState.createWithEntryPoints entryPointLambdaIds
         Globals = []
         CompletedFunctions = []
+        PlatformHelpers = Set.empty
     }
 
     /// Create with entry points and full mutability analysis result
@@ -550,6 +556,7 @@ module MLIRZipper =
         State = MLIRState.createWithAnalysis entryPointLambdaIds addressedMutables modifiedVarsInLoopBodies
         Globals = []
         CompletedFunctions = []
+        PlatformHelpers = Set.empty
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -1400,6 +1407,32 @@ module MLIRZipper =
         { zipper with CompletedFunctions = startFunc :: zipper.CompletedFunctions }
 
     // ─────────────────────────────────────────────────────────────────
+    // Platform Helper Registration
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Register a platform helper function to be emitted at module level.
+    /// Helpers are only emitted once (tracked by name in Set).
+    let registerPlatformHelper (helperName: string) (helperBody: string) (zipper: MLIRZipper) : MLIRZipper =
+        if Set.contains helperName zipper.PlatformHelpers then
+            zipper  // Already registered
+        else
+            { zipper with PlatformHelpers = Set.add helperName zipper.PlatformHelpers }
+
+    /// Platform helper definitions (MLIR func.func bodies)
+    /// These are stored separately from the Set of names for actual emission
+    let mutable private helperBodies : Map<string, string> = Map.empty
+
+    /// Register a helper with its body (call once per helper name)
+    let registerPlatformHelperWithBody (helperName: string) (helperBody: string) (zipper: MLIRZipper) : MLIRZipper =
+        if not (Map.containsKey helperName helperBodies) then
+            helperBodies <- Map.add helperName helperBody helperBodies
+        registerPlatformHelper helperName helperBody zipper
+
+    /// Get the body for a registered helper
+    let getPlatformHelperBody (helperName: string) : string option =
+        Map.tryFind helperName helperBodies
+
+    // ─────────────────────────────────────────────────────────────────
     // Extraction - Comonad extract: collapse accumulated context to final value
     // This is the ONLY place where MLIR text is actually produced
     // ─────────────────────────────────────────────────────────────────
@@ -1427,6 +1460,14 @@ module MLIRZipper =
                 // Zero-initialized buffer - no initializer needed
                 sb.AppendLine(sprintf "  llvm.mlir.global internal @%s() : !llvm.array<%d x i8>"
                     name size) |> ignore
+
+        // Emit platform helper functions (func.func dialect, will be lowered to LLVM)
+        for helperName in zipper.PlatformHelpers do
+            match getPlatformHelperBody helperName with
+            | Some body ->
+                sb.AppendLine("") |> ignore
+                sb.AppendLine(body) |> ignore
+            | None -> ()
 
         // Emit completed lambda functions
         for func in List.rev zipper.CompletedFunctions do

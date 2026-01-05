@@ -323,53 +323,84 @@ let witnessConsoleErrorln (platform: TargetPlatform) (prim: PlatformPrimitive) (
     | _ ->
         zipper, NotSupported "Console.errorln requires (string) argument"
 
-/// Witness Console.readln - read line from stdin
-/// Returns a string (fat pointer). For now, uses a fixed buffer size.
+/// Witness Console.readln - read line from stdin (character by character until newline)
+/// Returns a string (fat pointer). Reads one byte at a time to handle piped input correctly.
 let witnessConsoleReadln (platform: TargetPlatform) (prim: PlatformPrimitive) (zipper: MLIRZipper) : MLIRZipper * EmissionResult =
     // Match no args, unit arg (MLIRType.Unit), or pseudo-unit (i32 with value 0)
     // Unit literals are represented as "arith.constant 0 : i32" so we accept Integer I32 as well
     match prim.Args with
     | [] | [(_, Unit)] | [(_, Integer I32)] ->
-        // Allocate buffer on stack (256 bytes for now)
-        let bufSizeSSA, zipper1 = MLIRZipper.witnessConstant 256L I64 zipper
-        let bufPtrSSA, zipper2 = MLIRZipper.yieldSSA zipper1
+        // Allocate buffer on stack (256 bytes)
+        let bufSizeSSA, z1 = MLIRZipper.witnessConstant 256L I64 zipper
+        let bufPtrSSA, z2 = MLIRZipper.yieldSSA z1
         let allocaText = sprintf "%s = llvm.alloca %s x i8 : (i64) -> !llvm.ptr" bufPtrSSA bufSizeSSA
-        let zipper3 = MLIRZipper.witnessOpWithResult allocaText bufPtrSSA Pointer zipper2
+        let z3 = MLIRZipper.witnessOpWithResult allocaText bufPtrSSA Pointer z2
 
-        // fd=0 for stdin
-        let fdSSA, zipper4 = MLIRZipper.witnessConstant 0L I64 zipper3
+        // Allocate single-byte buffer for reading one char at a time
+        let oneSSA, z4 = MLIRZipper.witnessConstant 1L I64 z3
+        let charBufSSA, z5 = MLIRZipper.yieldSSA z4
+        let charAllocaText = sprintf "%s = llvm.alloca %s x i8 : (i64) -> !llvm.ptr" charBufSSA oneSSA
+        let z6 = MLIRZipper.witnessOpWithResult charAllocaText charBufSSA Pointer z5
 
-        // Read syscall
+        // Constants
+        let zeroSSA, z7 = MLIRZipper.witnessConstant 0L I64 z6
+        let newlineSSA, z8 = MLIRZipper.witnessConstant 10L I8 z7  // '\n'
+        let fdSSA, z9 = MLIRZipper.witnessConstant 0L I64 z8  // stdin
+
+        // Syscall number for read
         let syscallNum = match platform.OS with Linux -> 0L | MacOS -> 0x2000003L | _ -> 0L
-        let bytesReadSSA, zipper5 = witnessUnixReadSyscall syscallNum fdSSA (Integer I64) bufPtrSSA Pointer bufSizeSSA (Integer I64) zipper4
+        let syscallNumSSA, z10 = MLIRZipper.witnessConstant syscallNum I64 z9
 
-        // Strip trailing newline if present (adjust length by -1 if last char is \n)
-        // Clamp to 0 to handle EOF (when read returns 0, we get max(0-1, 0) = 0)
-        let oneSSA, zipper6 = MLIRZipper.witnessConstant 1L I64 zipper5
-        let rawLenSSA, zipper7 = MLIRZipper.yieldSSA zipper6
-        let subText = sprintf "%s = arith.subi %s, %s : i64" rawLenSSA bytesReadSSA oneSSA
-        let zipper8 = MLIRZipper.witnessOpWithResult subText rawLenSSA (Integer I64) zipper7
-        
-        // Clamp length to >= 0 to handle EOF gracefully
-        let zeroSSA, zipper8a = MLIRZipper.witnessConstant 0L I64 zipper8
-        let adjLenSSA, zipper8b = MLIRZipper.yieldSSA zipper8a
-        let maxText = sprintf "%s = arith.maxsi %s, %s : i64" adjLenSSA rawLenSSA zeroSSA
-        let zipper8 = MLIRZipper.witnessOpWithResult maxText adjLenSSA (Integer I64) zipper8b
+        // Build scf.while loop to read character by character
+        // Loop state: position in buffer (i64)
+        // Continue while: bytes_read > 0 AND char != '\n' AND pos < 255
 
-        // Construct fat pointer (string) from buffer and length
-        let undefSSA, zipper9 = MLIRZipper.yieldSSA zipper8
+        // Get unique SSA names for loop variables
+        let posResultSSA, z11 = MLIRZipper.yieldSSA z10
+        let posArgName = (posResultSSA.TrimStart('%')) + "_pos"
+        let pos = posArgName
+
+        // Guard block operations (all with unique names using pos prefix)
+        let guardOps =
+            [ sprintf "%%%s_max = arith.constant 255 : i64" pos
+              sprintf "%%%s_in_bounds = arith.cmpi slt, %%%s, %%%s_max : i64" pos pos pos
+              sprintf "%%%s_bytes = llvm.inline_asm has_side_effects \"syscall\", \"={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}\" %s, %s, %s, %s : (i64, i64, !llvm.ptr, i64) -> i64" pos syscallNumSSA fdSSA charBufSSA oneSSA
+              sprintf "%%%s_got_byte = arith.cmpi sgt, %%%s_bytes, %s : i64" pos pos zeroSSA
+              sprintf "%%%s_char = llvm.load %s : !llvm.ptr -> i8" pos charBufSSA
+              sprintf "%%%s_not_newline = arith.cmpi ne, %%%s_char, %s : i8" pos pos newlineSSA
+              sprintf "%%%s_cont1 = arith.andi %%%s_in_bounds, %%%s_got_byte : i1" pos pos pos
+              sprintf "%%%s_cont2 = arith.andi %%%s_cont1, %%%s_not_newline : i1" pos pos pos ]
+            |> String.concat "\n    "
+
+        // Body block operations
+        let bodyOps =
+            [ sprintf "%%%s_char_to_store = llvm.load %s : !llvm.ptr -> i8" pos charBufSSA
+              sprintf "%%%s_store_ptr = llvm.getelementptr %s[%%%s_arg] : (!llvm.ptr, i64) -> !llvm.ptr, i8" pos bufPtrSSA pos
+              sprintf "llvm.store %%%s_char_to_store, %%%s_store_ptr : i8, !llvm.ptr" pos pos
+              sprintf "%%%s_one = arith.constant 1 : i64" pos
+              sprintf "%%%s_next = arith.addi %%%s_arg, %%%s_one : i64" pos pos pos ]
+            |> String.concat "\n    "
+
+        let whileText =
+            sprintf "%s = scf.while (%%%s = %s) : (i64) -> i64 {\n    %s\n    scf.condition(%%%s_cont2) %%%s : i64\n  } do {\n  ^bb0(%%%s_arg: i64):\n    %s\n    scf.yield %%%s_next : i64\n  }"
+                posResultSSA pos zeroSSA guardOps pos pos pos bodyOps pos
+
+        let z12 = MLIRZipper.witnessOpWithResult whileText posResultSSA (Integer I64) z11
+
+        // Construct fat pointer (string) from buffer and final length
+        let undefSSA, z13 = MLIRZipper.yieldSSA z12
         let undefText = sprintf "%s = llvm.mlir.undef : !llvm.struct<(ptr, i64)>" undefSSA
-        let zipper10 = MLIRZipper.witnessOpWithResult undefText undefSSA (Struct [Pointer; Integer I64]) zipper9
+        let z14 = MLIRZipper.witnessOpWithResult undefText undefSSA (Struct [Pointer; Integer I64]) z13
 
-        let withPtrSSA, zipper11 = MLIRZipper.yieldSSA zipper10
+        let withPtrSSA, z15 = MLIRZipper.yieldSSA z14
         let insertPtrText = sprintf "%s = llvm.insertvalue %s, %s[0] : !llvm.struct<(ptr, i64)>" withPtrSSA bufPtrSSA undefSSA
-        let zipper12 = MLIRZipper.witnessOpWithResult insertPtrText withPtrSSA (Struct [Pointer; Integer I64]) zipper11
+        let z16 = MLIRZipper.witnessOpWithResult insertPtrText withPtrSSA (Struct [Pointer; Integer I64]) z15
 
-        let resultSSA, zipper13 = MLIRZipper.yieldSSA zipper12
-        let insertLenText = sprintf "%s = llvm.insertvalue %s, %s[1] : !llvm.struct<(ptr, i64)>" resultSSA adjLenSSA withPtrSSA
-        let zipper14 = MLIRZipper.witnessOpWithResult insertLenText resultSSA (Struct [Pointer; Integer I64]) zipper13
+        let resultSSA, z17 = MLIRZipper.yieldSSA z16
+        let insertLenText = sprintf "%s = llvm.insertvalue %s, %s[1] : !llvm.struct<(ptr, i64)>" resultSSA posResultSSA withPtrSSA
+        let z18 = MLIRZipper.witnessOpWithResult insertLenText resultSSA (Struct [Pointer; Integer I64]) z17
 
-        zipper14, WitnessedValue (resultSSA, Struct [Pointer; Integer I64])
+        z18, WitnessedValue (resultSSA, Struct [Pointer; Integer I64])
     | _ ->
         zipper, NotSupported "Console.readln takes no arguments"
 

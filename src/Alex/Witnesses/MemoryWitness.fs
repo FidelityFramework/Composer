@@ -163,12 +163,30 @@ let witnessTupleExpr
             let zipper' = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) ssa ty zipper
             zipper', TRValue (ssa, ty)
         | elements ->
-            // Multi-element tuple - allocate struct and store elements
-            let tupleSSA, zipper1 = MLIRZipper.yieldSSA zipper
-            let allocaText = sprintf "%s = llvm.alloca i64 x %d : (i64) -> !llvm.ptr" tupleSSA (List.length elements)
-            let zipper2 = MLIRZipper.witnessOp allocaText [(tupleSSA, Pointer)] zipper1
-            let zipper3 = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) tupleSSA "!llvm.ptr" zipper2
-            zipper3, TRValue (tupleSSA, "!llvm.ptr")
+            // Multi-element tuple - build struct value using undef + insertvalue
+            // Get element types from node.Type (should be TTuple)
+            let elemTypeStrs =
+                elements |> List.map (fun (_, tyStr) -> tyStr)
+            let tupleTypeStr = sprintf "!llvm.struct<(%s)>" (String.concat ", " elemTypeStrs)
+
+            // Start with undef struct
+            let undefSSA, zipper1 = MLIRZipper.yieldSSA zipper
+            let undefText = sprintf "%s = llvm.mlir.undef : %s" undefSSA tupleTypeStr
+            let zipper2 = MLIRZipper.witnessOp undefText [(undefSSA, Struct [])] zipper1
+
+            // Insert each element into the struct
+            let finalSSA, finalZipper =
+                elements
+                |> List.mapi (fun i (ssa, _) -> (i, ssa))
+                |> List.fold (fun (accSSA, z) (idx, elemSSA) ->
+                    let newSSA, z1 = MLIRZipper.yieldSSA z
+                    let insertText = sprintf "%s = llvm.insertvalue %s, %s[%d] : %s" newSSA elemSSA accSSA idx tupleTypeStr
+                    let z2 = MLIRZipper.witnessOp insertText [(newSSA, Struct [])] z1
+                    (newSSA, z2)
+                ) (undefSSA, zipper2)
+
+            let zipper3 = MLIRZipper.bindNodeSSA (string (NodeId.value node.Id)) finalSSA tupleTypeStr finalZipper
+            zipper3, TRValue (finalSSA, tupleTypeStr)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Record Expression
