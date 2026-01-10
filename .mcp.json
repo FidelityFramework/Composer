@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "serena": {
+    "serena-local": {
       "command": "serena",
       "args": ["start-mcp-server", "--project-from-cwd"]
     }
