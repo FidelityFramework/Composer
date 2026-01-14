@@ -370,11 +370,16 @@ let arithOp (op: ArithOp) (sb: StringBuilder) : unit =
         ssa r sb; sb.Append(" = arith.constant ").Append(v).Append(" : ") |> ignore
         mlirType t sb
     | ConstF (r, v, t) ->
-        ssa r sb; sb.Append(" = arith.constant ") |> ignore
-        if System.Double.IsNaN(v) then sb.Append("0x7FC00000") |> ignore
-        elif System.Double.IsPositiveInfinity(v) then sb.Append("0x7F800000") |> ignore
-        elif System.Double.IsNegativeInfinity(v) then sb.Append("0xFF800000") |> ignore
-        else sb.Append(v.ToString("G17")) |> ignore
+        ssa r sb
+        sb.Append(" = arith.constant ") |> ignore
+        // Exact IEEE 754 bit representation - type-preserving, no string manipulation
+        match t with
+        | TFloat F32 ->
+            let bits = System.BitConverter.SingleToInt32Bits(float32 v)
+            sb.AppendFormat("0x{0:X8}", bits) |> ignore
+        | _ ->
+            let bits = System.BitConverter.DoubleToInt64Bits(v)
+            sb.AppendFormat("0x{0:X16}", bits) |> ignore
         sb.Append(" : ") |> ignore
         mlirType t sb
 
@@ -960,10 +965,16 @@ and scfOp (op: SCFOp) (indent: int) (sb: StringBuilder) : unit =
         sb.Append("scf.while") |> ignore
         if not (List.isEmpty iterArgs) then
             sb.Append(" (") |> ignore
+            // Use the region's block arg SSAs for bindings (they're what ops inside reference)
+            let blockArgs = match condR.Blocks with [b] -> b.Args | _ -> []
             iterArgs |> List.iteri (fun i arg ->
                 if i > 0 then sb.Append(", ") |> ignore
-                // %argN = %initial_value (initial value is in iterArgs.SSA)
-                sb.Append("%arg").Append(i.ToString()).Append(" = ") |> ignore
+                // Use block arg SSA if available, otherwise fall back to iter prefix
+                if i < List.length blockArgs then
+                    ssa blockArgs.[i].SSA sb
+                else
+                    sb.Append("%iter").Append(i.ToString()) |> ignore
+                sb.Append(" = ") |> ignore
                 ssa arg.SSA sb)
             sb.Append(")") |> ignore
         sb.Append(" : (") |> ignore

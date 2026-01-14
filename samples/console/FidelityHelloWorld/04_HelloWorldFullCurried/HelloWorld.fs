@@ -1,27 +1,23 @@
 module Examples.HelloWorldFullCurried
 
-/// Demonstrates CURRIED function patterns:
+/// Demonstrates FULL CURRYING patterns:
 /// - Curried function with multiple parameters
-/// - Direct curried call (all args at once)
-/// - Sequential curried call (one arg at a time)
-/// - Pipe operator: `x |> f`
+/// - Partial application: binding first argument to create specialized function
+/// - Applying remaining argument to complete the call
 
 /// Curried greeting function - takes prefix then name
 let greet prefix name =
     Console.writeln $"{prefix}, {name}!"
 
-/// Hello function reads name and pipes to greeter
-let hello prefix =
-    Console.write "Enter your name: "
-    Console.readln()
-    |> greet prefix
+/// Partial application: bind "Hello" to create a specialized greeter
+let helloGreeter = greet "Hello"
 
 [<EntryPoint>]
 let main argv =
-    // Direct curried call with both arguments
-    greet "Hello" "World"
+    Console.write "Enter your name: "
+    let name = Console.readln()
 
-    // Interactive: read name and pipe to greeter
-    hello "Welcome"
+    // Apply remaining argument to the partially applied function
+    helloGreeter name
 
     0

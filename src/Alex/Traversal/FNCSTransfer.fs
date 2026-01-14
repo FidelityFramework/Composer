@@ -35,6 +35,7 @@ module MutAnalysis = Alex.Preprocessing.MutabilityAnalysis
 module SSAAssign = Alex.Preprocessing.SSAAssignment
 module StringCollect = Alex.Preprocessing.StringCollection
 module PlatformResolution = Alex.Preprocessing.PlatformBindingResolution
+module PatternAnalysis = Alex.Preprocessing.PatternBindingAnalysis
 
 /// Map FNCS NativeType to MLIR type
 let private mapType = mapNativeType
@@ -73,6 +74,9 @@ let private transferGraphCore
     let runtimeMode = if isFreestanding then Freestanding else Console
     let platformResolution = PlatformResolution.analyze graph runtimeMode hostPlatform.OS hostPlatform.Arch
 
+    // Pattern binding analysis (coeffect for match case bindings)
+    let patternBindingAnalysis = PatternAnalysis.analyze graph
+
     // Serialize preprocessing results to intermediates (if path provided)
     match intermediatesDir with
     | Some dir -> PreprocessingSerializer.serialize dir ssaAssignment entryPointLambdaIds graph
@@ -92,12 +96,72 @@ let private transferGraphCore
     let mutable errors: string list = []
 
     // ═══════════════════════════════════════════════════════════════════════
-    // SCF REGION HOOK (closes over regionOps)
+    // SCF REGION HOOK (closes over regionOps, graph, patternBindingAnalysis)
     // ═══════════════════════════════════════════════════════════════════════
+
+    /// Bind pattern variables for a match case before body traversal
+    /// FOUR PILLARS: This is "wiring-up" - connecting coeffects to VarBindings
+    /// - Coeffects: PatternBindingAnalysis, SSAAssignment (pre-computed, immutable)
+    /// - Zipper: bindVarSSA adds to VarBindings (observation/witnessing)
+    /// - Witnesses: MemWitness.witnessPayloadExtract handles MLIR emission
+    /// - Active Patterns: Match on SemanticKind (semantic meaning)
+    let bindMatchCasePatterns (z: PSGZipper) (matchNodeId: NodeId) (caseIdx: int) : PSGZipper =
+        // COEFFECT LOOKUP: Get Match node structure
+        match SemanticGraph.tryGetNode matchNodeId graph with
+        | Some matchNode ->
+            match matchNode.Kind with
+            | SemanticKind.Match (scrutineeId, cases) when caseIdx < List.length cases ->
+                let case = cases.[caseIdx]
+
+                // COEFFECT LOOKUP: Get scrutinee SSA (already in NodeBindings from prior traversal)
+                match recallNodeResult (NodeId.value scrutineeId) z with
+                | Some (scrutineeSSA, scrutineeType) ->
+                    // PHOTOGRAPHER PRINCIPLE: Iterate over PatternBinding NodeIds directly
+                    // Each PatternBinding node has its SSA pre-assigned by SSAAssignment nanopass
+                    let mutable z' = z
+
+                    for pbNodeId in case.PatternBindings do
+                        // COEFFECT LOOKUP: Get PatternBinding node and its pre-assigned SSA
+                        match SemanticGraph.tryGetNode pbNodeId graph with
+                        | Some pbNode ->
+                            match pbNode.Kind with
+                            | SemanticKind.PatternBinding name ->
+                                // COEFFECT LOOKUP: SSAs were assigned in preprocessing
+                                // Type is in pbNode.Type (following ML convention)
+                                match SSAAssign.lookupSSAs pbNodeId ssaAssignment with
+                                | Some ssas when not (List.isEmpty ssas) ->
+                                    let patternType = mapType pbNode.Type
+
+                                    // WITNESS: Call witnessPayloadExtract to get ops
+                                    // This follows Four Pillars - witness handles MLIR emission
+                                    let ops, resultVal = MemWitness.witnessPayloadExtract ssas scrutineeSSA scrutineeType patternType
+
+                                    // Emit all ops from witness
+                                    for op in ops do
+                                        emit op z'
+
+                                    // ZIPPER: Bind pattern variable name to result from witness
+                                    z' <- bindVarSSA name resultVal.SSA resultVal.Type z'
+                                | _ ->
+                                    // No SSA assigned - shouldn't happen if preprocessing is correct
+                                    ()
+                            | _ -> ()
+                        | None -> ()
+                    z'
+                | None ->
+                    // Scrutinee not yet in NodeBindings - shouldn't happen in correct traversal
+                    z
+            | _ -> z
+        | None -> z
+
     let scfHook: SCFRegionHook<PSGZipper> = {
-        BeforeRegion = fun z _parentId _kind ->
+        BeforeRegion = fun z parentId kind ->
             enterRegion z
-            z
+            // For MatchCaseRegion, bind pattern variables before case body traversal
+            match kind with
+            | RegionKind.MatchCaseRegion idx ->
+                bindMatchCasePatterns z parentId idx
+            | _ -> z
         AfterRegion = fun z parentId kind ->
             let ops = exitRegion z
             let key = (NodeId.value parentId, regionKindToInt kind)
@@ -590,7 +654,7 @@ let private transferGraphCore
     // ═══════════════════════════════════════════════════════════════════════
     // CREATE ZIPPER AND RUN TRAVERSAL
     // ═══════════════════════════════════════════════════════════════════════
-    match fromEntryPoint graph ssaAssignment analysisResult stringTable platformResolution entryPointLambdaIds with
+    match fromEntryPoint graph ssaAssignment analysisResult stringTable platformResolution patternBindingAnalysis entryPointLambdaIds with
     | None ->
         "", ["No entry point found in graph"]
 

@@ -64,6 +64,7 @@
       <!-- Platform Config (depends on PlatformTypes) -->
       <Compile Include="Alex/Preprocessing/PlatformConfig.fs" />
       <Compile Include="Alex/Preprocessing/PlatformBindingResolution.fs" />
+      <Compile Include="Alex/Preprocessing/PatternBindingAnalysis.fs" />
       <Compile Include="Alex/Preprocessing/PreprocessingSerializer.fs" />
 
       <!-- Alex Traversal - PSGZipper: Huet zipper with emission state -->
@@ -76,11 +77,6 @@
       <!-- Alex CodeGeneration - TypeMapping uses FNCS types -->
       <Compile Include="Alex/CodeGeneration/TypeMapping.fs" />
       <Compile Include="Alex/CodeGeneration/TypeSizing.fs" />
-
-      <!-- Alex Preprocessing - analysis before emission -->
-      <!-- NOTE: SSAAssignment.fs and MutabilityAnalysis.fs moved earlier (before MLIRZipper) as they're coeffects -->
-      <!-- NOTE: SaturateApplications.fs removed - transforms moved to FNCS -->
-      <Compile Include="Alex/Preprocessing/PatternBindingAnalysis.fs" />
 
       <!-- Alex Patterns - Active patterns for semantic classification -->
       <Compile Include="Alex/Patterns/SemanticPatterns.fs" />

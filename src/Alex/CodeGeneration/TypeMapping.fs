@@ -73,8 +73,25 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
                     failwithf "Record '%s' has unsupported layout: %A" tycon.Name tycon.Layout
             else
                 match tycon.Layout with
-                | TypeLayout.Inline (size, _) when size > 8 ->
-                    TStruct [TInt I32; TInt I64]  // Tagged union
+                | TypeLayout.Inline (size, align) when size > 8 ->
+                    // DU layout: tag + payload, computed from FNCS
+                    // Tag size inferred from (size mod align): 1=i8, 2=i16
+                    // Payload fills remaining space up to alignment
+                    let tagSize = size % align
+                    let tagType =
+                        match tagSize with
+                        | 1 -> TInt I8
+                        | 2 -> TInt I16
+                        | _ -> TInt I8  // Default to i8 for unusual layouts
+                    let payloadSize = size - tagSize
+                    let payloadType =
+                        match payloadSize with
+                        | 1 -> TInt I8
+                        | 2 -> TInt I16
+                        | 4 -> TInt I32
+                        | 8 -> TInt I64
+                        | n -> TArray (n, TInt I8)  // Larger payloads as byte array
+                    TStruct [tagType; payloadType]
                 | TypeLayout.Inline (size, align) when size > 0 ->
                     failwithf "TApp with unknown Inline layout (%d, %d): %s" size align tycon.Name
                 | TypeLayout.FatPointer ->
@@ -117,7 +134,15 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
     | NativeType.TRecord(tc, _) ->
         failwithf "Unexpected TRecord '%s' - use TApp with tycon.Fields" tc.Name
 
-    | NativeType.TUnion _ -> TStruct [TInt I32; TInt I64]  // Tagged union
+    | NativeType.TUnion (tycon, _cases) ->
+        // DU layout should come from NTU via tycon.Layout
+        // PLACEHOLDER: This needs proper integration with NTU layout computation
+        // The layout (tag size, payload size/alignment) should be pre-computed in FNCS
+        // based on platform bindings, not hardcoded here
+        //
+        // TODO: tycon.Layout should provide the computed struct layout
+        // For now, using a placeholder that will cause type errors if mismatched
+        failwithf "TUnion '%s' layout not yet integrated with NTU - needs FNCS enhancement" tycon.Name
 
     | NativeType.TAnon(fields, _) ->
         TStruct (fields |> List.map (fun (_, ty) -> mapNativeType ty))

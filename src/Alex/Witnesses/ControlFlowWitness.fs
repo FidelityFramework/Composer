@@ -135,14 +135,13 @@ let witnessWhileLoop
     : MLIROp list * TransferResult =
 
     // Build condition region with scf.condition terminator
-    let condBlockArgs = iterArgs |> List.map (fun v -> SCF.blockArg v.SSA v.Type)
+    // NOTE: SCF regions use anonymous entry blocks - block args are implicitly defined by the operation
     let condTerminator = MLIROp.SCFOp (SCF.scfCondition condResultSSA iterArgs)
-    let condRegion = SCF.singleBlockRegion "before" condBlockArgs (condOps @ [condTerminator])
+    let condRegion = SCF.singleBlockRegion "" [] (condOps @ [condTerminator])
 
     // Build body region with scf.yield terminator
-    let bodyBlockArgs = iterArgs |> List.map (fun v -> SCF.blockArg v.SSA v.Type)
     let bodyTerminator = MLIROp.SCFOp (SCF.scfYield iterArgs)
-    let bodyRegion = SCF.singleBlockRegion "do" bodyBlockArgs (bodyOps @ [bodyTerminator])
+    let bodyRegion = SCF.singleBlockRegion "" [] (bodyOps @ [bodyTerminator])
 
     // Result SSAs (one per iter arg) - use pre-assigned SSAs when iterArgs is non-empty
     let resultSSAs =
@@ -177,14 +176,9 @@ let witnessForLoop
     : MLIROp list * TransferResult =
 
     // Build body region
-    // Block args: induction variable + iter args
-    let ivArg = SCF.blockArg ivSSA MLIRTypes.index
-    let iterBlockArgs = iterArgs |> List.map (fun v -> SCF.blockArg v.SSA v.Type)
-    let allBlockArgs = ivArg :: iterBlockArgs
-
-    // Body with yield
+    // NOTE: SCF regions use anonymous entry blocks - block args are implicitly defined by the operation
     let bodyTerminator = MLIROp.SCFOp (SCF.scfYield iterArgs)
-    let bodyRegion = SCF.singleBlockRegion "body" allBlockArgs (bodyOps @ [bodyTerminator])
+    let bodyRegion = SCF.singleBlockRegion "" [] (bodyOps @ [bodyTerminator])
 
     // Result SSAs - use pre-assigned SSAs when iterArgs is non-empty
     // Note: indices 0,1 are used for ivSSA,stepSSA, so iterArgs start at index 2
@@ -223,6 +217,12 @@ let witnessMatch
         ssaIdx <- ssaIdx + 1
         ssa
 
+    // Extract tag type from scrutinee struct (field 0)
+    let tagType =
+        match scrutineeType with
+        | TStruct (t :: _) -> t
+        | _ -> TInt I8  // Fallback
+
     // For DU matching, extract discriminator (first field of struct)
     let discrimSSA = nextSSA ()
     let extractDiscrim = MLIROp.LLVMOp (LLVMOp.ExtractValue (discrimSSA, scrutineeSSA, [0], scrutineeType))
@@ -236,13 +236,13 @@ let witnessMatch
         | [(_, caseOps, resultSSA)] ->
             // Last case - no condition check needed
             match resultSSA, resultType with
-            | Some ssa, Some ty -> 
+            | Some ssa, Some ty ->
                 caseOps @ [MLIROp.SCFOp (SCF.scfYield [{ SSA = ssa; Type = ty }])], Some ssa
             | None, Some ty ->
                 let zeroSSA = nextSSA ()
                 let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, ty))
                 caseOps @ [zeroOp; MLIROp.SCFOp (SCF.scfYield [{ SSA = zeroSSA; Type = ty }])], Some zeroSSA
-            | _ -> 
+            | _ ->
                 caseOps @ [MLIROp.SCFOp (SCF.scfYieldVoid)], None
         | (tag, caseOps, resultSSA) :: rest ->
             // Check if discriminator matches this tag
@@ -250,8 +250,8 @@ let witnessMatch
             let cmpSSA = nextSSA ()
 
             let checkOps = [
-                MLIROp.ArithOp (ArithOp.ConstI (tagSSA, int64 tag, MLIRTypes.i32))
-                MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, discrimSSA, tagSSA, MLIRTypes.i32))
+                MLIROp.ArithOp (ArithOp.ConstI (tagSSA, int64 tag, tagType))
+                MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, discrimSSA, tagSSA, tagType))
             ]
 
             // Then branch: this case

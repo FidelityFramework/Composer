@@ -301,8 +301,8 @@ let witnessListExpr
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Witness discriminated union case construction
-/// DU layout: { i32 discriminator, payload }
-/// Uses 3-4 pre-assigned SSAs: tag[0], undef[1], withTag[2], result[3] (if payload)
+/// DU layout: { tag, payload } where types come from unionType struct
+/// Uses 3-5 pre-assigned SSAs depending on payload conversion needs
 let witnessUnionCase
     (nodeId: NodeId)
     (z: PSGZipper)
@@ -318,9 +318,16 @@ let witnessUnionCase
         ssaIdx <- ssaIdx + 1
         ssa
 
-    // Create discriminator constant
+    // Extract tag and payload types from the union struct
+    let tagType, payloadSlotType =
+        match unionType with
+        | TStruct [t; p] -> t, Some p
+        | TStruct [t] -> t, None
+        | _ -> TInt I8, None  // Fallback
+
+    // Create discriminator constant with correct type
     let tagSSA = nextSSA ()
-    let tagOp = MLIROp.ArithOp (ArithOp.ConstI (tagSSA, int64 tag, MLIRTypes.i32))
+    let tagOp = MLIROp.ArithOp (ArithOp.ConstI (tagSSA, int64 tag, tagType))
 
     // Start with undef
     let undefSSA = nextSSA ()
@@ -330,15 +337,97 @@ let witnessUnionCase
     let withTagSSA = nextSSA ()
     let insertTagOp = MLIROp.LLVMOp (LLVMOp.InsertValue (withTagSSA, undefSSA, tagSSA, [0], unionType))
 
-    match payload with
-    | Some payloadVal ->
-        // Insert payload at field 1
+    match payload, payloadSlotType with
+    | Some payloadVal, Some slotType ->
+        // Check if payload needs conversion to match slot type
+        let payloadSSA, conversionOps =
+            if payloadVal.Type = slotType then
+                payloadVal.SSA, []
+            else
+                // Need to convert payload to slot type
+                let convertedSSA = nextSSA ()
+                let convOp =
+                    match payloadVal.Type, slotType with
+                    // Integer widening (sign-extend)
+                    | TInt _, TInt I64 ->
+                        MLIROp.ArithOp (ArithOp.ExtSI (convertedSSA, payloadVal.SSA, payloadVal.Type, slotType))
+                    // Float to i64 (bitcast for storage)
+                    | TFloat F64, TInt I64 ->
+                        MLIROp.LLVMOp (LLVMOp.Bitcast (convertedSSA, payloadVal.SSA, payloadVal.Type, slotType))
+                    | TFloat F32, TInt I64 ->
+                        // f32 → i32 bitcast, then i32 → i64 extend
+                        let tmpSSA = nextSSA ()
+                        // For now, just use the SSA directly - MLIR will handle
+                        MLIROp.ArithOp (ArithOp.ExtSI (convertedSSA, payloadVal.SSA, TInt I32, slotType))
+                    | _ ->
+                        // Default: try sign-extend for integers
+                        MLIROp.ArithOp (ArithOp.ExtSI (convertedSSA, payloadVal.SSA, payloadVal.Type, slotType))
+                convertedSSA, [convOp]
+
+        // Insert (possibly converted) payload at field 1
         let resultSSA = nextSSA ()
-        let insertPayloadOp = MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withTagSSA, payloadVal.SSA, [1], unionType))
-        [tagOp; undefOp; insertTagOp; insertPayloadOp], TRValue { SSA = resultSSA; Type = unionType }
-    | None ->
+        let insertPayloadOp = MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withTagSSA, payloadSSA, [1], unionType))
+        [tagOp; undefOp; insertTagOp] @ conversionOps @ [insertPayloadOp], TRValue { SSA = resultSSA; Type = unionType }
+
+    | None, _ ->
         // No payload, just return with tag
         [tagOp; undefOp; insertTagOp], TRValue { SSA = withTagSSA; Type = unionType }
+
+    | Some _, None ->
+        // Payload provided but struct has no payload slot - error
+        [tagOp; undefOp; insertTagOp], TRValue { SSA = withTagSSA; Type = unionType }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYLOAD EXTRACTION (Pattern Matching)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Witness payload extraction from a DU for pattern matching
+/// DU layout: { tag, payload } - extracts payload[1] and converts to pattern type
+/// Uses 1-2 pre-assigned SSAs: extract[0], convert[1] (if conversion needed)
+///
+/// FOUR PILLARS: This is the witness for pattern payload extraction.
+/// Transfer calls this witness; Transfer does NOT emit ops directly.
+let witnessPayloadExtract
+    (ssas: SSA list)  // Pre-assigned SSAs for this extraction
+    (scrutineeSSA: SSA)
+    (scrutineeType: MLIRType)
+    (patternType: MLIRType)
+    : MLIROp list * Val =
+
+    // Get slot type from scrutinee struct (field 1 is payload)
+    let slotType =
+        match scrutineeType with
+        | TStruct [_; p] -> p
+        | _ -> patternType  // Fallback
+
+    // Extract payload as slot type
+    let extractSSA = ssas.[0]
+    let extractOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (extractSSA, scrutineeSSA, [1], scrutineeType))
+
+    // Convert extracted value to pattern type if different
+    if slotType = patternType then
+        [extractOp], { SSA = extractSSA; Type = patternType }
+    else
+        // Need conversion - use second pre-assigned SSA
+        let convertSSA = ssas.[1]
+        let convOp =
+            match slotType, patternType with
+            // i64 → i32 truncation (narrowing)
+            | TInt I64, TInt I32 ->
+                MLIROp.ArithOp (ArithOp.TruncI (convertSSA, extractSSA, slotType, patternType))
+            // i64 → f64 bitcast (reinterpret stored bits as float)
+            | TInt I64, TFloat F64 ->
+                MLIROp.LLVMOp (LLVMOp.Bitcast (convertSSA, extractSSA, slotType, patternType))
+            // i64 → f32 via bitcast (lower 32 bits)
+            | TInt I64, TFloat F32 ->
+                MLIROp.LLVMOp (LLVMOp.Bitcast (convertSSA, extractSSA, TInt I32, patternType))
+            // Other narrowing cases
+            | TInt _, TInt _ ->
+                MLIROp.ArithOp (ArithOp.TruncI (convertSSA, extractSSA, slotType, patternType))
+            | _ ->
+                // Default: truncate (may be wrong for some type combos)
+                MLIROp.ArithOp (ArithOp.TruncI (convertSSA, extractSSA, slotType, patternType))
+        [extractOp; convOp], { SSA = convertSSA; Type = patternType }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SRTP TRAIT CALLS

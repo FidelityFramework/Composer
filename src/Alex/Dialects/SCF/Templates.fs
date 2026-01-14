@@ -129,15 +129,17 @@ let blockArg (ssa: SSA) (ty: MLIRType) : BlockArg =
 /// Create a while loop structure for mutable iteration
 /// condOps should end with scf.condition
 /// bodyOps should end with scf.yield
+/// NOTE: SCF regions use anonymous entry blocks - block args are implicitly defined by the operation
 let whilePattern (condOps: MLIROp list) (bodyOps: MLIROp list) (iterArgs: Val list) : SCFOp =
-    let condRegion = singleBlockRegion "before" (iterArgs |> List.map (fun v -> blockArg v.SSA v.Type)) condOps
-    let bodyRegion = singleBlockRegion "do" (iterArgs |> List.map (fun v -> blockArg v.SSA v.Type)) bodyOps
+    let condRegion = singleBlockRegion "" [] condOps
+    let bodyRegion = singleBlockRegion "" [] bodyOps
     SCFOp.While (iterArgs |> List.map (fun v -> v.SSA), condRegion, bodyRegion, iterArgs)
 
 /// Create a for loop structure
 /// bodyOps should end with scf.yield
+/// NOTE: SCF regions use anonymous entry blocks - block args are implicitly defined by the operation
 let forPattern (iv: SSA) (start: SSA) (stop: SSA) (step: SSA) (bodyOps: MLIROp list) (iterArgs: Val list) : SCFOp =
-    let bodyRegion = singleBlockRegion "body" (blockArg iv MLIRTypes.index :: (iterArgs |> List.map (fun v -> blockArg v.SSA v.Type))) bodyOps
+    let bodyRegion = singleBlockRegion "" [] bodyOps
     SCFOp.For (iterArgs |> List.map (fun v -> v.SSA), iv, start, stop, step, bodyRegion, iterArgs)
 
 // ═══════════════════════════════════════════════════════════════════════════

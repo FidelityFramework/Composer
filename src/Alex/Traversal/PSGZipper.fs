@@ -24,6 +24,7 @@ open Alex.Preprocessing.SSAAssignment
 open Alex.Preprocessing.MutabilityAnalysis
 open Alex.Preprocessing.StringCollection
 open Alex.Preprocessing.PlatformConfig
+open Alex.Preprocessing.PatternBindingAnalysis
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ZIPPER PATH (Breadcrumbs)
@@ -70,6 +71,9 @@ type EmissionState = {
 
     /// Platform binding resolution results (runtime mode, syscall vs libc, etc.)
     Platform: PlatformResolutionResult
+
+    /// Pattern binding analysis results (match case bindings, entry bindings)
+    PatternBindings: PatternBindingAnalysisResult
 
     // ─────────────────────────────────────────────────────────────────────────
     /// Counter for lambda names
@@ -156,13 +160,14 @@ type PSGZipper = {
 
 module EmissionState =
     /// Create emission state from preprocessing results
-    /// ARCHITECTURAL PRINCIPLE: All coeffects (SSA, mutability, strings, platform)
+    /// ARCHITECTURAL PRINCIPLE: All coeffects (SSA, mutability, strings, platform, patterns)
     /// are computed in preprocessing passes and passed here as immutable data.
     let create
         (ssaAssign: SSAAssignment)
         (mutInfo: MutabilityAnalysisResult)
         (stringTable: StringTable)
         (platform: PlatformResolutionResult)
+        (patternBindings: PatternBindingAnalysisResult)
         (entryPointLambdaIds: Set<int>)
         : EmissionState =
         // Start lambda ID counter after the highest lambda_N used in SSAAssignment
@@ -182,6 +187,7 @@ module EmissionState =
             SSAAssignment = ssaAssign
             MutabilityInfo = mutInfo
             Platform = platform
+            PatternBindings = patternBindings
             NextLambdaId = maxLambdaId + 1
             CurrentOps = []
             TopLevel = []
@@ -260,18 +266,19 @@ let create
     | None -> None
 
 /// Create a zipper at the first entry point
-/// All coeffects (SSA, mutability, strings, platform) are pre-computed and passed in.
+/// All coeffects (SSA, mutability, strings, platform, patterns) are pre-computed and passed in.
 let fromEntryPoint
     (graph: SemanticGraph)
     (ssaAssign: SSAAssignment)
     (mutInfo: MutabilityAnalysisResult)
     (stringTable: StringTable)
     (platform: PlatformResolutionResult)
+    (patternBindings: PatternBindingAnalysisResult)
     (entryPointLambdaIds: Set<int>)
     : PSGZipper option =
     match graph.EntryPoints with
     | entryId :: _ ->
-        let state = EmissionState.create ssaAssign mutInfo stringTable platform entryPointLambdaIds
+        let state = EmissionState.create ssaAssign mutInfo stringTable platform patternBindings entryPointLambdaIds
         create graph entryId state
     | [] -> None
 

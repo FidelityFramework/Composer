@@ -104,7 +104,9 @@ let private nodeExpansionCost (kind: SemanticKind) : int =
     | SemanticKind.RecordExpr _ -> 10     // undef + inserts
     | SemanticKind.ArrayExpr _ -> 20      // allocs + stores + fat pointer
     | SemanticKind.ListExpr _ -> 20       // same as array
-    | SemanticKind.UnionCase _ -> 4       // tag + undef + insert(s)
+    | SemanticKind.UnionCase _ -> 6       // tag + undef + withTag + conversion + result
+    // PatternBinding needs SSAs for payload extraction + type conversion
+    | SemanticKind.PatternBinding _ -> 2  // extract + convert
     // Most nodes produce one result
     | _ -> 1
 

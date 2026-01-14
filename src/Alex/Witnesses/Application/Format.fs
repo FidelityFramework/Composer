@@ -95,7 +95,8 @@ let intToString (nodeId: NodeId) (z: PSGZipper) (intVal: Val) : MLIROp list * Va
         MLIROp.ArithOp (ArithOp.CmpI (condSSA, ICmpPred.Sgt, nArgSSA, zeroSSA, MLIRTypes.i64))
         MLIROp.SCFOp (scfCondition condSSA [nArg; posArg])
     ]
-    let condRegion = singleBlockRegion "before" [nArg; posArg] condOps
+    // Empty label but keep args - args define SSAs available inside region
+    let condRegion = singleBlockRegion "" [nArg; posArg] condOps
 
     // Body region: extract digit, store, decrement
     let digitSSA = nextSSA ()
@@ -123,7 +124,8 @@ let intToString (nodeId: NodeId) (z: PSGZipper) (intVal: Val) : MLIROp list * Va
         // yield newN, newPos (same types as block args)
         MLIROp.SCFOp (scfYield [{ SSA = newNSSA; Type = MLIRTypes.i64 }; { SSA = newPosSSA; Type = MLIRTypes.i64 }])
     ]
-    let bodyRegion = singleBlockRegion "do" [nArg; posArg] bodyOps
+    // "do" region needs explicit block args - use ^bb0 to trigger emission
+    let bodyRegion = singleBlockRegion "bb0" [nArg; posArg] bodyOps
 
     // The while loop itself
     let loopResultSSA = nextSSA ()
@@ -317,7 +319,7 @@ let floatToString (nodeId: NodeId) (z: PSGZipper) (floatVal: Val) : MLIROp list 
         MLIROp.ArithOp (ArithOp.CmpI (fracCondSSA, ICmpPred.Sgt, fracCountArg.SSA, zeroI64SSA, MLIRTypes.i64))
         MLIROp.SCFOp (scfCondition fracCondSSA [fracNArg; fracPosArg; fracCountArg])
     ]
-    let fracCondRegion = singleBlockRegion "before" [fracNArg; fracPosArg; fracCountArg] fracCondOps
+    let fracCondRegion = singleBlockRegion "" [fracNArg; fracPosArg; fracCountArg] fracCondOps
 
     let fracDigitSSA = nextSSA ()
     let fracDigit8SSA = nextSSA ()
@@ -342,7 +344,7 @@ let floatToString (nodeId: NodeId) (z: PSGZipper) (floatVal: Val) : MLIROp list 
             { SSA = fracNewCountSSA; Type = MLIRTypes.i64 }
         ])
     ]
-    let fracBodyRegion = singleBlockRegion "do" [fracNArg; fracPosArg; fracCountArg] fracBodyOps
+    let fracBodyRegion = singleBlockRegion "bb0" [fracNArg; fracPosArg; fracCountArg] fracBodyOps
 
     let fracLoopResult1SSA = nextSSA ()
     let fracLoopResult2SSA = nextSSA ()
@@ -383,7 +385,7 @@ let floatToString (nodeId: NodeId) (z: PSGZipper) (floatVal: Val) : MLIROp list 
         MLIROp.ArithOp (ArithOp.CmpI (intCondSSA, ICmpPred.Sgt, intNArg.SSA, zeroI64SSA, MLIRTypes.i64))
         MLIROp.SCFOp (scfCondition intCondSSA [intNArg; intPosArg])
     ]
-    let intCondRegion = singleBlockRegion "before" [intNArg; intPosArg] intCondOps
+    let intCondRegion = singleBlockRegion "" [intNArg; intPosArg] intCondOps
 
     let intDigitSSA = nextSSA ()
     let intDigit8SSA = nextSSA ()
@@ -405,7 +407,7 @@ let floatToString (nodeId: NodeId) (z: PSGZipper) (floatVal: Val) : MLIROp list 
             { SSA = intNewPosSSA; Type = MLIRTypes.i64 }
         ])
     ]
-    let intBodyRegion = singleBlockRegion "do" [intNArg; intPosArg] intBodyOps
+    let intBodyRegion = singleBlockRegion "bb0" [intNArg; intPosArg] intBodyOps
 
     let intLoopResult1SSA = nextSSA ()
     let intLoopResult2SSA = nextSSA ()
@@ -568,7 +570,7 @@ let stringToInt (nodeId: NodeId) (z: PSGZipper) (strVal: Val) : MLIROp list * Va
         MLIROp.ArithOp (ArithOp.CmpI (condSSA, ICmpPred.Slt, idxArgSSA, lenSSA, MLIRTypes.i64))
         MLIROp.SCFOp (scfCondition condSSA [accArg; idxArg])
     ]
-    let condRegion = singleBlockRegion "before" [accArg; idxArg] condOps
+    let condRegion = singleBlockRegion "" [accArg; idxArg] condOps
 
     // Body region
     let gepSSA = nextSSA ()
@@ -600,7 +602,7 @@ let stringToInt (nodeId: NodeId) (z: PSGZipper) (strVal: Val) : MLIROp list * Va
         // yield (same types as block args)
         MLIROp.SCFOp (scfYield [{ SSA = newAccSSA; Type = MLIRTypes.i64 }; { SSA = newIdxSSA; Type = MLIRTypes.i64 }])
     ]
-    let bodyRegion = singleBlockRegion "do" [accArg; idxArg] bodyOps
+    let bodyRegion = singleBlockRegion "bb0" [accArg; idxArg] bodyOps
 
     // While loop
     let loopResultSSA = nextSSA ()
