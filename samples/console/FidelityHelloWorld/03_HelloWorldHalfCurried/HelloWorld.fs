@@ -9,7 +9,8 @@ let greet (name: string) : unit =
 
 let hello() =
     Console.write "Enter your name: "
-
+    // With inline expansion, Console.readln's stackalloc moves to hello's frame
+    // The returned string is valid through hello's scope
     Console.readln()
     |> greet
 

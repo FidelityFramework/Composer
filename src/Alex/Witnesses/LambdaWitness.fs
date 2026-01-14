@@ -266,20 +266,26 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                             paramTy :: extractParamTypes resultTy (count - 1)
                         | _ -> []
 
-                // Check for unit parameter case: params is empty but type implies one argument
-                // FNCS represents unit-taking lambda as empty params list, but type is Unit -> T
-                let isUnitParam = 
-                    List.isEmpty params' && 
-                    (match node.Type with 
-                     | NativeType.TFun(NativeType.TApp(tc, _), _) -> tc.Name = "unit" 
-                     | _ -> false)
+                // NTU PRINCIPLE: Unit has size 0, so unit parameters are elided
+                // Check if the function domain type is unit - if so, nullary at native level
+                // Conservative: only elide when we have positive proof of NTUunit
+                let isUnitParam =
+                    match node.Type with
+                    | NativeType.TFun(NativeType.TApp(tc, _), _) ->
+                        tc.NTUKind = Some NTUKind.NTUunit || tc.Name = "unit"
+                    | NativeType.TFun _ ->
+                        false  // TVar, TFun, TTuple domains - not unit, don't elide
+                    | _nonFunType ->
+                        // Lambda should have TFun type. If not, conservative fallback:
+                        // don't elide parameters (safe behavior, just potentially suboptimal)
+                        false
 
                 let mlirPs, bindings =
                     if isUnitParam then
-                        // Synthesize a dummy unit parameter (Arg 0: i32)
-                        // This ensures MLIR signature matches (i32) -> ...
-                        let unitType = NativeType.TApp({ Name = "unit"; Module = []; ParamKinds = []; Layout = TypeLayout.Inline(0, 1); NTUKind = Some NTUKind.NTUunit; FieldCount = 0 }, [])
-                        [(Arg 0, mapType unitType)], []
+                        // NTUunit has size 0 - no parameter generated
+                        // A function taking unit is nullary at the native level
+                        // This aligns with call sites which also elide unit arguments
+                        [], []
                     else
                         let nodeParamTypes = extractParamTypes node.Type (List.length params')
 
