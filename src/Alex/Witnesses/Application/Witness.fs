@@ -20,6 +20,7 @@ open Alex.Patterns.SemanticPatterns
 module Primitives = Alex.Witnesses.Application.Primitives
 module Format = Alex.Witnesses.Application.Format
 module Platform = Alex.Witnesses.Application.Platform
+module ArenaTemplates = Alex.Dialects.LLVM.Templates
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UNIT TYPE DETECTION
@@ -249,7 +250,8 @@ let private witnessNativePtrOp
 
     | PtrOfNativeInt, [intVal] ->
         // NativePtr.ofNativeInt: nativeint -> ptr
-        let op = MLIROp.LLVMOp (LLVMOp.IntToPtr (resultSSA, intVal.SSA, MLIRTypes.ptr))
+        // Source type is intVal.Type (i64 for nativeint), NOT ptr
+        let op = MLIROp.LLVMOp (LLVMOp.IntToPtr (resultSSA, intVal.SSA, intVal.Type))
         Some ([op], TRValue { SSA = resultSSA; Type = MLIRTypes.ptr })
 
     | PtrToVoidPtr, [ptr] ->
@@ -462,6 +464,105 @@ let private witnessIntrinsic
                  MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withPtrSSA, lenSSA, [1], MLIRTypes.nativeStr))
              ]
              Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.nativeStr })
+        | _ -> None
+
+    // Arena operations - deterministic bump allocation
+    // Delegates to ArenaTemplates for MLIR construction
+    | ArenaOp opName ->
+        match opName, args with
+        | "fromPointer", [baseArg; capacityArg] ->
+            // Arena.fromPointer: nativeint -> int -> Arena<'lifetime>
+            let ssas = requireNodeSSAs appNodeId z
+            let mutable ssaIdx = 0
+            let nextSSA () = let s = ssas.[ssaIdx] in ssaIdx <- ssaIdx + 1; s
+
+            // Handle base: convert nativeint to ptr if needed
+            let basePtrOps, basePtrSSA =
+                if baseArg.Type = MLIRTypes.ptr then [], baseArg.SSA
+                else
+                    let convSSA = nextSSA()
+                    [MLIROp.LLVMOp (LLVMOp.IntToPtr (convSSA, baseArg.SSA, baseArg.Type))], convSSA
+
+            // Handle capacity: extend to i64 if needed
+            let capExtOps, capI64SSA =
+                if capacityArg.Type = MLIRTypes.i64 then [], capacityArg.SSA
+                else
+                    let extSSA = nextSSA()
+                    [MLIROp.ArithOp (ArithOp.ExtSI (extSSA, capacityArg.SSA, capacityArg.Type, MLIRTypes.i64))], extSSA
+
+            // SSAs for template
+            let capPtrSSA = nextSSA()
+            let zeroI64SSA = nextSSA()
+            let zeroPtrSSA = nextSSA()
+            let undefSSA = nextSSA()
+            let withBaseSSA = nextSSA()
+            let withCapSSA = nextSSA()
+
+            // Zero constant + template
+            let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroI64SSA, 0L, MLIRTypes.i64))
+            let templateOps = ArenaTemplates.buildArena resultSSA basePtrSSA capI64SSA capPtrSSA zeroI64SSA zeroPtrSSA undefSSA withBaseSSA withCapSSA
+                              |> List.map MLIROp.LLVMOp
+
+            Some (basePtrOps @ capExtOps @ [zeroOp] @ templateOps, TRValue { SSA = resultSSA; Type = ArenaTemplates.arenaType })
+
+        | "alloc", [arenaByref; sizeArg] ->
+            // Arena.alloc: byref<Arena<'lifetime>> -> int -> nativeint
+            let ssas = requireNodeSSAs appNodeId z
+            let mutable ssaIdx = 0
+            let nextSSA () = let s = ssas.[ssaIdx] in ssaIdx <- ssaIdx + 1; s
+
+            let arenaSSA = nextSSA()
+            let baseSSA = nextSSA()
+            let posPtrSSA = nextSSA()
+            let posI64SSA = nextSSA()
+
+            // Handle size: extend to i64 if needed
+            let sizeOps, sizeSSA =
+                if sizeArg.Type = MLIRTypes.i64 then [], sizeArg.SSA
+                else
+                    let extSSA = nextSSA()
+                    [MLIROp.ArithOp (ArithOp.ExtSI (extSSA, sizeArg.SSA, sizeArg.Type, MLIRTypes.i64))], extSSA
+
+            let newPosI64SSA = nextSSA()
+            let newPosPtrSSA = nextSSA()
+            let resultPtrSSA = nextSSA()
+            let newArenaSSA = nextSSA()
+            let resultIntSSA = nextSSA()  // Final nativeint result
+
+            // Use templates
+            let extractOps = ArenaTemplates.extractArenaForAlloc arenaSSA arenaByref.SSA baseSSA posPtrSSA posI64SSA
+                             |> List.map MLIROp.LLVMOp
+            let (bumpLLVMOps, addOp) = ArenaTemplates.bumpArenaPosition arenaSSA arenaByref.SSA baseSSA posI64SSA sizeSSA newPosI64SSA newPosPtrSSA resultPtrSSA newArenaSSA
+            let bumpOps = [MLIROp.ArithOp addOp] @ (bumpLLVMOps |> List.map MLIROp.LLVMOp)
+
+            // Convert GEP result (ptr) to nativeint as per Arena.alloc signature
+            let ptrToIntOp = MLIROp.LLVMOp (LLVMOp.PtrToInt (resultIntSSA, resultPtrSSA, MLIRTypes.i64))
+
+            Some (extractOps @ sizeOps @ bumpOps @ [ptrToIntOp], TRValue { SSA = resultIntSSA; Type = MLIRTypes.i64 })
+
+        | "remaining", [arena] ->
+            // Arena.remaining: Arena<'lifetime> -> int
+            let ssas = requireNodeSSAs appNodeId z
+            let capPtrSSA, posPtrSSA, capI64SSA, posI64SSA, diffSSA = ssas.[0], ssas.[1], ssas.[2], ssas.[3], ssas.[4]
+
+            let extractOps = ArenaTemplates.extractArenaForRemaining arena.SSA capPtrSSA posPtrSSA capI64SSA posI64SSA
+                             |> List.map MLIROp.LLVMOp
+            let mathOps = [
+                MLIROp.ArithOp (ArithOp.SubI (diffSSA, capI64SSA, posI64SSA, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, diffSSA, MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (extractOps @ mathOps, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+
+        | "reset", [arenaByref] ->
+            // Arena.reset: byref<Arena<'lifetime>> -> unit
+            let ssas = requireNodeSSAs appNodeId z
+            let arenaSSA, zeroI64SSA, zeroPtrSSA, newArenaSSA = ssas.[0], ssas.[1], ssas.[2], ssas.[3]
+
+            let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroI64SSA, 0L, MLIRTypes.i64))
+            let templateOps = ArenaTemplates.resetArenaPosition arenaSSA arenaByref.SSA zeroI64SSA zeroPtrSSA newArenaSSA
+                              |> List.map MLIROp.LLVMOp
+            Some ([zeroOp] @ templateOps, TRVoid)
+
         | _ -> None
 
     // Unhandled intrinsics

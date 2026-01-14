@@ -905,6 +905,135 @@ STOP. The fix is UPSTREAM in FNCS, not downstream patching in Alex.
 
 ---
 
+## Mistake 21: AddressOf Using Loaded Values Instead of Alloca Pointers (January 2026)
+
+Discovered during Arena intrinsic implementation when `Arena.alloc &arena` failed.
+
+**The Bug**:
+```fsharp
+// In FNCSTransfer.fs - AddressOf handling
+| SemanticKind.AddressOf (exprId, isMutable) ->
+    match resolveNodeToVal exprId z with  // WRONG: gets the LOADED value
+    | Some exprVal ->
+        let ops, result = MemWitness.witnessAddressOf node.Id z exprVal.SSA exprVal.Type isMutable
+```
+
+**What Happened**:
+1. `let mutable arena = ...` creates an alloca and stores the value
+2. VarRef witness LOADS the value from the alloca: `%v5 = llvm.load %v4`
+3. AddressOf tries to get address of the loaded value: `& %v5`
+4. Result: trying to take address of a register value (impossible in LLVM)
+
+**The MLIR Output**:
+```mlir
+%v4 = llvm.alloca %v3 x !llvm.struct<...>  // alloca for arena
+%v5 = llvm.store %v2, %v4                  // store initial value
+%v6 = llvm.load %v4 : ... -> struct        // VarRef loads the value
+// AddressOf tries to use %v6 (loaded struct) instead of %v4 (alloca ptr)!
+```
+
+**The Fix**:
+For AddressOf targeting a mutable VarRef, get the alloca pointer directly from the SSA coeffect instead of going through the VarRef witness:
+
+```fsharp
+| SemanticKind.AddressOf (exprId, isMutable) ->
+    // Check if target is an addressed mutable binding
+    let isTargetAddressedMutable =
+        match exprNode with
+        | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
+            EmissionState.isAddressedMutable (NodeId.value defId) z.State
+        | _ -> false
+
+    if isTargetAddressedMutable then
+        // Get alloca pointer directly, skip the load
+        match SSAAssign.lookupSSAs defId ssaAssignment with
+        | Some ssas when ssas.Length >= 2 ->
+            let allocaSSA = ssas.[1]  // [oneConst, allocaPtr] for addressed mutables
+            z', TRValue { SSA = allocaSSA; Type = TPtr }
+```
+
+**The Principle**: AddressOf of a mutable binding needs the ADDRESS (alloca pointer), not the VALUE (loaded from alloca). The SSA coeffect stores both - use the right one.
+
+---
+
+## Mistake 22: Nested Lambda Scope Corruption (January 2026)
+
+Discovered when sample 02 generated wrong function signatures.
+
+**The Bug**:
+```mlir
+; EXPECTED:
+func.func @main(%arg0: !llvm.ptr) -> i32 { ... }
+
+; ACTUAL:
+func.func @main() -> i32 { ... }  ; MISSING PARAMETER!
+```
+
+**What Happened**:
+1. `main` enters function with `params = [(%arg0, ptr)]`
+2. `hello` (nested lambda inside main) enters with its own params
+3. `hello` exits, `exitFunction` clears `CurrentFuncParams` to `None`
+4. `main`'s function def is emitted with NO PARAMETERS
+
+**The Fix**:
+Added parameter stacks to EmissionState:
+
+```fsharp
+type EmissionState = {
+    // ...
+    mutable FuncParamsStack: ((SSA * MLIRType) list) list
+    mutable FuncRetTypeStack: MLIRType list
+}
+
+let enterFunction name params' retType visibility z =
+    // Save current params to stack before overwriting
+    match z.State.CurrentFuncParams with
+    | Some ps -> z.State.FuncParamsStack <- ps :: z.State.FuncParamsStack
+    | None -> ()
+    z.State.CurrentFuncParams <- Some params'
+    // ...
+
+let exitFunction z =
+    // Restore params from stack
+    match z.State.FuncParamsStack with
+    | saved :: rest ->
+        z.State.CurrentFuncParams <- Some saved
+        z.State.FuncParamsStack <- rest
+    | [] ->
+        z.State.CurrentFuncParams <- None
+    // ...
+```
+
+**The Principle**: Nested function scopes must save and restore outer scope state. The stack pattern is standard for any nested traversal with mutable context.
+
+---
+
+## Mistake 23: LLVM Store Operand Order (January 2026)
+
+Simple but pernicious bug in Arena templates.
+
+**The Bug**:
+```fsharp
+// WRONG - operand order swapped
+Store (arenaPtrSSA, newArenaSSA, arenaType, NotAtomic)
+```
+
+**The MLIR Output**:
+```mlir
+; Trying to store a pointer AS a struct value:
+llvm.store %arg0, %v14 : !llvm.ptr, !llvm.struct<...>  ; TYPE MISMATCH!
+```
+
+**The Fix**:
+```fsharp
+// RIGHT - value first, then pointer
+Store (newArenaSSA, arenaPtrSSA, arenaType, NotAtomic)
+```
+
+**The Principle**: LLVM Store is `store value, ptr` - the thing being stored comes first. This matches the semantic reading: "store VALUE into PTR".
+
+---
+
 # The Acid Test
 
 Before committing any change, ask:

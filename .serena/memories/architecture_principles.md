@@ -245,6 +245,28 @@ module Console =
 
 **DEPRECATED** - The old `Platform.Bindings` with `Unchecked.defaultof` stubs is deprecated. See `binding_architecture_unified` memory for the canonical architecture.
 
+## Deterministic Memory Management
+
+> **Fidelity has NO garbage collector. Memory lifetime is deterministic - tied to computation boundaries.**
+
+See `memory_management_architecture` and `deterministic_memory_management` memories for full details.
+
+**Key Mechanisms:**
+1. **Stack allocation** - Local values with non-escaping lifetime
+2. **Continuation-bounded resources** - RAII cleanup when async completes
+3. **Actor arenas** - Bulk reclamation when actor terminates
+
+**Three Levels of Control:**
+- **Level 1 (Default)**: Compiler decides, developer writes idiomatic F#
+- **Level 2 (Hints)**: `[<Struct>]`, `inline`, capacity hints
+- **Level 3 (Explicit)**: `[<BAREStruct>]`, `MemoryPool`, `BARESpan<'T>`
+
+**The byref problem** - .NET restricts byrefs to stack frames. Fidelity solves this through:
+- BAREWire capability-based memory (separates lifetime from access)
+- Reference Sentinels (cross-process reference tracking)
+- RAII actor arenas (deterministic cleanup)
+- Static compilation (zero runtime overhead)
+
 ## Coeffects and Codata
 
 From the SpeakEZ blog:

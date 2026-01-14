@@ -259,30 +259,28 @@ let private transferGraphCore
                         z, TRVoid
 
             // ─────────────────────────────────────────────────────────────────
-            // Mutable set
+            // Mutable set - dispatch to witness
             // ─────────────────────────────────────────────────────────────────
             | SemanticKind.Set (targetId, valueId) ->
                 match SemanticGraph.tryGetNode targetId graph with
                 | Some targetNode ->
                     match targetNode.Kind with
-                    | SemanticKind.VarRef (name, _) ->
+                    | SemanticKind.VarRef (name, defIdOpt) ->
+                        // VarRef target: dispatch to BindingWitness.witnessSet
                         match recallNodeResult (NodeId.value valueId) z with
                         | Some (valueSSA, valueType) ->
-                            match lookupModuleLevelMutable name z with
-                            | Some (_, globalName) ->
-                                // Set node needs 1 SSA for addressof intermediate
-                                let addrSSA = requireNodeSSA node.Id z
-                                let addrOp = MLIROp.LLVMOp (LLVMOp.AddressOf (addrSSA, GlobalRef.GNamed globalName))
-                                let storeOp = MLIROp.LLVMOp (LLVMOp.Store (valueSSA, addrSSA, valueType, AtomicOrdering.NotAtomic))
-                                emit addrOp z
-                                emit storeOp z
-                                z, TRVoid
-                            | None ->
-                                let z' = bindVarSSA name valueSSA valueType z
-                                z', TRVoid
+                            let witnessCtx: BindWitness.WitnessContext = {
+                                SSA = ssaAssignment
+                                Mutability = analysisResult
+                                Graph = graph
+                            }
+                            let ops, result = BindWitness.witnessSet witnessCtx z node.Id name defIdOpt valueSSA valueType
+                            emitAll ops z
+                            z, result
                         | None ->
                             z, TRError (sprintf "Set: value not computed for '%s'" name)
                     | _ ->
+                        // Non-VarRef target (e.g., pointer dereference): direct store
                         match recallNodeResult (NodeId.value targetId) z,
                               recallNodeResult (NodeId.value valueId) z with
                         | Some (targetSSA, _), Some (valueSSA, valueType) ->
@@ -445,13 +443,38 @@ let private transferGraphCore
                     z, TRError "IndexSet: collection, index, or value not computed"
 
             | SemanticKind.AddressOf (exprId, isMutable) ->
-                match resolveNodeToVal exprId z with
-                | Some exprVal ->
-                    let ops, result = MemWitness.witnessAddressOf node.Id z exprVal.SSA exprVal.Type isMutable
-                    emitAll ops z
-                    z, result
-                | None ->
-                    z, TRError "AddressOf: expr not computed"
+                // For AddressOf of mutable bindings, we need the alloca pointer, NOT the loaded value.
+                // The VarRef witness loads values from allocas, but AddressOf needs the address itself.
+                let exprNode = SemanticGraph.tryGetNode exprId graph
+                let isTargetAddressedMutable =
+                    match exprNode with
+                    | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
+                        EmissionState.isAddressedMutable (NodeId.value defId) z.State
+                    | _ -> false
+
+                if isTargetAddressedMutable then
+                    // Get the alloca pointer directly from the definition's SSA assignment
+                    match exprNode with
+                    | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
+                        match SSAAssign.lookupSSAs defId ssaAssignment with
+                        | Some ssas when ssas.Length >= 2 ->
+                            // For addressed mutables: [oneConst, allocaPtr]
+                            let allocaSSA = ssas.[1]
+                            let z' = bindNodeResult nodeIdVal allocaSSA TPtr z
+                            z', TRValue { SSA = allocaSSA; Type = TPtr }
+                        | _ ->
+                            z, TRError "AddressOf: mutable binding has no alloca SSA"
+                    | _ ->
+                        z, TRError "AddressOf: expected VarRef for mutable target"
+                else
+                    // Non-mutable or non-VarRef: use standard path
+                    match resolveNodeToVal exprId z with
+                    | Some exprVal ->
+                        let ops, result = MemWitness.witnessAddressOf node.Id z exprVal.SSA exprVal.Type isMutable
+                        emitAll ops z
+                        z, result
+                    | None ->
+                        z, TRError "AddressOf: expr not computed"
 
             | SemanticKind.TupleExpr elementIds ->
                 let elements =

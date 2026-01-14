@@ -44,6 +44,9 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
         | "char" -> TInt I32  // Unicode codepoint
         | "string" -> NativeStrType
         | "Ptr" | "nativeptr" -> TPtr
+        // Byref types: all three variants map to pointers
+        // This handles the TApp representation; TByref is handled below
+        | "byref" | "inref" | "outref" -> TPtr
         | "array" -> NativeStrType  // Fat pointer {ptr, len}
         | "list" -> failwithf "list type not yet implemented: %A" ty
         | "option" ->
@@ -89,9 +92,9 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
                 | TypeLayout.Reference _ ->
                     failwithf "Reference type not yet implemented: %s" tycon.Name
                 | TypeLayout.NTUCompound n ->
-                    if n = 2 then TStruct [TPtr; TPtr]
-                    elif n = 1 then TPtr
-                    else failwithf "NTUCompound(%d) not yet implemented for %s" n tycon.Name
+                    // Arena<'lifetime> and similar compound types: N platform words
+                    if n = 1 then TPtr
+                    else TStruct (List.replicate n TPtr)
                 | TypeLayout.Inline _ ->
                     failwithf "Unknown inline type '%s' with no fields" tycon.Name
 

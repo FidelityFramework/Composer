@@ -111,6 +111,12 @@ type EmissionState = {
     /// Stack of saved CurrentOps for nested function scopes
     mutable OpsStack: (MLIROp list) list
 
+    /// Stack of saved function params for nested function scopes
+    mutable FuncParamsStack: ((SSA * MLIRType) list) list
+
+    /// Stack of saved return types for nested function scopes
+    mutable FuncRetTypeStack: MLIRType list
+
     // ─────────────────────────────────────────────────────────────────────────
     // VARIABLE BINDINGS (structured types, not strings)
     // ─────────────────────────────────────────────────────────────────────────
@@ -186,6 +192,8 @@ module EmissionState =
             CurrentFuncRetType = None
             Focus = AtNode
             OpsStack = []
+            FuncParamsStack = []
+            FuncRetTypeStack = []
             VarBindings = Map.empty
             NodeBindings = Map.empty
             EntryPointLambdaIds = entryPointLambdaIds
@@ -594,6 +602,13 @@ let enterFunction
     // Save current ops to stack before entering new function scope
     z.State.OpsStack <- z.State.CurrentOps :: z.State.OpsStack
     z.State.CurrentOps <- []  // Fresh ops for this function
+    // Save current function params/retType to stack for nested lambdas
+    match z.State.CurrentFuncParams with
+    | Some ps -> z.State.FuncParamsStack <- ps :: z.State.FuncParamsStack
+    | None -> ()
+    match z.State.CurrentFuncRetType with
+    | Some rt -> z.State.FuncRetTypeStack <- rt :: z.State.FuncRetTypeStack
+    | None -> ()
     z.State.Focus <- InFunction name
     z.State.CurrentFuncParams <- Some params'
     z.State.CurrentFuncRetType <- Some retType
@@ -614,8 +629,20 @@ let exitFunction (z: PSGZipper) : PSGZipper =
     | [] ->
         z.State.CurrentOps <- []
     z.State.Focus <- AtNode
-    z.State.CurrentFuncParams <- None
-    z.State.CurrentFuncRetType <- None
+    // Restore function params from stack (for nested lambdas)
+    match z.State.FuncParamsStack with
+    | saved :: rest ->
+        z.State.CurrentFuncParams <- Some saved
+        z.State.FuncParamsStack <- rest
+    | [] ->
+        z.State.CurrentFuncParams <- None
+    // Restore return type from stack (for nested lambdas)
+    match z.State.FuncRetTypeStack with
+    | saved :: rest ->
+        z.State.CurrentFuncRetType <- Some saved
+        z.State.FuncRetTypeStack <- rest
+    | [] ->
+        z.State.CurrentFuncRetType <- None
     z
 
 // ═══════════════════════════════════════════════════════════════════════════

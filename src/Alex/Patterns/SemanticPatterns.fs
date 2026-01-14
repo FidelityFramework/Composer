@@ -282,6 +282,12 @@ let (|MemoOp|_|) (info: IntrinsicInfo) =
 let (|BatchOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Batch then Some info.Operation else None
 
+/// Check if intrinsic is an Arena operation (using IntrinsicInfo)
+/// Arena intrinsics: fromPointer, alloc, allocAligned, remaining, reset
+/// Arena<'lifetime> provides deterministic bump allocation with compile-time lifetime tracking
+let (|ArenaOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Arena then Some info.Operation else None
+
 /// Conversion function names
 let private conversionFunctions = 
     set ["int"; "int8"; "int16"; "int32"; "int64";

@@ -213,3 +213,55 @@ let witnessVarRef
                         | None -> [], TRError (sprintf "No SSA assigned for variable '%s'" name)
         | None ->
             [], TRError (sprintf "Variable '%s' has no definition" name)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MUTABLE SET WITNESSING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Witness a mutable variable assignment (Set)
+/// Generates STORE to the appropriate location (global or alloca)
+/// setNodeId: The NodeId of the Set node itself (for SSA lookup if needed)
+let witnessSet
+    (ctx: WitnessContext)
+    (z: PSGZipper)
+    (setNodeId: NodeId)
+    (name: string)
+    (defId: NodeId option)
+    (valueSSA: SSA)
+    (valueType: MLIRType)
+    : MLIROp list * TransferResult =
+
+    // Check if this targets a module-level mutable
+    match getModuleLevelMutable name ctx with
+    | Some mlm ->
+        // Module-level mutable: emit addressof + store
+        let addrSSA = requireNodeSSA setNodeId z
+        let globalName = sprintf "g_%s" name
+        let addrOp = MLIROp.LLVMOp (AddressOf (addrSSA, GFunc globalName))
+        let storeOp = MLIROp.LLVMOp (Store (valueSSA, addrSSA, valueType, NotAtomic))
+        [addrOp; storeOp], TRVoid
+
+    | None ->
+        // Local variable: check if addressed mutable
+        match defId with
+        | Some nodeId ->
+            let nodeIdVal = NodeId.value nodeId
+
+            if isAddressedMutable nodeIdVal ctx then
+                // Addressed mutable: store to the alloca
+                match lookupSSAs nodeId ctx.SSA with
+                | Some ssas when ssas.Length >= 2 ->
+                    // The binding has: [oneConst, allocaPtr]
+                    // We store to the allocaPtr (index 1)
+                    let allocaSSA = ssas.[1]
+                    let storeOp = MLIROp.LLVMOp (Store (valueSSA, allocaSSA, valueType, NotAtomic))
+                    [storeOp], TRVoid
+                | _ ->
+                    [], TRError (sprintf "No alloca SSA for addressed mutable '%s'" name)
+            else
+                // Not an addressed mutable - this shouldn't happen for Set
+                // (Set targets must be mutable bindings)
+                [], TRError (sprintf "Set target '%s' is not a mutable binding" name)
+
+        | None ->
+            [], TRError (sprintf "Set target '%s' has no definition" name)

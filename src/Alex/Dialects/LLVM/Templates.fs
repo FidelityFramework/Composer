@@ -242,6 +242,105 @@ let intrMemset (dst: Val) (value: Val) (len: Val) (isVolatile: bool) : MLIROp =
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ARENA OPERATIONS (Deterministic Bump Allocation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Arena struct type: {base: ptr, capacity: ptr, position: ptr}
+/// NTUCompound(3) stores all fields as ptr; integers use inttoptr/ptrtoint
+let arenaType = TStruct [TPtr; TPtr; TPtr]
+
+/// Build Arena struct from base pointer and capacity
+/// Returns ops that construct the Arena: {base, inttoptr(cap), inttoptr(0)}
+let buildArena
+    (resultSSA: SSA)
+    (basePtrSSA: SSA)
+    (capI64SSA: SSA)
+    (capPtrSSA: SSA)
+    (zeroI64SSA: SSA)
+    (zeroPtrSSA: SSA)
+    (undefSSA: SSA)
+    (withBaseSSA: SSA)
+    (withCapSSA: SSA)
+    : LLVMOp list =
+    [
+        IntToPtr (capPtrSSA, capI64SSA, MLIRTypes.i64)
+        IntToPtr (zeroPtrSSA, zeroI64SSA, MLIRTypes.i64)
+        Undef (undefSSA, arenaType)
+        InsertValue (withBaseSSA, undefSSA, basePtrSSA, [0], arenaType)
+        InsertValue (withCapSSA, withBaseSSA, capPtrSSA, [1], arenaType)
+        InsertValue (resultSSA, withCapSSA, zeroPtrSSA, [2], arenaType)
+    ]
+
+/// Extract Arena fields: base (ptr), position (as i64)
+/// For alloc: load arena, extract base and position
+let extractArenaForAlloc
+    (arenaSSA: SSA)
+    (arenaPtrSSA: SSA)
+    (baseSSA: SSA)
+    (posPtrSSA: SSA)
+    (posI64SSA: SSA)
+    : LLVMOp list =
+    [
+        Load (arenaSSA, arenaPtrSSA, arenaType, NotAtomic)
+        ExtractValue (baseSSA, arenaSSA, [0], arenaType)
+        ExtractValue (posPtrSSA, arenaSSA, [2], arenaType)
+        PtrToInt (posI64SSA, posPtrSSA, MLIRTypes.i64)
+    ]
+
+/// Bump Arena position and store back
+/// For alloc: compute new position, update arena, store
+let bumpArenaPosition
+    (arenaSSA: SSA)
+    (arenaPtrSSA: SSA)
+    (baseSSA: SSA)
+    (posI64SSA: SSA)
+    (sizeSSA: SSA)
+    (newPosI64SSA: SSA)
+    (newPosPtrSSA: SSA)
+    (resultPtrSSA: SSA)
+    (newArenaSSA: SSA)
+    : (LLVMOp list * ArithOp) =
+    // Returns LLVMOps and one ArithOp (AddI)
+    let llvmOps = [
+        IntToPtr (newPosPtrSSA, newPosI64SSA, MLIRTypes.i64)
+        GEP (resultPtrSSA, baseSSA, [(posI64SSA, MLIRTypes.i64)], MLIRTypes.i8)
+        InsertValue (newArenaSSA, arenaSSA, newPosPtrSSA, [2], arenaType)
+        Store (newArenaSSA, arenaPtrSSA, arenaType, NotAtomic)
+    ]
+    let addOp = ArithOp.AddI (newPosI64SSA, posI64SSA, sizeSSA, MLIRTypes.i64)
+    (llvmOps, addOp)
+
+/// Extract capacity and position for remaining calculation
+let extractArenaForRemaining
+    (arenaSSA: SSA)
+    (capPtrSSA: SSA)
+    (posPtrSSA: SSA)
+    (capI64SSA: SSA)
+    (posI64SSA: SSA)
+    : LLVMOp list =
+    [
+        ExtractValue (capPtrSSA, arenaSSA, [1], arenaType)
+        ExtractValue (posPtrSSA, arenaSSA, [2], arenaType)
+        PtrToInt (capI64SSA, capPtrSSA, MLIRTypes.i64)
+        PtrToInt (posI64SSA, posPtrSSA, MLIRTypes.i64)
+    ]
+
+/// Reset Arena position to 0
+let resetArenaPosition
+    (arenaSSA: SSA)
+    (arenaPtrSSA: SSA)
+    (zeroI64SSA: SSA)
+    (zeroPtrSSA: SSA)
+    (newArenaSSA: SSA)
+    : LLVMOp list =
+    [
+        Load (arenaSSA, arenaPtrSSA, arenaType, NotAtomic)
+        IntToPtr (zeroPtrSSA, zeroI64SSA, MLIRTypes.i64)
+        InsertValue (newArenaSSA, arenaSSA, zeroPtrSSA, [2], arenaType)
+        Store (newArenaSSA, arenaPtrSSA, arenaType, NotAtomic)
+    ]
+
+// ═══════════════════════════════════════════════════════════════════════════
 // WRAP TO MLIROp
 // ═══════════════════════════════════════════════════════════════════════════
 
