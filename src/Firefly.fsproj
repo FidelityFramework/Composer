@@ -73,6 +73,7 @@
       <!-- Alex Bindings - Base types (need PSGZipper for Binding type) -->
       <Compile Include="Alex/Bindings/BindingTypes.fs" />
       <Compile Include="Alex/Bindings/PlatformHelpers.fs" />
+      <Compile Include="Alex/Bindings/SyscallBindings.fs" />
 
       <!-- Alex CodeGeneration - TypeMapping uses FNCS types -->
       <Compile Include="Alex/CodeGeneration/TypeMapping.fs" />

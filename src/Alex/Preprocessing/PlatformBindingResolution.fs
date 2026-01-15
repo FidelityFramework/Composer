@@ -21,6 +21,11 @@ open Alex.Dialects.Core.Types
 let private isPlatformIntrinsic (info: IntrinsicInfo) : bool =
     match info.Module with
     | IntrinsicModule.Sys -> true
+    | IntrinsicModule.DateTime ->
+        // DateTime.now and utcNow need platform resolution (syscall)
+        match info.Operation with
+        | "now" | "utcNow" -> true
+        | _ -> false  // Component extraction is pure arithmetic
     // NOTE: Console is NOT an intrinsic - see fsnative-spec/spec/platform-bindings.md
     | _ -> false
 

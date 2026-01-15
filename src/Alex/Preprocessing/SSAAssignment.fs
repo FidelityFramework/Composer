@@ -143,13 +143,32 @@ let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode
                 // Intrinsics have known SSA costs based on operation
                 match info.Module, info.Operation with
                 | IntrinsicModule.Format, "int" -> 45     // intToString
+                | IntrinsicModule.Format, "int64" -> 45   // intToString (handles i64 directly)
                 | IntrinsicModule.Format, "float" -> 75   // floatToString
                 | IntrinsicModule.Parse, "int" -> 35      // stringToInt
                 | IntrinsicModule.Parse, "float" -> 250   // stringToFloat (complex)
                 | IntrinsicModule.String, "contains" -> 30 // string scanning
                 | IntrinsicModule.String, "concat2" -> 15  // concatenation
                 | IntrinsicModule.String, "length" -> 3    // extract
-                | IntrinsicModule.Sys, _ -> 10             // syscalls
+                | IntrinsicModule.Sys, _ -> 16             // syscalls (clock_gettime needs 16 for ms computation)
+                | IntrinsicModule.DateTime, "now" -> 16    // delegates to clock_gettime
+                | IntrinsicModule.DateTime, "utcNow" -> 16 // delegates to clock_gettime
+                | IntrinsicModule.DateTime, "hour" -> 5    // const + div + rem + trunc
+                | IntrinsicModule.DateTime, "minute" -> 5
+                | IntrinsicModule.DateTime, "second" -> 5
+                | IntrinsicModule.DateTime, "millisecond" -> 3  // just mod + trunc
+                | IntrinsicModule.DateTime, "toTimeString" -> 60  // complex formatting
+                | IntrinsicModule.DateTime, "toDateString" -> 60
+                | IntrinsicModule.DateTime, "toString" -> 80
+                | IntrinsicModule.DateTime, "toDateTimeString" -> 100  // full ISO 8601 format
+                | IntrinsicModule.DateTime, _ -> 20        // other DateTime ops
+                | IntrinsicModule.TimeSpan, "fromMilliseconds" -> 2
+                | IntrinsicModule.TimeSpan, "fromSeconds" -> 3
+                | IntrinsicModule.TimeSpan, "hours" -> 5
+                | IntrinsicModule.TimeSpan, "minutes" -> 5
+                | IntrinsicModule.TimeSpan, "seconds" -> 5
+                | IntrinsicModule.TimeSpan, "milliseconds" -> 3
+                | IntrinsicModule.TimeSpan, _ -> 10        // other TimeSpan ops
                 | IntrinsicModule.NativePtr, _ -> 5        // pointer ops
                 | IntrinsicModule.Array, _ -> 10           // array ops
                 | IntrinsicModule.Operators, _ -> 5        // arithmetic

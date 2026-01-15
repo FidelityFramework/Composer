@@ -455,6 +455,14 @@ let private witnessIntrinsic
             Some (ops, TRValue resultVal)
         | _ -> None
 
+    | FormatOp "int64" ->
+        match args with
+        | [int64Val] ->
+            // intToString handles i64 directly (no extension needed for i64 input)
+            let ops, resultVal = Format.intToString appNodeId z int64Val
+            Some (ops, TRValue resultVal)
+        | _ -> None
+
     | FormatOp "float" ->
         match args with
         | [floatVal] ->
@@ -649,6 +657,114 @@ let private witnessIntrinsic
                               |> List.map MLIROp.LLVMOp
             Some ([zeroOp] @ templateOps, TRVoid)
 
+        | _ -> None
+
+    // DateTime operations
+    | DateTimeOp opName ->
+        match opName, args with
+        | "now", [] | "utcNow", [] ->
+            // Delegates to clock_gettime syscall
+            Platform.witnessSysOp appNodeId z "clock_gettime" [] mlirReturnType
+        | "hour", [msVal] ->
+            // ms / 3600000 % 24
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 3600000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[1], 24L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.DivSI (ssas.[2], msVal.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[3], ssas.[2], ssas.[1], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[3], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "minute", [msVal] ->
+            // ms / 60000 % 60
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 60000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[1], 60L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.DivSI (ssas.[2], msVal.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[3], ssas.[2], ssas.[1], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[3], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "second", [msVal] ->
+            // ms / 1000 % 60
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 1000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[1], 60L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.DivSI (ssas.[2], msVal.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[3], ssas.[2], ssas.[1], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[3], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "millisecond", [msVal] ->
+            // ms % 1000
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 1000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[1], msVal.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[1], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | _ ->
+            // Other DateTime ops (formatting) - not yet implemented
+            None
+
+    // TimeSpan operations
+    | TimeSpanOp opName ->
+        match opName, args with
+        | "fromMilliseconds", [ms] ->
+            // Identity - TimeSpan is represented as int64 milliseconds
+            Some ([], TRValue { SSA = ms.SSA; Type = ms.Type })
+        | "fromSeconds", [sec] ->
+            // sec * 1000
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 1000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.MulI (resultSSA, sec.SSA, ssas.[0], MLIRTypes.i64))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i64 })
+        | "hours", [ts] ->
+            // ts / 3600000
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 3600000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.DivSI (ssas.[1], ts.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[1], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "minutes", [ts] ->
+            // (ts / 60000) % 60
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 60000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[1], 60L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.DivSI (ssas.[2], ts.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[3], ssas.[2], ssas.[1], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[3], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "seconds", [ts] ->
+            // (ts / 1000) % 60
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 1000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[1], 60L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.DivSI (ssas.[2], ts.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[3], ssas.[2], ssas.[1], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[3], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "milliseconds", [ts] ->
+            // ts % 1000
+            let ssas = requireNodeSSAs appNodeId z
+            let ops = [
+                MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 1000L, MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.RemSI (ssas.[1], ts.SSA, ssas.[0], MLIRTypes.i64))
+                MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[1], MLIRTypes.i64, MLIRTypes.i32))
+            ]
+            Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
         | _ -> None
 
     // Unhandled intrinsics

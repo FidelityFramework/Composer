@@ -288,6 +288,16 @@ let (|BatchOp|_|) (info: IntrinsicInfo) =
 let (|ArenaOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Arena then Some info.Operation else None
 
+/// Check if intrinsic is a DateTime operation (using IntrinsicInfo)
+/// DateTime intrinsics: now, utcNow, hour, minute, second, millisecond, toTimeString, toDateString, toString
+let (|DateTimeOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.DateTime then Some info.Operation else None
+
+/// Check if intrinsic is a TimeSpan operation (using IntrinsicInfo)
+/// TimeSpan intrinsics: fromMilliseconds, fromSeconds, etc.
+let (|TimeSpanOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.TimeSpan then Some info.Operation else None
+
 /// Conversion function names
 let private conversionFunctions = 
     set ["int"; "int8"; "int16"; "int32"; "int64";

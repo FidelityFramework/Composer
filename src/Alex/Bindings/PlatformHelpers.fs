@@ -542,6 +542,104 @@ let bindSha1 (_appNodeId: NodeId) (_z: PSGZipper) (_prim: PlatformPrimitive) : B
     NotSupported "sha1 not yet implemented with structured ops"
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DATETIME BINDINGS
+// DateTime operations using milliseconds since Unix epoch
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// DateTime.now - delegates to Sys.clock_gettime (returns ms since epoch)
+let bindDateTimeNow (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+    // DateTime.now is identical to Sys.clock_gettime - just dispatch to it
+    let sysPrim: PlatformPrimitive = {
+        EntryPoint = "Sys.clock_gettime"
+        Library = "platform"
+        CallingConvention = "ccc"
+        Args = []
+        ReturnType = MLIRTypes.i64
+        BindingStrategy = Static
+    }
+    PlatformDispatch.dispatch appNodeId z sysPrim
+
+/// DateTime.hour - extract hour component (0-23) from ms since epoch
+let bindDateTimeHour (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+    match prim.Args with
+    | [msVal] ->
+        let ssas = requireNodeSSAs appNodeId z
+        // ms / 3600000 % 24
+        let c3600000 = ssas.[0]
+        let c24 = ssas.[1]
+        let hoursFull = ssas.[2]
+        let hoursDay = ssas.[3]
+        let hoursTrunc = ssas.[4]
+        let ops = [
+            MLIROp.ArithOp (ArithOp.ConstI (c3600000, 3600000L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.ConstI (c24, 24L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.DivSI (hoursFull, msVal.SSA, c3600000, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.RemSI (hoursDay, hoursFull, c24, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.TruncI (hoursTrunc, hoursDay, MLIRTypes.i64, MLIRTypes.i32))
+        ]
+        BoundOps (ops, Some { SSA = hoursTrunc; Type = MLIRTypes.i32 })
+    | _ -> NotSupported "DateTime.hour requires 1 argument"
+
+/// DateTime.minute - extract minute component (0-59) from ms since epoch
+let bindDateTimeMinute (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+    match prim.Args with
+    | [msVal] ->
+        let ssas = requireNodeSSAs appNodeId z
+        // ms / 60000 % 60
+        let c60000 = ssas.[0]
+        let c60 = ssas.[1]
+        let minsFull = ssas.[2]
+        let minsHour = ssas.[3]
+        let minsTrunc = ssas.[4]
+        let ops = [
+            MLIROp.ArithOp (ArithOp.ConstI (c60000, 60000L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.ConstI (c60, 60L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.DivSI (minsFull, msVal.SSA, c60000, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.RemSI (minsHour, minsFull, c60, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.TruncI (minsTrunc, minsHour, MLIRTypes.i64, MLIRTypes.i32))
+        ]
+        BoundOps (ops, Some { SSA = minsTrunc; Type = MLIRTypes.i32 })
+    | _ -> NotSupported "DateTime.minute requires 1 argument"
+
+/// DateTime.second - extract second component (0-59) from ms since epoch
+let bindDateTimeSecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+    match prim.Args with
+    | [msVal] ->
+        let ssas = requireNodeSSAs appNodeId z
+        // ms / 1000 % 60
+        let c1000 = ssas.[0]
+        let c60 = ssas.[1]
+        let secsFull = ssas.[2]
+        let secsMin = ssas.[3]
+        let secsTrunc = ssas.[4]
+        let ops = [
+            MLIROp.ArithOp (ArithOp.ConstI (c1000, 1000L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.ConstI (c60, 60L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.DivSI (secsFull, msVal.SSA, c1000, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.RemSI (secsMin, secsFull, c60, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.TruncI (secsTrunc, secsMin, MLIRTypes.i64, MLIRTypes.i32))
+        ]
+        BoundOps (ops, Some { SSA = secsTrunc; Type = MLIRTypes.i32 })
+    | _ -> NotSupported "DateTime.second requires 1 argument"
+
+/// DateTime.millisecond - extract millisecond component (0-999) from ms since epoch
+let bindDateTimeMillisecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+    match prim.Args with
+    | [msVal] ->
+        let ssas = requireNodeSSAs appNodeId z
+        // ms % 1000
+        let c1000 = ssas.[0]
+        let msRem = ssas.[1]
+        let msTrunc = ssas.[2]
+        let ops = [
+            MLIROp.ArithOp (ArithOp.ConstI (c1000, 1000L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.RemSI (msRem, msVal.SSA, c1000, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.TruncI (msTrunc, msRem, MLIRTypes.i64, MLIRTypes.i32))
+        ]
+        BoundOps (ops, Some { SSA = msTrunc; Type = MLIRTypes.i32 })
+    | _ -> NotSupported "DateTime.millisecond requires 1 argument"
+
+// ═══════════════════════════════════════════════════════════════════════════
 // REGISTRATION
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -558,3 +656,10 @@ let registerBindings () =
             PlatformDispatch.register os arch "base64Encode" bindBase64Encode
             PlatformDispatch.register os arch "base64Decode" bindBase64Decode
             PlatformDispatch.register os arch "sha1" bindSha1
+            // DateTime operations
+            PlatformDispatch.register os arch "DateTime.now" bindDateTimeNow
+            PlatformDispatch.register os arch "DateTime.utcNow" bindDateTimeNow  // Same as now for now
+            PlatformDispatch.register os arch "DateTime.hour" bindDateTimeHour
+            PlatformDispatch.register os arch "DateTime.minute" bindDateTimeMinute
+            PlatformDispatch.register os arch "DateTime.second" bindDateTimeSecond
+            PlatformDispatch.register os arch "DateTime.millisecond" bindDateTimeMillisecond

@@ -15,6 +15,8 @@ open Core.Toolchain
 open Alex.Traversal.PSGZipper
 open Alex.Bindings.BindingTypes
 open Alex.Bindings.PlatformTypes
+module SyscallBindings = Alex.Bindings.SyscallBindings
+module PlatformHelpers = Alex.Bindings.PlatformHelpers
 open Core.FNCS.Integration
 open Alex.Traversal.FNCSTransfer
 
@@ -167,6 +169,10 @@ let generateMLIR (projectResult: ProjectCheckResult) (targetTriple: string) (isF
 
 /// Compile a project - THE single entry point for all compilation
 let compileProject (options: CompilationOptions) : int =
+    // Initialize platform bindings (syscalls, helpers)
+    PlatformHelpers.registerBindings()
+    SyscallBindings.registerBindings()
+
     // Enable timing if requested
     Core.Timing.setEnabled options.ShowTiming
 

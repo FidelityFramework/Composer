@@ -508,7 +508,7 @@ let llvmOp (op: LLVMOp) (sb: StringBuilder) : unit =
         escapeString content sb
         sb.Append("\") : !llvm.array<").Append(len).Append(" x i8>") |> ignore
     | NullPtr r ->
-        ssa r sb; sb.Append(" = llvm.mlir.null : !llvm.ptr") |> ignore
+        ssa r sb; sb.Append(" = llvm.mlir.zero : !llvm.ptr") |> ignore
 
     // === CALL OPERATIONS ===
     | Call (result, func, args, retTy) ->

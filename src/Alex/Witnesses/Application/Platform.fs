@@ -91,12 +91,12 @@ let witnessPlatformBindingRequired
     bindingResultToTransferWithError result
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INTRINSIC DISPATCH HELPERS
+// SYS.* INTRINSIC DISPATCH
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Witness a Sys.* intrinsic operation
-/// These are TRUE PRIMITIVES - directly generate inline syscalls
-/// Requires 5 pre-assigned SSAs: syscallNum[0], resultSSA[1], truncResult[2], fdExt[3], lenExt[4]
+/// Dispatches to platform-specific bindings in SyscallBindings.fs
+/// This is a THIN ADAPTER - syscall logic lives in Bindings/SyscallBindings.fs
 let witnessSysOp
     (appNodeId: NodeId)
     (z: PSGZipper)
@@ -105,89 +105,20 @@ let witnessSysOp
     (returnType: MLIRType)
     : (MLIROp list * TransferResult) option =
 
-    // Get pre-assigned SSAs for syscall operations
-    let ssas = requireNodeSSAs appNodeId z
+    // Build entry point as "Sys.{opName}" for dispatch lookup
+    let entryPoint = $"Sys.{opName}"
 
-    match opName, args with
-    // Sys.write: fd:int -> ptr:nativeptr<byte> -> len:int -> int
-    | "write", [fdVal; ptrVal; lenVal] ->
-        // Linux x86_64: syscall 1 = write(fd, buf, count)
-        // SSAs: syscallNum[0], resultSSA[1], truncResult[2], fdExt[3], lenExt[4]
-        let syscallNum = ssas.[0]
-        let resultSSA = ssas.[1]
-        let truncResult = ssas.[2]
-        
-        // Build fd extension ops (if needed)
-        let fdOps, fdFinal =
-            if fdVal.Type = MLIRTypes.i64 then
-                [], fdVal.SSA
-            else
-                let fdExt = ssas.[3]
-                [MLIROp.ArithOp (ArithOp.ExtSI (fdExt, fdVal.SSA, fdVal.Type, MLIRTypes.i64))], fdExt
-        
-        // Build len extension ops (if needed)
-        let lenOps, lenFinal =
-            if lenVal.Type = MLIRTypes.i64 then
-                [], lenVal.SSA
-            else
-                let lenExt = ssas.[4]
-                [MLIROp.ArithOp (ArithOp.ExtSI (lenExt, lenVal.SSA, lenVal.Type, MLIRTypes.i64))], lenExt
-        
-        let ops =
-            [MLIROp.ArithOp (ArithOp.ConstI (syscallNum, 1L, MLIRTypes.i64))]
-            @ fdOps
-            @ lenOps
-            @ [
-                MLIROp.LLVMOp (LLVMOp.InlineAsm (
-                    Some resultSSA,
-                    "syscall",
-                    "={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}",
-                    [(syscallNum, MLIRTypes.i64)
-                     (fdFinal, MLIRTypes.i64)
-                     (ptrVal.SSA, MLIRTypes.ptr)
-                     (lenFinal, MLIRTypes.i64)],
-                    Some MLIRTypes.i64,
-                    true,
-                    false))
-                MLIROp.ArithOp (ArithOp.TruncI (truncResult, resultSSA, MLIRTypes.i64, MLIRTypes.i32))
-            ]
-        Some (ops, TRValue { SSA = truncResult; Type = MLIRTypes.i32 })
+    let prim: PlatformPrimitive = {
+        EntryPoint = entryPoint
+        Library = "platform"
+        CallingConvention = "ccc"
+        Args = args
+        ReturnType = returnType
+        BindingStrategy = Static
+    }
 
-    // Sys.read: fd:int -> ptr:nativeptr<byte> -> len:int -> int
-    | "read", [fdVal; ptrVal; lenVal] ->
-        // Linux x86_64: syscall 0 = read(fd, buf, count)
-        // Uses same SSA indices: syscallNum[0], resultSSA[1], truncResult[2], fdExt[3], lenExt[4]
-        let syscallNum = ssas.[0]
-        let resultSSA = ssas.[1]
-        let truncResult = ssas.[2]
-        let fdExt = ssas.[3]
-        let lenExt = ssas.[4]
-        
-        let ops = [
-            // Syscall number 0 for read
-            MLIROp.ArithOp (ArithOp.ConstI (syscallNum, 0L, MLIRTypes.i64))
-            // Extend fd to i64 (use actual type)
-            MLIROp.ArithOp (ArithOp.ExtSI (fdExt, fdVal.SSA, fdVal.Type, MLIRTypes.i64))
-            // Extend len to i64 (use actual type)
-            MLIROp.ArithOp (ArithOp.ExtSI (lenExt, lenVal.SSA, lenVal.Type, MLIRTypes.i64))
-            // Inline syscall
-            MLIROp.LLVMOp (LLVMOp.InlineAsm (
-                Some resultSSA,
-                "syscall",
-                "={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}",
-                [(syscallNum, MLIRTypes.i64)
-                 (fdExt, MLIRTypes.i64)
-                 (ptrVal.SSA, MLIRTypes.ptr)
-                 (lenExt, MLIRTypes.i64)],
-                Some MLIRTypes.i64,
-                true,
-                false))
-            // Truncate result to i32
-            MLIROp.ArithOp (ArithOp.TruncI (truncResult, resultSSA, MLIRTypes.i64, MLIRTypes.i32))
-        ]
-        Some (ops, TRValue { SSA = truncResult; Type = MLIRTypes.i32 })
-
-    | _ -> None
+    let result = PlatformDispatch.dispatch appNodeId z prim
+    bindingResultToTransfer result
 
 // NOTE: witnessConsoleOp removed - Console is NOT an intrinsic
 // It's Layer 3 user code in Fidelity.Platform that uses Sys.* intrinsics.

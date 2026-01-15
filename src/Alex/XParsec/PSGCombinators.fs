@@ -284,6 +284,8 @@ type EmissionCategory =
     // NOTE: ConsoleOp removed - Console is NOT an intrinsic, it's Layer 3 user code
     // in Fidelity.Platform that uses Sys.* intrinsics. See fsnative-spec/spec/platform-bindings.md
     | PlatformOp of op: string
+    | DateTimeOp of op: string
+    | TimeSpanOp of op: string
     | OtherIntrinsic
 
 let classifyIntrinsic (info: IntrinsicInfo) : EmissionCategory =
@@ -308,6 +310,10 @@ let classifyIntrinsic (info: IntrinsicInfo) : EmissionCategory =
     // NOTE: Console is NOT an intrinsic - see fsnative-spec/spec/platform-bindings.md
     // Platform (Sys.* intrinsics)
     | IntrinsicModule.Sys, op -> PlatformOp op
+    // DateTime operations
+    | IntrinsicModule.DateTime, op -> DateTimeOp op
+    // TimeSpan operations
+    | IntrinsicModule.TimeSpan, op -> TimeSpanOp op
     | _ -> OtherIntrinsic
 
 /// Match and classify intrinsic
