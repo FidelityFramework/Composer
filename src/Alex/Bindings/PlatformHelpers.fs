@@ -476,6 +476,7 @@ let buildStringContainsCharFunc () : FuncOp =
 // ═══════════════════════════════════════════════════════════════════════════
 
 let mutable private registeredHelpers : Set<string> = Set.empty
+let mutable private registeredExterns : Set<string> = Set.empty
 
 let private ensureHelper (name: string) (builder: unit -> FuncOp) (z: PSGZipper) : MLIROp list =
     if registeredHelpers.Contains name then
@@ -483,6 +484,12 @@ let private ensureHelper (name: string) (builder: unit -> FuncOp) (z: PSGZipper)
     else
         registeredHelpers <- registeredHelpers.Add name
         [MLIROp.FuncOp (builder ())]
+
+/// Ensure an extern function declaration is emitted to TopLevel (once)
+let private ensureExternDecl (name: string) (argTypes: MLIRType list) (retTy: MLIRType) (z: PSGZipper) : unit =
+    if not (registeredExterns.Contains name) then
+        registeredExterns <- registeredExterns.Add name
+        emitTopLevel (MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, Private))) z
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BINDINGS FOR HELPER CALLS
@@ -639,6 +646,247 @@ let bindDateTimeMillisecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPr
         BoundOps (ops, Some { SSA = msTrunc; Type = MLIRTypes.i32 })
     | _ -> NotSupported "DateTime.millisecond requires 1 argument"
 
+/// DateTime.utcOffset - get local timezone offset in seconds from UTC
+/// Uses libc localtime_r() to get tm_gmtoff from struct tm
+/// struct tm layout on Linux x86_64:
+///   - 9 ints (36 bytes) + 4 padding = offset 40 for tm_gmtoff (long, 8 bytes)
+let bindDateTimeUtcOffset (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+    // Ensure localtime_r is declared at module level: ptr localtime_r(ptr, ptr)
+    ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr z
+    let ssas = requireNodeSSAs appNodeId z
+    // SSA allocation:
+    // 0: const 1 for alloca
+    // 1: time_t alloca (8 bytes)
+    // 2: tm struct alloca (56 bytes)
+    // 3: const 56 for struct tm size
+    // 4: current seconds (from clock_gettime)
+    // 5: const 1000 for ms->sec conversion
+    // 6: const 0 for clock id
+    // 7: syscall 228 for clock_gettime
+    // 8: timespec alloca
+    // 9: const 0 for idx 0
+    // 10: tv_sec ptr
+    // 11: tv_sec loaded
+    // 12: time_t ptr (for call)
+    // 13: tm_gmtoff ptr
+    // 14: const 40 for tm_gmtoff offset
+    // 15: tm_gmtoff value (long)
+    // 16: result (i32)
+    let c1 = ssas.[0]
+    let timeAllocaSSA = ssas.[1]
+    let tmAllocaSSA = ssas.[2]
+    let c56 = ssas.[3]
+    let secFromClock = ssas.[4]
+    let c1000 = ssas.[5]
+    let clockId = ssas.[6]
+    let syscallNum = ssas.[7]
+    let timespecAlloca = ssas.[8]
+    let idx0 = ssas.[9]
+    let tvSecPtr = ssas.[10]
+    let tvSecVal = ssas.[11]
+    let timePtr = ssas.[12]
+    let gmtoffPtr = ssas.[13]
+    let c40 = ssas.[14]
+    let gmtoffVal = ssas.[15]
+    let resultSSA = ssas.[16]
+
+    // Types
+    let timespecType = TStruct [MLIRTypes.i64; MLIRTypes.i64]
+
+    let ops = [
+        // Allocate structs
+        MLIROp.ArithOp (ArithOp.ConstI (c1, 1L, MLIRTypes.i64))
+        MLIROp.LLVMOp (LLVMOp.Alloca (timespecAlloca, c1, timespecType, None))
+        MLIROp.LLVMOp (LLVMOp.Alloca (timeAllocaSSA, c1, MLIRTypes.i64, None))  // time_t
+        MLIROp.ArithOp (ArithOp.ConstI (c56, 56L, MLIRTypes.i64))
+        MLIROp.LLVMOp (LLVMOp.Alloca (tmAllocaSSA, c56, MLIRTypes.i8, None))  // struct tm (56 bytes)
+
+        // Call clock_gettime to get current time
+        MLIROp.ArithOp (ArithOp.ConstI (clockId, 0L, MLIRTypes.i64))  // CLOCK_REALTIME
+        MLIROp.ArithOp (ArithOp.ConstI (syscallNum, 228L, MLIRTypes.i64))  // clock_gettime syscall
+        MLIROp.LLVMOp (LLVMOp.InlineAsm (
+            Some secFromClock,
+            "syscall",
+            "={rax},{rax},{rdi},{rsi},~{rcx},~{r11},~{memory}",
+            [(syscallNum, MLIRTypes.i64); (clockId, MLIRTypes.i64); (timespecAlloca, MLIRTypes.ptr)],
+            Some MLIRTypes.i64,
+            true,
+            false))
+
+        // Load tv_sec from timespec
+        MLIROp.ArithOp (ArithOp.ConstI (idx0, 0L, MLIRTypes.i64))
+        MLIROp.LLVMOp (LLVMOp.GEP (tvSecPtr, timespecAlloca, [(idx0, MLIRTypes.i64)], timespecType))
+        MLIROp.LLVMOp (LLVMOp.Load (tvSecVal, tvSecPtr, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+        // Store seconds to time_t variable for localtime_r
+        MLIROp.LLVMOp (LLVMOp.Store (tvSecVal, timeAllocaSSA, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+        // Call localtime_r(time_t*, struct tm*) - libc function
+        // Returns pointer to struct tm (same as second arg)
+        MLIROp.FuncOp (FuncOp.FuncCall (
+            Some timePtr,
+            "localtime_r",
+            [{ SSA = timeAllocaSSA; Type = MLIRTypes.ptr }; { SSA = tmAllocaSSA; Type = MLIRTypes.ptr }],
+            MLIRTypes.ptr))
+
+        // Extract tm_gmtoff at offset 40
+        MLIROp.ArithOp (ArithOp.ConstI (c40, 40L, MLIRTypes.i64))
+        MLIROp.LLVMOp (LLVMOp.GEP (gmtoffPtr, tmAllocaSSA, [(c40, MLIRTypes.i64)], MLIRTypes.i8))
+        // Cast to i64 pointer and load
+        MLIROp.LLVMOp (LLVMOp.Load (gmtoffVal, gmtoffPtr, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+        // Truncate to i32 for return
+        MLIROp.ArithOp (ArithOp.TruncI (resultSSA, gmtoffVal, MLIRTypes.i64, MLIRTypes.i32))
+    ]
+    BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i32 })
+
+/// DateTime.toLocal - convert UTC milliseconds to local milliseconds
+/// Adds the UTC offset (in seconds) * 1000 to the input
+let bindDateTimeToLocal (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+    // Ensure localtime_r is declared at module level
+    ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr z
+    match prim.Args with
+    | [utcMs] ->
+        // Get UTC offset via the same mechanism as utcOffset
+        // Then: localMs = utcMs + (offsetSeconds * 1000)
+        let ssas = requireNodeSSAs appNodeId z
+
+        // First get the offset (reuse utcOffset logic but inline it)
+        let c1 = ssas.[0]
+        let timespecAlloca = ssas.[1]
+        let timeAllocaSSA = ssas.[2]
+        let c56 = ssas.[3]
+        let tmAllocaSSA = ssas.[4]
+        let clockId = ssas.[5]
+        let syscallNum = ssas.[6]
+        let _ = ssas.[7]  // syscall result (unused)
+        let idx0 = ssas.[8]
+        let tvSecPtr = ssas.[9]
+        let tvSecVal = ssas.[10]
+        let timePtr = ssas.[11]
+        let c40 = ssas.[12]
+        let gmtoffPtr = ssas.[13]
+        let gmtoffVal = ssas.[14]
+        let c1000 = ssas.[15]
+        let offsetMs = ssas.[16]
+        let resultSSA = ssas.[17]
+
+        let timespecType = TStruct [MLIRTypes.i64; MLIRTypes.i64]
+
+        let ops = [
+            MLIROp.ArithOp (ArithOp.ConstI (c1, 1L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.Alloca (timespecAlloca, c1, timespecType, None))
+            MLIROp.LLVMOp (LLVMOp.Alloca (timeAllocaSSA, c1, MLIRTypes.i64, None))
+            MLIROp.ArithOp (ArithOp.ConstI (c56, 56L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.Alloca (tmAllocaSSA, c56, MLIRTypes.i8, None))
+
+            MLIROp.ArithOp (ArithOp.ConstI (clockId, 0L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.ConstI (syscallNum, 228L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.InlineAsm (
+                None,  // Don't need result
+                "syscall",
+                "={rax},{rax},{rdi},{rsi},~{rcx},~{r11},~{memory}",
+                [(syscallNum, MLIRTypes.i64); (clockId, MLIRTypes.i64); (timespecAlloca, MLIRTypes.ptr)],
+                Some MLIRTypes.i64,
+                true,
+                false))
+
+            MLIROp.ArithOp (ArithOp.ConstI (idx0, 0L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.GEP (tvSecPtr, timespecAlloca, [(idx0, MLIRTypes.i64)], timespecType))
+            MLIROp.LLVMOp (LLVMOp.Load (tvSecVal, tvSecPtr, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+            MLIROp.LLVMOp (LLVMOp.Store (tvSecVal, timeAllocaSSA, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+            MLIROp.FuncOp (FuncOp.FuncCall (
+                Some timePtr,
+                "localtime_r",
+                [{ SSA = timeAllocaSSA; Type = MLIRTypes.ptr }; { SSA = tmAllocaSSA; Type = MLIRTypes.ptr }],
+                MLIRTypes.ptr))
+
+            MLIROp.ArithOp (ArithOp.ConstI (c40, 40L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.GEP (gmtoffPtr, tmAllocaSSA, [(c40, MLIRTypes.i64)], MLIRTypes.i8))
+            MLIROp.LLVMOp (LLVMOp.Load (gmtoffVal, gmtoffPtr, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+            // Convert offset from seconds to milliseconds
+            MLIROp.ArithOp (ArithOp.ConstI (c1000, 1000L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.MulI (offsetMs, gmtoffVal, c1000, MLIRTypes.i64))
+
+            // Add offset to input
+            MLIROp.ArithOp (ArithOp.AddI (resultSSA, utcMs.SSA, offsetMs, MLIRTypes.i64))
+        ]
+        BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+    | _ -> NotSupported "DateTime.toLocal requires 1 argument"
+
+/// DateTime.toUtc - convert local milliseconds to UTC milliseconds
+/// Subtracts the UTC offset (in seconds) * 1000 from the input
+let bindDateTimeToUtc (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+    // Ensure localtime_r is declared at module level
+    ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr z
+    match prim.Args with
+    | [localMs] ->
+        let ssas = requireNodeSSAs appNodeId z
+
+        let c1 = ssas.[0]
+        let timespecAlloca = ssas.[1]
+        let timeAllocaSSA = ssas.[2]
+        let c56 = ssas.[3]
+        let tmAllocaSSA = ssas.[4]
+        let clockId = ssas.[5]
+        let syscallNum = ssas.[6]
+        let idx0 = ssas.[7]
+        let tvSecPtr = ssas.[8]
+        let tvSecVal = ssas.[9]
+        let timePtr = ssas.[10]
+        let c40 = ssas.[11]
+        let gmtoffPtr = ssas.[12]
+        let gmtoffVal = ssas.[13]
+        let c1000 = ssas.[14]
+        let offsetMs = ssas.[15]
+        let resultSSA = ssas.[16]
+
+        let timespecType = TStruct [MLIRTypes.i64; MLIRTypes.i64]
+
+        let ops = [
+            MLIROp.ArithOp (ArithOp.ConstI (c1, 1L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.Alloca (timespecAlloca, c1, timespecType, None))
+            MLIROp.LLVMOp (LLVMOp.Alloca (timeAllocaSSA, c1, MLIRTypes.i64, None))
+            MLIROp.ArithOp (ArithOp.ConstI (c56, 56L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.Alloca (tmAllocaSSA, c56, MLIRTypes.i8, None))
+
+            MLIROp.ArithOp (ArithOp.ConstI (clockId, 0L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.ConstI (syscallNum, 228L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.InlineAsm (
+                None,
+                "syscall",
+                "={rax},{rax},{rdi},{rsi},~{rcx},~{r11},~{memory}",
+                [(syscallNum, MLIRTypes.i64); (clockId, MLIRTypes.i64); (timespecAlloca, MLIRTypes.ptr)],
+                Some MLIRTypes.i64,
+                true,
+                false))
+
+            MLIROp.ArithOp (ArithOp.ConstI (idx0, 0L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.GEP (tvSecPtr, timespecAlloca, [(idx0, MLIRTypes.i64)], timespecType))
+            MLIROp.LLVMOp (LLVMOp.Load (tvSecVal, tvSecPtr, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+            MLIROp.LLVMOp (LLVMOp.Store (tvSecVal, timeAllocaSSA, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+            MLIROp.FuncOp (FuncOp.FuncCall (
+                Some timePtr,
+                "localtime_r",
+                [{ SSA = timeAllocaSSA; Type = MLIRTypes.ptr }; { SSA = tmAllocaSSA; Type = MLIRTypes.ptr }],
+                MLIRTypes.ptr))
+
+            MLIROp.ArithOp (ArithOp.ConstI (c40, 40L, MLIRTypes.i64))
+            MLIROp.LLVMOp (LLVMOp.GEP (gmtoffPtr, tmAllocaSSA, [(c40, MLIRTypes.i64)], MLIRTypes.i8))
+            MLIROp.LLVMOp (LLVMOp.Load (gmtoffVal, gmtoffPtr, MLIRTypes.i64, AtomicOrdering.NotAtomic))
+
+            MLIROp.ArithOp (ArithOp.ConstI (c1000, 1000L, MLIRTypes.i64))
+            MLIROp.ArithOp (ArithOp.MulI (offsetMs, gmtoffVal, c1000, MLIRTypes.i64))
+
+            // Subtract offset from input
+            MLIROp.ArithOp (ArithOp.SubI (resultSSA, localMs.SSA, offsetMs, MLIRTypes.i64))
+        ]
+        BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+    | _ -> NotSupported "DateTime.toUtc requires 1 argument"
+
 // ═══════════════════════════════════════════════════════════════════════════
 // REGISTRATION
 // ═══════════════════════════════════════════════════════════════════════════
@@ -663,3 +911,7 @@ let registerBindings () =
             PlatformDispatch.register os arch "DateTime.minute" bindDateTimeMinute
             PlatformDispatch.register os arch "DateTime.second" bindDateTimeSecond
             PlatformDispatch.register os arch "DateTime.millisecond" bindDateTimeMillisecond
+            // Timezone operations (require libc localtime_r)
+            PlatformDispatch.register os arch "DateTime.utcOffset" bindDateTimeUtcOffset
+            PlatformDispatch.register os arch "DateTime.toLocal" bindDateTimeToLocal
+            PlatformDispatch.register os arch "DateTime.toUtc" bindDateTimeToUtc

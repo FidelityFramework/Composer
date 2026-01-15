@@ -731,6 +731,15 @@ let private witnessIntrinsic
                 MLIROp.ArithOp (ArithOp.TruncI (resultSSA, ssas.[1], MLIRTypes.i64, MLIRTypes.i32))
             ]
             Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
+        | "utcOffset", [] ->
+            // Get timezone offset via platform binding (uses libc localtime_r)
+            Platform.witnessPlatformBinding appNodeId z "DateTime.utcOffset" [] mlirReturnType
+        | "toLocal", [utcMs] ->
+            // Convert UTC to local via platform binding
+            Platform.witnessPlatformBinding appNodeId z "DateTime.toLocal" [utcMs] mlirReturnType
+        | "toUtc", [localMs] ->
+            // Convert local to UTC via platform binding
+            Platform.witnessPlatformBinding appNodeId z "DateTime.toUtc" [localMs] mlirReturnType
         | _ ->
             // Other DateTime ops (formatting) - not yet implemented
             None

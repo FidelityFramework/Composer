@@ -18,12 +18,11 @@ let padThree (n: int) : string =
     else
         Format.int n
 
-/// Format milliseconds since epoch as HH:MM:SS.mmm (UTC)
+/// Format milliseconds since epoch as HH:MM:SS.mmm (local time)
 /// Uses DateTime intrinsics for component extraction
-let formatTime (ms: int64) (tzOffsetHours: int) : unit =
-    // Convert timezone offset to milliseconds and apply
-    let tzOffsetMs = int64 tzOffsetHours * 3600000L
-    let localMs = ms + tzOffsetMs
+let formatTime (ms: int64) : unit =
+    // Convert UTC to local time using platform timezone
+    let localMs = DateTime.toLocal ms
 
     // Extract time components using DateTime intrinsics
     let hours = DateTime.hour localMs
@@ -46,15 +45,19 @@ let displayTimeLoop (iterations: int) =
     Console.writeln "TimeLoop - DateTime Intrinsics Demo"
     Console.writeln ""
 
-    // Timezone offset (hours from UTC) - adjust for your location
-    // Examples: UTC=0, EST=-5, PST=-8, CET=+1, JST=+9
-    let tzOffset = 0  // Using UTC for portability
+    // Show timezone offset for reference
+    let tzOffsetSec = DateTime.utcOffset ()
+    let tzOffsetHours = tzOffsetSec / 3600
+    Console.write "Timezone offset: "
+    Console.write (Format.int tzOffsetHours)
+    Console.writeln " hours from UTC"
+    Console.writeln ""
 
     // Get initial time using DateTime.now()
     let mutable lastTime = DateTime.now ()
     Console.write "Start: "
-    formatTime lastTime tzOffset
-    Console.writeln " UTC"
+    formatTime lastTime
+    Console.writeln " (local)"
     Console.writeln ""
 
     let mutable counter = 0
@@ -68,8 +71,8 @@ let displayTimeLoop (iterations: int) =
 
         // Format and display
         Console.write "Time: "
-        formatTime currentTime tzOffset
-        Console.write " UTC  (delta: "
+        formatTime currentTime
+        Console.write " (local)  (delta: "
         Console.write (Format.int64 delta)
         Console.writeln " ms)"
 
