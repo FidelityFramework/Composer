@@ -218,14 +218,20 @@ let private transferGraphCore
 
     let scfHook: SCFRegionHook<PSGZipper> = {
         BeforeRegion = fun z parentId kind ->
-            enterRegion z
-            // For MatchCaseRegion, bind pattern variables before case body traversal
             match kind with
             | RegionKind.MatchCaseRegion idx ->
+                enterRegion z
                 bindMatchCasePatterns z parentId idx
-            | _ -> z
+            | _ ->
+                // Unified stack management: Always enter region to isolate op collection.
+                // enterFunction (from preBindParams) handles scope/bindings.
+                enterRegion z
+                z
+
         AfterRegion = fun z parentId kind ->
+            // Unified stack management: Always exit region to retrieve collected ops.
             let ops = exitRegion z
+
             let key = (NodeId.value parentId, regionKindToInt kind)
             regionOps.[key] <- ops
             z
@@ -239,10 +245,116 @@ let private transferGraphCore
         | Some (ssa, ty) -> Some { SSA = ssa; Type = ty }
         | None -> None
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // WITNESS DISPATCH (closes over regionOps, graph, witnessCtx)
-    // ═══════════════════════════════════════════════════════════════════════
-    let witnessNode (z: PSGZipper) (node: SemanticNode) : PSGZipper =
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MUTUAL RECURSION: foldSubtree AND witnessNode
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    let rec foldSubtree 
+        (nodeId: NodeId)
+        (z: PSGZipper) 
+        : PSGZipper =
+        
+        let visited = System.Collections.Generic.HashSet<int>()
+        
+        let rec walk state nodeId =
+            let nodeIdVal = NodeId.value nodeId
+            if visited.Contains(nodeIdVal) then
+                state
+            else
+                visited.Add(nodeIdVal) |> ignore
+                match SemanticGraph.tryGetNode nodeId graph with
+                | None -> state
+                | Some node ->
+                    // 1. Follow semantic dependencies (VarRef definitions)
+                    let state =
+                        match node.Kind with
+                        | SemanticKind.VarRef (_, Some defId) ->
+                            walk state defId
+                        | _ -> state
+
+                    // 2. Pre-bind Lambda parameters
+                    let state =
+                        match node.Kind with
+                        | SemanticKind.Lambda _ -> LambdaWitness.preBindParams state node
+                        | _ -> state
+
+                    // 3. Process children with SCF hooks
+                    let state =
+                        match node.Kind with
+                        | SemanticKind.WhileLoop (guardId, bodyId) ->
+                            let parentId = node.Id
+                            let state = scfHook.BeforeRegion state parentId GuardRegion
+                            let state = walk state guardId
+                            let state = scfHook.AfterRegion state parentId GuardRegion
+                            let state = scfHook.BeforeRegion state parentId BodyRegion
+                            let state = walk state bodyId
+                            let state = scfHook.AfterRegion state parentId BodyRegion
+                            state
+
+                        | SemanticKind.ForLoop (_, startId, endId, _, bodyId) ->
+                            let parentId = node.Id
+                            let state = scfHook.BeforeRegion state parentId StartExprRegion
+                            let state = walk state startId
+                            let state = scfHook.AfterRegion state parentId StartExprRegion
+                            let state = scfHook.BeforeRegion state parentId EndExprRegion
+                            let state = walk state endId
+                            let state = scfHook.AfterRegion state parentId EndExprRegion
+                            let state = scfHook.BeforeRegion state parentId BodyRegion
+                            let state = walk state bodyId
+                            let state = scfHook.AfterRegion state parentId BodyRegion
+                            state
+
+                        | SemanticKind.IfThenElse (guardId, thenId, elseIdOpt) ->
+                            let parentId = node.Id
+                            let state = walk state guardId
+                            let state = scfHook.BeforeRegion state parentId ThenRegion
+                            let state = walk state thenId
+                            let state = scfHook.AfterRegion state parentId ThenRegion
+                            match elseIdOpt with
+                            | Some elseId ->
+                                let state = scfHook.BeforeRegion state parentId ElseRegion
+                                let state = walk state elseId
+                                scfHook.AfterRegion state parentId ElseRegion
+                            | None -> state
+
+                        | SemanticKind.Match (scrutineeId, cases) ->
+                            let parentId = node.Id
+                            let state = walk state scrutineeId
+                            cases
+                            |> List.fold (fun (state, idx) case ->
+                                let state = scfHook.BeforeRegion state parentId (MatchCaseRegion idx)
+                                let state = case.PatternBindings |> List.fold walk state
+                                let state =
+                                    match case.Guard with
+                                    | Some guardId -> walk state guardId
+                                    | None -> state
+                                let state = walk state case.Body
+                                let state = scfHook.AfterRegion state parentId (MatchCaseRegion idx)
+                                (state, idx + 1)
+                            ) (state, 0)
+                            |> fst
+
+                        | SemanticKind.Lambda (params', bodyId, _captures) ->
+                            // Lambda traversal: Parameters then Body (as region)
+                            let parentId = node.Id
+                            let paramNodeIds = params' |> List.map (fun (_, _, nodeId) -> nodeId)
+                            let state = paramNodeIds |> List.fold walk state
+                            
+                            // For Lambda, we DO NOT traverse the body here if we are the witnessNode!
+                            // The witnessNode logic invokes foldSubtree for the body separately.
+                            state
+
+                        | _ ->
+                            let semanticRefs = Reachability.getSemanticReferences node
+                            let state = semanticRefs |> List.fold walk state
+                            node.Children |> List.fold walk state
+
+                    // 4. Post-order witness
+                    witnessNode state node
+        
+        walk z nodeId
+
+    and witnessNode (z: PSGZipper) (node: SemanticNode) : PSGZipper =
         let nodeIdVal = NodeId.value node.Id
 
         let z', result =
@@ -373,13 +485,46 @@ let private transferGraphCore
             // Lambdas
             // ─────────────────────────────────────────────────────────────────
             | SemanticKind.Lambda (params', bodyId, _captures) ->
-                // Get accumulated body ops from regionOps (populated by scfHook)
-                let bodyKey = (nodeIdVal, regionKindToInt RegionKind.LambdaBodyRegion)
-                let bodyOps = regionOps.GetValueOrDefault(bodyKey, [])
+                // RECURSIVE WITNESS STRATEGY:
+                // We define a callback that traverses the body subtree and captures the output.
+                // This bypasses the global fold's stack management for the body,
+                // preventing the "0 ops" regression.
+                
+                let witnessBody (zFunc: PSGZipper) : MLIROp list * TransferResult =
+                    // zFunc is already in the function scope (enterFunction called).
+                    // We simply traverse the body subtree using our local walker.
+                    // The walker emits to zFunc.State.CurrentOps.
+                    
+                    let zAfter = foldSubtree bodyId zFunc
+                    
+                    // Retrieve the accumulated ops
+                    let ops = List.rev zAfter.State.CurrentOps
+                    // Clear them from state so they don't get double-emitted (conceptually)
+                    // (Though since we return them, LambdaWitness will use them)
+                    zAfter.State.CurrentOps <- []
+                    
+                    // Retrieve the result
+                    let result = 
+                        match resolveNodeToVal bodyId zAfter with
+                        | Some v -> TRValue v
+                        | None -> TRVoid
+                        
+                    ops, result
 
-                // Witness returns: (funcDef option, localOps, result)
-                // Photographer Principle: witness RETURNS, we ACCUMULATE
-                let funcDefOpt, localOps, result = LambdaWitness.witness params' bodyId node bodyOps z
+                // MODULE-LEVEL BINDING INJECTION (MLKit pattern):
+                // For main, inject pending ops.
+                let lambdaName =
+                    SSAAssign.lookupLambdaName node.Id ssaAssignment
+                    |> Option.defaultValue ""
+                
+                if lambdaName = "main" && not (List.isEmpty z.State.PendingModuleLevelOps) then
+                    let pending = List.rev z.State.PendingModuleLevelOps
+                    z.State.PendingModuleLevelOps <- []
+                    // Emit pending ops to current scope so they are picked up by witnessBody
+                    emitAll pending z
+
+                // Call witness with the callback
+                let funcDefOpt, localOps, result = LambdaWitness.witness params' bodyId node witnessBody z
 
                 // Add function definition to top-level (if present)
                 match funcDefOpt with
@@ -387,7 +532,6 @@ let private transferGraphCore
                 | None -> ()
 
                 // ARCHITECTURAL FIX: Exit function scope to restore parent's CurrentOps FIRST
-                // localOps (closure construction) belong in the PARENT scope, not the Lambda's scope
                 let z' = exitFunction z
 
                 // Now emit local ops (closure construction) to parent scope
@@ -833,12 +977,18 @@ let private transferGraphCore
                 | None ->
                     // Check if this is a Lambda parameter (definition, not use)
                     // Lambda parameters are definitions - they don't need lookup
-                    // The binding happens in preBindParams when the Lambda is entered
-                    match z.Path with
-                    | step :: _ when (match step.Parent.Kind with SemanticKind.Lambda _ -> true | _ -> false) ->
-                        // This is a Lambda parameter definition - it's OK if not in VarBindings yet
+                    // Use focus mode as fallback if Path is not available (e.g. during fold)
+                    let isLambdaContext = 
+                        match z.State.Focus with 
+                        | InFunction _ -> true 
+                        | _ -> 
+                            match z.Path with
+                            | step :: _ when (match step.Parent.Kind with SemanticKind.Lambda _ -> true | _ -> false) -> true
+                            | _ -> false
+                    
+                    if isLambdaContext then
                         z, TRVoid
-                    | _ ->
+                    else
                         z, TRError (sprintf "PatternBinding '%s' not found" name)
 
             | SemanticKind.UnionCase (_caseName, caseIndex, payloadOpt) ->
@@ -875,14 +1025,10 @@ let private transferGraphCore
         "", ["No entry point found in graph"]
 
     | Some initialZipper ->
-        // Run traversal with SCF hooks
+        // Run traversal using recursive subtree walker starting from entry points
         let finalZipper =
-            Traversal.foldWithSCFRegions
-                LambdaWitness.preBindParams
-                (Some scfHook)
-                witnessNode
-                initialZipper
-                graph
+            graph.EntryPoints
+            |> List.fold (fun z id -> foldSubtree id z) initialZipper
 
         // ═══════════════════════════════════════════════════════════════════
         // SERIALIZE OUTPUT

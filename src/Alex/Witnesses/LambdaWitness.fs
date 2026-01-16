@@ -232,7 +232,7 @@ let private witnessInFunctionScope
     (lambdaName: string)
     (node: SemanticNode)
     (bodyId: NodeId)
-    (bodyOps: MLIROp list)
+    (witnessBody: PSGZipper -> MLIROp list * TransferResult)
     (funcParams: (SSA * MLIRType) list)
     (closureLayoutOpt: ClosureLayout option)
     (z: PSGZipper)
@@ -275,12 +275,41 @@ let private witnessInFunctionScope
             let defaultOps, defaultSSA = createDefaultReturn z declaredRetType
             defaultOps, createReturnOp (Some defaultSSA) (Some declaredRetType), declaredRetType
 
-    // For closing lambdas: prepend capture extraction ops to body
+    // For closing lambdas: bind captured variables (already done in preBindParams)
     // These ops extract captured values from env struct at function entry
     let captureExtractionOps =
         match closureLayoutOpt with
         | Some layout -> buildCaptureExtractionOps layout z
         | None -> []
+
+    // Recursively witness the body
+    // This will emit body ops into zBody's CurrentOps
+    // We capture the result (Val) and the accumulated ops
+    let bodyOps, bodyRes = witnessBody z
+
+    // Build return/terminator ops
+    // TRUE FLAT CLOSURE: When body produces a closure struct, use its ACTUAL type
+    // (not the mapped TFun -> {ptr,ptr} type from declaredRetType)
+    let returnOps, terminator, actualRetType =
+        match bodyRes with
+        | TRValue { SSA = ssa; Type = bodyType } ->
+            // Check if body produces a closure struct (TStruct starting with TPtr)
+            // If so, use bodyType as the actual return type
+            let effectiveRetType =
+                match bodyType, declaredRetType with
+                | TStruct (TPtr :: _), TStruct [TPtr; TPtr] ->
+                    // Body is a flat closure struct, declaredRetType is old {ptr,ptr} model
+                    // Use the actual closure struct type
+                    bodyType
+                | _ ->
+                    declaredRetType
+            // Normal return - may need type reconciliation
+            let reconcileOps, finalSSA = reconcileReturnType z ssa bodyType effectiveRetType
+            reconcileOps, createReturnOp (Some finalSSA) (Some effectiveRetType), effectiveRetType
+        | _ ->
+            // No body result - create default (uses synthetic SSA)
+            let defaultOps, defaultSSA = createDefaultReturn z declaredRetType
+            defaultOps, createReturnOp (Some defaultSSA) (Some declaredRetType), declaredRetType
 
     // Build complete body ops: capture extraction + accumulated + return + terminator
     let completeBodyOps = captureExtractionOps @ bodyOps @ returnOps @ [terminator]
@@ -333,7 +362,7 @@ let witness
     (params': (string * NativeType * NodeId) list)
     (bodyId: NodeId)
     (node: SemanticNode)
-    (bodyOps: MLIROp list)
+    (witnessBody: PSGZipper -> MLIROp list * TransferResult)
     (z: PSGZipper)
     : MLIROp option * MLIROp list * TransferResult =
 
@@ -354,7 +383,7 @@ let witness
     // For closing lambdas, SSAAssignment has pre-computed all layout information
     let closureLayoutOpt = lookupClosureLayout node.Id z.State.SSAAssignment
 
-    witnessInFunctionScope lambdaName node bodyId bodyOps funcParams closureLayoutOpt z
+    witnessInFunctionScope lambdaName node bodyId witnessBody funcParams closureLayoutOpt z
 
 /// Check if a type is unit
 let private isUnitType (ty: NativeType) : bool =
@@ -532,10 +561,12 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                 layout.Captures
                 |> List.fold (fun acc slot ->
                     let acc' = bindVarSSA slot.Name slot.GepSSA slot.SlotType acc
-                    // Mark ByRef captures so VarRef/Set know to load/store through pointer
+                    // Mark ALL captures so VarRef knows to use VarBindings (not NodeBindings)
+                    let acc'' = markCapturedVariable slot.Name acc'
+                    // Additionally mark ByRef captures so VarRef/Set know to load/store through pointer
                     match slot.Mode with
-                    | ByRef -> markCapturedMutable slot.Name acc'
-                    | ByValue -> acc'
+                    | ByRef -> markCapturedMutable slot.Name acc''
+                    | ByValue -> acc''
                 ) z2
             | None -> z2
 

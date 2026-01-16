@@ -112,17 +112,13 @@ let private resolveArgs (argNodeIds: NodeId list) (z: PSGZipper) : Val list =
 
         if isUnitArg then None
         else
-            // First try NodeBindings (actual emitted results from post-order traversal)
+            // Get ACTUAL emitted SSA from NodeBindings (post-order traversal result)
+            // NO FALLBACK: Either it's there or we fail - no silent wrong SSA
             match recallNodeResult (NodeId.value nodeId) z with
             | Some (ssa, ty) ->
                 Some { SSA = ssa; Type = ty }
             | None ->
-                // Fall back to pre-assigned SSA if not in NodeBindings
-                // (shouldn't happen for children processed in post-order)
-                match lookupNodeSSA nodeId z, SemanticGraph.tryGetNode nodeId z.Graph with
-                | Some ssa, Some node ->
-                    Some { SSA = ssa; Type = mapNativeType node.Type }
-                | _ -> None)
+                failwithf "resolveArgs: No result in NodeBindings for arg node %d. Child must be processed in post-order before parent." (NodeId.value nodeId))
 
 /// Resolve function node to its SemanticKind
 /// Looks through TypeAnnotation nodes to find the underlying function

@@ -125,15 +125,22 @@ let witness
 /// INVARIANT: PSG guarantees definitions are traversed before uses
 /// Witness a VarRef node - resolve variable to its SSA value
 ///
-/// LOOKUP ORDER (architectural invariant):
-/// 1. VarBindings (by name) - function parameters, captured variables
-/// 2. NodeBindings (by defId) - let-bound values computed during traversal
-/// 3. SSAAssignment (by defId) - pre-computed coeffects
-/// 4. Function reference - Lambda/Binding to Lambda returns TRVoid (called by name)
+/// STRATIFIED LOOKUP ORDER (January 2026):
+/// 1. Module-level mutables: addressof + load from global
+/// 2. Addressed mutable (local): load from alloca
+/// 3. VarBindings + NodeBindings (stratified):
+///    - Captured mutables (ByRef): VarBindings has pointer, load through it
+///    - Function parameters (PatternBinding): VarBindings directly
+///    - VarBindings with name match: Check NodeBindings first by defId
+///      - If NodeBindings has it: use it (local let, not captured)
+///      - If not: use VarBindings (captured variable)
+/// 4. NodeBindings (by defId) - for vars not in VarBindings
+/// 5. SSAAssignment (by defId) - pre-computed coeffects
+/// 6. Function reference - Lambda/Binding to Lambda returns TRVoid (called by name)
 ///
-/// Special cases:
-/// - Module-level mutables: addressof + load from global
-/// - Addressed mutables (local): load from alloca
+/// The stratified approach handles both:
+/// - Name shadowing: local let `buffer` shadows parameter `buffer` from other function
+/// - Closure captures: captured `min` uses VarBindings (not NodeBindings) inside closure
 let witnessVarRef
     (ctx: WitnessContext)
     (z: PSGZipper)
@@ -164,6 +171,16 @@ let witnessVarRef
             | _ -> false
         | None -> false
 
+    // Helper: check if defId points to a PatternBinding (function parameter)
+    // vs a Binding (let expression) - this determines if VarBindings should be used
+    let isParameterRef nodeId =
+        match SemanticGraph.tryGetNode nodeId ctx.Graph with
+        | Some defNode ->
+            match defNode.Kind with
+            | SemanticKind.PatternBinding _ -> true
+            | _ -> false
+        | None -> false
+
     // 1. Module-level mutable: addressof + load
     match getModuleLevelMutable name ctx with
     | Some _ ->
@@ -176,28 +193,18 @@ let witnessVarRef
         [addrOp; loadOp], TRValue { SSA = loadSSA; Type = elemType }
     | None ->
 
-    // 2. VarBindings: parameters and captured variables (bound by name)
-    match recallVarSSA name z with
-    | Some (ptrSSA, ptrTy) when isCapturedMutable name z ->
-        // Captured mutable (ByRef): ptrSSA is pointer to the value, need to load
-        // Get element type from the definition node
-        let elemType = defId |> Option.map getDefType |> Option.defaultValue MLIRTypes.i32
-        let loadSSA = requireNodeSSA varRefNodeId z
-        let loadOp = MLIROp.LLVMOp (Load (loadSSA, ptrSSA, elemType, NotAtomic))
-        [loadOp], TRValue { SSA = loadSSA; Type = elemType }
-    | Some (ssa, ty) ->
-        // Regular VarBinding (parameter or ByValue capture): return value directly
-        [], TRValue { SSA = ssa; Type = ty }
-    | None ->
-
-    // Need defId for remaining lookups
+    // Need defId for most lookups
     match defId with
-    | None -> [], TRError (sprintf "Variable '%s' has no definition" name)
+    | None ->
+        // No defId - try VarBindings by name as last resort
+        match recallVarSSA name z with
+        | Some (ssa, ty) -> [], TRValue { SSA = ssa; Type = ty }
+        | None -> [], TRError (sprintf "Variable '%s' has no definition" name)
     | Some nodeId ->
 
     let nodeIdVal = NodeId.value nodeId
 
-    // 3. Addressed mutable (local): load from alloca
+    // 2. Addressed mutable (local): load from alloca
     if isAddressedMutable nodeIdVal ctx then
         match lookupSSAs nodeId ctx.SSA with
         | Some ssas when ssas.Length >= 2 ->
@@ -209,19 +216,44 @@ let witnessVarRef
         | _ -> [], TRError (sprintf "No alloca SSA for addressed mutable '%s'" name)
     else
 
-    // 4. NodeBindings: let-bound values computed during traversal
+    // 3. Captured variables (marked explicitly): use VarBindings
+    // Captures are marked by LambdaWitness when entering closure scope
+    // They must use VarBindings (capture extraction SSA), NOT NodeBindings
+    if isCapturedVariable name z then
+        match recallVarSSA name z with
+        | Some (ptrSSA, _ptrTy) when isCapturedMutable name z ->
+            // Captured mutable (ByRef): ptrSSA is pointer to the value, need to load
+            let elemType = getDefType nodeId
+            let loadSSA = requireNodeSSA varRefNodeId z
+            let loadOp = MLIROp.LLVMOp (Load (loadSSA, ptrSSA, elemType, NotAtomic))
+            [loadOp], TRValue { SSA = loadSSA; Type = elemType }
+        | Some (ssa, ty) ->
+            // Captured by value: use VarBindings directly
+            [], TRValue { SSA = ssa; Type = ty }
+        | None ->
+            [], TRError (sprintf "Captured variable '%s' not bound in VarBindings" name)
+    else
+
+    // 4. Function parameters: use VarBindings
+    match recallVarSSA name z with
+    | Some (ssa, ty) when isParameterRef nodeId ->
+        // Function parameter: use VarBindings directly (defId is PatternBinding)
+        [], TRValue { SSA = ssa; Type = ty }
+    | _ ->
+
+    // 5. NodeBindings: let-bound values in current function scope
     match recallNodeResult nodeIdVal z with
     | Some (ssa, ty) -> [], TRValue { SSA = ssa; Type = ty }
     | None ->
 
-    // 5. SSAAssignment: pre-computed coeffects
+    // 6. SSAAssignment: pre-computed coeffects (for non-parameter refs not in NodeBindings)
     match lookupSSA nodeId ctx.SSA with
     | Some ssa -> [], TRValue { SSA = ssa; Type = getDefType nodeId }
     | None ->
 
-    // 6. Function reference: called by name, not by SSA
+    // 7. Function reference: called by name, not by SSA
     if isFunctionRef nodeId then [], TRVoid
-    else [], TRError (sprintf "No SSA for variable '%s'" name)
+    else [], TRError (sprintf "No SSA for variable '%s' (defId=%d)" name nodeIdVal)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MUTABLE SET WITNESSING

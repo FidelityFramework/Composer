@@ -678,27 +678,149 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> 
 
     lambdaNames, entryPoints
 
+/// Check if a Binding contains a Lambda (function definition vs value binding)
+let private isLambdaBinding (graph: SemanticGraph) (bindingNodeId: NodeId) : bool =
+    match Map.tryFind bindingNodeId graph.Nodes with
+    | Some node ->
+        match node.Kind with
+        | SemanticKind.Binding _ ->
+            match node.Children with
+            | childId :: _ ->
+                match Map.tryFind childId graph.Nodes with
+                | Some childNode ->
+                    match childNode.Kind with
+                    | SemanticKind.Lambda _ -> true
+                    | _ -> false
+                | None -> false
+            | [] -> false
+        | _ -> false
+    | None -> false
+
+/// Find the main Lambda NodeId from entry points
+let private findMainLambdaId (graph: SemanticGraph) (entryPoints: Set<int>) : NodeId option =
+    // Entry points are either:
+    // 1. ModuleDef containing Bindings (one of which is main)
+    // 2. Direct Lambda node
+    graph.EntryPoints
+    |> List.tryPick (fun entryId ->
+        match Map.tryFind entryId graph.Nodes with
+        | Some node ->
+            match node.Kind with
+            | SemanticKind.Lambda _ when Set.contains (NodeId.value entryId) entryPoints ->
+                Some entryId
+            | SemanticKind.ModuleDef (_, memberIds) ->
+                // Find the main Lambda among module members
+                memberIds |> List.tryPick (fun memberId ->
+                    match Map.tryFind memberId graph.Nodes with
+                    | Some memberNode ->
+                        match memberNode.Kind with
+                        | SemanticKind.Binding (_, _, _, isEntryPoint) when isEntryPoint ->
+                            // Get the Lambda child of this binding
+                            match memberNode.Children with
+                            | lambdaId :: _ when Set.contains (NodeId.value lambdaId) entryPoints ->
+                                Some lambdaId
+                            | _ -> None
+                        | _ -> None
+                    | None -> None)
+            | _ -> None
+        | None -> None)
+
+/// Find module-level VALUE bindings (non-Lambda bindings that are siblings of main)
+/// These need SSAs in main's scope because they're emitted in main's prologue
+let private findModuleLevelValueBindings (graph: SemanticGraph) (mainLambdaId: NodeId) : NodeId list =
+    // Find the ModuleDef containing main
+    graph.EntryPoints
+    |> List.collect (fun entryId ->
+        match Map.tryFind entryId graph.Nodes with
+        | Some node ->
+            match node.Kind with
+            | SemanticKind.ModuleDef (_, memberIds) ->
+                // Get all Binding members that are NOT Lambda bindings
+                // and are NOT the main binding itself
+                memberIds
+                |> List.filter (fun memberId ->
+                    match Map.tryFind memberId graph.Nodes with
+                    | Some memberNode ->
+                        match memberNode.Kind with
+                        | SemanticKind.Binding _ ->
+                            // Check if this binding contains a Lambda
+                            let isLambda = isLambdaBinding graph memberId
+                            // Also check if this binding's child is main
+                            let containsMain =
+                                match memberNode.Children with
+                                | childId :: _ -> childId = mainLambdaId
+                                | [] -> false
+                            // Include if it's a VALUE binding (not Lambda, not main)
+                            not isLambda && not containsMain
+                        | _ -> false
+                    | None -> false)
+            | _ -> []
+        | None -> [])
+
 /// Main entry point: assign SSA names to all nodes in the graph
+///
+/// TWO-PASS SSA ASSIGNMENT:
+/// Pass 1: Module-level VALUE bindings get SSAs in main's scope (emitted in main's prologue)
+/// Pass 2: Each Lambda body gets its own scope with counter starting at 0
+///
+/// This prevents SSA collisions between module-level bindings and function bodies.
 let assignSSA (graph: SemanticGraph) : SSAAssignment =
     let lambdaNames, entryPoints = collectLambdas graph
 
-    // For each Lambda, assign SSAs to its body in its own scope
     let mutable allAssignments = Map.empty
     let mutable closureLayouts = Map.empty
 
+    // Find the main Lambda
+    let mainLambdaIdOpt = findMainLambdaId graph entryPoints
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PASS 1: Module-level VALUE bindings (emitted in main's prologue)
+    // These share main's SSA namespace, so process them first and continue counter
+    // ═══════════════════════════════════════════════════════════════════════════
+    let moduleLevelValueBindings =
+        match mainLambdaIdOpt with
+        | Some mainId -> findModuleLevelValueBindings graph mainId
+        | None -> []
+
+    // Assign SSAs to module-level value bindings
+    // These will use %v0, %v1, ... and main's body continues from there
+    let moduleLevelScope =
+        moduleLevelValueBindings
+        |> List.fold (fun scope bindingId ->
+            assignFunctionBody graph scope bindingId
+        ) FunctionScope.empty
+
+    // Track the counter after module-level bindings
+    let moduleLevelCounter = moduleLevelScope.Counter
+
+    // Merge module-level assignments
+    for kvp in moduleLevelScope.Assignments do
+        allAssignments <- Map.add kvp.Key kvp.Value allAssignments
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PASS 2: Lambda bodies (each gets its own scope)
+    // Non-main Lambdas start at counter 0
+    // Main Lambda starts at moduleLevelCounter (continues from Pass 1)
+    // ═══════════════════════════════════════════════════════════════════════════
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
         | SemanticKind.Lambda(params', bodyId, captures) ->
+            let nodeIdVal = NodeId.value node.Id
+            let isMain = Set.contains nodeIdVal entryPoints &&
+                         (mainLambdaIdOpt |> Option.map (fun id -> NodeId.value id = nodeIdVal) |> Option.defaultValue false)
+
+            // Main Lambda continues from module-level counter; others start fresh
+            let initialCounter = if isMain then moduleLevelCounter else 0
+            let initialScope = { FunctionScope.empty with Counter = initialCounter }
+
             // Assign SSAs to parameter PatternBindings (Arg 0, Arg 1, etc.)
-            // This allows VarRefs to parameters to look up their SSAs
             let paramScope =
                 params'
                 |> List.mapi (fun i (_name, _ty, nodeId) -> i, nodeId)
                 |> List.fold (fun (scope: FunctionScope) (i, nodeId) ->
-                    // Parameters get Arg N SSAs, mapped to their PatternBinding NodeId
                     FunctionScope.assign nodeId (NodeSSAAllocation.single (Arg i)) scope
-                ) FunctionScope.empty
+                ) initialScope
 
             // Assign SSAs to body nodes
             let bodyScope = assignFunctionBody graph paramScope bodyId
@@ -709,37 +831,24 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
             for kvp in bodyScope.Assignments do
                 allAssignments <- Map.add kvp.Key kvp.Value allAssignments
 
-            // Lambda node SSAs are assigned by assignFunctionBody (via nodeExpansionCost)
-            // For closing lambdas (with captures), also compute ClosureLayout
+            // For closing lambdas (with captures), compute ClosureLayout
             if not (List.isEmpty captures) then
-                // Look up the SSAs assigned to this Lambda node
-                match Map.tryFind (NodeId.value node.Id) bodyScope.Assignments with
+                match Map.tryFind nodeIdVal bodyScope.Assignments with
                 | Some alloc when alloc.SSAs.Length >= (List.length captures + 4) ->
                     let layout = buildClosureLayout node.Id captures alloc.SSAs
-                    closureLayouts <- Map.add (NodeId.value node.Id) layout closureLayouts
-                | _ ->
-                    // SSAs should have been assigned by assignFunctionBody
-                    // If not, something went wrong - but we don't want to crash here
-                    ()
+                    closureLayouts <- Map.add nodeIdVal layout closureLayouts
+                | _ -> ()
         | _ -> ()
 
-    // Also process top-level nodes (module bindings, etc.)
-    let topLevelScope =
-        graph.EntryPoints
-        |> List.fold (fun scope entryId -> assignFunctionBody graph scope entryId) FunctionScope.empty
-
-    for kvp in topLevelScope.Assignments do
-        allAssignments <- Map.add kvp.Key kvp.Value allAssignments
-
-    // Compute ClosureLayouts from top-level scope assignments as well
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Compute ClosureLayouts for any lambdas processed in module-level scope
+    // ═══════════════════════════════════════════════════════════════════════════
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
         | SemanticKind.Lambda(_, _, captures) when not (List.isEmpty captures) ->
-            // Check if we already computed this layout (from Lambda body processing above)
             if not (Map.containsKey (NodeId.value node.Id) closureLayouts) then
-                // Check top-level scope
-                match Map.tryFind (NodeId.value node.Id) topLevelScope.Assignments with
+                match Map.tryFind (NodeId.value node.Id) moduleLevelScope.Assignments with
                 | Some alloc when alloc.SSAs.Length >= (List.length captures + 4) ->
                     let layout = buildClosureLayout node.Id captures alloc.SSAs
                     closureLayouts <- Map.add (NodeId.value node.Id) layout closureLayouts

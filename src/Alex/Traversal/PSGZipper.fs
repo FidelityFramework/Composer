@@ -125,6 +125,9 @@ type EmissionState = {
     /// Stack of saved return types for nested function scopes
     mutable FuncRetTypeStack: MLIRType list
 
+    /// Stack of saved Focus states for nested function scopes
+    mutable FocusStack: ZipperFocus list
+
     // ─────────────────────────────────────────────────────────────────────────
     // VARIABLE BINDINGS (structured types, not strings)
     // ─────────────────────────────────────────────────────────────────────────
@@ -135,12 +138,40 @@ type EmissionState = {
     /// Node SSA bindings: NodeId value -> (SSA, MLIRType)
     mutable NodeBindings: Map<int, SSA * MLIRType>
 
-    /// Captured mutable variable names (ByRef captures)
+    /// Stack of saved VarBindings for nested function scopes
+    mutable VarBindingsStack: Map<string, SSA * MLIRType> list
+
+    /// Stack of saved NodeBindings for nested function scopes
+    mutable NodeBindingsStack: Map<int, SSA * MLIRType> list
+
+    /// Captured variable names (both ByRef and ByValue captures)
+    /// These come from closure environment extraction - VarRef should use VarBindings (not NodeBindings)
+    mutable CapturedVariables: Set<string>
+
+    /// Stack of saved CapturedVariables for nested function scopes
+    mutable CapturedVariablesStack: Set<string> list
+
+    /// Captured mutable variable names (ByRef captures only)
     /// These are pointers to the original mutable's alloca - VarRef must load, Set must store
     mutable CapturedMutables: Set<string>
 
+    /// Stack of saved CapturedMutables for nested function scopes
+    mutable CapturedMutablesStack: Set<string> list
+
     /// Entry point lambda IDs (for determining "main")
     EntryPointLambdaIds: Set<int>
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MODULE-LEVEL BINDING SUPPORT
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Ops accumulated from module-level VALUE bindings (outside any function scope)
+    /// These get injected into main's prologue when main is entered
+    mutable PendingModuleLevelOps: MLIROp list
+
+    /// Node bindings from module-level value bindings (name -> nodeId)
+    /// Used to track which bindings have been processed at module level
+    mutable ModuleLevelBindings: Map<string, int>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -209,10 +240,18 @@ module EmissionState =
             OpsStack = []
             FuncParamsStack = []
             FuncRetTypeStack = []
+            FocusStack = []
             VarBindings = Map.empty
             NodeBindings = Map.empty
+            VarBindingsStack = []
+            NodeBindingsStack = []
+            CapturedVariables = Set.empty
+            CapturedVariablesStack = []
             CapturedMutables = Set.empty
+            CapturedMutablesStack = []
             EntryPointLambdaIds = entryPointLambdaIds
+            PendingModuleLevelOps = []
+            ModuleLevelBindings = Map.empty
         }
 
     /// Look up pre-computed SSA for a PSG node (coeffect lookup)
@@ -428,16 +467,74 @@ let childCount (z: PSGZipper) : int = List.length z.Focus.Children
 let hasChildren (z: PSGZipper) : bool = not (List.isEmpty z.Focus.Children)
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SCOPE DERIVATION (from Zipper's Path)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Find the enclosing Lambda by walking up the zipper's path.
+/// This is the DEFINITIVE source of truth for "are we inside a function?"
+/// Returns Some (lambdaNode, lambdaName) if inside a Lambda, None if at module level.
+let findEnclosingLambda (z: PSGZipper) : (SemanticNode * string) option =
+    // First check if the current focus IS a Lambda
+    match z.Focus.Kind with
+    | SemanticKind.Lambda _ ->
+        let name = lookupLambdaName z.Focus.Id z.State.SSAAssignment
+                   |> Option.defaultValue "unknown"
+        Some (z.Focus, name)
+    | _ ->
+        // Walk up the path looking for a Lambda parent
+        z.Path
+        |> List.tryPick (fun step ->
+            match step.Parent.Kind with
+            | SemanticKind.Lambda _ ->
+                let name = lookupLambdaName step.Parent.Id z.State.SSAAssignment
+                           |> Option.defaultValue "unknown"
+                Some (step.Parent, name)
+            | _ -> None)
+
+/// Check if we're currently inside any function scope
+/// Derived from the zipper's Path - no manual tracking needed
+let isInsideFunction (z: PSGZipper) : bool =
+    findEnclosingLambda z |> Option.isSome
+
+// ═══════════════════════════════════════════════════════════════════════════
 // STATE OPERATIONS (Emission)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Emit a single operation to current scope
+/// Emit a single operation to current scope.
+/// CRITICAL: This derives the scope from the zipper's Path, not from manual State.Focus.
+/// If outside any function scope, ops go to PendingModuleLevelOps for later injection.
 let emit (op: MLIROp) (z: PSGZipper) : unit =
-    z.State.CurrentOps <- op :: z.State.CurrentOps
+    // Use BOTH the derived scope (from Path) AND the manual State.Focus
+    // State.Focus is set explicitly by enterFunction/exitFunction
+    // This handles the case where we're inside a Lambda body being traversed
+    let inFunction = 
+        match z.State.Focus with
+        | InFunction _ -> true
+        | AtNode -> isInsideFunction z
+    
+    // DEBUG TRACE
+    // let opName = match op with MLIROp.LLVMOp _ -> "LLVM" | MLIROp.FuncOp _ -> "Func" | MLIROp.ArithOp _ -> "Arith" | _ -> "Other"
+    // if not inFunction then
+    //     printfn "DEBUG: Emit to Pending! NodeId: %A Kind: %A Focus: %A PathDepth: %d Op: %s" z.Focus.Id z.Focus.Kind z.State.Focus (List.length z.Path) opName
+    
+    if inFunction then
+        // printfn "DEBUG: Emit Success! NodeId: %A Kind: %A Focus: %A" z.Focus.Id z.Focus.Kind z.State.Focus
+        z.State.CurrentOps <- op :: z.State.CurrentOps
+    else
+        z.State.PendingModuleLevelOps <- op :: z.State.PendingModuleLevelOps
 
-/// Emit multiple operations to current scope
+/// Emit multiple operations to current scope.
+/// Uses derived scope from zipper's Path.
 let emitAll (ops: MLIROp list) (z: PSGZipper) : unit =
-    z.State.CurrentOps <- List.rev ops @ z.State.CurrentOps
+    let inFunction = 
+        match z.State.Focus with
+        | InFunction _ -> true
+        | AtNode -> isInsideFunction z
+    
+    if inFunction then
+        z.State.CurrentOps <- List.rev ops @ z.State.CurrentOps
+    else
+        z.State.PendingModuleLevelOps <- List.rev ops @ z.State.PendingModuleLevelOps
 
 /// Emit a top-level operation (function definition, global)
 let emitTopLevel (op: MLIROp) (z: PSGZipper) : unit =
@@ -587,6 +684,16 @@ let bindVarSSA (name: string) (ssa: SSA) (ty: MLIRType) (z: PSGZipper) : PSGZipp
 let recallVarSSA (name: string) (z: PSGZipper) : (SSA * MLIRType) option =
     Map.tryFind name z.State.VarBindings
 
+/// Mark a variable as captured (either ByRef or ByValue)
+/// Captured variables should use VarBindings (not NodeBindings) when resolving VarRef
+let markCapturedVariable (name: string) (z: PSGZipper) : PSGZipper =
+    z.State.CapturedVariables <- Set.add name z.State.CapturedVariables
+    z
+
+/// Check if a variable is captured (either ByRef or ByValue)
+let isCapturedVariable (name: string) (z: PSGZipper) : bool =
+    Set.contains name z.State.CapturedVariables
+
 /// Mark a variable as a captured mutable (ByRef capture)
 /// These need load/store indirection when accessed
 let markCapturedMutable (name: string) (z: PSGZipper) : PSGZipper =
@@ -636,6 +743,20 @@ let enterFunction
     match z.State.CurrentFuncRetType with
     | Some rt -> z.State.FuncRetTypeStack <- rt :: z.State.FuncRetTypeStack
     | None -> ()
+    // Save current focus to stack
+    z.State.FocusStack <- z.State.Focus :: z.State.FocusStack
+    // Save current variable bindings to stack for function scoping
+    // VarBindings: cleared (parameters will be bound fresh)
+    // NodeBindings: PRESERVED (module-level bindings must be accessible)
+    // CapturedVariables/Mutables: cleared (capture markers are function-local)
+    z.State.VarBindingsStack <- z.State.VarBindings :: z.State.VarBindingsStack
+    z.State.NodeBindingsStack <- z.State.NodeBindings :: z.State.NodeBindingsStack
+    z.State.CapturedVariablesStack <- z.State.CapturedVariables :: z.State.CapturedVariablesStack
+    z.State.CapturedMutablesStack <- z.State.CapturedMutables :: z.State.CapturedMutablesStack
+    z.State.VarBindings <- Map.empty  // Fresh bindings for this function (parameters)
+    // NodeBindings: NOT cleared - preserve module-level and outer scope bindings
+    z.State.CapturedVariables <- Set.empty  // Fresh captured variables set for this function
+    z.State.CapturedMutables <- Set.empty  // Fresh captured mutables set for this function
     z.State.Focus <- InFunction name
     z.State.CurrentFuncParams <- Some params'
     z.State.CurrentFuncRetType <- Some retType
@@ -670,6 +791,38 @@ let exitFunction (z: PSGZipper) : PSGZipper =
         z.State.FuncRetTypeStack <- rest
     | [] ->
         z.State.CurrentFuncRetType <- None
+    // Restore focus from stack
+    match z.State.FocusStack with
+    | saved :: rest ->
+        z.State.Focus <- saved
+        z.State.FocusStack <- rest
+    | [] ->
+        z.State.Focus <- AtNode
+    // Restore variable bindings from stack (function scoping)
+    match z.State.VarBindingsStack with
+    | saved :: rest ->
+        z.State.VarBindings <- saved
+        z.State.VarBindingsStack <- rest
+    | [] ->
+        z.State.VarBindings <- Map.empty
+    match z.State.NodeBindingsStack with
+    | saved :: rest ->
+        z.State.NodeBindings <- saved
+        z.State.NodeBindingsStack <- rest
+    | [] ->
+        z.State.NodeBindings <- Map.empty
+    match z.State.CapturedVariablesStack with
+    | saved :: rest ->
+        z.State.CapturedVariables <- saved
+        z.State.CapturedVariablesStack <- rest
+    | [] ->
+        z.State.CapturedVariables <- Set.empty
+    match z.State.CapturedMutablesStack with
+    | saved :: rest ->
+        z.State.CapturedMutables <- saved
+        z.State.CapturedMutablesStack <- rest
+    | [] ->
+        z.State.CapturedMutables <- Set.empty
     z
 
 // ═══════════════════════════════════════════════════════════════════════════
