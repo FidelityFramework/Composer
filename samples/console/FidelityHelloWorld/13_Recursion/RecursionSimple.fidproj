@@ -1,0 +1,18 @@
+[package]
+name = "RecursionSimple"
+version = "0.1.0"
+description = "Demonstrates simple recursive functions (no mutual recursion)"
+authors = ["SpeakEZ LLC"]
+license = "MIT"
+
+[compilation]
+memory_model = "stack_only"
+target = "native"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/Linux_x86_64" }
+
+[build]
+sources = ["RecursionSimple.fs"]
+output = "recursion_simple"
+output_kind = "console"

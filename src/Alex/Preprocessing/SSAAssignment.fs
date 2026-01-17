@@ -417,7 +417,7 @@ let private nodeExpansionCost (graph: SemanticGraph) (node: SemanticNode) : int 
     | SemanticKind.InterpolatedString parts -> interpolatedStringCost parts
 
     // Lambda: cost depends on captures (structural analysis)
-    | SemanticKind.Lambda (_, _, captures) ->
+    | SemanticKind.Lambda (_, _, captures, _) ->
         computeLambdaSSACost captures
 
     // Fixed costs (these don't vary by structure)
@@ -543,7 +543,7 @@ let rec private assignFunctionBody
         // Special handling for nested Lambdas - they get their own scope
         // (but we still assign this Lambda node SSAs in parent scope for closure construction)
         match node.Kind with
-        | SemanticKind.Lambda(_params, bodyId, captures) ->
+        | SemanticKind.Lambda(_params, bodyId, captures, _) ->
             // Process Lambda body in a NEW scope (SSA counter resets)
             let _innerScope = assignFunctionBody graph closureLayouts FunctionScope.empty bodyId
             // Lambda itself gets SSAs in the PARENT scope for closure struct construction
@@ -618,42 +618,29 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> 
             | _ -> ()
         | None -> ()
 
-    // Build reverse index: Lambda NodeId -> Binding name
-    // This handles the case where Parent field isn't set on Lambdas
-    // ARCHITECTURAL NOTE: FNCS often wraps top-level bindings in TypeAnnotation
-    // So we must look through TypeAnnotation to find the Binding parent
-    let mutable lambdaToBindingName = Map.empty
-    
-    // Helper to find binding name by walking up parents
-    let rec findBindingParent (nodeId: NodeId) : string option =
-        match Map.tryFind nodeId graph.Nodes with
-        | Some node ->
-            match node.Kind with
-            | SemanticKind.Binding (name, _, _, _) -> Some name
-            | SemanticKind.TypeAnnotation _ ->
-                match node.Parent with
-                | Some parentId -> findBindingParent parentId
-                | None -> None
-            | _ -> None
-        | None -> None
+    // PRD-13: Find enclosing function by walking Parent chain
+    // Structure: Lambda -> Binding("loop") -> ... -> Lambda -> Binding("factorialTail")
+    let findEnclosingFunctionName (startId: NodeId) : string option =
+        let rec walk (nodeId: NodeId) (passedFirstLambda: bool) =
+            match Map.tryFind nodeId graph.Nodes with
+            | None -> None
+            | Some n ->
+                match n.Kind with
+                | SemanticKind.Lambda _ when passedFirstLambda ->
+                    // Found enclosing Lambda - get its parent Binding's name
+                    match n.Parent with
+                    | Some parentId ->
+                        match Map.tryFind parentId graph.Nodes with
+                        | Some { Kind = SemanticKind.Binding(name, _, _, _) } -> Some name
+                        | _ -> None
+                    | None -> None
+                | _ ->
+                    match n.Parent with
+                    | Some parentId -> walk parentId true
+                    | None -> None
+        walk startId false
 
-    for kvp in graph.Nodes do
-        let node = kvp.Value
-        match node.Kind with
-        | SemanticKind.Lambda _ ->
-            // Try to find a binding parent
-            match node.Parent with
-            | Some parentId ->
-                match findBindingParent parentId with
-                | Some name -> 
-                    lambdaToBindingName <- Map.add (NodeId.value kvp.Key) name lambdaToBindingName
-                | None -> ()
-            | None -> ()
-        | _ -> ()
-
-    // Now assign names to all Lambdas
-    // ARCHITECTURAL PRINCIPLE: When a Lambda is bound via `let name = ...`,
-    // use the binding name as the function name. This preserves programmer intent.
+    // Assign names to all Lambdas
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
@@ -663,42 +650,35 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> 
                 if Set.contains nodeIdVal entryPoints then
                     "main"
                 else
-                    // First check our reverse index (handles Parent = None case)
-                    match Map.tryFind nodeIdVal lambdaToBindingName with
-                    | Some bindingName -> bindingName
-                    | None ->
-                        // Fallback: check Parent field directly
+                    // Get base name from parent Binding
+                    let baseName =
                         match node.Parent with
                         | Some parentId ->
                             match Map.tryFind parentId graph.Nodes with
-                            | Some parentNode ->
-                                match parentNode.Kind with
-                                | SemanticKind.Binding (bindingName, _, _, _) ->
-                                    bindingName
-                                | _ ->
-                                    let n = sprintf "lambda_%d" lambdaCounter
-                                    lambdaCounter <- lambdaCounter + 1
-                                    n
-                            | None ->
-                                let n = sprintf "lambda_%d" lambdaCounter
-                                lambdaCounter <- lambdaCounter + 1
-                                n
-                        | None ->
-                            let n = sprintf "lambda_%d" lambdaCounter
-                            lambdaCounter <- lambdaCounter + 1
-                            n
+                            | Some { Kind = SemanticKind.Binding(bindingName, _, _, _) } -> Some bindingName
+                            | _ -> None
+                        | None -> None
+
+                    match baseName with
+                    | Some bname ->
+                        // Check if nested by walking Parent chain
+                        match findEnclosingFunctionName node.Id with
+                        | Some enclosing -> sprintf "%s_%s" enclosing bname
+                        | None -> bname
+                    | None ->
+                        let n = sprintf "lambda_%d" lambdaCounter
+                        lambdaCounter <- lambdaCounter + 1
+                        n
+
             lambdaNames <- Map.add nodeIdVal name lambdaNames
-            // CRITICAL: Also add the parent Binding's NodeId with the same name
-            // VarRefs point to Bindings, not Lambdas. Both must resolve to the function name.
+
+            // Also store for parent Binding's NodeId (VarRefs point to Bindings)
             match node.Parent with
             | Some parentId ->
                 match Map.tryFind parentId graph.Nodes with
-                | Some parentNode ->
-                    match parentNode.Kind with
-                    | SemanticKind.Binding _ ->
-                        lambdaNames <- Map.add (NodeId.value parentId) name lambdaNames
-                    | _ -> ()
-                | None -> ()
+                | Some { Kind = SemanticKind.Binding _ } ->
+                    lambdaNames <- Map.add (NodeId.value parentId) name lambdaNames
+                | _ -> ()
             | None -> ()
         | _ -> ()
 
@@ -831,7 +811,7 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
-        | SemanticKind.Lambda(params', bodyId, captures) ->
+        | SemanticKind.Lambda(params', bodyId, captures, _) ->
             let nodeIdVal = NodeId.value node.Id
             let isMain = Set.contains nodeIdVal entryPoints &&
                          (mainLambdaIdOpt |> Option.map (fun id -> NodeId.value id = nodeIdVal) |> Option.defaultValue false)

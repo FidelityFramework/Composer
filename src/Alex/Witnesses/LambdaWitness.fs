@@ -314,7 +314,7 @@ let private witnessInFunctionScope
     // ... (paramCount logic) ...
     let paramCount =
         match node.Kind with
-        | SemanticKind.Lambda (params', _bodyId, _captures) -> List.length params'
+        | SemanticKind.Lambda (params', _bodyId, _captures, _) -> List.length params'
         | _ -> 0
     let finalRetType = extractFinalReturnType node.Type paramCount
     let declaredRetType = mapNativeTypeWithGraph z.Graph finalRetType
@@ -461,7 +461,7 @@ let private isUnitType (ty: NativeType) : bool =
 /// - These entry ops are prepended to body ops later
 let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
     match node.Kind with
-    | SemanticKind.Lambda (params', _bodyId, captures) ->
+    | SemanticKind.Lambda (params', _bodyId, captures, _) ->
         let nodeIdVal = NodeId.value node.Id
         // ARCHITECTURAL FIX: Use SSAAssignment coeffect for lambda names
         // This respects binding names when Lambda is bound via `let name = ...`

@@ -277,7 +277,7 @@ let witnessVarRef
                         | _ -> None
                     
                     match lambdaNode with
-                    | Some { Kind = SemanticKind.Lambda(params', _, _) } -> List.length params'
+                    | Some { Kind = SemanticKind.Lambda(params', _, _, _) } -> List.length params'
                     | _ -> 
                         // Fallback: heuristic peeling (unsafe, but better than nothing)
                         // This happens for intrinsics or externals if they end up here

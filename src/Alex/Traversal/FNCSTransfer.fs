@@ -360,7 +360,7 @@ let private transferGraphCore
                             ) (state, 0)
                             |> fst
 
-                        | SemanticKind.Lambda (params', bodyId, _captures) ->
+                        | SemanticKind.Lambda (params', bodyId, _captures, _) ->
                             // Lambda traversal: Parameters then Body (as region)
                             let parentId = node.Id
                             let paramNodeIds = params' |> List.map (fun (_, _, nodeId) -> nodeId)
@@ -510,7 +510,7 @@ let private transferGraphCore
             // ─────────────────────────────────────────────────────────────────
             // Lambdas
             // ─────────────────────────────────────────────────────────────────
-            | SemanticKind.Lambda (params', bodyId, _captures) ->
+            | SemanticKind.Lambda (params', bodyId, _captures, _) ->
                 // RECURSIVE WITNESS STRATEGY:
                 // We define a callback that traverses the body subtree and captures the output.
                 // This bypasses the global fold's stack management for the body,
