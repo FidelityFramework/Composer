@@ -6,9 +6,9 @@
 
 Sequence expressions (`seq { }`) provide lazy, on-demand iteration in F#. Unlike `Lazy<'T>` (single deferred value), `Seq<'T>` produces multiple values through resumable computation.
 
-**Key Insight**: A sequence is a **resumable closure** - it captures variables from scope and suspends/resumes at yield points. The state machine tracks which yield to resume from.
+**Key Insight**: A sequence is an **extended flat closure with state machine fields**. Like Lazy (PRD-14), captures are inlined directly into the struct. The sequence adds state tracking for resumable computation at yield points.
 
-**Builds on PRD-14**: Both `Lazy<'T>` and `Seq<'T>` are deferred computations with captures. Lazy evaluates once; Seq evaluates repeatedly until exhausted.
+**Builds on PRD-14**: Both `Lazy<'T>` and `Seq<'T>` are flat closures with extra state. Lazy has `{computed, value, code_ptr, captures...}`. Seq has `{state, current, code_ptr, captures...}`.
 
 ## 2. Language Feature Specification
 
@@ -61,41 +61,79 @@ The `for...in` construct drives the state machine.
 1. **Laziness**: Elements computed on demand, not eagerly
 2. **Pull-based**: Consumer controls iteration pace
 3. **Restartability**: Iterating a seq twice re-executes from the beginning
-4. **Capture semantics**: Variables captured at creation time
+4. **Capture semantics**: Variables captured at creation time (flat closure model)
 
-## 3. FNCS Layer Implementation
+## 3. Architectural Principles
 
-### 3.1 NTUKind Extension
+### 3.1 Flat Closure Extension (No `env_ptr`)
 
-**File**: `~/repos/fsnative/src/Compiler/Checking.Native/NativeTypes.fs`
+Following the flat closure model from PRD-11 and PRD-14:
+
+```
+Seq<T> = {state: i32, current: T, code_ptr: ptr, capture₀, capture₁, ...}
+```
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `state` | `i32` | Current state: 0=initial, N=after yield N, -1=done |
+| `current` | `T` | Current value (valid after MoveNext returns true) |
+| `code_ptr` | `ptr` | MoveNext function pointer |
+| `capture₀...captureₙ` | varies | Inlined captured variables |
+
+**There is no `env_ptr` field.** Captures are stored directly in the struct.
+
+### 3.2 Capture Semantics (from PRD-11)
+
+| Variable Kind | Capture Mode | Storage in Seq |
+|---------------|--------------|----------------|
+| Immutable | ByValue | Copy of value |
+| Mutable | ByRef | Pointer to storage location |
+
+### 3.3 Struct Layout Examples
+
+**No captures** (`seq { yield 1; yield 2; yield 3 }`):
+```
+{state: i32, current: i32, code_ptr: ptr}
+```
+
+**With captures** (`seq { for i in 1..n do yield i * factor }` where n, factor are captured):
+```
+{state: i32, current: i32, code_ptr: ptr, n: i32, factor: i32}
+```
+
+### 3.4 State Machine Model
+
+Each `yield` becomes a state transition point. The MoveNext function:
+1. Switches on current state
+2. Executes code until next yield (or end)
+3. Stores yielded value in `current` field
+4. Updates state to next yield point
+5. Returns `true` (has value) or `false` (done)
+
+## 4. FNCS Layer Implementation
+
+### 4.1 NTUKind and NativeType Extensions
 
 ```fsharp
+// In NativeTypes.fs
 type NTUKind =
     // ... existing kinds ...
-    | NTUlazy  // From PRD-14
-    | NTUseq   // NEW: Sequence/generator
-```
+    | NTUseq   // Sequence/generator
 
-### 3.2 NativeType Extension
-
-```fsharp
 type NativeType =
     // ... existing types ...
-    | TLazy of valueType: NativeType  // From PRD-14
-    | TSeq of elementType: NativeType  // NEW
+    | TSeq of elementType: NativeType
 ```
 
-### 3.3 SemanticKind Extensions
-
-**File**: `~/repos/fsnative/src/Compiler/Checking.Native/SemanticGraph.fs`
+### 4.2 SemanticKind Extensions
 
 ```fsharp
 type SemanticKind =
     // ... existing kinds ...
 
-    /// Sequence expression - a resumable closure producing values on demand
+    /// Sequence expression - a resumable flat closure producing values on demand
     /// body: The sequence body containing yields
-    /// captures: Variables captured from enclosing scope
+    /// captures: Variables captured from enclosing scope (flat closure model)
     | SeqExpr of body: NodeId * captures: CaptureInfo list
 
     /// Yield point within a sequence expression
@@ -110,9 +148,9 @@ type SemanticKind =
     | ForEach of loopVar: string * varType: NativeType * source: NodeId * body: NodeId
 ```
 
-**Note**: No `stateIndex` in Yield - that's computed by Alex as a coeffect.
+**Note**: No `stateIndex` in Yield - that's computed by Alex as a coeffect (YieldStateIndices).
 
-### 3.4 TypeEnv Extension
+### 4.3 TypeEnv Extension
 
 Following PRD-13's environment enrichment pattern:
 
@@ -126,9 +164,7 @@ type TypeEnv = {
 }
 ```
 
-### 3.5 Checking seq { } Expressions
-
-**File**: `~/repos/fsnative/src/Compiler/Checking.Native/Expressions/Computations.fs`
+### 4.4 Checking `seq { }` Expressions
 
 ```fsharp
 /// Check a sequence expression
@@ -164,7 +200,7 @@ let checkSeqExpr
     seqNode
 ```
 
-### 3.6 Checking yield Expressions
+### 4.5 Checking `yield` Expressions
 
 ```fsharp
 /// Check a yield expression within a sequence
@@ -190,7 +226,7 @@ let checkYield
             children = [valueNode.Id])
 ```
 
-### 3.7 Checking for...in Expressions
+### 4.6 Checking `for...in` Expressions
 
 ```fsharp
 /// Check a for-each loop
@@ -226,23 +262,23 @@ let checkForEach
         children = [sourceNode.Id; bodyNode.Id])
 ```
 
-### 3.8 Files to Modify (FNCS)
+### 4.7 Files to Modify (FNCS)
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `NativeTypes.fs` | MODIFY | Add `NTUseq`, `TSeq` type constructor |
-| `SemanticGraph.fs` | MODIFY | Add `SeqExpr`, `Yield`, `ForEach` SemanticKinds |
+| `NativeTypes.fs` | MODIFY | Add `NTUseq`, `TSeq` |
+| `SemanticGraph.fs` | MODIFY | Add `SeqExpr`, `Yield`, `ForEach` |
 | `Types.fs` | MODIFY | Add `EnclosingSeqExpr` to TypeEnv |
-| `Expressions/Computations.fs` | MODIFY | Add seq/yield/for-in checking |
-| `Expressions/Coordinator.fs` | MODIFY | Route `seq { }` and `for...in` expressions |
+| `Expressions/Computations.fs` | MODIFY | Seq/yield/for-in checking |
+| `Expressions/Coordinator.fs` | MODIFY | Route expressions |
 
-## 4. Alex Layer Implementation
+## 5. Alex Layer Implementation
 
-### 4.1 YieldStateIndices Coeffect
-
-**File**: `src/Alex/Preprocessing/YieldStateIndices.fs`
+### 5.1 YieldStateIndices Coeffect
 
 Following the SSAAssignment pattern, assign state indices as coeffects:
+
+**File**: `src/Alex/Preprocessing/YieldStateIndices.fs`
 
 ```fsharp
 /// Coeffect: Maps each Yield NodeId to its state index
@@ -269,128 +305,183 @@ let run (graph: SemanticGraph) : YieldStateCoeffect =
     { StateIndices = indices }
 ```
 
-### 4.2 Sequence State Machine Structure
+### 5.2 SeqLayout Coeffect
+
+Following PRD-14's LazyLayout pattern:
+
+**File**: `src/Alex/Preprocessing/SeqLayout.fs`
 
 ```fsharp
-type SeqStateMachine<'T> = {
-    State: int              // 0 = initial, N = after yield N, -1 = done
-    Current: 'T             // Current value (valid after MoveNext returns true)
-    // ...captured variables...
+/// Layout information for a sequence expression
+type SeqLayout = {
+    /// NodeId of the SeqExpr
+    SeqId: NodeId
+    /// Element type (T in Seq<T>)
+    ElementType: MLIRType
+    /// Capture layouts (reuse from closure)
+    Captures: CaptureLayout list
+    /// Total struct type
+    StructType: MLIRType
+    /// Number of yield points
+    NumYields: int
+    /// MoveNext function name
+    MoveNextFuncName: string
 }
+
+/// Generate MLIR struct type for a sequence expression
+let seqStructType (elementType: MLIRType) (captureTypes: MLIRType list) : MLIRType =
+    // {state: i32, current: T, code_ptr: ptr, cap₀, cap₁, ...}
+    TStruct ([TInt I32; elementType; TPtr] @ captureTypes)
 ```
 
-### 4.3 SeqWitness - State Machine Emission
-
-**File**: `src/Alex/Witnesses/SeqWitness.fs`
+### 5.3 SeqWitness - Creation
 
 ```fsharp
 /// Emit MLIR for sequence expression initialization
-let witnessSeqExpr
+let witnessSeqCreate
     (z: PSGZipper)
-    (seqExprId: NodeId)
-    (captures: CaptureInfo list)
-    : MLIRBuilder =
+    (layout: SeqLayout)
+    (captureVals: Val list)
+    : (MLIROp list * TransferResult) =
 
-    mlir {
-        let structName = generateSeqStructName seqExprId
+    let structType = layout.StructType
+    let ssas = requireNodeSSAs layout.SeqId z
 
-        // Allocate state machine struct
-        yield $"%seq = llvm.alloca 1 x !{structName} : !llvm.ptr"
+    let ops = [
+        // Create initial state = 0
+        MLIROp.ArithOp (ArithOp.ConstI (ssas.[0], 0L, MLIRTypes.i32))
 
-        // Initialize state = 0 (initial)
-        yield "%state_ptr = llvm.getelementptr %seq[0, 0] : !llvm.ptr"
-        yield "%zero = llvm.mlir.constant(0 : i32) : i32"
-        yield "llvm.store %zero, %state_ptr : i32"
+        // Create undef seq struct
+        MLIROp.LLVMOp (LLVMOp.Undef (ssas.[1], structType))
 
-        // Store captured variables
-        for (i, capture) in captures |> List.indexed do
-            yield $"%cap_{i}_ptr = llvm.getelementptr %seq[0, {2 + i}] : !llvm.ptr"
-            yield $"llvm.store %{capture.Name}, %cap_{i}_ptr"
-    }
+        // Insert state=0 at index 0
+        MLIROp.LLVMOp (LLVMOp.InsertValue (ssas.[2], ssas.[1], ssas.[0], [0], structType))
 
-/// Emit the MoveNext function for a sequence
-let emitMoveNextFunction
-    (seqExprId: NodeId)
-    (yieldIndices: Map<NodeId, int>)
-    (body: SemanticNode)
-    : MLIRBuilder =
+        // Get MoveNext function address and insert at index 2
+        MLIROp.LLVMOp (LLVMOp.AddressOf (ssas.[3], GFunc layout.MoveNextFuncName))
+        MLIROp.LLVMOp (LLVMOp.InsertValue (ssas.[4], ssas.[2], ssas.[3], [2], structType))
+    ]
 
-    let numYields = yieldIndices.Count
+    // Insert each capture at indices 3, 4, 5, ...
+    let captureOps = ... // Same pattern as LazyWitness
 
-    mlir {
-        yield $"llvm.func @{seqExprId}_moveNext(%self: !llvm.ptr) -> i1 {{"
-        yield "    %state_ptr = llvm.getelementptr %self[0, 0] : !llvm.ptr"
-        yield "    %state = llvm.load %state_ptr : i32"
-        yield ""
-        yield $"    llvm.switch %state : i32 ["
-
-        // State 0 = initial, States 1..N = after yield N
-        for i in 0 .. numYields do
-            yield $"        {i}: ^state{i},"
-        yield "    ], ^done"
-
-        // Generate state blocks based on body structure
-        // Each yield becomes a state transition
-        // ... emit body with state transitions ...
-
-        yield "^done:"
-        yield "    %neg1 = llvm.mlir.constant(-1 : i32) : i32"
-        yield "    llvm.store %neg1, %state_ptr : i32"
-        yield "    %false = llvm.mlir.constant(false) : i1"
-        yield "    llvm.return %false : i1"
-        yield "}"
-    }
+    (ops @ captureOps, TRValue { SSA = resultSSA; Type = structType })
 ```
 
-### 4.4 ForEachWitness
+### 5.4 MoveNext Function Generation
 
-**File**: `src/Alex/Witnesses/ForEachWitness.fs`
+The MoveNext function is generated as a state machine:
+
+```fsharp
+/// Generate MoveNext function for a sequence
+/// Signature: (ptr-to-seq-struct) -> i1
+/// Mutates the struct (state, current) through the pointer
+let emitMoveNextFunction
+    (seqId: NodeId)
+    (layout: SeqLayout)
+    (yieldIndices: Map<NodeId, int>)
+    (bodyEmitter: int -> MLIRBuilder)  // state -> code for that state
+    : MLIROp list =
+
+    // MoveNext takes a POINTER to the seq struct (for mutation)
+    // Extracts current state, switches, executes code, stores new state/current
+
+    let numYields = layout.NumYields
+
+    // Generate:
+    // 1. Load state from struct
+    // 2. Switch on state: 0 -> ^state0, 1 -> ^state1, ...
+    // 3. Each state block: execute code until yield, store current, update state, return true
+    // 4. Done block: set state = -1, return false
+
+    ...
+```
+
+**Key insight**: MoveNext takes a **pointer** to the seq struct because it needs to mutate `state` and `current`. This is different from force (which can work with by-value for pure computation).
+
+### 5.5 ForEachWitness
 
 ```fsharp
 /// Emit MLIR for for-each loop
 let witnessForEach
     (z: PSGZipper)
     (loopVar: string)
-    (sourceSSA: string)
-    (bodyEmitter: unit -> MLIRBuilder)
-    : MLIRBuilder =
+    (seqLayout: SeqLayout)
+    (seqVal: Val)
+    (bodyEmitter: Val -> MLIROp list)  // current value -> body ops
+    : MLIROp list =
 
-    mlir {
-        yield "llvm.br ^loop_check"
+    // 1. Allocate seq struct on stack (if not already a pointer)
+    // 2. Loop: call MoveNext, check result, extract current, emit body, repeat
 
-        yield "^loop_check:"
-        yield $"    %has_next = llvm.call @moveNext(%{sourceSSA}) : (!llvm.ptr) -> i1"
-        yield "    llvm.cond_br %has_next, ^loop_body, ^loop_done"
+    [
+        // Alloca for seq struct
+        MLIROp.LLVMOp (LLVMOp.Alloca (seqAllocaSSA, one, seqLayout.StructType, None))
+        MLIROp.LLVMOp (LLVMOp.Store (seqVal.SSA, seqAllocaSSA, seqLayout.StructType, NotAtomic))
 
-        yield "^loop_body:"
-        yield $"    %curr_ptr = llvm.getelementptr %{sourceSSA}[0, 1] : !llvm.ptr"
-        yield $"    %{loopVar} = llvm.load %curr_ptr"
+        // Loop header
+        // %has_next = call @moveNext(%seq_alloca)
+        // cond_br %has_next, ^body, ^done
 
-        // Emit loop body
-        yield! bodyEmitter()
+        // Loop body
+        // %current_ptr = gep %seq_alloca[0, 1]
+        // %current = load %current_ptr
+        // ... body using %current ...
+        // br ^header
 
-        yield "    llvm.br ^loop_check"
-
-        yield "^loop_done:"
-    }
+        // Done
+        // ...
+    ]
 ```
 
-## 5. MLIR Output Specification
+### 5.6 SSA Cost Computation
 
-### 5.1 Simple Sequence: `seq { yield 1; yield 2; yield 3 }`
+```fsharp
+/// SSA cost for SeqExpr with N captures
+let seqExprSSACost (numCaptures: int) : int =
+    // 1: state constant (0)
+    // 1: undef struct
+    // 1: insert state
+    // 1: addressof code_ptr
+    // 1: insert code_ptr
+    // N: insert each capture
+    5 + numCaptures
+
+/// SSA cost for ForEach
+let forEachSSACost : int =
+    // 1: alloca for seq
+    // 1: store seq value
+    // 1: moveNext result
+    // 1: current_ptr (gep)
+    // 1: current value (load)
+    5
+```
+
+### 5.7 Files to Create/Modify (Alex)
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `Alex/Preprocessing/YieldStateIndices.fs` | CREATE | State index coeffects |
+| `Alex/Preprocessing/SeqLayout.fs` | CREATE | Seq struct layout coeffects |
+| `Alex/Witnesses/SeqWitness.fs` | CREATE | Seq creation, MoveNext emission |
+| `Alex/Witnesses/ForEachWitness.fs` | CREATE | For-each loop emission |
+| `Alex/Traversal/FNCSTransfer.fs` | MODIFY | Handle SeqExpr, Yield, ForEach |
+
+## 6. MLIR Output Specification
+
+### 6.1 Simple Sequence: `seq { yield 1; yield 2; yield 3 }`
 
 ```mlir
-// Sequence struct type
-!seq_numbers = !llvm.struct<(
-    i32,     // state: 0=initial, 1=after yield 1, etc., -1=done
-    i32      // current value
-)>
+// Sequence struct type (no captures)
+!seq_int_0 = !llvm.struct<(i32, i32, ptr)>
 
 // MoveNext function
-llvm.func @seq_numbers_moveNext(%self: !llvm.ptr) -> i1 {
+llvm.func @seq_123_moveNext(%self: !llvm.ptr) -> i1 {
+    // Load current state
     %state_ptr = llvm.getelementptr %self[0, 0] : !llvm.ptr
     %state = llvm.load %state_ptr : i32
 
+    // Switch on state
     llvm.switch %state : i32 [
         0: ^state0,
         1: ^state1,
@@ -399,57 +490,121 @@ llvm.func @seq_numbers_moveNext(%self: !llvm.ptr) -> i1 {
 
 ^state0:  // Initial -> yield 1
     %curr_ptr = llvm.getelementptr %self[0, 1] : !llvm.ptr
-    %c1 = llvm.mlir.constant(1 : i32) : i32
+    %c1 = arith.constant 1 : i32
     llvm.store %c1, %curr_ptr : i32
-    %s1 = llvm.mlir.constant(1 : i32) : i32
+    %s1 = arith.constant 1 : i32
     llvm.store %s1, %state_ptr : i32
-    %true1 = llvm.mlir.constant(true) : i1
-    llvm.return %true1 : i1
+    %true = arith.constant true
+    llvm.return %true : i1
 
 ^state1:  // After yield 1 -> yield 2
     %curr_ptr_1 = llvm.getelementptr %self[0, 1] : !llvm.ptr
-    %c2 = llvm.mlir.constant(2 : i32) : i32
+    %c2 = arith.constant 2 : i32
     llvm.store %c2, %curr_ptr_1 : i32
-    %s2 = llvm.mlir.constant(2 : i32) : i32
+    %s2 = arith.constant 2 : i32
     llvm.store %s2, %state_ptr : i32
-    %true2 = llvm.mlir.constant(true) : i1
-    llvm.return %true2 : i1
+    %true1 = arith.constant true
+    llvm.return %true1 : i1
 
 ^state2:  // After yield 2 -> yield 3
     %curr_ptr_2 = llvm.getelementptr %self[0, 1] : !llvm.ptr
-    %c3 = llvm.mlir.constant(3 : i32) : i32
+    %c3 = arith.constant 3 : i32
     llvm.store %c3, %curr_ptr_2 : i32
-    %s3 = llvm.mlir.constant(3 : i32) : i32
+    %s3 = arith.constant 3 : i32
     llvm.store %s3, %state_ptr : i32
-    %true3 = llvm.mlir.constant(true) : i1
-    llvm.return %true3 : i1
+    %true2 = arith.constant true
+    llvm.return %true2 : i1
 
 ^done:
-    %neg1 = llvm.mlir.constant(-1 : i32) : i32
+    %neg1 = arith.constant -1 : i32
     llvm.store %neg1, %state_ptr : i32
-    %false = llvm.mlir.constant(false) : i1
+    %false = arith.constant false
+    llvm.return %false : i1
+}
+
+// Creation
+%zero = arith.constant 0 : i32
+%undef = llvm.mlir.undef : !seq_int_0
+%s0 = llvm.insertvalue %zero, %undef[0] : !seq_int_0
+%code_ptr = llvm.mlir.addressof @seq_123_moveNext : !llvm.ptr
+%seq_val = llvm.insertvalue %code_ptr, %s0[2] : !seq_int_0
+```
+
+### 6.2 Sequence with Captures: `seq { for i in 1..n do yield i * factor }`
+
+```mlir
+// Sequence struct type (captures n: i32, factor: i32, plus mutable i)
+!seq_int_3 = !llvm.struct<(i32, i32, ptr, i32, i32, i32)>
+// Fields: state, current, code_ptr, n, factor, i
+
+// MoveNext function
+llvm.func @seq_factors_moveNext(%self: !llvm.ptr) -> i1 {
+    // Load state
+    %state_ptr = llvm.getelementptr %self[0, 0] : !llvm.ptr
+    %state = llvm.load %state_ptr : i32
+
+    // Load captures (n, factor) and mutable (i)
+    %n_ptr = llvm.getelementptr %self[0, 3] : !llvm.ptr
+    %n = llvm.load %n_ptr : i32
+    %factor_ptr = llvm.getelementptr %self[0, 4] : !llvm.ptr
+    %factor = llvm.load %factor_ptr : i32
+    %i_ptr = llvm.getelementptr %self[0, 5] : !llvm.ptr
+    %i = llvm.load %i_ptr : i32
+
+    llvm.switch %state : i32 [
+        0: ^state0,
+        1: ^state1
+    ], ^done
+
+^state0:  // Initial: i = 1
+    %one = arith.constant 1 : i32
+    llvm.store %one, %i_ptr : i32
+    llvm.br ^check
+
+^state1:  // After yield: i <- i + 1
+    %i_val = llvm.load %i_ptr : i32
+    %i_plus_1 = arith.addi %i_val, %one : i32
+    llvm.store %i_plus_1, %i_ptr : i32
+    llvm.br ^check
+
+^check:
+    %i_current = llvm.load %i_ptr : i32
+    %done_cond = arith.cmpi sgt, %i_current, %n : i32
+    llvm.cond_br %done_cond, ^done, ^yield
+
+^yield:
+    %i_for_yield = llvm.load %i_ptr : i32
+    %product = arith.muli %i_for_yield, %factor : i32
+    %curr_ptr = llvm.getelementptr %self[0, 1] : !llvm.ptr
+    llvm.store %product, %curr_ptr : i32
+    %s1 = arith.constant 1 : i32
+    llvm.store %s1, %state_ptr : i32
+    %true = arith.constant true
+    llvm.return %true : i1
+
+^done:
+    %neg1 = arith.constant -1 : i32
+    llvm.store %neg1, %state_ptr : i32
+    %false = arith.constant false
     llvm.return %false : i1
 }
 ```
 
-### 5.2 For-Each Loop: `for x in numbers do ...`
+### 6.3 For-Each Loop: `for x in numbers do ...`
 
 ```mlir
-// Initialize sequence
-%seq = llvm.alloca 1 x !seq_numbers : !llvm.ptr
-%init_state = llvm.mlir.constant(0 : i32) : i32
-%state_ptr = llvm.getelementptr %seq[0, 0] : !llvm.ptr
-llvm.store %init_state, %state_ptr : i32
+// Allocate seq struct on stack
+%seq_alloca = llvm.alloca 1 x !seq_int_0 : !llvm.ptr
+llvm.store %seq_val, %seq_alloca : !seq_int_0
 
-// Loop
 llvm.br ^loop_check
 
 ^loop_check:
-    %has_next = llvm.call @seq_numbers_moveNext(%seq) : (!llvm.ptr) -> i1
+    %has_next = llvm.call @seq_123_moveNext(%seq_alloca) : (!llvm.ptr) -> i1
     llvm.cond_br %has_next, ^loop_body, ^loop_done
 
 ^loop_body:
-    %curr_ptr = llvm.getelementptr %seq[0, 1] : !llvm.ptr
+    %curr_ptr = llvm.getelementptr %seq_alloca[0, 1] : !llvm.ptr
     %x = llvm.load %curr_ptr : i32
     // ... loop body using %x ...
     llvm.br ^loop_check
@@ -457,9 +612,9 @@ llvm.br ^loop_check
 ^loop_done:
 ```
 
-## 6. Validation
+## 7. Validation
 
-### 6.1 Sample Code
+### 7.1 Sample Code
 
 ```fsharp
 /// Sample 15: Simple Sequence Expressions
@@ -524,7 +679,7 @@ let main _ =
     0
 ```
 
-### 6.2 Expected Output
+### 7.2 Expected Output
 
 ```
 === Sample 15: Simple Sequences ===
@@ -557,27 +712,6 @@ let main _ =
 15
 ```
 
-## 7. Files to Create/Modify
-
-### 7.1 FNCS
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `NativeTypes.fs` | MODIFY | Add `NTUseq`, `TSeq` |
-| `SemanticGraph.fs` | MODIFY | Add `SeqExpr`, `Yield`, `ForEach` |
-| `Types.fs` | MODIFY | Add `EnclosingSeqExpr` to TypeEnv |
-| `Expressions/Computations.fs` | MODIFY | Seq/yield/for-in checking |
-| `Expressions/Coordinator.fs` | MODIFY | Route expressions |
-
-### 7.2 Firefly
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `Alex/Preprocessing/YieldStateIndices.fs` | CREATE | State index coeffects |
-| `Alex/Witnesses/SeqWitness.fs` | CREATE | Seq state machine emission |
-| `Alex/Witnesses/ForEachWitness.fs` | CREATE | For-each loop emission |
-| `Alex/Traversal/FNCSTransfer.fs` | MODIFY | Handle SeqExpr, Yield, ForEach |
-
 ## 8. Implementation Checklist
 
 ### Phase 1: FNCS Foundation
@@ -585,39 +719,53 @@ let main _ =
 - [ ] Add `TSeq` to NativeType
 - [ ] Add `SeqExpr`, `Yield`, `ForEach` to SemanticKind
 - [ ] Add `EnclosingSeqExpr` to TypeEnv
-- [ ] Implement seq { } expression checking
+- [ ] Implement seq { } expression checking with capture analysis
 - [ ] Implement yield checking
 - [ ] Implement for...in checking
 - [ ] FNCS builds successfully
 
 ### Phase 2: Alex Implementation
 - [ ] Create `YieldStateIndices.fs` coeffect pass
-- [ ] Create `SeqWitness.fs`
+- [ ] Create `SeqLayout.fs` coeffect pass
+- [ ] Create `SeqWitness.fs` with flat closure model
 - [ ] Create `ForEachWitness.fs`
-- [ ] Handle SeqExpr, Yield, ForEach in transfer
+- [ ] Handle SeqExpr, Yield, ForEach in FNCSTransfer
+- [ ] Generate MoveNext functions with state machines
 - [ ] Firefly builds successfully
 
 ### Phase 3: Validation
 - [ ] Sample 15 compiles without errors
 - [ ] Binary executes correctly
 - [ ] State machine transitions verified
+- [ ] Captures work correctly
 - [ ] Samples 01-14 still pass (regression)
 
 ## 9. Lessons Applied
 
 | Lesson | Application |
 |--------|-------------|
+| Flat closure model (PRD-11) | Captures inlined in seq struct |
 | Pre-creation pattern (PRD-13) | SeqExpr node created before checking body |
 | Environment enrichment (PRD-13) | `EnclosingSeqExpr` added to TypeEnv |
-| Capture analysis (PRD-11) | Seq reuses closure capture logic |
-| FNCS captures semantics | No stateIndex in Yield - semantic only |
-| Alex computes coeffects | `YieldStateIndices` assigns state numbers |
-| Build foundationally (PRD-14) | Seq builds on Lazy thunk concepts |
+| Coeffect pattern (PRD-14) | YieldStateIndices, SeqLayout computed before witnessing |
+| Extended closure (PRD-14) | Seq struct = closure + state machine fields |
 
 ## 10. Related PRDs
 
-- **PRD-11**: Closures - Sequences reuse capture analysis
+- **PRD-11**: Closures - Sequences reuse flat closure model
 - **PRD-13**: Recursion - Pre-creation and environment enrichment patterns
-- **PRD-14**: Lazy - Foundation for deferred computation
+- **PRD-14**: Lazy - Foundation for extended flat closures
 - **PRD-16**: SeqOperations - `Seq.map`, `Seq.filter`, etc.
 - **PRD-17**: Async - Builds on same deferred computation model
+
+## 11. Architectural Alignment
+
+This PRD aligns with the flat closure architecture:
+
+**Key principles maintained:**
+1. **No nulls** - Every field initialized
+2. **No env_ptr** - Captures inlined directly
+3. **Self-contained structs** - No pointer chains
+4. **Coeffect-based layout** - State indices and layout computed before witnessing
+5. **Capture reuse** - Same analysis as PRD-11 closures
+6. **MoveNext by pointer** - Mutation requires pointer to struct (stack-allocated for for-each)

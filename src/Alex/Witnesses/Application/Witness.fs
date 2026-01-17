@@ -23,6 +23,7 @@ module Platform = Alex.Witnesses.Application.Platform
 module ArenaTemplates = Alex.Dialects.LLVM.Templates
 module SCF = Alex.Dialects.SCF.Templates
 module SSAAssignment = Alex.Preprocessing.SSAAssignment
+module LazyWitness = Alex.Witnesses.LazyWitness
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLOSURE RETURN TYPE LOOKUP
@@ -883,6 +884,10 @@ let private witnessIntrinsic
             let op = MLIROp.LLVMOp (LLVMOp.Bitcast (resultSSA, i64.SSA, MLIRTypes.i64, MLIRTypes.f64))
             Some ([op], TRValue { SSA = resultSSA; Type = MLIRTypes.f64 })
         | _ -> None
+
+    // PRD-14: Lazy operations
+    | LazyOp opName ->
+        Alex.Witnesses.LazyWitness.witnessLazyOp appNodeId z opName args mlirReturnType
 
     // Unhandled intrinsics
     | _ ->

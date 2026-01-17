@@ -147,6 +147,12 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
     | NativeType.TNativePtr _ -> TPtr
     | NativeType.TForall(_, body) -> mapNativeType body
 
+    // PRD-14: Lazy<T> - struct { computed: i1, value: T, thunk: {ptr, ptr} }
+    | NativeType.TLazy elemTy ->
+        let elemMlir = mapNativeType elemTy
+        let closureType = TStruct [TPtr; TPtr]  // {code_ptr, env_ptr}
+        TStruct [TInt I1; elemMlir; closureType]
+
     // Named records are TApp with FieldCount > 0 - handled in TApp case above
 
     | NativeType.TUnion (tycon, _cases) ->
@@ -203,6 +209,11 @@ let rec mapNativeTypeWithGraph (graph: SemanticGraph) (ty: NativeType) : MLIRTyp
     | NativeType.TAnon(fields, _) ->
         // Anonymous records need recursive mapping
         TStruct (fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraph graph fieldTy))
+    // PRD-14: Lazy<T> - need recursive mapping in case T is a record
+    | NativeType.TLazy elemTy ->
+        let elemMlir = mapNativeTypeWithGraph graph elemTy
+        let closureType = TStruct [TPtr; TPtr]
+        TStruct [TInt I1; elemMlir; closureType]
     | _ ->
         // Non-record types: use standard mapping
         mapNativeType ty

@@ -29,6 +29,7 @@ module AppWitness = Alex.Witnesses.Application.Witness
 module CFWitness = Alex.Witnesses.ControlFlowWitness
 module MemWitness = Alex.Witnesses.MemoryWitness
 module LambdaWitness = Alex.Witnesses.LambdaWitness
+module LazyWitness = Alex.Witnesses.LazyWitness
 
 // Preprocessing modules (coeffects)
 module MutAnalysis = Alex.Preprocessing.MutabilityAnalysis
@@ -1039,6 +1040,65 @@ let private transferGraphCore
                 let ops, result = MemWitness.witnessUnionCase node.Id z caseIndex payload unionType
                 emitAll ops z
                 z, result
+
+            // ─────────────────────────────────────────────────────────────────
+            // PRD-14: Lazy values
+            // ─────────────────────────────────────────────────────────────────
+            | SemanticKind.LazyExpr (bodyId, _captures) ->
+                // bodyId points to the thunk lambda
+                // For simple thunks (no captures), Lambda returns TRVoid, so we construct
+                // the closure struct {funcPtr, null} ourselves using the thunk's name
+                let resultType = mapNativeTypeWithGraph graph node.Type
+                let elementType =
+                    match resultType with
+                    | TStruct [_; elemTy; _] -> elemTy  // {i1, T, closure} -> T
+                    | _ -> MLIRTypes.i64  // Fallback
+
+                // Try to get closure value from closing lambda
+                match resolveNodeToVal bodyId z with
+                | Some thunkVal ->
+                    // Closing lambda produced a closure - use it directly
+                    let ops, result = LazyWitness.witnessLazyCreate node.Id z thunkVal elementType
+                    emitAll ops z
+                    z, result
+                | None ->
+                    // Simple lambda (no captures) - construct thin closure {funcPtr, null}
+                    match SSAAssign.lookupLambdaName bodyId ssaAssignment with
+                    | Some thunkName ->
+                        let ssas = requireNodeSSAs node.Id z
+                        let funcPtrSSA = ssas.[0]
+                        let nullPtrSSA = ssas.[1]
+                        let closureSSA = ssas.[2]
+                        let closureWithFuncSSA = ssas.[3]
+
+                        let closureOps = [
+                            // Get function pointer
+                            MLIROp.LLVMOp (LLVMOp.AddressOf (funcPtrSSA, GFunc thunkName))
+                            // Null for env pointer
+                            MLIROp.LLVMOp (LLVMOp.Null (nullPtrSSA, TPtr))
+                            // Build closure struct
+                            MLIROp.LLVMOp (LLVMOp.Undef (closureSSA, TStruct [TPtr; TPtr]))
+                            MLIROp.LLVMOp (LLVMOp.InsertValue (closureWithFuncSSA, closureSSA, funcPtrSSA, [0], TStruct [TPtr; TPtr]))
+                        ]
+                        emitAll closureOps z
+                        // Now create the lazy struct with this closure
+                        let thunkVal = { SSA = closureWithFuncSSA; Type = TStruct [TPtr; TPtr] }
+                        let ops, result = LazyWitness.witnessLazyCreate node.Id z thunkVal elementType
+                        emitAll ops z
+                        z, result
+                    | None ->
+                        z, TRError (sprintf "LazyExpr: thunk lambda name not found for bodyId %d" (NodeId.value bodyId))
+
+            | SemanticKind.LazyForce lazyValueId ->
+                match resolveNodeToVal lazyValueId z with
+                | Some lazyVal ->
+                    // Get element type (T) - this is the result type of force
+                    let elementType = mapNativeTypeWithGraph graph node.Type
+                    let ops, result = LazyWitness.witnessLazyForce node.Id z lazyVal elementType
+                    emitAll ops z
+                    z, result
+                | None ->
+                    z, TRError "LazyForce: lazy value not computed"
 
             | SemanticKind.Error msg ->
                 z, TRError msg

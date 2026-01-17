@@ -362,6 +362,10 @@ let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode
                 | IntrinsicModule.TimeSpan, "seconds" -> 5
                 | IntrinsicModule.TimeSpan, "milliseconds" -> 3
                 | IntrinsicModule.TimeSpan, _ -> 10        // other TimeSpan ops
+                | IntrinsicModule.Lazy, "create" -> 10     // PRD-14: undef + flag store + thunk store
+                | IntrinsicModule.Lazy, "force" -> 20      // PRD-14: check + branch + cached/compute paths + phi
+                | IntrinsicModule.Lazy, "isValueCreated" -> 3  // PRD-14: GEP + load flag
+                | IntrinsicModule.Lazy, _ -> 10            // other Lazy ops
                 | IntrinsicModule.Bits, "htons" | IntrinsicModule.Bits, "ntohs" -> 2  // byte swap uint16
                 | IntrinsicModule.Bits, "htonl" | IntrinsicModule.Bits, "ntohl" -> 2  // byte swap uint32
                 | IntrinsicModule.Bits, _ -> 1             // bitcast operations
@@ -430,12 +434,18 @@ let private nodeExpansionCost (graph: SemanticGraph) (node: SemanticNode) : int 
     | SemanticKind.VarRef _ -> 2
     | SemanticKind.FieldGet _ -> 1
     | SemanticKind.FieldSet _ -> 1
+    | SemanticKind.Set _ -> 1  // For module-level mutable address operation
     | SemanticKind.TraitCall _ -> 1
     | SemanticKind.ArrayExpr _ -> 20
     | SemanticKind.ListExpr _ -> 20
     // PatternBinding needs SSAs for extraction + conversion
     // For tuple patterns: elemExtract + payloadExtract + convert = 3
     | SemanticKind.PatternBinding _ -> 3
+    // PRD-14: Lazy values
+    // For simple thunks: 4 (thin closure: funcPtr + null + undef + insert) + 4 (lazy struct) = 8
+    // For closing thunks: just 4 (lazy struct, closure from Lambda)
+    | SemanticKind.LazyExpr _ -> 12   // thin closure construction + lazy struct creation
+    | SemanticKind.LazyForce _ -> 20  // check flag + branch + cached/compute paths + phi
     | _ -> 1
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -490,10 +500,12 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.Deref _ -> true
     | SemanticKind.TraitCall _ -> true
     | SemanticKind.Intrinsic _ -> true
+    | SemanticKind.LazyExpr _ -> true
+    | SemanticKind.LazyForce _ -> true
     | SemanticKind.PlatformBinding _ -> true
     | SemanticKind.InterpolatedString _ -> true
-    // These don't produce values (statements/void)
-    | SemanticKind.Set _ -> false
+    // Set needs SSAs for module-level mutable address operations
+    | SemanticKind.Set _ -> true
     | SemanticKind.FieldSet _ -> false
     | SemanticKind.IndexSet _ -> false
     | SemanticKind.NamedIndexedPropertySet _ -> false

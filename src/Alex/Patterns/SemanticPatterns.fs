@@ -298,6 +298,11 @@ let (|DateTimeOp|_|) (info: IntrinsicInfo) =
 let (|TimeSpanOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.TimeSpan then Some info.Operation else None
 
+/// PRD-14: Check if intrinsic is a Lazy operation (using IntrinsicInfo)
+/// Lazy intrinsics: create, force, isValueCreated
+let (|LazyOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Lazy then Some info.Operation else None
+
 /// Conversion function names
 let private conversionFunctions = 
     set ["int"; "int8"; "int16"; "int32"; "int64";
