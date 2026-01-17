@@ -1,6 +1,6 @@
-# PRD-15: Sequence Operations
+# PRD-16: Sequence Operations
 
-> **Sample**: `15_SeqOperations` | **Status**: Planned | **Depends On**: PRD-14 (SimpleSeq)
+> **Sample**: `16_SeqOperations` | **Status**: Planned | **Depends On**: PRD-15 (SimpleSeq), PRD-12 (HOFs)
 
 ## 1. Executive Summary
 
@@ -357,12 +357,13 @@ Sum: 55
 - [ ] Test: fold sums sequence
 
 ### Validation
-- [ ] Sample 15 compiles without errors
-- [ ] Sample 15 produces correct output
-- [ ] Samples 01-14 still pass
+- [ ] Sample 16 compiles without errors
+- [ ] Sample 16 produces correct output
+- [ ] Samples 01-15 still pass
 
 ## 9. Related PRDs
 
-- **PRD-14**: SimpleSeq - Foundation for sequences
+- **PRD-14**: Lazy - Foundation for deferred computation
+- **PRD-15**: SimpleSeq - Foundation for sequences
 - **PRD-12**: HOFs - Seq operations are HOFs
 - **PRD-11**: Closures - Mapper/predicate are closures

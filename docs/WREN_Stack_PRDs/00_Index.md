@@ -36,20 +36,17 @@ All PRDs assume familiarity with:
 | [PRD-12](./PRD-12-HigherOrderFunctions.md) | Higher-Order Functions | 12_HigherOrderFunctions | Planned |
 | [PRD-13](./PRD-13-Recursion.md) | Recursive Bindings | 13_Recursion | Planned |
 
-### Phase B: Sequences (Samples 14-15)
+### Phase B: Lazy Stack (Samples 14-16)
+
+> Lazy before Seq: Thunks are simpler (single deferred value), sequences are resumable thunks (multiple yields).
 
 | PRD | Feature | Sample | Status |
 |-----|---------|--------|--------|
-| [PRD-14](./PRD-14-SimpleSeq.md) | Sequence Expressions | 14_SimpleSeq | Planned |
-| [PRD-15](./PRD-15-SeqOperations.md) | Seq.map/filter/take | 15_SeqOperations | Planned |
+| [PRD-14](./PRD-14-Lazy.md) | Lazy Thunks | 14_Lazy | Planned |
+| [PRD-15](./PRD-15-SimpleSeq.md) | Sequence Expressions | 15_SimpleSeq | Planned |
+| [PRD-16](./PRD-16-SeqOperations.md) | Seq.map/filter/take | 16_SeqOperations | Planned |
 
-### Phase C: Lazy Evaluation (Sample 16)
-
-| PRD | Feature | Sample | Status |
-|-----|---------|--------|--------|
-| [PRD-16](./PRD-16-LazyValues.md) | Lazy Thunks | 16_LazyValues | Planned |
-
-### Phase D: Async (Samples 17-19)
+### Phase C: Async (Samples 17-19)
 
 | PRD | Feature | Sample | Status |
 |-----|---------|--------|--------|
@@ -136,10 +133,12 @@ Sample 11 (Closures)
     │                              ▲
     │                              │
 Sample 13 (Recursion)              │
-                                   │
-Sample 14-15 (Seq) ────────────────┤
-                                   │
-Sample 16 (Lazy) ──────────────────┤
+    │                              │
+    ▼                              │
+Sample 14 (Lazy) ──────────────────┤   ← Foundation: single deferred value
+    │                              │
+    ▼                              │
+Sample 15-16 (Seq) ────────────────┤   ← Builds on Lazy: resumable thunks
                                    │
 Sample 17-19 (Async) ──────────────┤
                                    │

@@ -1,6 +1,8 @@
-# PRD-16: Lazy Values
+# PRD-14: Lazy Values (Thunks)
 
-> **Sample**: `16_LazyValues` | **Status**: Planned | **Depends On**: PRD-11 (Closures)
+> **Sample**: `14_Lazy` | **Status**: Planned | **Depends On**: PRD-11 (Closures)
+
+**Foundation of the Lazy Stack**: This PRD establishes deferred computation with memoization. `Lazy<'T>` is a simpler primitive than `Seq<'T>` - it computes once and caches. Sequences (PRD-15) build on this foundation.
 
 ## 1. Executive Summary
 
@@ -319,12 +321,13 @@ Note: "Computing expensive value..." appears only ONCE - the second force uses t
 - [ ] Implement force with caching
 
 ### Phase 3: Validation
-- [ ] Sample 16 compiles without errors
-- [ ] Sample 16 produces correct output (caching verified)
-- [ ] Samples 01-15 still pass
+- [ ] Sample 14 compiles without errors
+- [ ] Sample 14 produces correct output (caching verified)
+- [ ] Samples 01-13 still pass
 
 ## 10. Related PRDs
 
 - **PRD-11**: Closures - Thunks are closures
-- **PRD-14**: Sequences - Both are deferred computation
+- **PRD-15**: SimpleSeq - Sequences build on lazy foundation
+- **PRD-16**: SeqOperations - Higher-order sequence functions
 - **PRD-27-28**: Threading - Thread-safe lazy initialization

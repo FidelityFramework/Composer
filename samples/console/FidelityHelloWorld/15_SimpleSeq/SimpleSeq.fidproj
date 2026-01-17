@@ -1,0 +1,11 @@
+[package]
+name = "SimpleSeq"
+
+[compilation]
+memory_model = "stack_only"
+target = "native"
+
+[build]
+sources = ["SimpleSeq.fs"]
+output = "SimpleSeq"
+output_kind = "console"

@@ -1,0 +1,11 @@
+[package]
+name = "Lazy"
+
+[compilation]
+memory_model = "stack_only"
+target = "native"
+
+[build]
+sources = ["Lazy.fs"]
+output = "Lazy"
+output_kind = "console"

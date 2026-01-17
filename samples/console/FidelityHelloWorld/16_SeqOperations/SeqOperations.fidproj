@@ -1,0 +1,11 @@
+[package]
+name = "SeqOperations"
+
+[compilation]
+memory_model = "stack_only"
+target = "native"
+
+[build]
+sources = ["SeqOperations.fs"]
+output = "SeqOperations"
+output_kind = "console"
