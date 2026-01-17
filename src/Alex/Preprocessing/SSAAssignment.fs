@@ -13,6 +13,7 @@ module Alex.Preprocessing.SSAAssignment
 
 open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
+open FSharp.Native.Compiler.Checking.Native.UnionFind
 open Alex.Dialects.Core.Types
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -160,11 +161,17 @@ let rec private mapCaptureType (ty: NativeType) : MLIRType =
             match args with
             | [innerTy] -> TStruct [TInt I1; mapCaptureType innerTy]
             | _ -> TPtr  // Fallback
-        | _ -> TPtr  // Records, DUs, unknown types - treat as pointer-sized
+        | _ -> 
+            failwithf "DEBUG: mapCaptureType fallback for type: '%s'" tycon.Name
+            TPtr  // Records, DUs, unknown types - treat as pointer-sized
     | NativeType.TFun _ -> TStruct [TPtr; TPtr]  // Function = closure struct
     | NativeType.TTuple (elements, _) ->
         TStruct (elements |> List.map mapCaptureType)
-    | NativeType.TVar _ -> TPtr  // Type variable - assume pointer-sized
+    | NativeType.TVar tvar -> 
+        // Resolve type variable using Union-Find
+        match find tvar with
+        | (_, Some boundTy) -> mapCaptureType boundTy
+        | (_, None) -> TPtr  // Unbound type variable - assume pointer-sized
     | NativeType.TByref _ -> TPtr
     | _ -> TPtr  // Fallback for other cases
 
@@ -521,6 +528,7 @@ type SSAAssignment = {
 /// Returns updated scope with assignments
 let rec private assignFunctionBody
     (graph: SemanticGraph)
+    (closureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>)
     (scope: FunctionScope)
     (nodeId: NodeId)
     : FunctionScope =
@@ -530,14 +538,14 @@ let rec private assignFunctionBody
     | Some node ->
         // Post-order: process children first
         let scopeAfterChildren =
-            node.Children |> List.fold (fun s childId -> assignFunctionBody graph s childId) scope
+            node.Children |> List.fold (fun s childId -> assignFunctionBody graph closureLayouts s childId) scope
 
         // Special handling for nested Lambdas - they get their own scope
         // (but we still assign this Lambda node SSAs in parent scope for closure construction)
         match node.Kind with
         | SemanticKind.Lambda(_params, bodyId, captures) ->
             // Process Lambda body in a NEW scope (SSA counter resets)
-            let _innerScope = assignFunctionBody graph FunctionScope.empty bodyId
+            let _innerScope = assignFunctionBody graph closureLayouts FunctionScope.empty bodyId
             // Lambda itself gets SSAs in the PARENT scope for closure struct construction
             // SSA count is deterministic based on captures (from FNCS)
             let cost = computeLambdaSSACost captures
@@ -545,9 +553,15 @@ let rec private assignFunctionBody
                 let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                 let alloc = NodeSSAAllocation.multi ssas
                 FunctionScope.assign node.Id alloc scopeWithSSAs
+                
+                // Compute ClosureLayout immediately using the allocated SSAs from the parent scope
+                if not (List.isEmpty captures) then
+                    let layout = buildClosureLayout node.Id captures ssas
+                    if not (closureLayouts.ContainsKey(NodeId.value node.Id)) then
+                        closureLayouts.Add(NodeId.value node.Id, layout)
+                scopeWithSSAs
             else
                 // Simple lambda (no captures) - no SSAs needed in parent scope
-                // The function is emitted as func.func @name, called via func.call @name
                 scopeAfterChildren
         // VarRef now gets SSAs for mutable variable loads
         // (Regular VarRefs to immutable values may not use their SSAs, but unused SSAs are harmless)
@@ -606,23 +620,35 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> 
 
     // Build reverse index: Lambda NodeId -> Binding name
     // This handles the case where Parent field isn't set on Lambdas
+    // ARCHITECTURAL NOTE: FNCS often wraps top-level bindings in TypeAnnotation
+    // So we must look through TypeAnnotation to find the Binding parent
     let mutable lambdaToBindingName = Map.empty
+    
+    // Helper to find binding name by walking up parents
+    let rec findBindingParent (nodeId: NodeId) : string option =
+        match Map.tryFind nodeId graph.Nodes with
+        | Some node ->
+            match node.Kind with
+            | SemanticKind.Binding (name, _, _, _) -> Some name
+            | SemanticKind.TypeAnnotation _ ->
+                match node.Parent with
+                | Some parentId -> findBindingParent parentId
+                | None -> None
+            | _ -> None
+        | None -> None
+
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
-        | SemanticKind.Binding (bindingName, _, _, _) ->
-            // Check if first child is a Lambda
-            match node.Children with
-            | childId :: _ ->
-                match Map.tryFind childId graph.Nodes with
-                | Some childNode ->
-                    match childNode.Kind with
-                    | SemanticKind.Lambda _ ->
-                        // This Binding contains a Lambda - record the mapping
-                        lambdaToBindingName <- Map.add (NodeId.value childId) bindingName lambdaToBindingName
-                    | _ -> ()
+        | SemanticKind.Lambda _ ->
+            // Try to find a binding parent
+            match node.Parent with
+            | Some parentId ->
+                match findBindingParent parentId with
+                | Some name -> 
+                    lambdaToBindingName <- Map.add (NodeId.value kvp.Key) name lambdaToBindingName
                 | None -> ()
-            | [] -> ()
+            | None -> ()
         | _ -> ()
 
     // Now assign names to all Lambdas
@@ -768,7 +794,7 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
     let lambdaNames, entryPoints = collectLambdas graph
 
     let mutable allAssignments = Map.empty
-    let mutable closureLayouts = Map.empty
+    let mutableClosureLayouts = System.Collections.Generic.Dictionary<int, ClosureLayout>()
 
     // Find the main Lambda
     let mainLambdaIdOpt = findMainLambdaId graph entryPoints
@@ -787,7 +813,7 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
     let moduleLevelScope =
         moduleLevelValueBindings
         |> List.fold (fun scope bindingId ->
-            assignFunctionBody graph scope bindingId
+            assignFunctionBody graph mutableClosureLayouts scope bindingId
         ) FunctionScope.empty
 
     // Track the counter after module-level bindings
@@ -823,7 +849,8 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
                 ) initialScope
 
             // Assign SSAs to body nodes
-            let bodyScope = assignFunctionBody graph paramScope bodyId
+            // This will also compute ClosureLayouts for any nested lambdas found in the body
+            let bodyScope = assignFunctionBody graph mutableClosureLayouts paramScope bodyId
 
             // Merge into global assignments (including parameter SSAs)
             for kvp in paramScope.Assignments do
@@ -831,29 +858,18 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
             for kvp in bodyScope.Assignments do
                 allAssignments <- Map.add kvp.Key kvp.Value allAssignments
 
-            // For closing lambdas (with captures), compute ClosureLayout
-            if not (List.isEmpty captures) then
-                match Map.tryFind nodeIdVal bodyScope.Assignments with
-                | Some alloc when alloc.SSAs.Length >= (List.length captures + 4) ->
-                    let layout = buildClosureLayout node.Id captures alloc.SSAs
-                    closureLayouts <- Map.add nodeIdVal layout closureLayouts
-                | _ -> ()
+            // Note: ClosureLayout for THIS lambda itself is computed when its PARENT is visited
+            // or if it is visited as part of another lambda's body.
+            // If this lambda is a top-level binding value, it might be visited in Pass 1?
+            // Or if it's main, it's never "visited" as a child?
+            // Main doesn't have captures, so no layout needed.
         | _ -> ()
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Compute ClosureLayouts for any lambdas processed in module-level scope
-    // ═══════════════════════════════════════════════════════════════════════════
-    for kvp in graph.Nodes do
-        let node = kvp.Value
-        match node.Kind with
-        | SemanticKind.Lambda(_, _, captures) when not (List.isEmpty captures) ->
-            if not (Map.containsKey (NodeId.value node.Id) closureLayouts) then
-                match Map.tryFind (NodeId.value node.Id) moduleLevelScope.Assignments with
-                | Some alloc when alloc.SSAs.Length >= (List.length captures + 4) ->
-                    let layout = buildClosureLayout node.Id captures alloc.SSAs
-                    closureLayouts <- Map.add (NodeId.value node.Id) layout closureLayouts
-                | _ -> ()
-        | _ -> ()
+    // Convert mutable dictionary to immutable map
+    let closureLayouts = 
+        mutableClosureLayouts
+        |> Seq.map (fun kvp -> kvp.Key, kvp.Value)
+        |> Map.ofSeq
 
     {
         NodeSSA = allAssignments

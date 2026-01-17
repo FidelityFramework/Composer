@@ -73,19 +73,58 @@ let private buildClosureConstruction
     // Use pre-computed CaptureInsertSSAs from SSAAssignment
     // Each insertvalue uses the PREVIOUS insertvalue result as input
     let captureOps =
+        // Helper to look up variable in PARENT scope (since z is in inner scope)
+        let recallParentVarSSA name =
+            match z.State.VarBindingsStack with
+            | parentBindings :: _ -> Map.tryFind name parentBindings
+            | [] -> None // Should be main/module level if stack empty
+
         layout.Captures
         |> List.mapi (fun i slot ->
             // Get the captured value's SSA from the source binding
-            let capturedSSA =
-                match slot.SourceNodeId with
-                | Some srcId ->
-                    match recallNodeResult (NodeId.value srcId) z with
-                    | Some (ssa, _ty) -> ssa
-                    | None ->
-                        match lookupSSA srcId z.State.SSAAssignment with
-                        | Some ssa -> ssa
-                        | None -> V 0
-                | None -> V 0
+            // PRIORITY: Check VarBindings in PARENT SCOPE first (handles allocas/rebindings)
+            // Then check NodeBindings by ID (handles intermediate results)
+            // Finally check if it is a FUNCTION reference (needs addressof)
+            // Finally fallback to SSAAssignment (coeffect)
+            
+            let capturedSSA, funcOps =
+                match recallParentVarSSA slot.Name with
+                | Some (ssa, _) -> ssa, []
+                | None ->
+                    match slot.SourceNodeId with
+                    | Some srcId ->
+                        match recallNodeResult (NodeId.value srcId) z with
+                        | Some (ssa, _ty) -> ssa, []
+                        | None ->
+                            // Check if source node maps to a known function name in SSAAssignment
+                            match lookupLambdaName srcId z.State.SSAAssignment with
+                            | Some funcName ->
+                                // Emit addressof @funcName
+                                let funcPtrSSA = freshSynthSSA z
+                                let addrOp = MLIROp.LLVMOp (AddressOf (funcPtrSSA, GFunc funcName))
+                                
+                                // Create closure struct {func_ptr, null}
+                                let closureStructSSA = freshSynthSSA z
+                                let undefSSA = freshSynthSSA z
+                                let withPtrSSA = freshSynthSSA z
+                                let nullEnvSSA = freshSynthSSA z
+                                
+                                // TFun maps to {ptr, ptr}
+                                let closureTy = TStruct [TPtr; TPtr]
+                                
+                                let ops = [
+                                    addrOp
+                                    MLIROp.LLVMOp (Undef (undefSSA, closureTy))
+                                    MLIROp.LLVMOp (InsertValue (withPtrSSA, undefSSA, funcPtrSSA, [0], closureTy))
+                                    MLIROp.LLVMOp (NullPtr nullEnvSSA)
+                                    MLIROp.LLVMOp (InsertValue (closureStructSSA, withPtrSSA, nullEnvSSA, [1], closureTy))
+                                ]
+                                closureStructSSA, ops
+                            | None ->
+                                // Not a function, fallback to SSA lookup
+                                let ssa = match lookupSSA srcId z.State.SSAAssignment with Some s -> s | None -> V 0
+                                ssa, []
+                    | None -> V 0, []
 
             // Previous SSA: for i=0, use ClosureWithCodeSSA; otherwise use previous CaptureInsertSSA
             let prevSSA =
@@ -97,8 +136,10 @@ let private buildClosureConstruction
 
             // Insert at index (1 + slotIndex) since index 0 is code_ptr
             let insertIndex = 1 + slot.SlotIndex
-            MLIROp.LLVMOp (InsertValue (resultSSA, prevSSA, capturedSSA, [insertIndex], layout.ClosureStructType))
+            // Prepend function construction ops if any
+            funcOps @ [MLIROp.LLVMOp (InsertValue (resultSSA, prevSSA, capturedSSA, [insertIndex], layout.ClosureStructType))]
         )
+        |> List.concat
 
     // The final CaptureInsertSSA equals ClosureResultSSA (per SSAAssignment)
     [codeAddrOp; undefOp; withCodeOp] @ captureOps
@@ -166,6 +207,10 @@ let private createDefaultReturn (z: PSGZipper) (declaredRetType: MLIRType) : MLI
     | TPtr ->
         // Null pointer for pointer returns
         let op = MLIROp.LLVMOp (LLVMOp.NullPtr resultSSA)
+        [op], resultSSA
+    | TStruct _ ->
+        // Undef for struct returns (including closures)
+        let op = MLIROp.LLVMOp (LLVMOp.Undef (resultSSA, declaredRetType))
         [op], resultSSA
     | _ ->
         // Zero constant for integer returns
@@ -328,23 +373,26 @@ let private witnessInFunctionScope
 
     // For closing lambdas: emit closure construction ops and return TRValue
     // For simple lambdas: just the funcDef, TRVoid
+    
+    // ARCHITECTURAL CHANGE: Always use llvm.func (LLVM Dialect)
+    // This allows taking address of any function (for closures) and matches llvm.return.
+    // Also requires callers to use llvm.call.
+    
+    // Fix linkage mapping:
+    let linkage = if isFuncInternal lambdaName z then LLVMPrivate else LLVMExternal
+
+    let llvmFuncDef = LLVMOp.LLVMFuncDef (lambdaName, finalFuncParams, actualRetType, bodyRegion, linkage)
+
     match closureLayoutOpt with
     | Some layout ->
-        // CLOSING LAMBDA: Use llvm.func because we take its address with llvm.mlir.addressof
-        // llvm.mlir.addressof can only reference llvm.func or llvm.mlir.global
-        let llvmFuncDef = LLVMOp.LLVMFuncDef (lambdaName, finalFuncParams, actualRetType, bodyRegion, LLVMPrivate)
-        // Build closure construction ops (in parent scope)
+        // CLOSING LAMBDA: Emit closure construction ops (in parent scope)
         let closureOps = buildClosureConstruction layout lambdaName z
         // Return: llvmFuncDef for TopLevel, closureOps for CurrentOps, TRValue with closure
         Some (MLIROp.LLVMOp llvmFuncDef), closureOps, TRValue { SSA = layout.ClosureResultSSA; Type = layout.ClosureStructType }
     | None ->
-        // Simple lambda: use func.func, no address taken
-        let visibility =
-            if isFuncInternal lambdaName z then FuncVisibility.Private
-            else FuncVisibility.Public
-        let funcDef = FuncOp.FuncDef (lambdaName, finalFuncParams, actualRetType, bodyRegion, visibility)
-        // Photographer Principle: OBSERVE and RETURN, do not EMIT
-        Some (MLIROp.FuncOp funcDef), [], TRVoid
+        // Simple lambda: no closure construction
+        // Return: llvmFuncDef for TopLevel, no local ops, TRVoid
+        Some (MLIROp.LLVMOp llvmFuncDef), [], TRVoid
 
 /// Witness a Lambda node - main entry point
 /// Returns: (funcDef option * localOps * TransferResult)
@@ -537,6 +585,9 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
         let z1 = enterFunction lambdaName finalMlirParams returnType visibility z
 
         // Handle argv conversion or standard parameter bindings
+        // ARCHITECTURAL FIX: If a parameter is AddressedMutable (captured ByRef or mutated),
+        // we MUST allocate stack space and store the argument value.
+        // The binding should then point to the ALLOCA, not the argument value.
         let z2 =
             if needsArgvConversion && not (List.isEmpty paramBindings) then
                 let paramName = fst (List.head paramBindings)
@@ -545,7 +596,45 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                 paramBindings
                 |> List.fold (fun acc (paramName, bindingOpt) ->
                     match bindingOpt with
-                    | Some (ssa, mlirType) -> bindVarSSA paramName ssa mlirType acc
+                    | Some (argSSA, mlirType) ->
+                        // Check if this parameter needs alloca (captured ByRef or mutated)
+                        // Note: We don't have the NodeId of the parameter binding here easily
+                        // But we can check by NAME if we trust unique names in function scope
+                        // Or relying on MutabilityAnalysis to track by name if NodeId isn't available
+                        // Wait, params' has NodeId!
+                        let paramNodeId =
+                            params'
+                            |> List.tryFind (fun (n, _, _) -> n = paramName)
+                            |> Option.map (fun (_, _, id) -> NodeId.value id)
+                            
+                        let needsStack =
+                            match paramNodeId with
+                            | Some id -> needsAlloca id paramName acc
+                            | None -> false // Should not happen
+
+                        if needsStack then
+                            // Allocate stack slot
+                            let allocaSSA = freshSynthSSA acc
+                            let allocaOp = MLIROp.LLVMOp (LLVMOp.Alloca (allocaSSA, Arg -1, mlirType, None)) // Arg -1 is unused for count=1
+                            // Store argument value
+                            let storeOp = MLIROp.LLVMOp (LLVMOp.Store (argSSA, allocaSSA, mlirType, AtomicOrdering.NotAtomic))
+                            
+                            // Emit ops to function prologue
+                            emit allocaOp acc
+                            emit storeOp acc
+                            
+                            // Bind name to ALLOCA (as pointer)
+                            // VarRef witness handles loading from pointers for mutable bindings
+                            // But we need to make sure the type recorded is the VALUE type or PTR type?
+                            // bindVarSSA takes the type of the SSA. allocaSSA is TPtr.
+                            // But checking logic expects to know the underlying type?
+                            // VarRef witness uses the type from NodeBindings/VarBindings.
+                            // If we bind (allocaSSA, TPtr), then VarRef will see TPtr.
+                            // Standard VarRef logic: if it's mutable/addressed, it expects TPtr and loads it.
+                            bindVarSSA paramName allocaSSA TPtr acc
+                        else
+                            // Immutable parameter - bind directly to argument value
+                            bindVarSSA paramName argSSA mlirType acc
                     | None -> acc
                 ) z1
 

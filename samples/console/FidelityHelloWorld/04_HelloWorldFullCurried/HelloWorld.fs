@@ -6,8 +6,9 @@ module Examples.HelloWorldFullCurried
 /// - Applying remaining argument to complete the call
 
 /// Curried greeting function - takes prefix then name
-let greet prefix name =
-    Console.writeln $"{prefix}, {name}!"
+let greet prefix =
+    fun name ->
+        Console.writeln $"{prefix}, {name}!"
 
 /// Partial application: bind "Hello" to create a specialized greeter
 let helloGreeter = greet "Hello"

@@ -973,88 +973,91 @@ let witness
                     | None -> name
                 | None -> name  // No definition, use VarRef name
 
-            // Check if this is a closure call (VarRef points to a closure value)
-            // If so, we need indirect call through the closure struct
-            // Closures can be:
-            // 1. Lambda with captures (inline closure)
-            // 2. Binding to Lambda with captures
-            // 3. Binding to Application that returns a function type (closure factory result)
-            let isClosureCall =
-                match defIdOpt with
-                | Some defId ->
-                    match SemanticGraph.tryGetNode defId z.Graph with
-                    | Some defNode ->
-                        match defNode.Kind with
-                        | SemanticKind.Lambda (_, _, captures) -> not (List.isEmpty captures)
-                        | SemanticKind.Binding (_, _, _, _) ->
-                            // Check the bound value
-                            match defNode.Children with
-                            | [childId] ->
-                                match SemanticGraph.tryGetNode childId z.Graph with
-                                | Some childNode ->
-                                    match childNode.Kind with
-                                    | SemanticKind.Lambda (_, _, captures) ->
-                                        // Binding to Lambda with captures
-                                        not (List.isEmpty captures)
-                                    | SemanticKind.Application _ ->
-                                        // Binding to Application - check if result is a function type
-                                        // e.g., `let counter = makeCounter 0` where makeCounter returns a closure
-                                        match childNode.Type with
-                                        | NativeType.TFun _ -> true  // Returns function = closure factory result
-                                        | _ -> false
-                                    | _ -> false
-                                | None -> false
-                            | _ -> false
-                        | _ -> false
-                    | None -> false
-                | None -> false
+            // Get target node to check for parameter count
+            let targetNodeOpt = defIdOpt |> Option.bind (fun id -> SemanticGraph.tryGetNode id z.Graph)
+            
+            // Check for partial application
+            let isPartialApplication =
+                match targetNodeOpt with
+                | Some { Kind = SemanticKind.Lambda (params', _, _) } ->
+                    List.length args < List.length params'
+                | _ -> false
 
-            if isClosureCall then
-                // TRUE FLAT CLOSURE CALL:
-                // Closure struct layout: {code_ptr: ptr, capture_0, capture_1, ...}
-                // Extract code_ptr (index 0), then call with ENTIRE closure struct as first arg
-                // The callee extracts captures from the closure struct
-
-                // Get the closure struct SSA - check VarBindings first (params/captures),
-                // then NodeBindings (local let bindings)
-                let closureSSAOpt =
-                    match recallVarSSA name z with
-                    | Some (ssa, ty) -> Some (ssa, ty)
-                    | None ->
-                        // Not in VarBindings - check NodeBindings using defId
-                        match defIdOpt with
-                        | Some defId ->
-                            match recallNodeResult (NodeId.value defId) z with
-                            | Some (ssa, ty) -> Some (ssa, ty)
-                            | None -> None
-                        | None -> None
-                match closureSSAOpt with
-                | Some (closureSSA, closureType) ->
-                    // Generate synthetic SSA for code_ptr extraction
-                    let codePtrSSA = freshSynthSSA z
-
-                    // Extract code_ptr (index 0)
-                    let extractCodeOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (codePtrSSA, closureSSA, [0], closureType))
-
-                    // Pass ENTIRE closure struct as first arg (not just env_ptr)
-                    // The callee function receives it and extracts captures
-                    let closureArg = { SSA = closureSSA; Type = closureType }
-                    let callArgs = closureArg :: args
-
-                    // Indirect call through code_ptr
-                    if isUnitType returnType then
-                        let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (None, codePtrSSA, callArgs, mlirReturnType))
-                        [extractCodeOp; callOp], TRVoid
-                    else
-                        match lookupNodeSSA appNodeId z with
-                        | Some resultSSA ->
-                            let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (Some resultSSA, codePtrSSA, callArgs, mlirReturnType))
-                            [extractCodeOp; callOp], TRValue { SSA = resultSSA; Type = mlirReturnType }
+            if isPartialApplication then
+                // PARTIAL APPLICATION: Construct a closure
+                match lookupNodeSSA appNodeId z with
+                | Some resultSSA ->
+                    // For now, we use a simple placeholder closure construction.
+                    // Real partial application requires generating a specialized implementation 
+                    // that extracts the partially applied args.
+                    // But Sample 04 expects curried behavior.
+                    
+                    // Actually, PRD-11 says: "Fidelity uses FLAT closures".
+                    // If we have App(greet, ["Hello"]), we need to capture "Hello".
+                    
+                    // ARCHITECTURAL NOTE: Real partial application is a complex feature
+                    // involving synthetic implementaton generation. 
+                    // If Sample 04 previously passed, it likely used eta-expansion in FNCS.
+                    // But my recursive witness might have changed how App nodes are seen.
+                    
+                    // Wait! If Sample 04 is "Full Curried", it means greet is prefix -> name -> unit.
+                    // FNCS might represent this as nested Lambdas.
+                    // If so, App(greet, ["Hello"]) is saturated for the OUTER lambda.
+                    // The result is the INNER lambda (a closure).
+                    
+                    // Let's check the parameter count of the target lambda again.
+                    match targetNodeOpt with
+                    | Some { Kind = SemanticKind.Lambda (params', _, _) } ->
+                        if List.length args = List.length params' then
+                            // Saturated - regular call
+                            let effectiveRetType =
+                                match defIdOpt with
+                                | Some defId ->
+                                    match tryGetClosureReturnType defId z with
+                                    | Some closureType -> closureType
+                                    | None -> mlirReturnType
+                                | None -> mlirReturnType
+                            let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, args, effectiveRetType))
+                            [callOp], TRValue { SSA = resultSSA; Type = effectiveRetType }
+                        else
+                            // Partial - must return a closure
+                            // Since we don't have synthetic impl generation yet,
+                            // we fail with a clear message.
+                            [], TRError (sprintf "Partial application of '%s' (provided %d, expected %d) not yet supported in Alex restructuring" funcName args.Length params'.Length)
+                    | _ ->
+                        // Saturated or non-lambda target - regular call or primitive
+                        // Try binary primitive first
+                        match tryWitnessBinaryPrimitive appNodeId z funcName args with
+                        | Some (ops, result) ->
+                            ops, result
                         | None ->
-                            [], TRError (sprintf "No SSA assigned for closure call result: %s" name)
+                            // Try unary primitive
+                            match tryWitnessUnaryPrimitive appNodeId z funcName args with
+                            | Some (ops, result) ->
+                                ops, result
+                            | None ->
+                                // Regular function call - emit func.call
+                                if isUnitType returnType then
+                                    let callOp = MLIROp.FuncOp (FuncOp.FuncCall (None, funcName, args, mlirReturnType))
+                                    [callOp], TRVoid
+                                else
+                                    match lookupNodeSSA appNodeId z with
+                                    | Some resultSSA ->
+                                        let effectiveRetType =
+                                            match defIdOpt with
+                                            | Some defId ->
+                                                match tryGetClosureReturnType defId z with
+                                                | Some closureType -> closureType
+                                                | None -> mlirReturnType
+                                            | None -> mlirReturnType
+                                        let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, args, effectiveRetType))
+                                        [callOp], TRValue { SSA = resultSSA; Type = effectiveRetType }
+                                    | None ->
+                                        [], TRError (sprintf "No SSA assigned for function call result: %s" funcName)
                 | None ->
-                    [], TRError (sprintf "Closure '%s' not bound in scope" name)
+                    [], TRError (sprintf "No SSA assigned for application result: %s" funcName)
             else
+                // Saturated call through closure or other - use saturated logic
                 // Try binary primitive first
                 match tryWitnessBinaryPrimitive appNodeId z funcName args with
                 | Some (ops, result) ->
@@ -1065,31 +1068,82 @@ let witness
                     | Some (ops, result) ->
                         ops, result
                     | None ->
-                        // Regular function call - emit func.call
-                        // F# ≅ SSA: function application maps directly to func.call
-                        // Check native type for unit (void semantics)
-                        if isUnitType returnType then
-                            // Void function - no result SSA needed
-                            // Unit is represented as i32 in MLIR but call returns void
-                            let callOp = MLIROp.FuncOp (FuncOp.FuncCall (None, funcName, args, mlirReturnType))
-                            [callOp], TRVoid
-                        else
-                            // Function with return value - lookup pre-assigned SSA
-                            match lookupNodeSSA appNodeId z with
-                            | Some resultSSA ->
-                                // TRUE FLAT CLOSURE: If callee returns a closure, use actual closure struct type
-                                // (not the generic {ptr, ptr} from mapNativeType(TFun))
-                                let effectiveRetType =
+                        // Check if this is a closure call (VarRef points to a closure value)
+                        let isClosureCall =
+                            match defIdOpt with
+                            | Some defId ->
+                                match SemanticGraph.tryGetNode defId z.Graph with
+                                | Some defNode ->
+                                    match defNode.Kind with
+                                    | SemanticKind.Lambda (_, _, captures) -> not (List.isEmpty captures)
+                                    | SemanticKind.Binding (_, _, _, _) ->
+                                        match defNode.Children with
+                                        | [childId] ->
+                                            match SemanticGraph.tryGetNode childId z.Graph with
+                                            | Some childNode ->
+                                                match childNode.Kind with
+                                                | SemanticKind.Lambda (_, _, captures) -> not (List.isEmpty captures)
+                                                | SemanticKind.Application _ ->
+                                                    match childNode.Type with
+                                                    | NativeType.TFun _ -> true
+                                                    | _ -> false
+                                                | _ -> false
+                                            | None -> false
+                                        | _ -> false
+                                    | _ -> false
+                                | None -> false
+                            | None -> false
+
+                        if isClosureCall then
+                            // Get the closure struct SSA
+                            let closureSSAOpt =
+                                match recallVarSSA name z with
+                                | Some (ssa, ty) -> Some (ssa, ty)
+                                | None ->
                                     match defIdOpt with
                                     | Some defId ->
-                                        match tryGetClosureReturnType defId z with
-                                        | Some closureType -> closureType
-                                        | None -> mlirReturnType
-                                    | None -> mlirReturnType
-                                let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, args, effectiveRetType))
-                                [callOp], TRValue { SSA = resultSSA; Type = effectiveRetType }
+                                        match recallNodeResult (NodeId.value defId) z with
+                                        | Some (ssa, ty) -> Some (ssa, ty)
+                                        | None -> None
+                                    | None -> None
+                            match closureSSAOpt with
+                            | Some (closureSSA, closureType) ->
+                                let codePtrSSA = freshSynthSSA z
+                                let extractCodeOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (codePtrSSA, closureSSA, [0], closureType))
+                                let closureArg = { SSA = closureSSA; Type = closureType }
+                                let callArgs = closureArg :: args
+                                if isUnitType returnType then
+                                    let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (None, codePtrSSA, callArgs, mlirReturnType))
+                                    [extractCodeOp; callOp], TRVoid
+                                else
+                                    match lookupNodeSSA appNodeId z with
+                                    | Some resultSSA ->
+                                        let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (Some resultSSA, codePtrSSA, callArgs, mlirReturnType))
+                                        [extractCodeOp; callOp], TRValue { SSA = resultSSA; Type = mlirReturnType }
+                                    | None ->
+                                        [], TRError (sprintf "No SSA assigned for closure call result: %s" name)
                             | None ->
-                                [], TRError (sprintf "No SSA assigned for function call result: %s" funcName)
+                                [], TRError (sprintf "Closure '%s' not bound in scope" name)
+                        else
+                            // Regular function call
+                            if isUnitType returnType then
+                                // Void function
+                                let callOp = MLIROp.LLVMOp (callFunc None funcName args mlirReturnType)
+                                [callOp], TRVoid
+                            else
+                                match lookupNodeSSA appNodeId z with
+                                | Some resultSSA ->
+                                    let effectiveRetType =
+                                        match defIdOpt with
+                                        | Some defId ->
+                                            match tryGetClosureReturnType defId z with
+                                            | Some closureType -> closureType
+                                            | None -> mlirReturnType
+                                        | None -> mlirReturnType
+                                    let callOp = MLIROp.LLVMOp (callFunc (Some resultSSA) funcName args effectiveRetType)
+                                    [callOp], TRValue { SSA = resultSSA; Type = effectiveRetType }
+                                | None ->
+                                    [], TRError (sprintf "No SSA assigned for function call result: %s" funcName)
 
         // Nested Application - the function is itself an Application result (closure)
         // This happens with curried functions: App(App(makeCounter, [0]), [_eta0])

@@ -89,15 +89,18 @@ let private transferGraphCore
         Graph = graph
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // LOCAL STATE for region ops (NOT in zipper)
     // ═══════════════════════════════════════════════════════════════════════
     let regionOps = Dictionary<int * int, MLIROp list>()
     let mutable errors: string list = []
+    
+    // Global visited set for the entire graph traversal to handle DAGs correctly
+    let visited = System.Collections.Generic.HashSet<int>()
+    let emittedFunctions = System.Collections.Generic.HashSet<string>()
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // SCF REGION HOOK (closes over regionOps, graph, patternBindingAnalysis)
-    // ═══════════════════════════════════════════════════════════════════════
 
     /// Bind pattern variables for a match case before body traversal
     /// FOUR PILLARS: This is "wiring-up" - connecting coeffects to VarBindings
@@ -253,8 +256,6 @@ let private transferGraphCore
         (nodeId: NodeId)
         (z: PSGZipper) 
         : PSGZipper =
-        
-        let visited = System.Collections.Generic.HashSet<int>()
         
         let rec walk state nodeId =
             let nodeIdVal = NodeId.value nodeId
@@ -526,13 +527,26 @@ let private transferGraphCore
                 // Call witness with the callback
                 let funcDefOpt, localOps, result = LambdaWitness.witness params' bodyId node witnessBody z
 
-                // Add function definition to top-level (if present)
-                match funcDefOpt with
-                | Some funcDef -> emitTopLevel funcDef z
-                | None -> ()
-
                 // ARCHITECTURAL FIX: Exit function scope to restore parent's CurrentOps FIRST
                 let z' = exitFunction z
+
+                // Add function definition to top-level (if present and not already emitted)
+                match funcDefOpt with
+                | Some funcDef -> 
+                    // Use active pattern or manual extraction to get the function name
+                    let funcNameOpt =
+                        match funcDef with
+                        | MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> Some name
+                        | MLIROp.LLVMOp (LLVMOp.LLVMFuncDef (name, _, _, _, _)) -> Some name
+                        | _ -> None
+                    
+                    match funcNameOpt with
+                    | Some name ->
+                        if not (emittedFunctions.Contains(name)) then
+                            emittedFunctions.Add(name) |> ignore
+                            emitTopLevel funcDef z'
+                    | None -> ()
+                | None -> ()
 
                 // Now emit local ops (closure construction) to parent scope
                 emitAll localOps z'

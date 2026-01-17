@@ -157,18 +157,8 @@ let witnessVarRef
 
     // Helper: check if defNode is a function reference (Lambda or Binding to Lambda)
     let isFunctionRef nodeId =
-        match SemanticGraph.tryGetNode nodeId ctx.Graph with
-        | Some defNode ->
-            match defNode.Kind with
-            | SemanticKind.Lambda _ -> true
-            | SemanticKind.Binding _ ->
-                match defNode.Children with
-                | [childId] ->
-                    match SemanticGraph.tryGetNode childId ctx.Graph with
-                    | Some cn -> match cn.Kind with SemanticKind.Lambda _ -> true | _ -> false
-                    | None -> false
-                | _ -> false
-            | _ -> false
+        match Alex.Preprocessing.SSAAssignment.lookupLambdaName nodeId ctx.SSA with
+        | Some _ -> true
         | None -> false
 
     // Helper: check if defId points to a PatternBinding (function parameter)
