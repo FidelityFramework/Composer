@@ -361,7 +361,7 @@ let private transferGraphCore
                             ) (state, 0)
                             |> fst
 
-                        | SemanticKind.Lambda (params', bodyId, _captures, _) ->
+                        | SemanticKind.Lambda (params', bodyId, _captures, _, _context) ->
                             // Lambda traversal: Parameters then Body (as region)
                             let parentId = node.Id
                             let paramNodeIds = params' |> List.map (fun (_, _, nodeId) -> nodeId)
@@ -511,7 +511,7 @@ let private transferGraphCore
             // ─────────────────────────────────────────────────────────────────
             // Lambdas
             // ─────────────────────────────────────────────────────────────────
-            | SemanticKind.Lambda (params', bodyId, _captures, _) ->
+            | SemanticKind.Lambda (params', bodyId, _captures, _, _context) ->
                 // RECURSIVE WITNESS STRATEGY:
                 // We define a callback that traverses the body subtree and captures the output.
                 // This bypasses the global fold's stack management for the body,
@@ -1044,7 +1044,7 @@ let private transferGraphCore
             // ─────────────────────────────────────────────────────────────────
             // PRD-14: Lazy values
             // ─────────────────────────────────────────────────────────────────
-            | SemanticKind.LazyExpr (bodyId, _captures) ->
+            | SemanticKind.LazyExpr (bodyId, captures) ->
                 // bodyId points to the thunk lambda
                 // For simple thunks (no captures), Lambda returns TRVoid, so we construct
                 // the closure struct {funcPtr, null} ourselves using the thunk's name
@@ -1054,40 +1054,22 @@ let private transferGraphCore
                     | TStruct [_; elemTy; _] -> elemTy  // {i1, T, closure} -> T
                     | _ -> MLIRTypes.i64  // Fallback
 
-                // Try to get closure value from closing lambda
-                match resolveNodeToVal bodyId z with
-                | Some thunkVal ->
-                    // Closing lambda produced a closure - use it directly
-                    let ops, result = LazyWitness.witnessLazyCreate node.Id z thunkVal elementType
+                // Get thunk function name
+                match SSAAssign.lookupLambdaName bodyId ssaAssignment with
+                | Some thunkName ->
+                    // Resolve capture values - FLAT CLOSURE: captures are inlined, not in env_ptr
+                    let captureVals =
+                        captures
+                        |> List.choose (fun cap ->
+                            match cap.SourceNodeId with
+                            | Some srcId -> resolveNodeToVal srcId z
+                            | None -> None)
+                    
+                    let ops, result = LazyWitness.witnessLazyCreate node.Id z thunkName elementType captureVals
                     emitAll ops z
                     z, result
                 | None ->
-                    // Simple lambda (no captures) - construct thin closure {funcPtr, null}
-                    match SSAAssign.lookupLambdaName bodyId ssaAssignment with
-                    | Some thunkName ->
-                        let ssas = requireNodeSSAs node.Id z
-                        let funcPtrSSA = ssas.[0]
-                        let nullPtrSSA = ssas.[1]
-                        let closureSSA = ssas.[2]
-                        let closureWithFuncSSA = ssas.[3]
-
-                        let closureOps = [
-                            // Get function pointer
-                            MLIROp.LLVMOp (LLVMOp.AddressOf (funcPtrSSA, GFunc thunkName))
-                            // Null for env pointer
-                            MLIROp.LLVMOp (LLVMOp.Null (nullPtrSSA, TPtr))
-                            // Build closure struct
-                            MLIROp.LLVMOp (LLVMOp.Undef (closureSSA, TStruct [TPtr; TPtr]))
-                            MLIROp.LLVMOp (LLVMOp.InsertValue (closureWithFuncSSA, closureSSA, funcPtrSSA, [0], TStruct [TPtr; TPtr]))
-                        ]
-                        emitAll closureOps z
-                        // Now create the lazy struct with this closure
-                        let thunkVal = { SSA = closureWithFuncSSA; Type = TStruct [TPtr; TPtr] }
-                        let ops, result = LazyWitness.witnessLazyCreate node.Id z thunkVal elementType
-                        emitAll ops z
-                        z, result
-                    | None ->
-                        z, TRError (sprintf "LazyExpr: thunk lambda name not found for bodyId %d" (NodeId.value bodyId))
+                    z, TRError (sprintf "LazyExpr: thunk lambda name not found for bodyId %d" (NodeId.value bodyId))
 
             | SemanticKind.LazyForce lazyValueId ->
                 match resolveNodeToVal lazyValueId z with

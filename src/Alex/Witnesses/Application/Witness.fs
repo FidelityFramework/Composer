@@ -37,7 +37,7 @@ let rec private tryGetClosureReturnType (funcNodeId: NodeId) (z: PSGZipper) : ML
     match SemanticGraph.tryGetNode funcNodeId z.Graph with
     | Some funcNode ->
         match funcNode.Kind with
-        | SemanticKind.Lambda (_, bodyId, _, _) ->
+        | SemanticKind.Lambda (_, bodyId, _, _, _) ->
             // The body of this Lambda might BE the returned closure
             // Or it might be a binding whose value is the closure
             // Traverse through the body to find the closure
@@ -61,7 +61,7 @@ and private tryGetClosureFromBody (nodeId: NodeId) (z: PSGZipper) : MLIRType opt
     match SemanticGraph.tryGetNode nodeId z.Graph with
     | Some node ->
         match node.Kind with
-        | SemanticKind.Lambda (_, _, captures, _) when not (List.isEmpty captures) ->
+        | SemanticKind.Lambda (_, _, captures, _, _) when not (List.isEmpty captures) ->
             // The body IS the closure - get its ClosureLayout
             match SSAAssignment.lookupClosureLayout nodeId z.State.SSAAssignment with
             | Some layout -> Some layout.ClosureStructType
@@ -885,9 +885,8 @@ let private witnessIntrinsic
             Some ([op], TRValue { SSA = resultSSA; Type = MLIRTypes.f64 })
         | _ -> None
 
-    // PRD-14: Lazy operations
-    | LazyOp opName ->
-        Alex.Witnesses.LazyWitness.witnessLazyOp appNodeId z opName args mlirReturnType
+    // PRD-14: Lazy operations handled via SemanticKind.LazyExpr and LazyForce
+    // in FNCSTransfer.fs, not through intrinsic pattern matching.
 
     // Unhandled intrinsics
     | _ ->
@@ -941,7 +940,19 @@ let witness
     // Resolve arguments to Val list
     let args = resolveArgs argNodeIds z
     // Use graph-aware mapping for record types
-    let mlirReturnType = mapNativeTypeWithGraph z.Graph returnType
+    let declaredReturnType = mapNativeTypeWithGraph z.Graph returnType
+
+    // PRD-14: Check if target function returns a lazy with captures.
+    // If so, use the actual LazyLayout struct type (includes captures) instead of declared type.
+    // This is the KEY coeffect lookup for lazy-returning functions.
+    let mlirReturnType =
+        match resolveFuncKind funcNodeId z with
+        | Some (SemanticKind.VarRef (_, Some defId)) ->
+            // VarRef to a Lambda - check if Lambda body is LazyExpr with captures
+            match Alex.Preprocessing.SSAAssignment.getActualFunctionReturnType z.Graph defId z.State.SSAAssignment with
+            | Some actualType -> actualType  // Use actual type with captures
+            | None -> declaredReturnType     // No lazy captures, use declared
+        | _ -> declaredReturnType
 
     // Get the function node's semantic kind
     match resolveFuncKind funcNodeId z with
@@ -984,7 +995,7 @@ let witness
             // Check for partial application
             let isPartialApplication =
                 match targetNodeOpt with
-                | Some { Kind = SemanticKind.Lambda (params', _, _, _) } ->
+                | Some { Kind = SemanticKind.Lambda (params', _, _, _, _) } ->
                     List.length args < List.length params'
                 | _ -> false
 
@@ -1012,7 +1023,7 @@ let witness
                     
                     // Let's check the parameter count of the target lambda again.
                     match targetNodeOpt with
-                    | Some { Kind = SemanticKind.Lambda (params', _, _, _) } ->
+                    | Some { Kind = SemanticKind.Lambda (params', _, _, _, _) } ->
                         if List.length args = List.length params' then
                             // Saturated - regular call
                             let effectiveRetType = mlirReturnType
@@ -1068,14 +1079,14 @@ let witness
                                 match SemanticGraph.tryGetNode defId z.Graph with
                                 | Some defNode ->
                                     match defNode.Kind with
-                                    | SemanticKind.Lambda (_, _, captures, _) -> not (List.isEmpty captures)
+                                    | SemanticKind.Lambda (_, _, captures, _, _) -> not (List.isEmpty captures)
                                     | SemanticKind.Binding (_, _, _, _) ->
                                         match defNode.Children with
                                         | [childId] ->
                                             match SemanticGraph.tryGetNode childId z.Graph with
                                             | Some childNode ->
                                                 match childNode.Kind with
-                                                | SemanticKind.Lambda (_, _, captures, _) -> not (List.isEmpty captures)
+                                                | SemanticKind.Lambda (_, _, captures, _, _) -> not (List.isEmpty captures)
                                                 | SemanticKind.Application _ ->
                                                     match childNode.Type with
                                                     | NativeType.TFun _ -> true

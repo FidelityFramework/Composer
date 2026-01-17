@@ -18,9 +18,11 @@ let private typesMatch (ty1: MLIRType) (ty2: MLIRType) : bool =
     ty1 = ty2
 
 /// Get integer bit width from MLIR type
+/// TIndex is platform-word integer (i64 on 64-bit), treated as I64 for operations
 let private getIntBitWidth (ty: MLIRType) : IntBitWidth option =
     match ty with
     | TInt w -> Some w
+    | TIndex -> Some I64  // Platform-word integer
     | _ -> None
 
 /// Get float width from MLIR type

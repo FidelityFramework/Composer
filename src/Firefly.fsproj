@@ -57,6 +57,9 @@
       <!-- Platform Types - OSFamily/Architecture (no dependencies, breaks cycles) -->
       <Compile Include="Alex/Bindings/PlatformTypes.fs" />
 
+      <!-- Alex CodeGeneration - TypeMapping first (no deps, used by SSAAssignment) -->
+      <Compile Include="Alex/CodeGeneration/TypeMapping.fs" />
+
       <!-- Alex Preprocessing - coeffects before PSGZipper -->
       <Compile Include="Alex/Preprocessing/SSAAssignment.fs" />
       <Compile Include="Alex/Preprocessing/MutabilityAnalysis.fs" />
@@ -75,8 +78,7 @@
       <Compile Include="Alex/Bindings/PlatformHelpers.fs" />
       <Compile Include="Alex/Bindings/SyscallBindings.fs" />
 
-      <!-- Alex CodeGeneration - TypeMapping uses FNCS types -->
-      <Compile Include="Alex/CodeGeneration/TypeMapping.fs" />
+      <!-- Alex CodeGeneration - TypeSizing uses TypeMapping (moved earlier) -->
       <Compile Include="Alex/CodeGeneration/TypeSizing.fs" />
 
       <!-- Alex Patterns - Active patterns for semantic classification -->

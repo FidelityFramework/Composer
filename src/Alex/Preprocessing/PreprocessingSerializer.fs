@@ -77,7 +77,7 @@ let private kindToShortString (kind: SemanticKind) : string =
         sprintf "Binding(%s%s)" name (if isMut then ", mutable" else "")
     | SemanticKind.VarRef (name, defId) ->
         sprintf "VarRef(%s -> %s)" name (defId |> Option.map (fun id -> string (NodeId.value id)) |> Option.defaultValue "?")
-    | SemanticKind.Lambda (params', _, captures, _) ->
+    | SemanticKind.Lambda (params', _, captures, _, _) ->
         sprintf "Lambda(%d params, %d captures)" (List.length params') (List.length captures)
     | SemanticKind.Application (funcId, argIds) ->
         sprintf "Application(%d, [%s])" (NodeId.value funcId) (argIds |> List.map (NodeId.value >> string) |> String.concat ", ")
@@ -116,7 +116,7 @@ let serializeSSAAssignment (ssa: SSAAssignment) (graph: SemanticGraph) : SSAAssi
         graph.Nodes.Values
         |> Seq.choose (fun node ->
             match node.Kind with
-            | SemanticKind.Lambda(params', _, _captures, _) ->
+            | SemanticKind.Lambda(params', _, _captures, _, _) ->
                 let nodeIdVal = NodeId.value node.Id
                 let name = ssa.LambdaNames |> Map.tryFind nodeIdVal |> Option.defaultValue "unknown"
                 Some {

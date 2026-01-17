@@ -277,7 +277,7 @@ let witnessVarRef
                         | _ -> None
                     
                     match lambdaNode with
-                    | Some { Kind = SemanticKind.Lambda(params', _, _, _) } -> List.length params'
+                    | Some { Kind = SemanticKind.Lambda(params', _, _, _, _) } -> List.length params'
                     | _ -> 
                         // Fallback: heuristic peeling (unsafe, but better than nothing)
                         // This happens for intrinsics or externals if they end up here
@@ -310,14 +310,22 @@ let witnessVarRef
                     peel varRefNode.Type targetParamCount
 
             // Map types to MLIR
-            let mlirParams = 
-                paramTypes 
+            let mlirParams =
+                paramTypes
                 |> List.map (mapNativeTypeWithGraph ctx.Graph)
                 |> List.mapi (fun i ty -> Arg (i + 1), ty) // Arg 1+ for user params
-            
+
             // Add Env param (Arg 0)
             let thunkParams = (Arg 0, MLIRTypes.ptr) :: mlirParams
-            let mlirRetType = mapNativeTypeWithGraph ctx.Graph retType
+
+            // PRD-14: For lazy-returning functions with captures, use actual struct type
+            let mlirRetType =
+                match defId with
+                | Some defNodeId ->
+                    match Alex.Preprocessing.SSAAssignment.getActualFunctionReturnType ctx.Graph defNodeId ctx.SSA with
+                    | Some actualType -> actualType
+                    | None -> mapNativeTypeWithGraph ctx.Graph retType
+                | None -> mapNativeTypeWithGraph ctx.Graph retType
             
             // Build body: call original function
             // Original function expects (args...) - NO env

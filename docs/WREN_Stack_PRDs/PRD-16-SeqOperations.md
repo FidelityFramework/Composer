@@ -736,3 +736,5 @@ This PRD aligns with the flat closure architecture:
 - Struct size grows with composition depth
 - For typical depths (3-5 operations), this is acceptable
 - Very deep pipelines may need alternative strategies (future optimization)
+
+> **Critical:** See Serena memory `compose_from_standing_art_principle` for why composing from PRD-11/14/15 patterns is essential. New features MUST extend standing art, not reinvent.

@@ -24,7 +24,7 @@
 
 | # | Anti-Pattern | Why Wrong | Fix |
 |---|--------------|-----------|-----|
-| 9 | Hardcoding types instead of using FNCS flow | Type info exists upstream, being discarded | Use node.Type + mapType + Serialize.mlirType |
+| 9 | Hardcoding types instead of using FNCS flow | Type info exists upstream, being discarded | Use node.Type + mapType + Serialize.mlirType **→ See `type_flow_anti_patterns` memory** |
 | 10 | Imperative "push" with "wasn't traversed yet" fallbacks | Zipper provides attention to any node | Pull/codata model - graph is complete |
 | 11 | BCL stubs for platform operations (`Unchecked.defaultof`) | Violates BCL-free principle | Use FNCS Sys intrinsics |
 | 12 | TVar → Pointer default for polymorphic ops | Erases type instantiation from SRTP | Typed tree overlay should capture concrete types |

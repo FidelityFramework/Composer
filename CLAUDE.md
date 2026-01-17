@@ -34,6 +34,7 @@ Before taking ANY action on code, you MUST:
    - `architecture_principles` - Core architectural constraints
    - `negative_examples` - Real mistakes with explanations (ESSENTIAL)
    - `fncs_functional_decomposition_principle` - Why intrinsics must decompose
+   - `compose_from_standing_art_principle` - New features MUST extend recent patterns
 4. **Read task-relevant memories** based on the work at hand
 5. **Confirm the layered architecture** - where does this change belong?
 
@@ -78,6 +79,40 @@ The correct behavior:
 - Understand WHY something works a certain way before changing it
 - Look at how similar problems are solved in reference implementations
 - Recognize when operations need to be FNCS intrinsics (types and operations are compiler-level, not library-level)
+
+---
+
+## CRITICAL: Compose from Standing Art (January 2026)
+
+> **New features MUST compose from recently established patterns, not invent parallel mechanisms.**
+
+When implementing new language features (Lazy, Seq, Async, etc.), the correct approach is to:
+
+1. **Identify what existing patterns apply** - Does this need closures? Capture analysis? State machines?
+2. **Check what was RECENTLY established** - Read the last 2-3 PRDs for new patterns
+3. **EXTEND the existing pattern** - Don't reinvent, compose
+
+**Real Example (PRD-14 Lazy):**
+```
+WRONG: Created {code_ptr, env_ptr} with null env_ptr for no-capture case
+       → Ignored that flat closures had JUST been established in PRD-11
+
+RIGHT: Lazy = PRD-11 Flat Closure + memoization state
+       {computed: i1, value: T, code_ptr: ptr, cap₀, cap₁, ...}
+       → Reused capture analysis, coeffect patterns, SSA cost model
+```
+
+**Before implementing ANY new feature, ask:**
+- What patterns from the last 2-3 PRDs apply here?
+- What Serena memories document relevant architecture?
+- Am I extending existing code or writing parallel implementations?
+- Does this "feel like" special-case handling? (If yes, STOP)
+
+**Key Serena memory:** `compose_from_standing_art_principle`
+
+**The ripple effect:** Getting primitives right creates positive ripple effects. PRD-11 closures compose into PRD-14 Lazy, which composes into PRD-15 Seq, which enables PRD-16 Seq operations. If PRD-11 was wrong, ALL downstream features inherit that wrongness.
+
+> "The standing art composes up. Use it."
 
 ---
 

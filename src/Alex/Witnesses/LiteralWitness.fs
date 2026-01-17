@@ -49,12 +49,13 @@ let private getStringSSAs (nodeId: NodeId) (z: PSGZipper) : SSA * SSA * SSA * SS
 /// nodeId: The ID of the literal node being witnessed (passed from traversal)
 /// Returns: (operations generated, result info)
 let witness (z: PSGZipper) (nodeId: NodeId) (lit: LiteralValue) : MLIROp list * TransferResult =
-    // Look up the node to determine the expected type (e.g. NTUint -> TIndex)
-    // This handles the case where a literal '0' (Int32) is assigned to a 'nativeint' (TIndex/i64) binding
-    let expectedType =
+    // The TYPE of a literal comes from FNCS via node.Type, not from the literal representation.
+    // LiteralValue.Int32 means "value fits in 32 bits", NOT "type is i32".
+    // Example: `let x : int = 10` has type `int` (PlatformWord → i64), stored as Int32.
+    let literalType =
         match SemanticGraph.tryGetNode nodeId z.Graph with
         | Some node -> Alex.CodeGeneration.TypeMapping.mapNativeType node.Type
-        | None -> MLIRTypes.i32 // Fallback
+        | None -> failwithf "Literal node %A not found in graph - pipeline bug" nodeId
 
     match lit with
     | LiteralValue.Unit ->
@@ -71,63 +72,56 @@ let witness (z: PSGZipper) (nodeId: NodeId) (lit: LiteralValue) : MLIROp list * 
 
     | LiteralValue.Int8 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i8
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
+    // Integer literals: literalType is THE type, period.
+    // The literal representation (Int16, Int32, Int64) is value storage, not type.
+    
     | LiteralValue.Int16 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i16
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.Int32 n ->
         let ssaName = getSingleSSA nodeId z
-        // Respect expected type if it's TIndex (for NTUint/nativeint compatibility)
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i32
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.Int64 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i64
-        let op = MLIROp.ArithOp (ConstI (ssaName, n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.UInt8 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i8
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.UInt16 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i16
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.UInt32 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i32
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.UInt64 n ->
         let ssaName = getSingleSSA nodeId z
-        let ty = if expectedType = MLIRTypes.index then MLIRTypes.index else MLIRTypes.i64
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, ty))
-        [op], TRValue { SSA = ssaName; Type = ty }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.NativeInt n ->
-        // Platform word size - assume 64-bit for now
         let ssaName = getSingleSSA nodeId z
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, MLIRTypes.index)) // NativeInt IS index
-        [op], TRValue { SSA = ssaName; Type = MLIRTypes.index }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.UNativeInt n ->
         let ssaName = getSingleSSA nodeId z
-        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, MLIRTypes.index)) // UNativeInt IS index
-        [op], TRValue { SSA = ssaName; Type = MLIRTypes.index }
+        let op = MLIROp.ArithOp (ConstI (ssaName, int64 n, literalType))
+        [op], TRValue { SSA = ssaName; Type = literalType }
 
     | LiteralValue.Char c ->
         // Char is i32 (Unicode codepoint)

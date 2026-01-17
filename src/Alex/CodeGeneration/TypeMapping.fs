@@ -23,113 +23,132 @@ let NativeStrType = TStruct [TPtr; TInt I64]
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Map FNCS NativeType to structured MLIRType
-/// This is the canonical conversion used throughout Alex
+/// This is the canonical conversion used throughout Alex.
+/// Uses NTU layout information for platform-aware type mapping.
 let rec mapNativeType (ty: NativeType) : MLIRType =
     match ty with
     | NativeType.TApp(tycon, args) ->
-        match tycon.Name with
-        | "unit" -> TInt I32  // Unit represented as i32 (returns 0)
-        | "bool" -> TInt I1
-        | "int8" | "sbyte" -> TInt I8
-        | "uint8" | "byte" -> TInt I8
-        | "int16" -> TInt I16
-        | "uint16" -> TInt I16
-        | "int" | "int32" -> TInt I32
-        | "uint" | "uint32" -> TInt I32
-        | "int64" -> TInt I64
-        | "uint64" -> TInt I64
-        | "nativeint" -> TIndex  // Platform-word integer (i64 on 64-bit)
-        | "unativeint" -> TIndex  // Platform-word unsigned integer
-        | "float32" | "single" -> TFloat F32
-        | "float" | "double" -> TFloat F64
-        | "char" -> TInt I32  // Unicode codepoint
-        | "string" -> NativeStrType
-        | "Ptr" | "nativeptr" -> TPtr
-        // Byref types: all three variants map to pointers
-        // This handles the TApp representation; TByref is handled below
-        | "byref" | "inref" | "outref" -> TPtr
-        | "array" -> NativeStrType  // Fat pointer {ptr, len}
-        | "list" -> failwithf "list type not yet implemented: %A" ty
-        | "option" ->
-            match args with
-            | [innerTy] -> TStruct [TInt I1; mapNativeType innerTy]
-            | _ -> failwithf "option type requires exactly one type argument: %A" ty
-        | "voption" ->
-            match args with
-            | [innerTy] -> TStruct [TInt I1; mapNativeType innerTy]
-            | _ -> failwithf "voption type requires exactly one type argument: %A" ty
-        | "result" ->
-            // Result<'T, 'E> is a DU with Ok and Error cases
-            // Layout: {tag: i8, okPayload: 'T, errorPayload: 'E}
-            // Each case extracts from its corresponding field index (tag+1)
-            match args with
-            | [okTy; errorTy] -> TStruct [TInt I8; mapNativeType okTy; mapNativeType errorTy]
-            | _ -> failwithf "result type requires exactly two type arguments: %A" ty
+        // FIRST: Check NTU layout for types that have it - this is the authoritative source
+        // for platform-dependent types like int (PlatformWord)
+        match tycon.Layout, tycon.NTUKind with
+        // Zero-size unit type
+        | TypeLayout.Inline (0, 1), Some NTUKind.NTUunit -> TInt I32
+        // Boolean: 1-bit
+        | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt I1
+        // Fixed-width integers by NTUKind
+        | _, Some NTUKind.NTUint8 -> TInt I8
+        | _, Some NTUKind.NTUuint8 -> TInt I8
+        | _, Some NTUKind.NTUint16 -> TInt I16
+        | _, Some NTUKind.NTUuint16 -> TInt I16
+        | _, Some NTUKind.NTUint32 -> TInt I32
+        | _, Some NTUKind.NTUuint32 -> TInt I32
+        | _, Some NTUKind.NTUint64 -> TInt I64
+        | _, Some NTUKind.NTUuint64 -> TInt I64
+        // Platform-word integers (int, uint, nativeint, size_t, ptrdiff_t)
+        // On 64-bit platforms, these are concrete i64 (not MLIR index type)
+        // TODO: When platform quotations are implemented, this will be configurable
+        | TypeLayout.PlatformWord, Some NTUKind.NTUint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUuint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUnint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUunint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUsize
+        | TypeLayout.PlatformWord, Some NTUKind.NTUdiff
+        | TypeLayout.PlatformWord, None -> TInt I64  // Platform word = i64 on 64-bit
+        // Pointers
+        | TypeLayout.PlatformWord, Some NTUKind.NTUptr
+        | TypeLayout.PlatformWord, Some NTUKind.NTUfnptr -> TPtr
+        | _, Some NTUKind.NTUptr -> TPtr
+        // Floats
+        | _, Some NTUKind.NTUfloat32 -> TFloat F32
+        | _, Some NTUKind.NTUfloat64 -> TFloat F64
+        // Char (Unicode codepoint)
+        | _, Some NTUKind.NTUchar -> TInt I32
+        // String (fat pointer)
+        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> NativeStrType
+        // SECOND: Name-based fallback for types without proper NTU metadata
+        // Note: Arrays have FatPointer layout but no specific NTUKind, handled in fallback
         | _ ->
-            // Check FieldCount for record types
-            if tycon.FieldCount > 0 then
-                match tycon.Layout with
-                | TypeLayout.Inline (size, align) when size > 0 && align > 0 ->
-                    // Infer struct layout from size/align/fieldCount
-                    match size, align, tycon.FieldCount with
-                    | 16, 8, 2 -> TStruct [TPtr; TPtr]  // Two pointers
-                    | 24, 8, 2 -> TStruct [TPtr; TInt I64; TInt I64]  // Fat pointer (string) + int
-                    | 32, 8, 2 -> TStruct [TPtr; TInt I64; TPtr; TInt I64]  // Two fat pointers (strings)
-                    | 32, 8, 3 -> TStruct [TPtr; TInt I64; TInt I64]  // Fat pointer + int + padding or ptr
-                    | 40, 8, 3 -> TStruct [TPtr; TInt I64; TPtr; TInt I64; TInt I64]  // 3 fat ptrs (24+16)
-                    | 48, 8, 3 -> TStruct [TPtr; TInt I64; TPtr; TInt I64; TPtr; TInt I64]  // 3 fat pointers
-                    | 56, 8, 3 -> TStruct [TPtr; TInt I64; TPtr; TInt I64; TPtr; TInt I64; TInt I64]  // 3 strings + int
+            match tycon.Name with
+            // Byref types: all variants map to pointers
+            | "byref" | "inref" | "outref" -> TPtr
+            | "Ptr" | "nativeptr" -> TPtr
+            | "option" ->
+                match args with
+                | [innerTy] -> TStruct [TInt I1; mapNativeType innerTy]
+                | _ -> failwithf "option type requires exactly one type argument: %A" ty
+            | "voption" ->
+                match args with
+                | [innerTy] -> TStruct [TInt I1; mapNativeType innerTy]
+                | _ -> failwithf "voption type requires exactly one type argument: %A" ty
+            | "result" ->
+                // Result<'T, 'E> is a DU with Ok and Error cases
+                match args with
+                | [okTy; errorTy] -> TStruct [TInt I8; mapNativeType okTy; mapNativeType errorTy]
+                | _ -> failwithf "result type requires exactly two type arguments: %A" ty
+            | "list" -> failwithf "list type not yet implemented: %A" ty
+            | "array" | "Array" ->
+                // Array<T> is a fat pointer {ptr, len} - same layout as string
+                NativeStrType
+            | _ ->
+                // Check FieldCount for record types
+                if tycon.FieldCount > 0 then
+                    match tycon.Layout with
+                    | TypeLayout.Inline (size, align) when size > 0 && align > 0 ->
+                        // Infer struct layout from size/align/fieldCount
+                        match size, align, tycon.FieldCount with
+                        | 16, 8, 2 -> TStruct [TPtr; TPtr]  // Two pointers
+                        | 24, 8, 2 -> TStruct [TPtr; TInt I64; TInt I64]  // Fat pointer (string) + int
+                        | 32, 8, 2 -> TStruct [TPtr; TInt I64; TPtr; TInt I64]  // Two fat pointers (strings)
+                        | 32, 8, 3 -> TStruct [TPtr; TInt I64; TInt I64]  // Fat pointer + int + padding or ptr
+                        | 40, 8, 3 -> TStruct [TPtr; TInt I64; TPtr; TInt I64; TInt I64]  // 3 fat ptrs (24+16)
+                        | 48, 8, 3 -> TStruct [TPtr; TInt I64; TPtr; TInt I64; TPtr; TInt I64]  // 3 fat pointers
+                        | 56, 8, 3 -> TStruct [TPtr; TInt I64; TPtr; TInt I64; TPtr; TInt I64; TInt I64]  // 3 strings + int
+                        | _ ->
+                            // Fallback: estimate fields based on word-aligned size
+                            let numWords = size / 8
+                            TStruct (List.replicate numWords TPtr)
+                    | TypeLayout.NTUCompound n when n = tycon.FieldCount ->
+                        TStruct (List.replicate n TPtr)
                     | _ ->
-                        // Fallback: estimate fields based on word-aligned size
-                        let numWords = size / 8
-                        TStruct (List.replicate numWords TPtr)
-                | TypeLayout.NTUCompound n when n = tycon.FieldCount ->
-                    TStruct (List.replicate n TPtr)
-                | _ ->
-                    failwithf "Record '%s' has unsupported layout: %A" tycon.Name tycon.Layout
-            else
-                match tycon.Layout with
-                | TypeLayout.Inline (size, align) when size > 8 ->
-                    // DU layout: tag + payload, computed from FNCS
-                    // Tag size inferred from (size mod align): 1=i8, 2=i16
-                    // Payload fills remaining space up to alignment
-                    let tagSize = size % align
-                    let tagType =
-                        match tagSize with
-                        | 1 -> TInt I8
-                        | 2 -> TInt I16
-                        | _ -> TInt I8  // Default to i8 for unusual layouts
-                    let payloadSize = size - tagSize
-                    let payloadType =
-                        match payloadSize with
-                        | 1 -> TInt I8
-                        | 2 -> TInt I16
-                        | 4 -> TInt I32
-                        | 8 -> TInt I64
-                        | n -> TArray (n, TInt I8)  // Larger payloads as byte array
-                    TStruct [tagType; payloadType]
-                | TypeLayout.Inline (size, align) when size > 0 ->
-                    failwithf "TApp with unknown Inline layout (%d, %d): %s" size align tycon.Name
-                | TypeLayout.FatPointer ->
-                    NativeStrType
-                | TypeLayout.PlatformWord ->
-                    match tycon.NTUKind with
-                    | Some NTUKind.NTUptr | Some NTUKind.NTUfnptr -> TPtr
-                    | Some NTUKind.NTUint | Some NTUKind.NTUuint
-                    | Some NTUKind.NTUnint | Some NTUKind.NTUunint
-                    | Some NTUKind.NTUsize | Some NTUKind.NTUdiff -> TIndex
-                    | None -> TIndex
-                    | Some kind -> failwithf "Unexpected NTUKind %A with PlatformWord layout: %s" kind tycon.Name
-                | TypeLayout.Opaque ->
-                    failwithf "TApp with Opaque layout - FNCS must resolve type '%s'" tycon.Name
-                | TypeLayout.Reference _ ->
-                    failwithf "Reference type not yet implemented: %s" tycon.Name
-                | TypeLayout.NTUCompound n ->
-                    // Arena<'lifetime> and similar compound types: N platform words
-                    if n = 1 then TPtr
-                    else TStruct (List.replicate n TPtr)
-                | TypeLayout.Inline _ ->
-                    failwithf "Unknown inline type '%s' with no fields" tycon.Name
+                        failwithf "Record '%s' has unsupported layout: %A" tycon.Name tycon.Layout
+                else
+                    match tycon.Layout with
+                    | TypeLayout.Inline (size, align) when size > 8 ->
+                        // DU layout: tag + payload, computed from FNCS
+                        // Tag size inferred from (size mod align): 1=i8, 2=i16
+                        // Payload fills remaining space up to alignment
+                        let tagSize = size % align
+                        let tagType =
+                            match tagSize with
+                            | 1 -> TInt I8
+                            | 2 -> TInt I16
+                            | _ -> TInt I8  // Default to i8 for unusual layouts
+                        let payloadSize = size - tagSize
+                        let payloadType =
+                            match payloadSize with
+                            | 1 -> TInt I8
+                            | 2 -> TInt I16
+                            | 4 -> TInt I32
+                            | 8 -> TInt I64
+                            | n -> TArray (n, TInt I8)  // Larger payloads as byte array
+                        TStruct [tagType; payloadType]
+                    | TypeLayout.Inline (size, align) when size > 0 ->
+                        failwithf "TApp with unknown Inline layout (%d, %d): %s" size align tycon.Name
+                    | TypeLayout.FatPointer ->
+                        NativeStrType
+                    | TypeLayout.PlatformWord ->
+                        // Should have been handled by NTU-aware code at top; this is a fallback
+                        TIndex
+                    | TypeLayout.Opaque ->
+                        failwithf "TApp with Opaque layout - FNCS must resolve type '%s'" tycon.Name
+                    | TypeLayout.Reference _ ->
+                        failwithf "Reference type not yet implemented: %s" tycon.Name
+                    | TypeLayout.NTUCompound n ->
+                        // Arena<'lifetime> and similar compound types: N platform words
+                        if n = 1 then TPtr
+                        else TStruct (List.replicate n TPtr)
+                    | TypeLayout.Inline _ ->
+                        failwithf "Unknown inline type '%s' with no fields" tycon.Name
 
     | NativeType.TFun _ -> TStruct [TPtr; TPtr]  // Function pointer + closure
 
@@ -147,11 +166,11 @@ let rec mapNativeType (ty: NativeType) : MLIRType =
     | NativeType.TNativePtr _ -> TPtr
     | NativeType.TForall(_, body) -> mapNativeType body
 
-    // PRD-14: Lazy<T> - struct { computed: i1, value: T, thunk: {ptr, ptr} }
+    // PRD-14: Lazy<T> - FLAT CLOSURE: { computed: i1, value: T, code_ptr: ptr }
+    // Captures are added dynamically at witness time, not in type mapping
     | NativeType.TLazy elemTy ->
         let elemMlir = mapNativeType elemTy
-        let closureType = TStruct [TPtr; TPtr]  // {code_ptr, env_ptr}
-        TStruct [TInt I1; elemMlir; closureType]
+        TStruct [TInt I1; elemMlir; TPtr]  // Flat: just code_ptr, no env_ptr
 
     // Named records are TApp with FieldCount > 0 - handled in TApp case above
 
@@ -209,11 +228,10 @@ let rec mapNativeTypeWithGraph (graph: SemanticGraph) (ty: NativeType) : MLIRTyp
     | NativeType.TAnon(fields, _) ->
         // Anonymous records need recursive mapping
         TStruct (fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraph graph fieldTy))
-    // PRD-14: Lazy<T> - need recursive mapping in case T is a record
+    // PRD-14: Lazy<T> - FLAT CLOSURE, need recursive mapping in case T is a record
     | NativeType.TLazy elemTy ->
         let elemMlir = mapNativeTypeWithGraph graph elemTy
-        let closureType = TStruct [TPtr; TPtr]
-        TStruct [TInt I1; elemMlir; closureType]
+        TStruct [TInt I1; elemMlir; TPtr]  // Flat: just code_ptr, captures added at witness
     | _ ->
         // Non-record types: use standard mapping
         mapNativeType ty

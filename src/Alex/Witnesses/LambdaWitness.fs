@@ -188,12 +188,12 @@ let private buildClosureConstruction
 /// Generate ops to extract captured values from closure struct at function entry
 /// These ops are prepended to the function body
 ///
-/// CLOSURE CONVENTION: Closing Lambdas take env_ptr (Arg 0) which points to the closure struct.
-/// We load the struct from the pointer, then extract values.
+/// CLOSURE CONVENTION: Closing Lambdas take env_ptr (Arg 0) which points to the struct.
+/// The struct type and extraction indices depend on context:
+/// - Regular closure: Load {code_ptr, cap0, cap1, ...}, extract at indices 1, 2, ...
+/// - Lazy thunk: Load {computed, value, code_ptr, cap0, cap1, ...}, extract at indices 3, 4, ...
 ///
-/// For each capture slot:
-///   %struct = load %env_ptr
-///   %extracted = llvm.extractvalue %struct[1 + slotIndex]
+/// January 2026: Compositional layout via ClosureContext coeffect
 let private buildCaptureExtractionOps
     (layout: ClosureLayout)
     (z: PSGZipper)
@@ -201,19 +201,23 @@ let private buildCaptureExtractionOps
 
     // Arg 0 is the environment pointer (passed as TPtr)
     let envPtrSSA = Arg 0
-    
-    // Load the closure struct from the environment pointer
+
+    // Get struct type and extraction base from context (compositional layout)
+    let loadStructType = closureLoadStructType layout
+    let extractionBase = closureExtractionBaseIndex layout
+
+    // Load the struct from the environment pointer
     let structSSA = freshSynthSSA z
-    let loadOp = MLIROp.LLVMOp (Load (structSSA, envPtrSSA, layout.ClosureStructType, NotAtomic))
+    let loadOp = MLIROp.LLVMOp (Load (structSSA, envPtrSSA, loadStructType, NotAtomic))
 
     // Extract each captured value from the loaded struct
-    // Captures are at indices 1, 2, ... (index 0 is code_ptr)
+    // Extraction index = baseIndex + slotIndex (context-dependent)
     let extractOps =
         layout.Captures
         |> List.map (fun slot ->
             // slot.GepSSA is the SSA we bound in preBindParams - use it for the extracted value
-            let extractIndex = 1 + slot.SlotIndex
-            MLIROp.LLVMOp (ExtractValue (slot.GepSSA, structSSA, [extractIndex], layout.ClosureStructType))
+            let extractIndex = extractionBase + slot.SlotIndex
+            MLIROp.LLVMOp (ExtractValue (slot.GepSSA, structSSA, [extractIndex], loadStructType))
         )
 
     loadOp :: extractOps
@@ -314,7 +318,7 @@ let private witnessInFunctionScope
     // ... (paramCount logic) ...
     let paramCount =
         match node.Kind with
-        | SemanticKind.Lambda (params', _bodyId, _captures, _) -> List.length params'
+        | SemanticKind.Lambda (params', _bodyId, _captures, _, _) -> List.length params'
         | _ -> 0
     let finalRetType = extractFinalReturnType node.Type paramCount
     let declaredRetType = mapNativeTypeWithGraph z.Graph finalRetType
@@ -328,6 +332,13 @@ let private witnessInFunctionScope
         | Some (ssa, bodyType) ->
             let effectiveRetType =
                 match bodyType, declaredRetType with
+                // PRD-14: Lazy<T> with captures - body has {i1, T, ptr, caps...}, declared has {i1, T, ptr}
+                // When lazy-returning function has captures, use actual body type (with captures)
+                | TStruct (TInt I1 :: valTy :: TPtr :: caps), TStruct [TInt I1; declValTy; TPtr]
+                    when not (List.isEmpty caps) && valTy = declValTy -> bodyType
+                // PRD-11: Flat closure with captures - body has {ptr, caps...}, declared has {ptr}
+                | TStruct (TPtr :: caps), TStruct [TPtr] when not (List.isEmpty caps) -> bodyType
+                // Legacy two-pointer closure model (kept for compatibility)
                 | TStruct (TPtr :: _), TStruct [TPtr; TPtr] -> bodyType
                 | _ -> declaredRetType
             let reconcileOps, finalSSA = reconcileReturnType z ssa bodyType effectiveRetType
@@ -343,6 +354,13 @@ let private witnessInFunctionScope
         | TRValue { SSA = ssa; Type = bodyType } ->
             let effectiveRetType =
                 match bodyType, declaredRetType with
+                // PRD-14: Lazy<T> with captures - body has {i1, T, ptr, caps...}, declared has {i1, T, ptr}
+                // When lazy-returning function has captures, use actual body type (with captures)
+                | TStruct (TInt I1 :: valTy :: TPtr :: caps), TStruct [TInt I1; declValTy; TPtr]
+                    when not (List.isEmpty caps) && valTy = declValTy -> bodyType
+                // PRD-11: Flat closure with captures - body has {ptr, caps...}, declared has {ptr}
+                | TStruct (TPtr :: caps), TStruct [TPtr] when not (List.isEmpty caps) -> bodyType
+                // Legacy two-pointer closure model (kept for compatibility)
                 | TStruct (TPtr :: _), TStruct [TPtr; TPtr] -> bodyType
                 | _ -> declaredRetType
             let reconcileOps, finalSSA = reconcileReturnType z ssa bodyType effectiveRetType
@@ -461,7 +479,7 @@ let private isUnitType (ty: NativeType) : bool =
 /// - These entry ops are prepended to body ops later
 let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
     match node.Kind with
-    | SemanticKind.Lambda (params', _bodyId, captures, _) ->
+    | SemanticKind.Lambda (params', _bodyId, captures, _, _) ->
         let nodeIdVal = NodeId.value node.Id
         // ARCHITECTURAL FIX: Use SSAAssignment coeffect for lambda names
         // This respects binding names when Lambda is bound via `let name = ...`
@@ -600,14 +618,14 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                         // But we can check by NAME if we trust unique names in function scope
                         // Or relying on MutabilityAnalysis to track by name if NodeId isn't available
                         // Wait, params' has NodeId!
-                        let paramNodeId =
+                        let paramNodeIdOpt =
                             params'
                             |> List.tryFind (fun (n, _, _) -> n = paramName)
-                            |> Option.map (fun (_, _, id) -> NodeId.value id)
-                            
+                            |> Option.map (fun (_, _, id) -> id)
+
                         let needsStack =
-                            match paramNodeId with
-                            | Some id -> needsAlloca id paramName acc
+                            match paramNodeIdOpt with
+                            | Some id -> needsAlloca (NodeId.value id) paramName acc
                             | None -> false // Should not happen
 
                         if needsStack then
@@ -616,11 +634,11 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                             let allocaOp = MLIROp.LLVMOp (LLVMOp.Alloca (allocaSSA, Arg -1, mlirType, None)) // Arg -1 is unused for count=1
                             // Store argument value
                             let storeOp = MLIROp.LLVMOp (LLVMOp.Store (argSSA, allocaSSA, mlirType, AtomicOrdering.NotAtomic))
-                            
+
                             // Emit ops to function prologue
                             emit allocaOp acc
                             emit storeOp acc
-                            
+
                             // Bind name to ALLOCA (as pointer)
                             // VarRef witness handles loading from pointers for mutable bindings
                             // But we need to make sure the type recorded is the VALUE type or PTR type?
@@ -629,10 +647,21 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                             // VarRef witness uses the type from NodeBindings/VarBindings.
                             // If we bind (allocaSSA, TPtr), then VarRef will see TPtr.
                             // Standard VarRef logic: if it's mutable/addressed, it expects TPtr and loads it.
-                            bindVarSSA paramName allocaSSA TPtr acc
+                            let acc' = bindVarSSA paramName allocaSSA TPtr acc
+                            // CAPTURE FIX: Also bind by NodeId for capture resolution
+                            // resolveNodeToVal looks up by NodeId in NodeBindings
+                            match paramNodeIdOpt with
+                            | Some id -> bindNodeResult (NodeId.value id) allocaSSA TPtr acc'
+                            | None -> acc'
                         else
                             // Immutable parameter - bind directly to argument value
-                            bindVarSSA paramName argSSA mlirType acc
+                            let acc' = bindVarSSA paramName argSSA mlirType acc
+                            // CAPTURE FIX: Also bind by NodeId for capture resolution
+                            // resolveNodeToVal looks up by NodeId in NodeBindings
+                            // This enables lazy captures and closure captures of function parameters
+                            match paramNodeIdOpt with
+                            | Some id -> bindNodeResult (NodeId.value id) argSSA mlirType acc'
+                            | None -> acc'
                     | None -> acc
                 ) z1
 

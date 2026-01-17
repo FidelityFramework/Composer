@@ -615,3 +615,92 @@ This PRD aligns with the flat closure architecture documented in:
 3. **Self-contained structs** - No pointer chains
 4. **Coeffect-based layout** - SSA computed before witnessing
 5. **Capture reuse** - Same analysis as PRD-11 closures
+
+## 12. Implementation Lessons (January 2026)
+
+### 12.1 The "Compose from Standing Art" Principle
+
+> **New features MUST compose from recently established patterns, not invent parallel mechanisms.**
+
+PRD-14 implementation initially went wrong by creating a `{code_ptr, env_ptr}` closure model with null env_ptr for no-capture cases. This completely ignored that **flat closures had just been established** in PRD-11.
+
+**The correct approach:**
+1. Identify what existing patterns the feature needs (closures, capture analysis)
+2. Check what was RECENTLY established (PRD-11 flat closures)
+3. EXTEND the existing pattern, don't reinvent
+
+```
+WRONG: Lazy-specific closure model with nulls
+RIGHT: Lazy = PRD-11 Flat Closure + memoization state
+       {computed: i1, value: T, code_ptr: ptr, cap₀, cap₁, ...}
+```
+
+This principle applies to ALL future PRDs. See Serena memory: `compose_from_standing_art_principle`
+
+### 12.2 Option B Thunk Calling Convention
+
+A key architectural decision was choosing between two calling conventions:
+
+| Option | Thunk Signature | Force Complexity |
+|--------|-----------------|------------------|
+| **A** | `(cap₀, cap₁, ...) -> T` | Must extract and pass captures |
+| **B** | `(ptr) -> T` | Uniform - just passes pointer |
+
+**Decision: Option B** - Thunk receives pointer to lazy struct, extracts its own captures.
+
+**Why Option B wins:**
+- Force is UNIFORM regardless of capture count
+- No def-use tracking needed at force site
+- Clean separation: force handles invocation, thunk handles extraction
+- SSA cost for force is FIXED (4 ops) not variable
+
+See Serena memory: `lazy_thunk_calling_convention`
+
+### 12.3 Capture Analysis Reuse
+
+FNCS already had capture analysis for Lambda (PRD-11). The correct approach was to **reuse it**:
+
+```fsharp
+// In Applications.fs - made public for reuse
+let computeCaptures (builder: NodeBuilder) (env: TypeEnv) (bodyNodeId: NodeId) (excludeNames: Set<string>) : CaptureInfo list
+
+// checkLambda uses it
+let captures = computeCaptures builder env bodyNode.Id paramNames
+
+// checkLazy reuses the SAME function
+let captures = computeCaptures builder env innerNode.Id (Set.singleton "_unit")
+```
+
+**Lesson:** Before writing new code, ask "Does this already exist for a similar feature?"
+
+### 12.4 SSA Cost Determinism
+
+SSA assignment must be 100% deterministic - no synthetic SSAs, no runtime decisions.
+
+**LazyExpr SSA cost:** `5 + numCaptures` (variable, but deterministic from PSG)
+**LazyForce SSA cost:** `4` (fixed - this is the Option B benefit)
+
+The coeffect pattern means witnesses OBSERVE pre-computed SSAs, they don't INVENT them.
+
+### 12.5 Process Lessons for Future PRDs
+
+Before implementing ANY new feature:
+
+1. **Review the last 2-3 PRDs** for patterns that might apply
+2. **Read Serena memories** for architectural decisions
+3. **Identify composition points** - what existing code/patterns to extend?
+4. **Document the composition** in the PRD explicitly
+5. **Course correct early** if implementation diverges from patterns
+
+> "The standing art composes up. Use it."
+
+### 12.6 Files Modified (Reference)
+
+**FNCS:**
+- `Applications.fs` - Made `collectVarRefs` public, added `computeCaptures`
+- `Coordinator.fs` - `checkLazy` uses `computeCaptures`
+
+**Alex:**
+- `LazyWitness.fs` - Option B calling convention
+- `SSAAssignment.fs` - SSA costs (LazyExpr: 5+N, LazyForce: 4)
+- `FNCSTransfer.fs` - Simplified LazyForce (uniform, no capture tracking)

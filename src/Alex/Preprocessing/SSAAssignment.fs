@@ -86,7 +86,38 @@ type ClosureLayout = {
     EnvStructType: MLIRType
     /// MLIR type of the closure struct: {ptr, T0, T1, ...} = {code_ptr, captures...}
     ClosureStructType: MLIRType
+    /// Lambda context: determines extraction base index and load struct type
+    /// RegularClosure: captures at [1..N], load ClosureStructType
+    /// LazyThunk: captures at [3..N+2], load lazy struct type
+    Context: LambdaContext
+    /// For LazyThunk: the full lazy struct type {i1, T, ptr, cap0, cap1, ...}
+    /// PRD-14 Option B: thunk receives pointer to this struct and extracts captures at indices 3+
+    LazyStructType: MLIRType option
 }
+
+/// Get the struct type to load when extracting captures from this closure
+/// For regular closures: the closure struct {code_ptr, cap0, cap1, ...}
+/// For lazy thunks: the lazy struct {computed, value, code_ptr, cap0, cap1, ...}
+/// PRD-14 Option B: thunk receives pointer to FULL lazy struct
+let closureLoadStructType (layout: ClosureLayout) : MLIRType =
+    match layout.Context with
+    | LambdaContext.RegularClosure -> layout.ClosureStructType
+    | LambdaContext.LazyThunk ->
+        // PRD-14 Option B: thunk receives pointer to the FULL lazy struct
+        // {computed: i1, value: T, code_ptr: ptr, cap0, cap1, ...}
+        match layout.LazyStructType with
+        | Some lazyType -> lazyType
+        | None -> failwith "LazyThunk context requires LazyStructType to be set"
+    | LambdaContext.SeqGenerator -> layout.ClosureStructType  // Future
+
+/// Get the base index for capture extraction based on context
+/// Regular closure: captures at indices 1, 2, ... (after code_ptr at [0])
+/// Lazy thunk: captures at indices 3, 4, ... (after computed[0], value[1], code_ptr[2])
+let closureExtractionBaseIndex (layout: ClosureLayout) : int =
+    match layout.Context with
+    | LambdaContext.RegularClosure -> 1  // Captures start at index 1
+    | LambdaContext.LazyThunk -> 3       // Captures start at index 3 (after computed, value, code_ptr)
+    | LambdaContext.SeqGenerator -> 3    // Future: similar to lazy
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STRUCTURAL SSA DERIVATION
@@ -136,38 +167,66 @@ let private computeLambdaSSACost (captures: CaptureInfo list) : int =
 /// Minimal NativeType to MLIRType mapping for capture slots
 /// This is a subset of TypeMapping.mapNativeType, inlined here to avoid
 /// circular dependencies (SSAAssignment must compile before TypeMapping)
+/// CRITICAL: Must check Layout + NTUKind first to match TypeMapping behavior,
+/// especially for PlatformWord types like int which are i64 on 64-bit platforms.
 let rec private mapCaptureType (ty: NativeType) : MLIRType =
     match ty with
     | NativeType.TApp(tycon, args) ->
-        match tycon.Name with
-        | "unit" -> TInt I32
-        | "bool" -> TInt I1
-        | "int8" | "sbyte" -> TInt I8
-        | "uint8" | "byte" -> TInt I8
-        | "int16" -> TInt I16
-        | "uint16" -> TInt I16
-        | "int" | "int32" -> TInt I32
-        | "uint" | "uint32" -> TInt I32
-        | "int64" -> TInt I64
-        | "uint64" -> TInt I64
-        | "nativeint" | "unativeint" -> TIndex  // Platform-word integer (i64 on 64-bit)
-        | "float32" | "single" -> TFloat F32
-        | "float" | "double" -> TFloat F64
-        | "char" -> TInt I32
-        | "string" -> TStruct [TPtr; TInt I64]  // Fat pointer
-        | "Ptr" | "nativeptr" | "byref" | "inref" | "outref" -> TPtr
-        | "array" -> TStruct [TPtr; TInt I64]  // Fat pointer
-        | "option" | "voption" ->
-            match args with
-            | [innerTy] -> TStruct [TInt I1; mapCaptureType innerTy]
-            | _ -> TPtr  // Fallback
-        | _ -> 
-            failwithf "DEBUG: mapCaptureType fallback for type: '%s'" tycon.Name
-            TPtr  // Records, DUs, unknown types - treat as pointer-sized
+        // FIRST: Check Layout + NTUKind for platform-aware type mapping
+        // This mirrors TypeMapping.mapNativeType to ensure consistency
+        match tycon.Layout, tycon.NTUKind with
+        // Zero-size unit type
+        | TypeLayout.Inline (0, 1), Some NTUKind.NTUunit -> TInt I32
+        // Boolean: 1-bit
+        | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt I1
+        // Fixed-width integers by NTUKind
+        | _, Some NTUKind.NTUint8 -> TInt I8
+        | _, Some NTUKind.NTUuint8 -> TInt I8
+        | _, Some NTUKind.NTUint16 -> TInt I16
+        | _, Some NTUKind.NTUuint16 -> TInt I16
+        | _, Some NTUKind.NTUint32 -> TInt I32
+        | _, Some NTUKind.NTUuint32 -> TInt I32
+        | _, Some NTUKind.NTUint64 -> TInt I64
+        | _, Some NTUKind.NTUuint64 -> TInt I64
+        // Platform-word integers (int, uint, nativeint, size_t, ptrdiff_t)
+        // On 64-bit platforms, these are concrete i64
+        | TypeLayout.PlatformWord, Some NTUKind.NTUint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUuint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUnint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUunint
+        | TypeLayout.PlatformWord, Some NTUKind.NTUsize
+        | TypeLayout.PlatformWord, Some NTUKind.NTUdiff
+        | TypeLayout.PlatformWord, None -> TInt I64  // Platform word = i64 on 64-bit
+        // Pointers
+        | TypeLayout.PlatformWord, Some NTUKind.NTUptr
+        | TypeLayout.PlatformWord, Some NTUKind.NTUfnptr -> TPtr
+        | _, Some NTUKind.NTUptr -> TPtr
+        // Floats
+        | _, Some NTUKind.NTUfloat32 -> TFloat F32
+        | _, Some NTUKind.NTUfloat64 -> TFloat F64
+        // Char (Unicode codepoint)
+        | _, Some NTUKind.NTUchar -> TInt I32
+        // String (fat pointer)
+        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TStruct [TPtr; TInt I64]
+        // SECOND: Name-based fallback for types without proper NTU metadata
+        | _ ->
+            match tycon.Name with
+            | "Ptr" | "nativeptr" | "byref" | "inref" | "outref" -> TPtr
+            | "array" -> TStruct [TPtr; TInt I64]  // Fat pointer
+            | "option" | "voption" ->
+                match args with
+                | [innerTy] -> TStruct [TInt I1; mapCaptureType innerTy]
+                | _ -> TPtr  // Fallback
+            | _ ->
+                // Records, DUs, unknown types - check if has fields or treat as pointer
+                if tycon.FieldCount > 0 then
+                    TPtr  // Records are passed by pointer
+                else
+                    TPtr  // Fallback for other cases
     | NativeType.TFun _ -> TStruct [TPtr; TPtr]  // Function = closure struct
     | NativeType.TTuple (elements, _) ->
         TStruct (elements |> List.map mapCaptureType)
-    | NativeType.TVar tvar -> 
+    | NativeType.TVar tvar ->
         // Resolve type variable using Union-Find
         match find tvar with
         | (_, Some boundTy) -> mapCaptureType boundTy
@@ -200,9 +259,12 @@ let private buildEnvStructType (captures: CaptureInfo list) : MLIRType =
 ///   ssas[N+3..2N+2]   = insertvalue for each capture at [1..N]
 ///   ssas[2N+2]        = final result (last insertvalue)
 let private buildClosureLayout
+    (graph: SemanticGraph)
     (lambdaNodeId: NodeId)
+    (bodyNodeId: NodeId)
     (captures: CaptureInfo list)
     (ssas: SSA list)
+    (context: LambdaContext)
     : ClosureLayout =
 
     let n = List.length captures
@@ -239,6 +301,22 @@ let private buildClosureLayout
     let captureTypes = captures |> List.map captureSlotType
     let closureStructType = TStruct (TPtr :: captureTypes)
 
+    // PRD-14 Option B: For lazy thunks, compute the FULL lazy struct type
+    // {computed: i1, value: T, code_ptr: ptr, cap0, cap1, ...}
+    // T is the Lambda body's return type (the element type of Lazy<T>)
+    let lazyStructType =
+        match context with
+        | LambdaContext.LazyThunk ->
+            // Get the body's return type (T in Lazy<T>)
+            match SemanticGraph.tryGetNode bodyNodeId graph with
+            | Some bodyNode ->
+                let elementType = mapCaptureType bodyNode.Type
+                // Lazy struct: {i1, T, ptr, cap0, cap1, ...}
+                Some (TStruct ([TInt I1; elementType; TPtr] @ captureTypes))
+            | None ->
+                failwithf "LazyThunk Lambda body node %d not found" (NodeId.value bodyNodeId)
+        | _ -> None
+
     {
         LambdaNodeId = lambdaNodeId
         Captures = captureSlots
@@ -249,6 +327,8 @@ let private buildClosureLayout
         ClosureResultSSA = resultSSA
         EnvStructType = envStructType
         ClosureStructType = closureStructType
+        Context = context
+        LazyStructType = lazyStructType
     }
 
 /// Calculate SSA cost for interpolated string based on parts
@@ -421,7 +501,7 @@ let private nodeExpansionCost (graph: SemanticGraph) (node: SemanticNode) : int 
     | SemanticKind.InterpolatedString parts -> interpolatedStringCost parts
 
     // Lambda: cost depends on captures (structural analysis)
-    | SemanticKind.Lambda (_, _, captures, _) ->
+    | SemanticKind.Lambda (_, _, captures, _, _) ->
         computeLambdaSSACost captures
 
     // Fixed costs (these don't vary by structure)
@@ -555,7 +635,7 @@ let rec private assignFunctionBody
         // Special handling for nested Lambdas - they get their own scope
         // (but we still assign this Lambda node SSAs in parent scope for closure construction)
         match node.Kind with
-        | SemanticKind.Lambda(_params, bodyId, captures, _) ->
+        | SemanticKind.Lambda(_params, bodyId, captures, _, context) ->
             // Process Lambda body in a NEW scope (SSA counter resets)
             let _innerScope = assignFunctionBody graph closureLayouts FunctionScope.empty bodyId
             // Lambda itself gets SSAs in the PARENT scope for closure struct construction
@@ -565,10 +645,12 @@ let rec private assignFunctionBody
                 let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                 let alloc = NodeSSAAllocation.multi ssas
                 FunctionScope.assign node.Id alloc scopeWithSSAs
-                
+
                 // Compute ClosureLayout immediately using the allocated SSAs from the parent scope
+                // Pass the context so witnesses know how to extract captures
+                // PRD-14: Pass graph and bodyId for lazy struct type computation
                 if not (List.isEmpty captures) then
-                    let layout = buildClosureLayout node.Id captures ssas
+                    let layout = buildClosureLayout graph node.Id bodyId captures ssas context
                     if not (closureLayouts.ContainsKey(NodeId.value node.Id)) then
                         closureLayouts.Add(NodeId.value node.Id, layout)
                 scopeWithSSAs
@@ -823,7 +905,7 @@ let assignSSA (graph: SemanticGraph) : SSAAssignment =
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
-        | SemanticKind.Lambda(params', bodyId, captures, _) ->
+        | SemanticKind.Lambda(params', bodyId, captures, _, _context) ->
             let nodeIdVal = NodeId.value node.Id
             let isMain = Set.contains nodeIdVal entryPoints &&
                          (mainLambdaIdOpt |> Option.map (fun id -> NodeId.value id = nodeIdVal) |> Option.defaultValue false)
@@ -898,3 +980,56 @@ let lookupClosureLayout (nodeId: NodeId) (assignment: SSAAssignment) : ClosureLa
 /// Check if a Lambda has captures (is a closure)
 let hasClosure (nodeId: NodeId) (assignment: SSAAssignment) : bool =
     Map.containsKey (NodeId.value nodeId) assignment.ClosureLayouts
+
+/// PRD-14: Get the actual return type for a function that may return a lazy with captures.
+/// If the function body is a LazyExpr with captures, returns the actual lazy struct type
+/// including the inlined captures: {i1, T, ptr, cap0, cap1, ...}
+/// Returns None if the function doesn't return a lazy with captures.
+let getActualFunctionReturnType (graph: SemanticGraph) (defId: NodeId) (assignment: SSAAssignment) : MLIRType option =
+    // defId may be a Binding node - need to find the Lambda child
+    let lambdaNode =
+        match Map.tryFind defId graph.Nodes with
+        | Some node ->
+            match node.Kind with
+            | SemanticKind.Lambda _ -> Some node
+            | SemanticKind.Binding _ ->
+                // Binding's first child is typically the Lambda
+                match node.Children with
+                | childId :: _ ->
+                    match Map.tryFind childId graph.Nodes with
+                    | Some childNode ->
+                        match childNode.Kind with
+                        | SemanticKind.Lambda _ -> Some childNode
+                        | _ -> None
+                    | None -> None
+                | [] -> None
+            | _ -> None
+        | None -> None
+
+    match lambdaNode with
+    | None -> None
+    | Some lambda ->
+        match lambda.Kind with
+        | SemanticKind.Lambda (_, bodyId, _, _, _) ->
+            // Check if body is a LazyExpr
+            match Map.tryFind bodyId graph.Nodes with
+            | Some bodyNode ->
+                match bodyNode.Kind with
+                | SemanticKind.LazyExpr (_, captures) when not (List.isEmpty captures) ->
+                    // Function returns a lazy with captures
+                    // Compute the actual lazy struct type: {i1, T, ptr, cap0, cap1, ...}
+                    // Get element type from the LazyExpr's type
+                    let elemMlir =
+                        match bodyNode.Type with
+                        | NativeType.TLazy elemType -> mapCaptureType elemType
+                        | _ -> TInt I64  // Fallback
+
+                    // Compute capture types using the same logic as closure construction
+                    let captureTypes = captures |> List.map captureSlotType
+
+                    // Build the actual lazy struct type with captures inlined
+                    let actualLazyType = TStruct (TInt I1 :: elemMlir :: TPtr :: captureTypes)
+                    Some actualLazyType
+                | _ -> None
+            | None -> None
+        | _ -> None

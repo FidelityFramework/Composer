@@ -8,64 +8,100 @@
 /// 3. Zipper: Navigate and accumulate structured ops
 /// 4. Templates: Return structured MLIROp types, no sprintf
 ///
+/// FLAT CLOSURE ARCHITECTURE (January 2026):
+/// Lazy values are "extended flat closures" - captures are inlined directly.
+/// NO env_ptr, NO nulls - following MLKit-style flat closure principles.
+///
 /// LAZY STRUCT LAYOUT:
-/// !lazy_T = !llvm.struct<(i1, T, !closure_type)>
+/// !lazy_T = !llvm.struct<(i1, T, ptr, cap₀, cap₁, ...)>
 ///   - Field 0: Computed flag (i1)
-///   - Field 1: Cached value (T)
-///   - Field 2: Thunk closure {code_ptr, env_ptr}
+///   - Field 1: Cached value (T) - valid when computed=true
+///   - Field 2: Thunk function pointer
+///   - Field 3+: Inlined captured values
+///
+/// THUNK CALLING CONVENTION (Option B - January 2026):
+/// Thunk receives pointer to lazy struct, extracts its own captures:
+///   llvm.func @thunk(%lazy_ptr: ptr) -> T {
+///       %lazy = llvm.load %lazy_ptr : !lazy_struct_type
+///       %cap0 = llvm.extractvalue %lazy[3] : !lazy_struct_type
+///       %cap1 = llvm.extractvalue %lazy[4] : !lazy_struct_type
+///       // ... compute with captures ...
+///       llvm.return %result : T
+///   }
+///
+/// FORCE IS UNIFORM:
+/// Force doesn't need to know capture count - just passes pointer to thunk:
+///   %code_ptr = llvm.extractvalue %lazy[2]
+///   %lazy_ptr = llvm.alloca !lazy_struct_type
+///   llvm.store %lazy, %lazy_ptr
+///   %result = llvm.call %code_ptr(%lazy_ptr) : (ptr) -> T
 ///
 /// OPERATIONS:
-/// - Lazy.create: Build lazy struct with thunk, flag=false
-/// - Lazy.force: Check flag, compute if needed, cache and return
-/// - Lazy.isValueCreated: Return the computed flag
+/// - witnessLazyCreate: Build lazy struct with thunk and captures
+/// - witnessLazyForce: Uniform force - passes pointer to thunk
 module Alex.Witnesses.LazyWitness
 
 open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open Alex.Dialects.Core.Types
-open Alex.Dialects.SCF.Templates
 open Alex.Traversal.PSGZipper
-open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LAZY STRUCT TYPE
+// LAZY STRUCT TYPE (FLAT CLOSURE MODEL)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Build the MLIR type for Lazy<T>
-/// Layout: { computed: i1, value: T, thunk: {ptr, ptr} }
-let lazyStructType (elementType: MLIRType) : MLIRType =
-    let closureType = TStruct [TPtr; TPtr]  // {code_ptr, env_ptr}
-    TStruct [TInt I1; elementType; closureType]
+/// Build the MLIR type for Lazy<T> with N captures
+/// Layout: { computed: i1, value: T, code_ptr: ptr, cap₀, cap₁, ... }
+let lazyStructType (elementType: MLIRType) (captureTypes: MLIRType list) : MLIRType =
+    // {i1, T, ptr, cap₀, cap₁, ...}
+    TStruct ([TInt I1; elementType; TPtr] @ captureTypes)
 
-/// Standard closure type for thunks: {code_ptr, env_ptr}
-let closureType = TStruct [TPtr; TPtr]
+/// Lazy struct type with no captures (simplest case)
+let lazyStructTypeNoCaptures (elementType: MLIRType) : MLIRType =
+    // {i1, T, ptr}
+    TStruct [TInt I1; elementType; TPtr]
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LAZY.CREATE - Build deferred computation
+// LAZY.CREATE - Build deferred computation (FLAT CLOSURE)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Witness Lazy.create: (unit -> 'T) -> Lazy<'T>
-/// Takes a thunk closure, builds a lazy struct with computed=false
+/// Witness lazy expression creation
 ///
-/// Input: thunkVal - the closure representing the deferred computation
-/// Output: Lazy struct with computed=false, thunk stored
+/// Input:
+///   - thunkName: Name of the thunk function
+///   - elementType: The type T in Lazy<T>
+///   - captureVals: Values captured by the lazy expression
+///
+/// Output:
+///   - Lazy struct: {computed=false, value=undef, code_ptr, cap₀, cap₁, ...}
+///
+/// SSA cost: 5 + numCaptures
+///   - 1: false constant
+///   - 1: undef struct
+///   - 1: insert computed flag
+///   - 1: addressof code_ptr
+///   - 1: insert code_ptr
+///   - N: insert each capture
 let witnessLazyCreate
     (appNodeId: NodeId)
     (z: PSGZipper)
-    (thunkVal: Val)
+    (thunkName: string)
     (elementType: MLIRType)
+    (captureVals: Val list)
     : (MLIROp list * TransferResult) =
 
-    let lazyType = lazyStructType elementType
+    let captureTypes = captureVals |> List.map (fun v -> v.Type)
+    let lazyType = lazyStructType elementType captureTypes
     let ssas = requireNodeSSAs appNodeId z
-    let resultSSA = requireNodeSSA appNodeId z
 
-    // Pre-assigned SSAs for intermediate values
+    // Pre-assigned SSAs (from SSAAssignment coeffect)
     let falseSSA = ssas.[0]
     let undefSSA = ssas.[1]
-    let withFlagSSA = ssas.[2]
-    let withThunkSSA = ssas.[3]
+    let withComputedSSA = ssas.[2]
+    let codePtrSSA = ssas.[3]
+    let withCodePtrSSA = ssas.[4]
+    // ssas.[5..] for captures
 
-    let ops = [
+    let baseOps = [
         // Create false constant for computed flag
         MLIROp.ArithOp (ArithOp.ConstI (falseSSA, 0L, MLIRTypes.i1))
 
@@ -73,32 +109,60 @@ let witnessLazyCreate
         MLIROp.LLVMOp (LLVMOp.Undef (undefSSA, lazyType))
 
         // Insert computed=false at index 0
-        MLIROp.LLVMOp (LLVMOp.InsertValue (withFlagSSA, undefSSA, falseSSA, [0], lazyType))
+        MLIROp.LLVMOp (LLVMOp.InsertValue (withComputedSSA, undefSSA, falseSSA, [0], lazyType))
 
-        // Insert thunk closure at index 2 (skip value at index 1)
-        MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withFlagSSA, thunkVal.SSA, [2], lazyType))
+        // Get thunk function address
+        MLIROp.LLVMOp (LLVMOp.AddressOf (codePtrSSA, GFunc thunkName))
+
+        // Insert code_ptr at index 2 (skip value at index 1)
+        MLIROp.LLVMOp (LLVMOp.InsertValue (withCodePtrSSA, withComputedSSA, codePtrSSA, [2], lazyType))
     ]
 
-    (ops, TRValue { SSA = resultSSA; Type = lazyType })
+    // Insert each capture at indices 3, 4, 5, ...
+    let captureOps, finalSSA =
+        if captureVals.IsEmpty then
+            [], withCodePtrSSA
+        else
+            let ops, lastSSA =
+                captureVals
+                |> List.indexed
+                |> List.fold (fun (accOps, prevSSA) (i, capVal) ->
+                    let nextSSA = ssas.[5 + i]
+                    let captureIndex = 3 + i
+                    let op = MLIROp.LLVMOp (LLVMOp.InsertValue (nextSSA, prevSSA, capVal.SSA, [captureIndex], lazyType))
+                    (accOps @ [op], nextSSA)
+                ) ([], withCodePtrSSA)
+            ops, lastSSA
+
+    (baseOps @ captureOps, TRValue { SSA = finalSSA; Type = lazyType })
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LAZY.FORCE - Evaluate and cache
+// LAZY.FORCE - Evaluate thunk (OPTION B: UNIFORM CALLING CONVENTION)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Witness Lazy.force: Lazy<'T> -> 'T
-/// Checks if computed, returns cached or computes and caches
 ///
-/// MLIR Structure:
-/// 1. Extract computed flag
-/// 2. Branch based on flag
-/// 3. Cached path: extract and return value
-/// 4. Compute path: extract thunk, call it, cache result
-/// 5. Phi to merge paths
+/// OPTION B CALLING CONVENTION (January 2026):
+/// Force is UNIFORM - doesn't need to know capture count.
+/// 1. Create constant 1 for alloca count
+/// 2. Extract code_ptr from lazy struct [2]
+/// 3. Alloca space for lazy struct on stack
+/// 4. Store lazy struct to alloca
+/// 5. Call thunk with pointer to lazy struct
+/// 6. Return result
 ///
-/// NOTE: For simplicity, we implement inline force without mutating the lazy struct.
-/// A full implementation would use alloca + store for caching.
-/// This version evaluates EVERY time (no memoization) - suitable for pure thunks.
-/// TODO: Implement proper memoization with alloca for mutable lazy struct.
+/// The thunk receives the lazy struct pointer and extracts its own captures.
+/// This provides clean separation - force site doesn't need capture info.
+///
+/// NOTE: This is pure thunk semantics - always evaluates.
+/// True memoization (caching) requires mutation and will be added
+/// after Arena PRDs (20-22) provide memory management support.
+///
+/// SSA cost: 4 (fixed, regardless of captures)
+///   - 1: extract code_ptr
+///   - 1: constant 1 for alloca count
+///   - 1: alloca for lazy struct
+///   - 1: indirect call result
 let witnessLazyForce
     (appNodeId: NodeId)
     (z: PSGZipper)
@@ -106,34 +170,32 @@ let witnessLazyForce
     (elementType: MLIRType)
     : (MLIROp list * TransferResult) =
 
-    let lazyType = lazyStructType elementType
     let ssas = requireNodeSSAs appNodeId z
-    let resultSSA = requireNodeSSA appNodeId z
+    let lazyStructType = lazyVal.Type
 
-    // For now, implement a simple "always compute" version
-    // This extracts the thunk and calls it every time
-    // True memoization requires ptr-based lazy structs with mutation
-
-    // Pre-assigned SSAs
-    let computedSSA = ssas.[0]
-    let thunkSSA = ssas.[1]
-    let codePtrSSA = ssas.[2]
-    let envPtrSSA = ssas.[3]
+    // Pre-assigned SSAs (from SSAAssignment coeffect)
+    // SSA cost is fixed: 4 SSAs (extract, const 1, alloca, call result)
+    let codePtrSSA = ssas.[0]
+    let oneSSA = ssas.[1]
+    let allocaPtrSSA = ssas.[2]
+    let resultSSA = ssas.[3]
 
     let ops = [
-        // Extract computed flag (unused in this simple impl, but shown for structure)
-        MLIROp.LLVMOp (LLVMOp.ExtractValue (computedSSA, lazyVal.SSA, [0], lazyType))
+        // Extract code_ptr from lazy struct (index 2)
+        MLIROp.LLVMOp (LLVMOp.ExtractValue (codePtrSSA, lazyVal.SSA, [2], lazyStructType))
 
-        // Extract thunk closure from lazy struct
-        MLIROp.LLVMOp (LLVMOp.ExtractValue (thunkSSA, lazyVal.SSA, [2], lazyType))
+        // Create constant 1 for alloca count
+        MLIROp.ArithOp (ArithOp.ConstI (oneSSA, 1L, MLIRTypes.i64))
 
-        // Extract code_ptr and env_ptr from thunk closure
-        MLIROp.LLVMOp (LLVMOp.ExtractValue (codePtrSSA, thunkSSA, [0], closureType))
-        MLIROp.LLVMOp (LLVMOp.ExtractValue (envPtrSSA, thunkSSA, [1], closureType))
+        // Alloca space for lazy struct on stack
+        MLIROp.LLVMOp (LLVMOp.Alloca (allocaPtrSSA, oneSSA, lazyStructType, None))
 
-        // Call thunk: code_ptr(env_ptr) -> 'T
-        // The thunk function signature is: (ptr) -> T (env is first arg)
-        MLIROp.LLVMOp (LLVMOp.IndirectCall (Some resultSSA, codePtrSSA, [{ SSA = envPtrSSA; Type = TPtr }], elementType))
+        // Store lazy struct to alloca
+        MLIROp.LLVMOp (LLVMOp.Store (lazyVal.SSA, allocaPtrSSA, lazyStructType, AtomicOrdering.NotAtomic))
+
+        // Call thunk with pointer to lazy struct
+        // Thunk signature: (ptr) -> T
+        MLIROp.LLVMOp (LLVMOp.IndirectCall (Some resultSSA, codePtrSSA, [{ SSA = allocaPtrSSA; Type = TPtr }], elementType))
     ]
 
     (ops, TRValue { SSA = resultSSA; Type = elementType })
@@ -148,52 +210,13 @@ let witnessLazyIsValueCreated
     (appNodeId: NodeId)
     (z: PSGZipper)
     (lazyVal: Val)
-    (elementType: MLIRType)
     : (MLIROp list * TransferResult) =
 
-    let lazyType = lazyStructType elementType
     let resultSSA = requireNodeSSA appNodeId z
 
     let ops = [
-        // Extract computed flag from lazy struct
-        MLIROp.LLVMOp (LLVMOp.ExtractValue (resultSSA, lazyVal.SSA, [0], lazyType))
+        // Extract computed flag from lazy struct (index 0)
+        MLIROp.LLVMOp (LLVMOp.ExtractValue (resultSSA, lazyVal.SSA, [0], lazyVal.Type))
     ]
 
     (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i1 })
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LAZY INTRINSIC DISPATCH
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Dispatch Lazy intrinsic operations
-/// Called from Application/Witness.fs when encountering IntrinsicModule.Lazy
-let witnessLazyOp
-    (appNodeId: NodeId)
-    (z: PSGZipper)
-    (opName: string)
-    (args: Val list)
-    (resultType: MLIRType)
-    : (MLIROp list * TransferResult) option =
-
-    match opName, args with
-    | "create", [thunkVal] ->
-        // Determine element type from result (Lazy<T> -> T)
-        let elementType =
-            match resultType with
-            | TStruct [_; elemTy; _] -> elemTy  // Extract T from {i1, T, closure}
-            | _ -> MLIRTypes.i64  // Fallback
-        Some (witnessLazyCreate appNodeId z thunkVal elementType)
-
-    | "force", [lazyVal] ->
-        // resultType is the element type T
-        Some (witnessLazyForce appNodeId z lazyVal resultType)
-
-    | "isValueCreated", [lazyVal] ->
-        // Extract element type from lazy struct
-        let elementType =
-            match lazyVal.Type with
-            | TStruct [_; elemTy; _] -> elemTy
-            | _ -> MLIRTypes.i64
-        Some (witnessLazyIsValueCreated appNodeId z lazyVal elementType)
-
-    | _ -> None

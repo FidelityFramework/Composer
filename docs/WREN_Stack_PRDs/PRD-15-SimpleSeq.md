@@ -769,3 +769,5 @@ This PRD aligns with the flat closure architecture:
 4. **Coeffect-based layout** - State indices and layout computed before witnessing
 5. **Capture reuse** - Same analysis as PRD-11 closures
 6. **MoveNext by pointer** - Mutation requires pointer to struct (stack-allocated for for-each)
+
+> **Critical:** See Serena memory `compose_from_standing_art_principle` for why composing from PRD-11/14 patterns is essential. New features MUST extend standing art, not reinvent.

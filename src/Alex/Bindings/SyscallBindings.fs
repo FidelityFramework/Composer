@@ -38,91 +38,109 @@ let private syscall2ArgConstraints = "={rax},{rax},{rdi},{rsi},~{rcx},~{r11},~{m
 
 /// Sys.write: fd:int -> ptr:nativeptr<byte> -> len:int -> int
 /// Linux syscall 1 = write(fd, buf, count)
+/// ARCHITECTURAL NOTE: The syscall returns i64 (ssize_t on LP64).
+/// prim.ReturnType MUST match - if it doesn't, that's a type system bug to surface.
 let private bindSysWrite (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
-    match prim.Args with
-    | [fdVal; ptrVal; lenVal] ->
-        let ssas = requireNodeSSAs appNodeId z
-        // SSAs: syscallNum[0], resultSSA[1], truncResult[2], fdExt[3], lenExt[4]
-        let syscallNum = ssas.[0]
-        let resultSSA = ssas.[1]
-        let truncResult = ssas.[2]
+    // Type check: syscall returns i64, FNCS should resolve int → i64 on 64-bit
+    if prim.ReturnType <> MLIRTypes.i64 then
+        NotSupported $"Sys.write return type mismatch: expected i64 (ssize_t), got {prim.ReturnType}. Check FNCS type resolution for 'int' on this platform."
+    else
+        match prim.Args with
+        | [fdVal; ptrVal; lenVal] ->
+            let ssas = requireNodeSSAs appNodeId z
+            // SSAs: syscallNum[0], resultSSA[1], fdExt[2], lenExt[3]
+            let syscallNum = ssas.[0]
+            let resultSSA = ssas.[1]
 
-        // Build fd extension ops (if needed)
-        let fdOps, fdFinal =
-            if fdVal.Type = MLIRTypes.i64 then
-                [], fdVal.SSA
-            else
-                let fdExt = ssas.[3]
-                [MLIROp.ArithOp (ArithOp.ExtSI (fdExt, fdVal.SSA, fdVal.Type, MLIRTypes.i64))], fdExt
+            // Build fd extension ops (if needed)
+            let fdOps, fdFinal =
+                if fdVal.Type = MLIRTypes.i64 then
+                    [], fdVal.SSA
+                else
+                    let fdExt = ssas.[2]
+                    [MLIROp.ArithOp (ArithOp.ExtSI (fdExt, fdVal.SSA, fdVal.Type, MLIRTypes.i64))], fdExt
 
-        // Build len extension ops (if needed)
-        let lenOps, lenFinal =
-            if lenVal.Type = MLIRTypes.i64 then
-                [], lenVal.SSA
-            else
-                let lenExt = ssas.[4]
-                [MLIROp.ArithOp (ArithOp.ExtSI (lenExt, lenVal.SSA, lenVal.Type, MLIRTypes.i64))], lenExt
+            // Build len extension ops (if needed)
+            let lenOps, lenFinal =
+                if lenVal.Type = MLIRTypes.i64 then
+                    [], lenVal.SSA
+                else
+                    let lenExt = ssas.[3]
+                    [MLIROp.ArithOp (ArithOp.ExtSI (lenExt, lenVal.SSA, lenVal.Type, MLIRTypes.i64))], lenExt
 
-        let ops =
-            [MLIROp.ArithOp (ArithOp.ConstI (syscallNum, SYSCALL_WRITE, MLIRTypes.i64))]
-            @ fdOps
-            @ lenOps
-            @ [
-                MLIROp.LLVMOp (LLVMOp.InlineAsm (
-                    Some resultSSA,
-                    "syscall",
-                    syscall3ArgConstraints,
-                    [(syscallNum, MLIRTypes.i64)
-                     (fdFinal, MLIRTypes.i64)
-                     (ptrVal.SSA, MLIRTypes.ptr)
-                     (lenFinal, MLIRTypes.i64)],
-                    Some MLIRTypes.i64,
-                    true,
-                    false))
-                MLIROp.ArithOp (ArithOp.TruncI (truncResult, resultSSA, MLIRTypes.i64, MLIRTypes.i32))
-            ]
-        BoundOps (ops, Some { SSA = truncResult; Type = MLIRTypes.i32 })
-    | _ ->
-        NotSupported "Sys.write requires 3 arguments: fd, ptr, len"
+            let ops =
+                [MLIROp.ArithOp (ArithOp.ConstI (syscallNum, SYSCALL_WRITE, MLIRTypes.i64))]
+                @ fdOps
+                @ lenOps
+                @ [
+                    MLIROp.LLVMOp (LLVMOp.InlineAsm (
+                        Some resultSSA,
+                        "syscall",
+                        syscall3ArgConstraints,
+                        [(syscallNum, MLIRTypes.i64)
+                         (fdFinal, MLIRTypes.i64)
+                         (ptrVal.SSA, MLIRTypes.ptr)
+                         (lenFinal, MLIRTypes.i64)],
+                        Some MLIRTypes.i64,
+                        true,
+                        false))
+                ]
+            BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+        | _ ->
+            NotSupported "Sys.write requires 3 arguments: fd, ptr, len"
 
 /// Sys.read: fd:int -> ptr:nativeptr<byte> -> len:int -> int
 /// Linux syscall 0 = read(fd, buf, count)
+/// ARCHITECTURAL NOTE: The syscall returns i64 (ssize_t on LP64).
+/// prim.ReturnType MUST match - if it doesn't, that's a type system bug to surface.
 let private bindSysRead (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
-    match prim.Args with
-    | [fdVal; ptrVal; lenVal] ->
-        let ssas = requireNodeSSAs appNodeId z
-        // SSAs: syscallNum[0], resultSSA[1], truncResult[2], fdExt[3], lenExt[4]
-        let syscallNum = ssas.[0]
-        let resultSSA = ssas.[1]
-        let truncResult = ssas.[2]
-        let fdExt = ssas.[3]
-        let lenExt = ssas.[4]
+    // Type check: syscall returns i64, FNCS should resolve int → i64 on 64-bit
+    if prim.ReturnType <> MLIRTypes.i64 then
+        NotSupported $"Sys.read return type mismatch: expected i64 (ssize_t), got {prim.ReturnType}. Check FNCS type resolution for 'int' on this platform."
+    else
+        match prim.Args with
+        | [fdVal; ptrVal; lenVal] ->
+            let ssas = requireNodeSSAs appNodeId z
+            // SSAs: syscallNum[0], resultSSA[1], fdExt[2], lenExt[3]
+            let syscallNum = ssas.[0]
+            let resultSSA = ssas.[1]
 
-        let ops = [
-            // Syscall number 0 for read
-            MLIROp.ArithOp (ArithOp.ConstI (syscallNum, SYSCALL_READ, MLIRTypes.i64))
-            // Extend fd to i64
-            MLIROp.ArithOp (ArithOp.ExtSI (fdExt, fdVal.SSA, fdVal.Type, MLIRTypes.i64))
-            // Extend len to i64
-            MLIROp.ArithOp (ArithOp.ExtSI (lenExt, lenVal.SSA, lenVal.Type, MLIRTypes.i64))
-            // Inline syscall
-            MLIROp.LLVMOp (LLVMOp.InlineAsm (
-                Some resultSSA,
-                "syscall",
-                syscall3ArgConstraints,
-                [(syscallNum, MLIRTypes.i64)
-                 (fdExt, MLIRTypes.i64)
-                 (ptrVal.SSA, MLIRTypes.ptr)
-                 (lenExt, MLIRTypes.i64)],
-                Some MLIRTypes.i64,
-                true,
-                false))
-            // Truncate result to i32
-            MLIROp.ArithOp (ArithOp.TruncI (truncResult, resultSSA, MLIRTypes.i64, MLIRTypes.i32))
-        ]
-        BoundOps (ops, Some { SSA = truncResult; Type = MLIRTypes.i32 })
-    | _ ->
-        NotSupported "Sys.read requires 3 arguments: fd, ptr, len"
+            // Build fd extension ops (if needed)
+            let fdOps, fdFinal =
+                if fdVal.Type = MLIRTypes.i64 then
+                    [], fdVal.SSA
+                else
+                    let fdExt = ssas.[2]
+                    [MLIROp.ArithOp (ArithOp.ExtSI (fdExt, fdVal.SSA, fdVal.Type, MLIRTypes.i64))], fdExt
+
+            // Build len extension ops (if needed)
+            let lenOps, lenFinal =
+                if lenVal.Type = MLIRTypes.i64 then
+                    [], lenVal.SSA
+                else
+                    let lenExt = ssas.[3]
+                    [MLIROp.ArithOp (ArithOp.ExtSI (lenExt, lenVal.SSA, lenVal.Type, MLIRTypes.i64))], lenExt
+
+            let ops =
+                [MLIROp.ArithOp (ArithOp.ConstI (syscallNum, SYSCALL_READ, MLIRTypes.i64))]
+                @ fdOps
+                @ lenOps
+                @ [
+                    MLIROp.LLVMOp (LLVMOp.InlineAsm (
+                        Some resultSSA,
+                        "syscall",
+                        syscall3ArgConstraints,
+                        [(syscallNum, MLIRTypes.i64)
+                         (fdFinal, MLIRTypes.i64)
+                         (ptrVal.SSA, MLIRTypes.ptr)
+                         (lenFinal, MLIRTypes.i64)],
+                        Some MLIRTypes.i64,
+                        true,
+                        false))
+                ]
+            BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+        | _ ->
+            NotSupported "Sys.read requires 3 arguments: fd, ptr, len"
 
 /// Sys.clock_gettime: unit -> int64
 /// Linux syscall 228 = clock_gettime(clockid, timespec*)
