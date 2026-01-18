@@ -181,6 +181,12 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         let elemMlir = mapNativeTypeForArch arch elemTy
         TStruct [TInt I1; elemMlir; TPtr]  // Flat: just code_ptr, no env_ptr
 
+    // PRD-15: Seq<T> - FLAT CLOSURE: { state: i32, current: T, moveNext_ptr: ptr }
+    // Captures are added dynamically at witness time, not in type mapping
+    | NativeType.TSeq elemTy ->
+        let elemMlir = mapNativeTypeForArch arch elemTy
+        TStruct [TInt I32; elemMlir; TPtr]  // Flat: state, current, moveNext_ptr
+
     // Named records are TApp with FieldCount > 0 - handled in TApp case above
 
     | NativeType.TUnion (tycon, _cases) ->

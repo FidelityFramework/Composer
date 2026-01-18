@@ -936,6 +936,7 @@ let private binaryIndex (opName: string) (r: SSA) (l: SSA) (rh: SSA) (sb: String
 
 /// Emit LLVM function definition (in recursive group because it needs `region`)
 /// llvm.func @name(%arg0: type, ...) -> retType { ... }
+/// NOTE: Like func.func, llvm.func entry block cannot have a label when function has named arguments
 let rec llvmFuncDef (name: string) (args: (SSA * MLIRType) list) (retTy: MLIRType) (body: Region) (linkage: LLVMLinkage) (sb: StringBuilder) : unit =
     sb.Append("llvm.func ") |> ignore
     match linkage with
@@ -949,20 +950,36 @@ let rec llvmFuncDef (name: string) (args: (SSA * MLIRType) list) (retTy: MLIRTyp
         llvmType t sb)
     sb.Append(") -> ") |> ignore
     llvmType retTy sb
-    region body 2 sb
+    // Use funcRegion - llvm.func also cannot have entry block label with named args
+    funcRegion body 2 sb
 
 /// Emit region
 /// For single-block regions with no block args, emit ops directly (MLIR doesn't need labels)
 /// For multi-block or blocks with args, emit full block structure
 /// Empty label (BlockRef "") means implicit entry block - no label emitted
+/// Generic region serialization (used by most constructs)
 and region (r: Region) (indent: int) (sb: StringBuilder) : unit =
+    regionWithEntryLabel r indent true sb
+
+/// Region serialization for func.func - entry block NEVER has a label
+/// (function arguments serve as implicit entry block arguments)
+and funcRegion (r: Region) (indent: int) (sb: StringBuilder) : unit =
+    regionWithEntryLabel r indent false sb
+
+/// Core region serialization with configurable entry block labeling
+and regionWithEntryLabel (r: Region) (indent: int) (allowEntryLabel: bool) (sb: StringBuilder) : unit =
     sb.Append(" {") |> ignore
     for i, blk in r.Blocks |> List.indexed do
         sb.AppendLine() |> ignore
         // Check if this block has an explicit label (non-empty)
         let hasExplicitLabel = match blk.Label with BlockRef s -> s <> ""
-        // Only emit block label if: has explicit label AND (multiple blocks, or block has args, or not first block)
-        let needsLabel = hasExplicitLabel && (List.length r.Blocks > 1 || not (List.isEmpty blk.Args))
+        // For entry block (i=0): only emit label if allowEntryLabel is true
+        // For other blocks: emit label if explicit AND (multiple blocks or block has args)
+        let isEntryBlock = (i = 0)
+        let needsLabel =
+            hasExplicitLabel &&
+            (not isEntryBlock || allowEntryLabel) &&
+            (List.length r.Blocks > 1 || not (List.isEmpty blk.Args))
         if needsLabel then
             for _ in 1..indent do sb.Append("  ") |> ignore
             blockRef blk.Label sb
@@ -1209,6 +1226,7 @@ and funcOp (op: FuncOp) (indent: int) (sb: StringBuilder) : unit =
     match op with
     | FuncDef (name, args, retTy, body, vis) ->
         // MLIR syntax: func.func private @name(...) for private functions
+        // Entry block NEVER has a label - function args are implicit entry block args
         sb.Append("func.func ") |> ignore
         funcVisibility vis sb
         sb.Append("@").Append(name).Append("(") |> ignore
@@ -1218,7 +1236,7 @@ and funcOp (op: FuncOp) (indent: int) (sb: StringBuilder) : unit =
             mlirType t sb)
         sb.Append(") -> ") |> ignore
         mlirType retTy sb
-        region body (indent + 1) sb
+        funcRegion body (indent + 1) sb
 
     | FuncDecl (name, argTypes, retTy, vis) ->
         // MLIR syntax: func.func private @name(...) for private functions
@@ -1269,10 +1287,15 @@ and funcOp (op: FuncOp) (indent: int) (sb: StringBuilder) : unit =
     | FuncReturn values ->
         sb.Append("func.return") |> ignore
         if not (List.isEmpty values) then
+            // MLIR syntax: func.return %v1, %v2 : type1, type2
             sb.Append(" ") |> ignore
-            values |> List.iteri (fun i v ->
+            values |> List.iteri (fun i (v, _) ->
                 if i > 0 then sb.Append(", ") |> ignore
                 ssa v sb)
+            sb.Append(" : ") |> ignore
+            values |> List.iteri (fun i (_, t) ->
+                if i > 0 then sb.Append(", ") |> ignore
+                mlirType t sb)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INDEX DIALECT SERIALIZATION

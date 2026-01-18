@@ -1,9 +1,16 @@
 [package]
 name = "SimpleSeq"
+version = "0.1.0"
+description = "Sample 15: Simple Sequence Expressions (PRD-15)"
+authors = ["SpeakEZ LLC"]
+license = "MIT"
 
 [compilation]
 memory_model = "stack_only"
 target = "native"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/Linux_x86_64" }
 
 [build]
 sources = ["SimpleSeq.fs"]

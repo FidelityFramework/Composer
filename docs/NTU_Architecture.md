@@ -40,7 +40,7 @@ The "NTU" prefix is used internally by FNCS to mark platform-generic types, simi
 | `NTUfloat32` | 32-bit float | f32 |
 | `NTUfloat64` | 64-bit float | f64 |
 
-## Option B: NTU Internal with Semantic Aliases
+## Layered Type Abstraction
 
 The architecture uses a layered approach:
 

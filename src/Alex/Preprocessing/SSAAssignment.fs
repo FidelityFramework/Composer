@@ -479,6 +479,35 @@ let private computeUnionCaseSSACost (payloadOpt: NodeId option) : int =
     | Some _ -> 6  // tag + undef + withTag + payload insert + conversion + result
     | None -> 3    // tag + undef + withTag (no payload)
 
+/// Count mutable bindings in a subtree (internal state fields for seq)
+/// PRD-15 THROUGH-LINE: Internal state is unique to Seq - mutable vars declared inside body
+/// that persist between MoveNext calls. This is distinct from captures (read-only from enclosing scope).
+let rec private countMutableBindingsInSubtree (graph: SemanticGraph) (nodeId: NodeId) : int =
+    match Map.tryFind nodeId graph.Nodes with
+    | None -> 0
+    | Some node ->
+        // Count this node if it's a mutable binding
+        let thisCount =
+            match node.Kind with
+            | SemanticKind.Binding (_, isMutable, _, _) when isMutable -> 1
+            | _ -> 0
+        // Count in children
+        let childCount =
+            node.Children
+            |> List.sumBy (fun childId -> countMutableBindingsInSubtree graph childId)
+        thisCount + childCount
+
+/// Compute SSA cost for SeqExpr based on captures and internal state
+/// PRD-15: SeqExpr SSA cost = 5 base + numCaptures + (2 * numInternalState)
+/// The 2 per internal state is for: const zero + InsertValue
+let private computeSeqExprSSACost (graph: SemanticGraph) (bodyId: NodeId) (captures: CaptureInfo list) : int =
+    let numCaptures = List.length captures
+    let numInternalState = countMutableBindingsInSubtree graph bodyId
+    // 5 base (zero, undef, insert state, addressof, insert code_ptr)
+    // + 1 per capture (InsertValue)
+    // + 2 per internal state (const zero + InsertValue)
+    5 + numCaptures + (numInternalState * 2)
+
 /// Get the number of SSAs needed for a node based on its STRUCTURE
 /// This is the key function - it analyzes actual instance structure, not just kind
 let private nodeExpansionCost (graph: SemanticGraph) (node: SemanticNode) : int =
@@ -529,6 +558,16 @@ let private nodeExpansionCost (graph: SemanticGraph) (node: SemanticNode) : int 
     // For closing thunks: just 4 (lazy struct, closure from Lambda)
     | SemanticKind.LazyExpr _ -> 12   // thin closure construction + lazy struct creation
     | SemanticKind.LazyForce _ -> 20  // check flag + branch + cached/compute paths + phi
+    // PRD-15: Sequence expressions
+    // SeqExpr: 5 base + captures + (2 * internal state fields)
+    // Internal state = let mutable bindings inside seq body (through-line from PRD-11)
+    | SemanticKind.SeqExpr (bodyId, captures) -> computeSeqExprSSACost graph bodyId captures
+    // Yield: 4 (gep current + store value + gep state + store state)
+    | SemanticKind.Yield _ -> 4
+    // YieldBang: 12 (nested iteration setup)
+    | SemanticKind.YieldBang _ -> 12
+    // ForEach: 7 (setup: 4 + condition: 1 + body: 2)
+    | SemanticKind.ForEach _ -> 7
     | _ -> 1
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -585,6 +624,10 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.Intrinsic _ -> true
     | SemanticKind.LazyExpr _ -> true
     | SemanticKind.LazyForce _ -> true
+    // PRD-15: Sequence expressions
+    | SemanticKind.SeqExpr _ -> true   // Produces seq struct value
+    | SemanticKind.Yield _ -> true     // Needs SSAs for state machine operations
+    | SemanticKind.YieldBang _ -> true // Needs SSAs for nested iteration
     | SemanticKind.PlatformBinding _ -> true
     | SemanticKind.InterpolatedString _ -> true
     // Set needs SSAs for module-level mutable address operations
@@ -594,7 +637,7 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.NamedIndexedPropertySet _ -> false
     | SemanticKind.WhileLoop _ -> false
     | SemanticKind.ForLoop _ -> false
-    | SemanticKind.ForEach _ -> false
+    | SemanticKind.ForEach _ -> true  // PRD-15: Needs SSAs for loop control
     | SemanticKind.TryWith _ -> false
     | SemanticKind.TryFinally _ -> false
     | SemanticKind.Quote _ -> false
@@ -1008,10 +1051,12 @@ let lookupClosureLayout (nodeId: NodeId) (assignment: SSAAssignment) : ClosureLa
 let hasClosure (nodeId: NodeId) (assignment: SSAAssignment) : bool =
     Map.containsKey (NodeId.value nodeId) assignment.ClosureLayouts
 
-/// PRD-14: Get the actual return type for a function that may return a lazy with captures.
+/// PRD-14/PRD-15: Get the actual return type for a function that may return a lazy or seq with captures.
 /// If the function body is a LazyExpr with captures, returns the actual lazy struct type
 /// including the inlined captures: {i1, T, ptr, cap0, cap1, ...}
-/// Returns None if the function doesn't return a lazy with captures.
+/// If the function body is a SeqExpr with captures, returns the actual seq struct type
+/// including the inlined captures: {i32, T, ptr, cap0, cap1, ...}
+/// Returns None if the function doesn't return a lazy/seq with captures.
 let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (defId: NodeId) (assignment: SSAAssignment) : MLIRType option =
     // defId may be a Binding node - need to find the Lambda child
     let lambdaNode =
@@ -1057,6 +1102,35 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
                     // Build the actual lazy struct type with captures inlined
                     let actualLazyType = TStruct (TInt I1 :: elemMlir :: TPtr :: captureTypes)
                     Some actualLazyType
+
+                // PRD-15: Sequence expressions with captures and/or internal state
+                | SemanticKind.SeqExpr (seqBodyId, captures) ->
+                    // Function returns a seq - check if it has captures OR internal state
+                    let numInternalState = countMutableBindingsInSubtree graph seqBodyId
+                    if List.isEmpty captures && numInternalState = 0 then
+                        None  // No captures, no internal state - use simple type
+                    else
+                        // Compute the actual seq struct type: {i32, T, ptr, cap0, ..., state0, ...}
+                        // where i32 is state (vs i1 computed flag for lazy)
+                        let elemMlir =
+                            match bodyNode.Type with
+                            | NativeType.TSeq elemType -> mapCaptureType arch elemType
+                            | _ -> TInt I64  // Fallback
+
+                        // Compute capture types using the same logic as closure construction
+                        let captureTypes = captures |> List.map (captureSlotType arch)
+
+                        // PRD-15 THROUGH-LINE: Internal state fields are also part of struct
+                        // They're initialized to default (0), MoveNext state 0 sets actual values
+                        // For now, assume all internal state is i64 (platform word size)
+                        // A more precise approach would traverse the body to get actual types
+                        let internalStateTypes = List.replicate numInternalState (TInt I64)
+
+                        // Build the actual seq struct type with captures + internal state inlined
+                        // Layout: {state: i32, current: T, code_ptr: ptr, cap0..., state0...}
+                        let actualSeqType = TStruct (TInt I32 :: elemMlir :: TPtr :: captureTypes @ internalStateTypes)
+                        Some actualSeqType
+
                 | _ -> None
             | None -> None
         | _ -> None

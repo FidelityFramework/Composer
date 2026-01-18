@@ -346,11 +346,11 @@ Deliverables:
 
 F* uses arbitrary-precision integers (`Z.t` via Zarith) by default, with explicit fixed-width types (`FStar.UInt32`, etc.) available. fsnative would need to decide how to handle this:
 
-**Option A**: Implement arbitrary-precision integers in Alloy, use them as the default `int` type.
+**Arbitrary-precision**: Implement arbitrary-precision integers in Alloy, use them as the default `int` type.
 
-**Option B**: Require explicit width annotations in F* code targeting fsnative, map `int` to a reasonable default (e.g., `int64`).
+**Fixed-width default**: Require explicit width annotations in F* code targeting fsnative, map `int` to a reasonable default (e.g., `int64`).
 
-**Option C**: Provide both, let developers choose per-project.
+**Hybrid approach**: Provide both, let developers choose per-project.
 
 The choice affects verification. Arbitrary-precision integers simplify proofs (no overflow concerns) but complicate native code generation. Fixed-width integers match hardware but require overflow reasoning.
 

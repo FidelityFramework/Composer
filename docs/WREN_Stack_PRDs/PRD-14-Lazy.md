@@ -461,22 +461,22 @@ With by-value lazy structs, this requires the lazy value to be stored in mutable
 
 ### 7.2 Implementation Options
 
-**Option A: By-pointer lazy values**
+**By-pointer memoization**
 - Lazy values are always `ptr` to stack/arena allocated struct
 - Force mutates through the pointer
 - Natural memoization
 
-**Option B: Functional update (copy-on-force)**
+**Functional update (copy-on-force)**
 - Force returns `(value, updated_lazy_struct)`
 - Caller decides whether to use updated struct
 - Pure but awkward API
 
-**Option C: Deferred memoization**
+**Deferred memoization (pure thunk)**
 - Initial implementation: always recompute (no caching)
 - Add memoization when arena PRDs (20-22) are complete
 - Simpler starting point
 
-**Recommendation**: Start with **Option C** for PRD-14. The semantics are correct for pure thunks (same result each time). True memoization with caching will be added after arena support (PRD-20-22) provides the memory management foundation.
+**Decision**: Start with **deferred memoization** for PRD-14. The semantics are correct for pure thunks (same result each time). True memoization with caching will be added after arena support (PRD-20-22) provides the memory management foundation.
 
 ### 7.3 Pure Thunk Semantics (Initial Implementation)
 
@@ -637,18 +637,18 @@ RIGHT: Lazy = PRD-11 Flat Closure + memoization state
 
 This principle applies to ALL future PRDs. See Serena memory: `compose_from_standing_art_principle`
 
-### 12.2 Option B Thunk Calling Convention
+### 12.2 Thunk Calling Convention: Struct Pointer Passing
 
 A key architectural decision was choosing between two calling conventions:
 
-| Option | Thunk Signature | Force Complexity |
-|--------|-----------------|------------------|
-| **A** | `(cap₀, cap₁, ...) -> T` | Must extract and pass captures |
-| **B** | `(ptr) -> T` | Uniform - just passes pointer |
+| Convention | Thunk Signature | Force Complexity |
+|------------|-----------------|------------------|
+| **Parameter Passing** | `(cap₀, cap₁, ...) -> T` | Must extract and pass captures |
+| **Struct Pointer Passing** | `(ptr) -> T` | Uniform - just passes pointer |
 
-**Decision: Option B** - Thunk receives pointer to lazy struct, extracts its own captures.
+**Decision: Struct Pointer Passing** - Thunk receives pointer to lazy struct, extracts its own captures.
 
-**Why Option B wins:**
+**Why struct pointer passing wins:**
 - Force is UNIFORM regardless of capture count
 - No def-use tracking needed at force site
 - Clean separation: force handles invocation, thunk handles extraction
@@ -678,7 +678,7 @@ let captures = computeCaptures builder env innerNode.Id (Set.singleton "_unit")
 SSA assignment must be 100% deterministic - no synthetic SSAs, no runtime decisions.
 
 **LazyExpr SSA cost:** `5 + numCaptures` (variable, but deterministic from PSG)
-**LazyForce SSA cost:** `4` (fixed - this is the Option B benefit)
+**LazyForce SSA cost:** `4` (fixed - this is the struct pointer passing benefit)
 
 The coeffect pattern means witnesses OBSERVE pre-computed SSAs, they don't INVENT them.
 
@@ -701,6 +701,6 @@ Before implementing ANY new feature:
 - `Coordinator.fs` - `checkLazy` uses `computeCaptures`
 
 **Alex:**
-- `LazyWitness.fs` - Option B calling convention
+- `LazyWitness.fs` - Struct pointer passing calling convention
 - `SSAAssignment.fs` - SSA costs (LazyExpr: 5+N, LazyForce: 4)
 - `FNCSTransfer.fs` - Simplified LazyForce (uniform, no capture tracking)

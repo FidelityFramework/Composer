@@ -110,6 +110,58 @@ Each `yield` becomes a state transition point. The MoveNext function:
 4. Updates state to next yield point
 5. Returns `true` (has value) or `false` (done)
 
+### 3.5 Internal State vs. Captures (Critical Distinction)
+
+Sequence expressions can have TWO kinds of variables that persist across yields:
+
+| Category | Definition | Storage | Lifetime | Example |
+|----------|------------|---------|----------|---------|
+| **Captures** | Variables from enclosing scope | Inlined in seq struct at creation | Created at seq creation, immutable copies | `factor` in `seq { yield x * factor }` |
+| **Internal State** | Mutable variables declared inside seq body | Additional fields in seq struct | Created at first MoveNext, mutated between yields | `i` in `seq { let mutable i = 1; while ... }` |
+
+**Captures** (from enclosing scope):
+```fsharp
+let factor = 10
+let scaled = seq {           // 'factor' is CAPTURED here
+    yield 1 * factor
+    yield 2 * factor
+}
+// factor is copied into the seq struct at creation
+```
+
+**Internal State** (mutable variables inside body):
+```fsharp
+let countUp max = seq {
+    let mutable i = 1        // INTERNAL STATE - lives in seq struct
+    while i <= max do
+        yield i
+        i <- i + 1           // Mutated between yields
+}
+// 'i' is a field in the seq struct, initialized on first MoveNext
+```
+
+**Combined Example**:
+```fsharp
+let multiplesOf factor count = seq {
+    let mutable i = 1        // Internal state (mutable, in struct)
+    while i <= count do      // 'count' is captured (immutable copy)
+        yield i * factor     // 'factor' is captured (immutable copy)
+        i <- i + 1
+}
+```
+
+Resulting struct layout:
+```
+{state: i32, current: i32, code_ptr: ptr, factor: i32, count: i32, i: i32}
+|<-- standard seq fields -->|<-- captures -->|<-- internal state -->|
+```
+
+**Why This Matters for Alex**:
+- Captures are initialized at seq creation (in `witnessSeqCreate`)
+- Internal state is initialized in the MoveNext function (state 0 block)
+- Both are accessed via fixed struct offsets
+- Internal state requires read-modify-write in MoveNext; captures are read-only
+
 ## 4. FNCS Layer Implementation
 
 ### 4.1 NTUKind and NativeType Extensions
@@ -166,6 +218,21 @@ type TypeEnv = {
 
 ### 4.4 Checking `seq { }` Expressions
 
+**LambdaContext Extension**: Following PRD-11's flat closure model, sequence generators use `LambdaContext.SeqGenerator` to distinguish them from regular closures and lazy thunks:
+
+```fsharp
+/// Extended LambdaContext (from PRD-11, extended in PRD-14, PRD-15)
+type LambdaContext =
+    | RegularClosure       // PRD-11: {code_ptr, cap₀, cap₁, ...}
+    | LazyThunk            // PRD-14: {computed, value, code_ptr, cap₀, ...}
+    | SeqGenerator         // PRD-15: {state, current, code_ptr, cap₀, ...}
+
+/// The LambdaContext determines the extraction base index for captures:
+/// - RegularClosure: base = 1 (after code_ptr)
+/// - LazyThunk: base = 3 (after computed, value, code_ptr)
+/// - SeqGenerator: base = 3 (after state, current, code_ptr)
+```
+
 ```fsharp
 /// Check a sequence expression
 let checkSeqExpr
@@ -185,7 +252,10 @@ let checkSeqExpr
         children = [])
 
     // STEP 2: Extend environment with enclosing seq context
-    let seqEnv = { env with EnclosingSeqExpr = Some seqNode.Id }
+    //         AND set LambdaContext for capture extraction
+    let seqEnv = { env with
+                    EnclosingSeqExpr = Some seqNode.Id
+                    LambdaContext = Some LambdaContext.SeqGenerator }
 
     // STEP 3: Check body - yields will validate against EnclosingSeqExpr
     let bodyNode = checkExpr seqEnv builder seqBody
@@ -271,6 +341,108 @@ let checkForEach
 | `Types.fs` | MODIFY | Add `EnclosingSeqExpr` to TypeEnv |
 | `Expressions/Computations.fs` | MODIFY | Seq/yield/for-in checking |
 | `Expressions/Coordinator.fs` | MODIFY | Route expressions |
+| `Unify.fs` | MODIFY | Add TSeq bridge cases |
+
+### 4.8 Type Unification Bridge Cases (Critical Architecture)
+
+**This section documents critical architectural knowledge for PRD-15 through PRD-30.**
+
+#### 4.8.1 The Type Representation Duality
+
+Types like `Seq<T>`, `Lazy<T>`, `nativeptr<T>`, and `byref<T>` exist in **TWO representations** within FNCS:
+
+| Representation | Source | Example | Memory Model |
+|----------------|--------|---------|--------------|
+| **Direct Form** | Programmatic type construction (`mkSeqType`, `mkLazyType`) | `TSeq elem`, `TLazy elem` | Has proper struct layout info |
+| **TApp Form** | Parsing type syntax (`seq<int>`, `Lazy<string>`) | `TApp(seqTyCon, [elem])` | Generic type application |
+
+**Why both exist:**
+- When FNCS constructs types programmatically (e.g., `mkSeqType int`), it creates `TSeq int` directly
+- When FCS parses type syntax like `seq<int>`, it creates `TApp(seqTyCon, [int])`
+- Both represent the **same semantic type** but through different construction paths
+
+#### 4.8.2 The Unification Problem
+
+Without explicit handling, `TSeq int` and `TApp(seq, [int])` would **NOT unify**:
+
+```fsharp
+// This would fail without bridge cases:
+let x: seq<int> = seq { yield 1 }  // seq { } creates TSeq int
+//    ^^^^^^^^^                     // type annotation parses to TApp(seq, [int])
+// Error: Cannot unify TSeq int with TApp(seq, [int])
+```
+
+#### 4.8.3 Bridge Cases in Unify.fs
+
+The solution is explicit "bridge cases" in the `unify` function that make both representations equivalent:
+
+```fsharp
+// In Unify.fs - the unify function
+
+// TSeq directly unifies with itself
+| NativeType.TSeq elem1, NativeType.TSeq elem2 ->
+    unify elem1 elem2 range
+
+// Bridge: TSeq <-> TApp(seq, [elem])
+| NativeType.TSeq elem1, NativeType.TApp(tc, [elem2]) when tc.Name = "seq" ->
+    unify elem1 elem2 range
+| NativeType.TApp(tc, [elem1]), NativeType.TSeq elem2 when tc.Name = "seq" ->
+    unify elem1 elem2 range
+```
+
+#### 4.8.4 Existing Bridge Cases (Pre-PRD-15)
+
+This pattern already existed for `nativeptr` and `byref`:
+
+```fsharp
+// TNativePtr <-> TApp(nativeptr, [elem])
+| NativeType.TNativePtr elem1, NativeType.TApp(tc, [elem2])
+    when tc.Name = "nativeptr" || tc.Name = "NativePtr" ->
+    unify elem1 elem2 range
+
+// TByref <-> TApp(byref/inref/outref, [elem])
+| NativeType.TByref elem1, NativeType.TApp(tc, [elem2])
+    when tc.Name = "byref" || tc.Name = "inref" || tc.Name = "outref" ->
+    unify elem1 elem2 range
+```
+
+#### 4.8.5 Bridge Cases Added in PRD-15
+
+| Direct Form | TApp Names | Purpose |
+|-------------|------------|---------|
+| `TSeq elem` | `"seq"` | Sequence expressions |
+| `TLazy elem` | `"Lazy"`, `"lazy"` | Lazy thunks (gap fixed from PRD-14) |
+
+**Important Discovery**: TLazy was missing its bridge case before PRD-15 - this was a pre-existing gap that has been fixed as part of this implementation.
+
+#### 4.8.6 When to Add Bridge Cases
+
+**Add a bridge case when introducing ANY new direct-form type case** that:
+1. Represents a parameterized type (has element type(s))
+2. Can also appear as a type application from parsed syntax
+3. Needs to unify with both representations
+
+**Future PRDs that may need bridge cases:**
+- `TAsync<T>` if introduced as a direct case
+- `TResult<T, E>` if introduced as a direct case
+- Any new "struct wrapper" types
+
+#### 4.8.7 The canUnify Function
+
+Note: The `canUnify` function (used for type compatibility checks without side effects) must also have corresponding bridge cases. Ensure both `unify` and `canUnify` are updated together.
+
+#### 4.8.8 Why Direct Forms Exist
+
+Direct forms (`TSeq`, `TLazy`, `TNativePtr`, `TByref`) exist because they carry **additional semantic information** beyond generic type application:
+
+| Direct Form | Semantic Information |
+|-------------|---------------------|
+| `TSeq elem` | State machine struct layout, MoveNext pattern |
+| `TLazy elem` | Memoization fields, force pattern |
+| `TNativePtr elem` | Pointer semantics, no GC tracking |
+| `TByref elem` | Reference semantics, stack discipline |
+
+The `TApp` form is more general but loses this domain-specific knowledge. Bridge cases ensure both representations are considered equivalent while preserving the richer semantics when available.
 
 ## 5. Alex Layer Implementation
 
@@ -280,6 +452,28 @@ Following the SSAAssignment pattern, assign state indices as coeffects:
 
 **File**: `src/Alex/Preprocessing/YieldStateIndices.fs`
 
+**Yield Numbering Order**: Yields are numbered **in document (syntactic) order** - a pre-order traversal of the PSG body. This provides deterministic, predictable state indices:
+
+| State | Meaning |
+|-------|---------|
+| 0 | Initial state (before first yield) |
+| 1 | After first yield in document order |
+| 2 | After second yield in document order |
+| N | After Nth yield |
+| -1 | Completed (no more values) |
+
+**Example**:
+```fsharp
+seq {
+    yield 1       // State transition: 0 -> 1
+    if cond then
+        yield 2   // State transition: 1 -> 2 (if taken)
+    yield 3       // State transition: 1 -> 3 or 2 -> 3
+}
+```
+
+The `collectYieldsInBody` function performs **pre-order PSG traversal**, visiting children left-to-right in document order.
+
 ```fsharp
 /// Coeffect: Maps each Yield NodeId to its state index
 type YieldStateCoeffect = {
@@ -287,7 +481,15 @@ type YieldStateCoeffect = {
     StateIndices: Map<NodeId, Map<NodeId, int>>
 }
 
-/// Assign state indices to all yield points in order of appearance
+/// Collect yields in document (pre-order) traversal order
+let rec collectYieldsInBody (graph: SemanticGraph) (nodeId: NodeId) : NodeId list =
+    let node = graph.Nodes.[nodeId]
+    let childYields = node.Children |> List.collect (collectYieldsInBody graph)
+    match node.Kind with
+    | SemanticKind.Yield _ -> nodeId :: childYields  // This yield + nested yields
+    | _ -> childYields
+
+/// Assign state indices to all yield points in document order
 let run (graph: SemanticGraph) : YieldStateCoeffect =
     let mutable indices = Map.empty
 
@@ -320,6 +522,8 @@ type SeqLayout = {
     ElementType: MLIRType
     /// Capture layouts (reuse from closure)
     Captures: CaptureLayout list
+    /// Internal state layouts (mutable vars in seq body)
+    InternalState: StateFieldLayout list
     /// Total struct type
     StructType: MLIRType
     /// Number of yield points
@@ -329,10 +533,31 @@ type SeqLayout = {
 }
 
 /// Generate MLIR struct type for a sequence expression
-let seqStructType (elementType: MLIRType) (captureTypes: MLIRType list) : MLIRType =
-    // {state: i32, current: T, code_ptr: ptr, cap₀, cap₁, ...}
-    TStruct ([TInt I32; elementType; TPtr] @ captureTypes)
+let seqStructType (elementType: MLIRType) (captureTypes: MLIRType list) (internalStateTypes: MLIRType list) : MLIRType =
+    // {state: i32, current: T, code_ptr: ptr, cap₀, cap₁, ..., state₀, state₁, ...}
+    TStruct ([TInt I32; elementType; TPtr] @ captureTypes @ internalStateTypes)
 ```
+
+**MoveNextFuncName Generation Pattern**: MoveNext function names are deterministically generated from the SeqExpr's NodeId to ensure uniqueness and debuggability:
+
+```fsharp
+/// Generate MoveNext function name for a sequence
+let generateMoveNextName (seqId: NodeId) (enclosingFuncName: string option) : string =
+    // Pattern: seq_<nodeid>_moveNext or <enclosingFunc>_seq_<nodeid>_moveNext
+    match enclosingFuncName with
+    | Some funcName -> sprintf "%s_seq_%d_moveNext" funcName seqId.Value
+    | None -> sprintf "seq_%d_moveNext" seqId.Value
+
+// Examples:
+// - Top-level: "seq_42_moveNext"
+// - Inside 'main': "main_seq_42_moveNext"
+// - Inside 'countUp': "countUp_seq_87_moveNext"
+```
+
+This naming convention:
+1. **Uniqueness**: NodeId ensures no collisions
+2. **Debuggability**: Enclosing function name provides context in stack traces
+3. **Determinism**: Same input always produces same name
 
 ### 5.3 SeqWitness - Creation
 

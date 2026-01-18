@@ -62,6 +62,7 @@
 
       <!-- Alex Preprocessing - coeffects before PSGZipper -->
       <Compile Include="Alex/Preprocessing/SSAAssignment.fs" />
+      <Compile Include="Alex/Preprocessing/YieldStateIndices.fs" />
       <Compile Include="Alex/Preprocessing/MutabilityAnalysis.fs" />
       <Compile Include="Alex/Preprocessing/StringCollection.fs" />
       <!-- Platform Config (depends on PlatformTypes) -->
@@ -96,6 +97,7 @@
       <Compile Include="Alex/Witnesses/Application/Format.fs" />
       <Compile Include="Alex/Witnesses/Application/Platform.fs" />
       <Compile Include="Alex/Witnesses/LazyWitness.fs" />
+      <Compile Include="Alex/Witnesses/SeqWitness.fs" />
       <Compile Include="Alex/Witnesses/Application/Witness.fs" />
       <Compile Include="Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="Alex/Witnesses/MemoryWitness.fs" />

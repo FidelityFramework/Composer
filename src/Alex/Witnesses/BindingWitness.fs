@@ -330,15 +330,18 @@ let witnessVarRef
             // Build body: call original function
             // Original function expects (args...) - NO env
             let callArgs = mlirParams |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
-            
-            // Use callFunc template
+
+            // FLAT CLOSURE PATTERN (January 2026):
+            // Thunk address is taken via llvm.mlir.addressof, so must use llvm.func + llvm.return
+            // See fsnative-spec/spec/drafts/backend-lowering-architecture.md
             let resultSSA = V 0 // Local SSA 0 in thunk
-            let callOp = MLIROp.LLVMOp (callFunc (Some resultSSA) funcName callArgs mlirRetType)
-            let retOp = MLIROp.LLVMOp (Return (Some resultSSA, Some mlirRetType))
-            
+            let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, callArgs, mlirRetType))
+            let retOp = MLIROp.LLVMOp (LLVMOp.Return (Some resultSSA, Some mlirRetType))
+
             let block = { Label = BlockRef "entry"; Args = []; Ops = [callOp; retOp] }
             let region = { Blocks = [block] }
-            let thunkDef = MLIROp.LLVMOp (LLVMFuncDef (thunkName, thunkParams, mlirRetType, region, LLVMPrivate))
+            // Use llvm.func because address is taken (flat closure pattern)
+            let thunkDef = MLIROp.LLVMOp (LLVMOp.LLVMFuncDef (thunkName, thunkParams, mlirRetType, region, LLVMPrivate))
             
             emitTopLevel thunkDef z
             registerFunc thunkName true z

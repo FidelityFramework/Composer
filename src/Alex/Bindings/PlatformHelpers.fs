@@ -157,8 +157,8 @@ let buildParseIntFunc () : FuncOp =
     let negateOp = MLIROp.ArithOp (SubI (negated, c0, result0, MLIRTypes.i64))
     let selectFinal = MLIROp.ArithOp (Select (final', isNeg, negated, result0, MLIRTypes.i64))
 
-    // Return
-    let retOp = MLIROp.FuncOp (FuncReturn [final'])
+    // Return (with type for MLIR syntax)
+    let retOp = MLIROp.FuncOp (FuncReturn [(final', MLIRTypes.i64)])
 
     // Build the complete function body
     let allOps =
@@ -367,7 +367,7 @@ let buildParseFloatFunc () : FuncOp =
         MLIROp.ArithOp (Select (final', isNeg, negated, combined, MLIRTypes.f64))
     ]
 
-    let retOp = MLIROp.FuncOp (FuncReturn [final'])
+    let retOp = MLIROp.FuncOp (FuncReturn [(final', MLIRTypes.f64)])
 
     let allOps =
         [extractPtr; extractLen] @
@@ -457,7 +457,7 @@ let buildStringContainsCharFunc () : FuncOp =
         [{SSA = cFalse; Type = MLIRTypes.i1}; {SSA = c0; Type = MLIRTypes.i64}]
     ))
 
-    let retOp = MLIROp.FuncOp (FuncReturn [result0])
+    let retOp = MLIROp.FuncOp (FuncReturn [(result0, MLIRTypes.i1)])
 
     let allOps = [extractPtr; extractLen] @ constOps @ [whileOp; retOp]
     let bodyRegion = { Blocks = [{ Label = BlockRef "entry"; Args = []; Ops = allOps }] }

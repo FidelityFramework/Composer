@@ -522,7 +522,8 @@ and FuncOp =
     | FuncConstant of result: SSA * funcName: string * funcTy: MLIRType
 
     // === RETURN ===
-    | FuncReturn of values: SSA list
+    // func.return %val : type  (requires type information for MLIR syntax)
+    | FuncReturn of values: (SSA * MLIRType) list
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INDEX DIALECT - EXHAUSTIVE (from IndexOps.td)

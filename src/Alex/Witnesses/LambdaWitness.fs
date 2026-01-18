@@ -261,8 +261,18 @@ let private createDefaultReturn (z: PSGZipper) (declaredRetType: MLIRType) : MLI
         [op], resultSSA
 
 /// Create return instruction with type
-let private createReturnOp (valueSSA: SSA option) (valueTy: MLIRType option) : MLIROp =
-    MLIROp.LLVMOp (LLVMOp.Return (valueSSA, valueTy))
+/// FLAT CLOSURE PATTERN (January 2026):
+/// - Closures (address taken) use llvm.return to match llvm.func
+/// - Non-closures (called by name) use func.return to match func.func
+let private createReturnOp (valueSSA: SSA option) (valueTy: MLIRType option) (isClosure: bool) : MLIROp =
+    if isClosure then
+        match valueSSA, valueTy with
+        | Some ssa, Some ty -> MLIROp.LLVMOp (LLVMOp.Return (Some ssa, Some ty))
+        | _ -> MLIROp.LLVMOp (LLVMOp.Return (None, None))
+    else
+        match valueSSA, valueTy with
+        | Some ssa, Some ty -> MLIROp.FuncOp (FuncOp.FuncReturn [(ssa, ty)])
+        | _ -> MLIROp.FuncOp (FuncOp.FuncReturn [])
 
 /// Create unreachable terminator (for panic paths)
 let private createUnreachable () : MLIROp =
@@ -323,6 +333,11 @@ let private witnessInFunctionScope
     let finalRetType = extractFinalReturnType node.Type paramCount
     let declaredRetType = mapNativeTypeWithGraphForArch z.State.Platform.TargetArch z.Graph finalRetType
 
+    // FLAT CLOSURE PATTERN (January 2026):
+    // Closures (address taken via llvm.mlir.addressof) need llvm.func + llvm.return
+    // Non-closures (called by name) use func.func + func.return
+    let isClosure = closureLayoutOpt.IsSome
+
     // ... (bodyResult logic) ...
     let bodyResult = recallNodeResult (NodeId.value bodyId) z
 
@@ -336,16 +351,20 @@ let private witnessInFunctionScope
                 // When lazy-returning function has captures, use actual body type (with captures)
                 | TStruct (TInt I1 :: valTy :: TPtr :: caps), TStruct [TInt I1; declValTy; TPtr]
                     when not (List.isEmpty caps) && valTy = declValTy -> bodyType
+                // PRD-15: Seq<T> with captures - body has {i32, T, ptr, caps...}, declared has {i32, T, ptr}
+                // When seq-returning function has captures, use actual body type (with captures)
+                | TStruct (TInt I32 :: valTy :: TPtr :: caps), TStruct [TInt I32; declValTy; TPtr]
+                    when not (List.isEmpty caps) && valTy = declValTy -> bodyType
                 // PRD-11: Flat closure with captures - body has {ptr, caps...}, declared has {ptr}
                 | TStruct (TPtr :: caps), TStruct [TPtr] when not (List.isEmpty caps) -> bodyType
                 // Legacy two-pointer closure model (kept for compatibility)
                 | TStruct (TPtr :: _), TStruct [TPtr; TPtr] -> bodyType
                 | _ -> declaredRetType
             let reconcileOps, finalSSA = reconcileReturnType z ssa bodyType effectiveRetType
-            reconcileOps, createReturnOp (Some finalSSA) (Some effectiveRetType), effectiveRetType
+            reconcileOps, createReturnOp (Some finalSSA) (Some effectiveRetType) isClosure, effectiveRetType
         | None ->
             let defaultOps, defaultSSA = createDefaultReturn z declaredRetType
-            defaultOps, createReturnOp (Some defaultSSA) (Some declaredRetType), declaredRetType
+            defaultOps, createReturnOp (Some defaultSSA) (Some declaredRetType) isClosure, declaredRetType
 
     // ... (bodyRes logic) ...
     let bodyOps, bodyRes = witnessBody z
@@ -358,16 +377,20 @@ let private witnessInFunctionScope
                 // When lazy-returning function has captures, use actual body type (with captures)
                 | TStruct (TInt I1 :: valTy :: TPtr :: caps), TStruct [TInt I1; declValTy; TPtr]
                     when not (List.isEmpty caps) && valTy = declValTy -> bodyType
+                // PRD-15: Seq<T> with captures - body has {i32, T, ptr, caps...}, declared has {i32, T, ptr}
+                // When seq-returning function has captures, use actual body type (with captures)
+                | TStruct (TInt I32 :: valTy :: TPtr :: caps), TStruct [TInt I32; declValTy; TPtr]
+                    when not (List.isEmpty caps) && valTy = declValTy -> bodyType
                 // PRD-11: Flat closure with captures - body has {ptr, caps...}, declared has {ptr}
                 | TStruct (TPtr :: caps), TStruct [TPtr] when not (List.isEmpty caps) -> bodyType
                 // Legacy two-pointer closure model (kept for compatibility)
                 | TStruct (TPtr :: _), TStruct [TPtr; TPtr] -> bodyType
                 | _ -> declaredRetType
             let reconcileOps, finalSSA = reconcileReturnType z ssa bodyType effectiveRetType
-            reconcileOps, createReturnOp (Some finalSSA) (Some effectiveRetType), effectiveRetType
+            reconcileOps, createReturnOp (Some finalSSA) (Some effectiveRetType) isClosure, effectiveRetType
         | _ ->
             let defaultOps, defaultSSA = createDefaultReturn z declaredRetType
-            defaultOps, createReturnOp (Some defaultSSA) (Some declaredRetType), declaredRetType
+            defaultOps, createReturnOp (Some defaultSSA) (Some declaredRetType) isClosure, declaredRetType
 
     // For closing lambdas: bind captured variables (already done in preBindParams)
     let captureExtractionOps =
@@ -396,25 +419,25 @@ let private witnessInFunctionScope
     }
     let bodyRegion: Region = { Blocks = [entryBlock] }
 
-    // ... (emit logic) ...
-    
-    // Fix linkage mapping:
-    let linkage = if isFuncInternal lambdaName z then LLVMPrivate else LLVMExternal
-
-    let llvmFuncDef = LLVMOp.LLVMFuncDef (lambdaName, finalMlirParams, actualRetType, bodyRegion, linkage)
-
+    // FLAT CLOSURE PATTERN (January 2026):
+    // Closures (address taken) use llvm.func because llvm.mlir.addressof requires it
+    // Non-closures (called by name) use func.func for MLIR portability
+    // See fsnative-spec/spec/drafts/backend-lowering-architecture.md
     match closureLayoutOpt with
     | Some layout ->
-        // CLOSING LAMBDA: Emit closure construction ops (in parent scope)
+        // CLOSING LAMBDA: use llvm.func (address will be taken)
+        let llvmVisibility = if isFuncInternal lambdaName z then LLVMPrivate else LLVMPrivate // closures always private
+        let llvmFuncDef = LLVMOp.LLVMFuncDef (lambdaName, finalMlirParams, actualRetType, bodyRegion, llvmVisibility)
         let closureOps = buildClosureConstruction layout lambdaName z
-        // Return: llvmFuncDef for TopLevel, closureOps for CurrentOps, TRValue with closure
+        // Return: funcDef for TopLevel, closureOps for CurrentOps, TRValue with closure
         // FIX: The result of buildClosureConstruction is now {ptr, ptr} (generic closure),
         // NOT layout.ClosureStructType (flat struct). The flat struct is hidden in the arena.
         Some (MLIROp.LLVMOp llvmFuncDef), closureOps, TRValue { SSA = layout.ClosureResultSSA; Type = TStruct [TPtr; TPtr] }
     | None ->
-        // Simple lambda: no closure construction
-        // Return: llvmFuncDef for TopLevel, no local ops, TRVoid
-        Some (MLIROp.LLVMOp llvmFuncDef), [], TRVoid
+        // Simple lambda: no closure construction, use func.func (MLIR portable)
+        let visibility = if isFuncInternal lambdaName z then Private else Public
+        let funcDef = FuncOp.FuncDef (lambdaName, finalMlirParams, actualRetType, bodyRegion, visibility)
+        Some (MLIROp.FuncOp funcDef), [], TRVoid
 
 /// Witness a Lambda node - main entry point
 /// Returns: (funcDef option * localOps * TransferResult)

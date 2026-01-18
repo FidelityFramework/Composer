@@ -146,6 +146,49 @@ With inlining:
 
 **Trade-off**: Struct size grows with composition depth. For typical pipeline depths (3-5), this is acceptable. Very deep pipelines would benefit from alternative strategies (future optimization).
 
+### 3.5 Copy Semantics (Critical for Correctness)
+
+**Seq operation wrappers COPY the inner seq and closure structs by value, not by pointer.**
+
+When creating a wrapper sequence (e.g., `Seq.map`):
+
+```fsharp
+let mapped = Seq.map mapper innerSeq
+```
+
+The wrapper struct creation performs **value copies**:
+
+```mlir
+// Create map wrapper struct - COPIES both inner and mapper
+%undef = llvm.mlir.undef : !map_seq_type
+%s0 = llvm.insertvalue %zero, %undef[0] : !map_seq_type     // state = 0
+%s1 = llvm.insertvalue %code_ptr, %s0[2] : !map_seq_type    // code_ptr
+%s2 = llvm.insertvalue %inner_seq_VAL, %s1[3] : !map_seq_type  // COPY inner seq
+%s3 = llvm.insertvalue %mapper_VAL, %s2[4] : !map_seq_type     // COPY mapper closure
+```
+
+**Why this matters:**
+1. **Independence**: Each wrapper owns its own copy of the inner seq's state
+2. **Iteration**: Multiple iterations of the same wrapper are independent
+3. **No aliasing**: No shared mutable state between wrappers
+
+**Consequence for closure invocation**: When invoking the mapper/predicate closure, we extract the flat closure value and pass captures as arguments:
+
+```mlir
+// Extract mapper closure (value copy in struct)
+%mapper_ptr = llvm.getelementptr %self[0, 4] : !llvm.ptr
+%mapper = llvm.load %mapper_ptr : !mapper_closure_type
+
+// Extract code_ptr and captures (if any)
+%code_ptr = llvm.extractvalue %mapper[0] : !mapper_closure_type
+%cap0 = llvm.extractvalue %mapper[1] : !mapper_closure_type  // if captures exist
+
+// Invoke: code_ptr(captures..., value)
+%result = llvm.call %code_ptr(%cap0, %inner_val) : (...) -> !output_type
+```
+
+**Critical**: The closure is stored **by value** in the wrapper struct. When invoking, we extract the code pointer and captures from the inlined closure, not from a pointer indirection.
+
 ## 4. FNCS Layer Implementation
 
 ### 4.1 Seq Module Intrinsics
@@ -225,6 +268,16 @@ With intrinsic info attached marking it as `{Module = Seq; Operation = "map"}`.
 | `SemanticGraph.fs` | MODIFY | Add `Seq` to IntrinsicModule |
 | `NativeGlobals.fs` | MODIFY | Seq module registration |
 
+### 4.4 Type Unification Considerations
+
+PRD-16 operations produce and consume `TSeq` types. The type unification bridge cases documented in **PRD-15 Section 4.8** ensure that:
+
+1. `Seq.map f xs` where `xs: seq<int>` (TApp form from type annotation) correctly unifies with `TSeq int`
+2. The result type `seq<'b>` can be used in contexts expecting either representation
+3. Chained operations like `Seq.take 5 (Seq.map f xs)` work regardless of how types are constructed
+
+**No new bridge cases are needed for PRD-16** - it uses the existing `TSeq` type and its bridge cases from PRD-15.
+
 ## 5. Alex Layer Implementation
 
 ### 5.1 SeqOpLayout Coeffect
@@ -297,16 +350,29 @@ let emitMapMoveNext (layout: MapSeqLayout) : MLIROp list =
         yield "%inner_curr_ptr = llvm.getelementptr %inner_ptr[0, 1] : !llvm.ptr"
         yield "%inner_val = llvm.load %inner_curr_ptr"
 
+        // === MAPPER CLOSURE INVOCATION (Flat Closure Pattern) ===
+        // The mapper is stored as a flat closure: {code_ptr, cap₀, cap₁, ...}
+        // We extract code_ptr and each capture, then call with captures prepended
+
         // Get mapper closure (inlined at offset 4)
         yield "%mapper_ptr = llvm.getelementptr %self[0, 4] : !llvm.ptr"
         yield "%mapper = llvm.load %mapper_ptr : !mapper_closure_type"
 
-        // Extract code_ptr and captures from mapper (flat closure)
+        // Extract code_ptr (always at index 0)
         yield "%mapper_code = llvm.extractvalue %mapper[0] : !mapper_closure_type"
-        // Extract captures if any...
 
-        // Call mapper: code_ptr(captures..., inner_val) -> B
-        yield "%result = llvm.call %mapper_code(..., %inner_val)"
+        // Extract captures (indices 1, 2, 3, ... based on MapperLayout.Captures)
+        // For each capture at index i (1-based in closure struct):
+        for i, cap in layout.MapperLayout.Captures |> List.indexed do
+            yield sprintf "%%cap_%d = llvm.extractvalue %%mapper[%d] : !mapper_closure_type" i (i + 1)
+
+        // Call mapper: code_ptr(cap₀, cap₁, ..., inner_val) -> B
+        // Following flat closure calling convention from PRD-11:
+        // - Captures come FIRST (prepended)
+        // - Original parameters come LAST
+        let capArgs = layout.MapperLayout.Captures |> List.mapi (fun i _ -> sprintf "%%cap_%d" i) |> String.concat ", "
+        let callArgs = if capArgs = "" then "%inner_val" else sprintf "%s, %%inner_val" capArgs
+        yield sprintf "%%result = llvm.call %%mapper_code(%s) : (...) -> !output_elem_type" callArgs
 
         // Store transformed value
         yield "%curr_ptr = llvm.getelementptr %self[0, 1] : !llvm.ptr"
@@ -320,6 +386,16 @@ let emitMapMoveNext (layout: MapSeqLayout) : MLIROp list =
         yield "llvm.return %false : i1"
     }
 ```
+
+**Mapper Invocation SSA Breakdown** (for N captures):
+| SSA | Purpose |
+|-----|---------|
+| 1 | GEP to mapper location |
+| 1 | Load mapper closure |
+| 1 | Extract code_ptr |
+| N | Extract each capture |
+| 1 | Call mapper |
+| **Total** | **4 + N** |
 
 ### 5.3 Seq.filter MoveNext Implementation
 
@@ -473,7 +549,97 @@ let witnessSeqFold
     }
 ```
 
-### 5.6 Files to Create/Modify (Alex)
+### 5.6 SSA Cost Formulas
+
+Following PRD-14's coeffect-based SSA pre-computation, each seq operation has deterministic SSA requirements:
+
+#### 5.6.1 Wrapper Creation SSA Costs
+
+| Operation | Formula | Breakdown |
+|-----------|---------|-----------|
+| **Seq.map** | `5 + sizeof(inner) + sizeof(mapper)` | state(1) + code_ptr(1) + insertvalue×3 + inner fields + mapper fields |
+| **Seq.filter** | `5 + sizeof(inner) + sizeof(predicate)` | state(1) + code_ptr(1) + insertvalue×3 + inner fields + predicate fields |
+| **Seq.take** | `6 + sizeof(inner)` | state(1) + remaining(1) + code_ptr(1) + insertvalue×3 + inner fields |
+| **Seq.fold** | `5` (no wrapper created) | alloca(1) + store(1) + acc_alloca(1) + acc_store(1) + result_load(1) |
+
+```fsharp
+/// SSA cost for Seq.map wrapper creation
+let mapWrapperSSACost (innerSeqSize: int) (mapperSize: int) : int =
+    // 1: constant 0 for state
+    // 1: undef wrapper struct
+    // 1: insert state
+    // 1: addressof moveNext
+    // 1: insert moveNext ptr
+    // innerSeqSize: copy inner seq into wrapper (insertvalue chain)
+    // mapperSize: copy mapper closure into wrapper
+    5 + innerSeqSize + mapperSize
+
+/// SSA cost for Seq.filter wrapper creation
+let filterWrapperSSACost (innerSeqSize: int) (predicateSize: int) : int =
+    5 + innerSeqSize + predicateSize
+
+/// SSA cost for Seq.take wrapper creation
+let takeWrapperSSACost (innerSeqSize: int) : int =
+    // Same as map/filter, plus 1 for the "remaining" count
+    6 + innerSeqSize
+
+/// Seq.fold doesn't create a wrapper - it's an eager consumer
+/// Returns SSA cost for the fold loop setup (not per-iteration)
+let foldSetupSSACost : int = 5
+```
+
+#### 5.6.2 MoveNext Function SSA Costs (Per Invocation)
+
+| Operation | Formula | Notes |
+|-----------|---------|-------|
+| **map MoveNext** | `10 + N_mapper_caps` | GEP×3 + load×3 + call×2 + extract(1+N) + store + constants |
+| **filter MoveNext** | `12 + N_pred_caps` | Same as map + loop branch overhead |
+| **take MoveNext** | `14` | remaining check + all of map's cost |
+| **fold (per iteration)** | `8 + N_folder_caps` | No wrapper, direct iteration |
+
+```fsharp
+/// SSA cost for map MoveNext function body
+let mapMoveNextSSACost (numMapperCaptures: int) : int =
+    // Inner sequence operations: gep(1) + load moveNext ptr(1) + call(1) + gep curr(1) + load curr(1)
+    // Mapper invocation: gep(1) + load(1) + extract code(1) + extract caps(N) + call(1)
+    // Store result: gep(1) + store(1)
+    // Constants and branch: 2
+    10 + numMapperCaptures
+
+/// SSA cost for filter MoveNext (includes loop)
+let filterMoveNextSSACost (numPredicateCaptures: int) : int =
+    // Same as map, plus loop control
+    12 + numPredicateCaptures
+
+/// SSA cost for take MoveNext
+let takeMoveNextSSACost : int =
+    // Remaining check: load(1) + cmp(1) + constant(1)
+    // Plus map-equivalent cost for pass-through
+    14
+
+/// SSA cost for fold per-iteration body
+let foldIterationSSACost (numFolderCaptures: int) : int =
+    8 + numFolderCaptures
+```
+
+#### 5.6.3 Composed Pipeline SSA Analysis
+
+For a composition like `Seq.take 5 (Seq.map f (Seq.filter p xs))`:
+
+**Creation phase SSA cost**:
+```
+filterWrapper = 5 + innerSize + predSize
+mapWrapper = 5 + filterWrapperSize + mapperSize
+takeWrapper = 6 + mapWrapperSize
+```
+
+**Per-iteration SSA cost** (worst case - filter matches):
+```
+take.MoveNext calls map.MoveNext calls filter.MoveNext calls inner.MoveNext
+= takeMoveNext + mapMoveNext + filterMoveNext + innerMoveNext
+```
+
+### 5.7 Files to Create/Modify (Alex)
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -685,33 +851,49 @@ Sum: 55
 
 ## 8. Implementation Checklist
 
+### Phase 0: SSA Cost Infrastructure
+- [ ] Implement `mapWrapperSSACost` function
+- [ ] Implement `filterWrapperSSACost` function
+- [ ] Implement `takeWrapperSSACost` function
+- [ ] Implement `foldSetupSSACost` function
+- [ ] Implement MoveNext SSA cost functions
+- [ ] Verify SSA cost formulas match actual generation
+
 ### Phase 1: Seq.map
 - [ ] Add Seq.map intrinsic to FNCS
-- [ ] Create MapSeqLayout coeffect
+- [ ] Create MapSeqLayout coeffect (with SSA cost)
+- [ ] Implement MapSeq wrapper creation with copy semantics
 - [ ] Implement MapSeq MoveNext generation
+- [ ] Implement mapper closure invocation with explicit capture extraction
 - [ ] Test: map doubles values
 
 ### Phase 2: Seq.filter
 - [ ] Add Seq.filter intrinsic
-- [ ] Create FilterSeqLayout coeffect
-- [ ] Implement FilterSeq MoveNext generation
+- [ ] Create FilterSeqLayout coeffect (with SSA cost)
+- [ ] Implement FilterSeq wrapper creation with copy semantics
+- [ ] Implement FilterSeq MoveNext generation with loop
+- [ ] Implement predicate closure invocation with capture extraction
 - [ ] Test: filter for evens
 
 ### Phase 3: Seq.take
 - [ ] Add Seq.take intrinsic
-- [ ] Create TakeSeqLayout coeffect
+- [ ] Create TakeSeqLayout coeffect (with SSA cost)
+- [ ] Implement TakeSeq wrapper creation (includes remaining counter)
 - [ ] Implement TakeSeq MoveNext generation
 - [ ] Test: take limits sequence
 
 ### Phase 4: Seq.fold
 - [ ] Add Seq.fold intrinsic
 - [ ] Implement fold as eager consumer (not a wrapper)
+- [ ] Implement folder closure invocation with capture extraction
 - [ ] Test: fold sums sequence
 
 ### Validation
 - [ ] Sample 16 compiles without errors
 - [ ] Sample 16 produces correct output
 - [ ] Composed pipelines work (e.g., `take (map (filter xs))`)
+- [ ] Copy semantics verified (independent iteration)
+- [ ] SSA counts match cost formulas
 - [ ] Samples 01-15 still pass
 
 ## 9. Related PRDs

@@ -72,21 +72,21 @@ let callVoidSSA (func: string) (args: SSA list) (argTy: MLIRType) : FuncOp =
 // RETURN
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Return from function: func.return
-let funcReturn (values: SSA list) : FuncOp =
+/// Return from function: func.return %val : type
+let funcReturn (values: (SSA * MLIRType) list) : FuncOp =
     FuncOp.FuncReturn values
 
-/// Convenience: return a single value
-let funcReturnOne (value: SSA) : FuncOp =
-    FuncOp.FuncReturn [value]
+/// Convenience: return a single value with type
+let funcReturnOne (value: SSA) (ty: MLIRType) : FuncOp =
+    FuncOp.FuncReturn [(value, ty)]
 
 /// Convenience: return nothing (void function)
 let funcReturnVoid : FuncOp =
     FuncOp.FuncReturn []
 
-/// Return value (alias for funcReturnOne)
-let returnVal (value: SSA) : FuncOp =
-    FuncOp.FuncReturn [value]
+/// Return value with type (alias for funcReturnOne)
+let returnVal (value: SSA) (ty: MLIRType) : FuncOp =
+    FuncOp.FuncReturn [(value, ty)]
 
 /// Return void (alias for funcReturnVoid)
 let returnVoid : FuncOp =

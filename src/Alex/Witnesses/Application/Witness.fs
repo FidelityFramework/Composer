@@ -6,11 +6,29 @@
 ///
 /// The PSGZipper contains the Graph - no separate graph parameter needed.
 /// Returns structured MLIROp list via the factored witness modules.
+///
+/// DIALECT BOUNDARY (January 2026):
+/// This module respects the MLIR dialect hierarchy:
+///
+/// PORTABLE DIALECTS (func, arith, cf, scf):
+///   - Direct function calls by name → FuncOp.FuncCall
+///   - Arithmetic operations → ArithOp.*
+///   - Control flow → CFOp.*, SCFOp.*
+///
+/// LLVM DIALECT (backend-target-intrinsic):
+///   - Indirect calls through function pointers → LLVMOp.IndirectCall
+///   - Struct manipulation (extractvalue, insertvalue, gep) → LLVMOp.*
+///   - Functions whose address is taken → llvm.func (in LambdaWitness)
+///
+/// See fsnative-spec/spec/drafts/backend-lowering-architecture.md and
+/// Serena memory `mlir_dialect_architecture` for the full specification.
 module Alex.Witnesses.Application.Witness
 
 open FSharp.Native.Compiler.Checking.Native.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.Dialects.Core.Types
+// NOTE: LLVM.Templates imported for struct ops (extractvalue, etc.) and indirect calls.
+// Do NOT use `callFunc` for direct calls - use FuncOp.FuncCall instead.
 open Alex.Dialects.LLVM.Templates
 open Alex.Traversal.PSGZipper
 open Alex.CodeGeneration.TypeMapping
@@ -1222,15 +1240,18 @@ let witness
                                 [], TRError (String.concat "; " captureErrors)
                             else
                                 let allArgs = captureArgs @ args
+                                // DIALECT BOUNDARY: Direct calls by name use func.call (portable)
+                                // Only indirect calls through pointers use llvm.call
                                 if isUnitType returnType then
-                                    // Void function
-                                    let callOp = MLIROp.LLVMOp (callFunc None funcName allArgs mlirReturnType)
+                                    // Void function - direct call by name
+                                    let callOp = MLIROp.FuncOp (FuncOp.FuncCall (None, funcName, allArgs, mlirReturnType))
                                     [callOp], TRVoid
                                 else
                                     match lookupNodeSSA appNodeId z with
                                     | Some resultSSA ->
                                         let effectiveRetType = mlirReturnType
-                                        let callOp = MLIROp.LLVMOp (callFunc (Some resultSSA) funcName allArgs effectiveRetType)
+                                        // Direct call by name - use func.call (not llvm.call)
+                                        let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, allArgs, effectiveRetType))
                                         [callOp], TRValue { SSA = resultSSA; Type = effectiveRetType }
                                     | None ->
                                         [], TRError (sprintf "No SSA assigned for function call result: %s" funcName)
