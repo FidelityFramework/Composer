@@ -347,13 +347,115 @@ Expected values:
 
 # =============================================================================
 # Sample 16: SeqOperations
-# Seq.map, Seq.filter, Seq.take, Seq.fold (PRD-16)
+# Seq.map, Seq.filter, Seq.take, Seq.fold, Seq.collect (PRD-16)
 # =============================================================================
 [[samples]]
 name = "16_SeqOperations"
 project = "SeqOperations.fidproj"
 binary = "target/SeqOperations"
-skip = true
-skip_reason = "PRD-16 not yet implemented"
+timeout_seconds = 60
 expected_output = """
+=== Sample 16: Sequence Operations ===
+
+--- Part 2: Seq.map ---
+naturals 5: 1 2 3 4 5
+doubled (x*2): 2 4 6 8 10
+squared (x*x): 1 4 9 16 25
+addTen (x+10): 11 12 13 14 15
+
+--- Part 3: Seq.filter ---
+evens from 1..10: 2 4 6 8 10
+odds from 1..10: 1 3 5 7 9
+greaterThan5 from 1..10: 6 7 8 9 10
+
+--- Part 4: Seq.take ---
+firstThree from 1..100: 1 2 3
+exactlyFive from 1..5: 1 2 3 4 5
+takeMoreThanAvailable: 1 2 3
+
+--- Part 5: Seq.fold ---
+sum of 1..10: 55
+product of 1..5: 120
+max of 1..10: 10
+count of 1..10: 10
+
+--- Part 6: Composed Operations ---
+evensSquared (filter even, map x*x): 4 16 36 64 100
+squaresOver10 (map x*x, filter >10): 16 25 36 49 64 81 100
+first3EvensDoubled: 4 8 12
+sumEvenSquares: 220
+
+--- Part 7: Manual vs Seq.fold ---
+manualSum 1..10: 55
+manualCount 1..10: 10
+
+--- Part 8: Closures with Captures ---
+scaledBy3: 3 6 9 12 15
+scaledBy7: 7 14 21
+above5: 6 7 8 9 10
+above0: 1 2 3 4 5
+sumPlus10Each: 65
+transformed (2*x+100): 102 104 106
+
+--- Part 9: Seq.collect ---
+expandDouble: 1 2 2 4 3 6
+expandTriple: 1 1 1 2 2 2
+expandBy10: 1 10 2 20 3 30
+repeated: 1 2 2 3 3 3 4 4 4 4
+
+--- Part 10: Composed with Captures ---
+complexPipeline 5 2 5: 12 14 16 18 20
+sumFilteredScaled 3 10: 120
+
+--- Part 11: Edge Cases ---
+mapEmpty: (done)
+filterEmpty: (done)
+foldEmpty: 42
+mapSingle: 100
+filterNone: (done)
+takeZero: (done)
+takeFromEmpty: (done)
+
+--- Part 12: Deep Composition ---
+deepPipeline1: 3 6 9 12 15
+deepPipelineWithFold: 400
+
+--- Verification Summary ---
+Expected values:
+  naturals 5: 1 2 3 4 5
+  doubled: 2 4 6 8 10
+  squared: 1 4 9 16 25
+  addTen: 11 12 13 14 15
+  evens: 2 4 6 8 10
+  odds: 1 3 5 7 9
+  greaterThan5: 6 7 8 9 10
+  firstThree: 1 2 3
+  exactlyFive: 1 2 3 4 5
+  takeMoreThanAvailable: 1 2 3
+  sum: 55
+  product: 120
+  max: 10
+  count: 10
+  evensSquared: 4 16 36 64 100
+  squaresOver10: 16 25 36 49 64 81 100
+  first3EvensDoubled: 4 8 12
+  sumEvenSquares: 220
+  manualSum: 55
+  manualCount: 10
+  scaledBy3: 3 6 9 12 15
+  scaledBy7: 7 14 21
+  above5: 6 7 8 9 10
+  above0: 1 2 3 4 5
+  sumPlus10Each: 65
+  transformed: 102 104 106
+  expandDouble: 1 2 2 4 3 6
+  expandTriple: 1 1 1 2 2 2
+  expandBy10: 1 10 2 20 3 30
+  repeated: 1 2 2 3 3 3 4 4 4 4
+  complexPipeline: 12 14 16 18 20
+  sumFilteredScaled: 120
+  foldEmpty: 42
+  mapSingle: 100
+  deepPipeline1: 3 6 9 12 15
+  deepPipelineWithFold: 400
 """

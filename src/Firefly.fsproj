@@ -98,6 +98,7 @@
       <Compile Include="Alex/Witnesses/Application/Platform.fs" />
       <Compile Include="Alex/Witnesses/LazyWitness.fs" />
       <Compile Include="Alex/Witnesses/SeqWitness.fs" />
+      <Compile Include="Alex/Witnesses/SeqOpWitness.fs" />
       <Compile Include="Alex/Witnesses/Application/Witness.fs" />
       <Compile Include="Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="Alex/Witnesses/MemoryWitness.fs" />

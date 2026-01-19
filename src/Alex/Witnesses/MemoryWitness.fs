@@ -13,7 +13,7 @@
 /// - SRTP trait calls
 module Alex.Witnesses.MemoryWitness
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.PSGZipper

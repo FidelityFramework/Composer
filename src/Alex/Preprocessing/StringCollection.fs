@@ -16,7 +16,7 @@
 /// The zipper is PASSIVE - it observes and produces, never mutates.
 module Alex.Preprocessing.StringCollection
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 
 // ═══════════════════════════════════════════════════════════════════════════

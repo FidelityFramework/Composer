@@ -149,7 +149,7 @@ let (|UnaryOp|_|) (opName: string) =
 // NativePtr Operations
 // ═══════════════════════════════════════════════════════════════════════════
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 
 /// NativePtr operation kinds (type-safe dispatch)
 type NativePtrOpKind =
@@ -307,6 +307,11 @@ let (|TimeSpanOp|_|) (info: IntrinsicInfo) =
 /// Lazy intrinsics: create, force, isValueCreated
 let (|LazyOp|_|) (info: IntrinsicInfo) =
     if info.Module = IntrinsicModule.Lazy then Some info.Operation else None
+
+/// PRD-16: Check if intrinsic is a Seq operation (using IntrinsicInfo)
+/// Seq intrinsics: map, filter, take, fold, collect, iter, toArray, toList, isEmpty, head, length
+let (|SeqOp|_|) (info: IntrinsicInfo) =
+    if info.Module = IntrinsicModule.Seq then Some info.Operation else None
 
 /// Conversion function names
 let private conversionFunctions = 

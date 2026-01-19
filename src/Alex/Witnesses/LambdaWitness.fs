@@ -24,7 +24,7 @@
 /// Witnesses OBSERVE and RETURN. They do NOT emit directly.
 module Alex.Witnesses.LambdaWitness
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.PSGZipper
@@ -212,12 +212,14 @@ let private buildCaptureExtractionOps
 
     // Extract each captured value from the loaded struct
     // Extraction index = baseIndex + slotIndex (context-dependent)
+    // Extraction SSAs are derived from SlotIndex: v0, v1, ..., v(N-1)
+    // This is the child function's SSA namespace - body SSAs start at N
     let extractOps =
         layout.Captures
         |> List.map (fun slot ->
-            // slot.GepSSA is the SSA we bound in preBindParams - use it for the extracted value
+            let extractSSA = V slot.SlotIndex  // Derived from PSG structure
             let extractIndex = extractionBase + slot.SlotIndex
-            MLIROp.LLVMOp (ExtractValue (slot.GepSSA, structSSA, [extractIndex], loadStructType))
+            MLIROp.LLVMOp (ExtractValue (extractSSA, structSSA, [extractIndex], loadStructType))
         )
 
     loadOp :: extractOps
@@ -729,12 +731,14 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
         let z3 =
             match closureLayoutOpt with
             | Some layout ->
-                // Bind each captured variable name to its slot's GEP SSA
+                // Bind each captured variable name to its extraction SSA
+                // Extraction SSAs are derived from SlotIndex: v0, v1, ..., v(N-1)
                 // For ByRef captures: SSA is a pointer, mark as captured mutable
                 // For ByValue captures: SSA is the value itself
                 layout.Captures
                 |> List.fold (fun acc slot ->
-                    let acc' = bindVarSSA slot.Name slot.GepSSA slot.SlotType acc
+                    let extractSSA = V slot.SlotIndex  // Derived from PSG structure
+                    let acc' = bindVarSSA slot.Name extractSSA slot.SlotType acc
                     // Mark ALL captures so VarRef knows to use VarBindings (not NodeBindings)
                     let acc'' = markCapturedVariable slot.Name acc'
                     // Additionally mark ByRef captures so VarRef/Set know to load/store through pointer

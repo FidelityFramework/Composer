@@ -15,7 +15,7 @@
 /// - Produces coeffects that witnesses PULL during emission
 module Alex.Preprocessing.PatternBindingAnalysis
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -5,7 +5,7 @@
 /// ZERO sprintf. Function bodies are Regions containing structured ops.
 module Alex.Bindings.PlatformHelpers
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open Alex.Dialects.Core.Types
 open Alex.Dialects.Arith.Templates
 open Alex.Dialects.LLVM.Templates

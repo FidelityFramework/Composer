@@ -17,7 +17,7 @@
 /// Navigation is O(1). We can always reconstruct the full tree by walking up.
 module Alex.Traversal.PSGZipper
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Preprocessing.SSAAssignment
@@ -163,15 +163,6 @@ type EmissionState = {
 
     // ─────────────────────────────────────────────────────────────────────────
     // MODULE-LEVEL BINDING SUPPORT
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Ops accumulated from module-level VALUE bindings (outside any function scope)
-    /// These get injected into main's prologue when main is entered
-    mutable PendingModuleLevelOps: MLIROp list
-
-    /// Node bindings from module-level value bindings (name -> nodeId)
-    /// Used to track which bindings have been processed at module level
-    mutable ModuleLevelBindings: Map<string, int>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -250,8 +241,6 @@ module EmissionState =
             CapturedMutables = Set.empty
             CapturedMutablesStack = []
             EntryPointLambdaIds = entryPointLambdaIds
-            PendingModuleLevelOps = []
-            ModuleLevelBindings = Map.empty
         }
 
     /// Look up pre-computed SSA for a PSG node (coeffect lookup)
@@ -491,50 +480,17 @@ let findEnclosingLambda (z: PSGZipper) : (SemanticNode * string) option =
                 Some (step.Parent, name)
             | _ -> None)
 
-/// Check if we're currently inside any function scope
-/// Derived from the zipper's Path - no manual tracking needed
-let isInsideFunction (z: PSGZipper) : bool =
-    findEnclosingLambda z |> Option.isSome
-
 // ═══════════════════════════════════════════════════════════════════════════
 // STATE OPERATIONS (Emission)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Emit a single operation to current scope.
-/// CRITICAL: This derives the scope from the zipper's Path, not from manual State.Focus.
-/// If outside any function scope, ops go to PendingModuleLevelOps for later injection.
 let emit (op: MLIROp) (z: PSGZipper) : unit =
-    // Use BOTH the derived scope (from Path) AND the manual State.Focus
-    // State.Focus is set explicitly by enterFunction/exitFunction
-    // This handles the case where we're inside a Lambda body being traversed
-    let inFunction = 
-        match z.State.Focus with
-        | InFunction _ -> true
-        | AtNode -> isInsideFunction z
-    
-    // DEBUG TRACE
-    // let opName = match op with MLIROp.LLVMOp _ -> "LLVM" | MLIROp.FuncOp _ -> "Func" | MLIROp.ArithOp _ -> "Arith" | _ -> "Other"
-    // if not inFunction then
-    //     printfn "DEBUG: Emit to Pending! NodeId: %A Kind: %A Focus: %A PathDepth: %d Op: %s" z.Focus.Id z.Focus.Kind z.State.Focus (List.length z.Path) opName
-    
-    if inFunction then
-        // printfn "DEBUG: Emit Success! NodeId: %A Kind: %A Focus: %A" z.Focus.Id z.Focus.Kind z.State.Focus
-        z.State.CurrentOps <- op :: z.State.CurrentOps
-    else
-        z.State.PendingModuleLevelOps <- op :: z.State.PendingModuleLevelOps
+    z.State.CurrentOps <- op :: z.State.CurrentOps
 
 /// Emit multiple operations to current scope.
-/// Uses derived scope from zipper's Path.
 let emitAll (ops: MLIROp list) (z: PSGZipper) : unit =
-    let inFunction = 
-        match z.State.Focus with
-        | InFunction _ -> true
-        | AtNode -> isInsideFunction z
-    
-    if inFunction then
-        z.State.CurrentOps <- List.rev ops @ z.State.CurrentOps
-    else
-        z.State.PendingModuleLevelOps <- List.rev ops @ z.State.PendingModuleLevelOps
+    z.State.CurrentOps <- List.rev ops @ z.State.CurrentOps
 
 /// Emit a top-level operation (function definition, global)
 let emitTopLevel (op: MLIROp) (z: PSGZipper) : unit =

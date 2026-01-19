@@ -5,7 +5,7 @@
 /// Uses coeffects from preprocessing (SSAAssignment, MutabilityAnalysis).
 module Alex.Witnesses.BindingWitness
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Dialects.LLVM.Templates

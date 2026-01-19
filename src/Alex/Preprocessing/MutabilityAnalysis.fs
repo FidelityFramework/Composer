@@ -10,7 +10,7 @@
 /// the photographer principle: observe the structure, don't compute during transfer.
 module Alex.Preprocessing.MutabilityAnalysis
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types

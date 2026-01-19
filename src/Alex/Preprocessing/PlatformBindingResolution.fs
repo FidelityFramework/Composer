@@ -8,7 +8,7 @@
 /// (freestanding vs console, syscall vs libc) are resolved here.
 module Alex.Preprocessing.PlatformBindingResolution
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open Alex.Preprocessing.PlatformConfig
 open Alex.Bindings.PlatformTypes
 open Alex.Dialects.Core.Types

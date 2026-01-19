@@ -6,6 +6,7 @@
 /// - SRTP resolution during type checking (not post-hoc)
 /// - Hard-pruned SemanticGraph (only reachable nodes)
 /// - No BCL types, no IL imports, no obj
+/// - Baker enrichment (module classification metadata)
 ///
 /// Firefly receives SemanticGraph and applies:
 /// - Lowering nanopasses (FlattenApplications, LowerStrings, etc.)
@@ -14,8 +15,11 @@ module Core.FNCS.Integration
 
 // Re-export FNCS types for use throughout Firefly
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.NativeService
+// Baker - Post-construction semantic enrichment (peer to Checking.Native)
+// ModuleClassifications now computed lazily on SemanticGraph itself
+module BakerPipeline = FSharp.Native.Compiler.Baker.Pipeline
 
 /// Type aliases for cleaner code
 type FNCSNode = SemanticNode
@@ -27,6 +31,9 @@ type FNCSLiteralValue = LiteralValue
 
 /// Check result from FNCS
 type FNCSCheckResult = CheckResult
+
+/// Module classification (computed lazily on SemanticGraph)
+type FNCSModuleClassification = ModuleClassification
 
 /// Extract int from NodeId
 let nodeIdToInt (NodeId id) = id
@@ -230,3 +237,28 @@ let parseErrors (result: FNCSParseResult) : string list =
     match result with
     | ParseSuccess _ -> []
     | ParseError errs -> errs
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Module Classification - Coeffect Observation (computed lazily on PSG)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Emit Baker intermediates to a directory (for -k flag debug output).
+let emitBakerIntermediates (graph: FNCSGraph) (outputDir: string) (baseName: string) : unit =
+    BakerPipeline.emitIntermediates graph outputDir baseName
+
+/// Get module classification for a specific module (observes lazy field).
+let getModuleClassification (moduleId: FNCSNodeId) (graph: FNCSGraph) : FNCSModuleClassification option =
+    Map.tryFind moduleId graph.ModuleClassifications.Value
+
+/// Get all module classifications (observes lazy field).
+let allModuleClassifications (graph: FNCSGraph) : Map<FNCSNodeId, FNCSModuleClassification> =
+    graph.ModuleClassifications.Value
+
+let moduleInitBindings (classification: FNCSModuleClassification) : FNCSNodeId list =
+    classification.ModuleInit
+
+let moduleDefinitions (classification: FNCSModuleClassification) : FNCSNodeId list =
+    classification.Definitions
+
+let moduleEntryPoint (classification: FNCSModuleClassification) : FNCSNodeId option =
+    classification.EntryPoint

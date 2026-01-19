@@ -24,7 +24,7 @@
 /// Serena memory `mlir_dialect_architecture` for the full specification.
 module Alex.Witnesses.Application.Witness
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open Alex.Dialects.Core.Types
 // NOTE: LLVM.Templates imported for struct ops (extractvalue, etc.) and indirect calls.
@@ -43,6 +43,7 @@ module ArenaTemplates = Alex.Dialects.LLVM.Templates
 module SCF = Alex.Dialects.SCF.Templates
 module SSAAssignment = Alex.Preprocessing.SSAAssignment
 module LazyWitness = Alex.Witnesses.LazyWitness
+module SeqOpWitness = Alex.Witnesses.SeqOpWitness
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLOSURE RETURN TYPE LOOKUP
@@ -949,6 +950,64 @@ let private witnessIntrinsic
 
     // PRD-14: Lazy operations handled via SemanticKind.LazyExpr and LazyForce
     // in FNCSTransfer.fs, not through intrinsic pattern matching.
+
+    // PRD-16: Seq operations (map, filter, take, fold, collect)
+    | SeqOp opName ->
+        match opName, args with
+        | "map", [mapper; innerSeq] ->
+            // Seq.map : ('T -> 'U) -> seq<'T> -> seq<'U>
+            // Need to extract element types from the return type
+            let outputElementType =
+                match returnType with
+                | NativeType.TSeq elemTy -> mapNativeTypeForArch z.State.Platform.TargetArch elemTy
+                | _ -> MLIRTypes.i64  // Fallback
+            let inputElementType =
+                match innerSeq.Type with
+                | TStruct (TInt I32 :: elemTy :: _) -> elemTy  // Extract from Seq struct
+                | _ -> MLIRTypes.i64  // Fallback
+            SeqOpWitness.witnessSeqMap appNodeId z mapper innerSeq inputElementType outputElementType
+            |> Some
+
+        | "filter", [predicate; innerSeq] ->
+            // Seq.filter : ('T -> bool) -> seq<'T> -> seq<'T>
+            let elementType =
+                match returnType with
+                | NativeType.TSeq elemTy -> mapNativeTypeForArch z.State.Platform.TargetArch elemTy
+                | _ -> MLIRTypes.i64
+            SeqOpWitness.witnessSeqFilter appNodeId z predicate innerSeq elementType
+            |> Some
+
+        | "take", [count; innerSeq] ->
+            // Seq.take : int -> seq<'T> -> seq<'T>
+            let elementType =
+                match returnType with
+                | NativeType.TSeq elemTy -> mapNativeTypeForArch z.State.Platform.TargetArch elemTy
+                | _ -> MLIRTypes.i64
+            SeqOpWitness.witnessSeqTake appNodeId z count innerSeq elementType
+            |> Some
+
+        | "fold", [folder; initial; seq] ->
+            // Seq.fold : ('S -> 'T -> 'S) -> 'S -> seq<'T> -> 'S
+            let accType = mapNativeTypeForArch z.State.Platform.TargetArch returnType
+            let elementType =
+                match seq.Type with
+                | TStruct (TInt I32 :: elemTy :: _) -> elemTy
+                | _ -> MLIRTypes.i64
+            SeqOpWitness.witnessSeqFold appNodeId z folder initial seq accType elementType
+            |> Some
+
+        | "collect", [mapper; outerSeq] ->
+            // Seq.collect : ('T -> seq<'U>) -> seq<'T> -> seq<'U>
+            let outputElementType =
+                match returnType with
+                | NativeType.TSeq elemTy -> mapNativeTypeForArch z.State.Platform.TargetArch elemTy
+                | _ -> MLIRTypes.i64
+            SeqOpWitness.witnessSeqCollect appNodeId z mapper outerSeq outputElementType
+            |> Some
+
+        | _ ->
+            // Other Seq operations not yet implemented
+            None
 
     // Unhandled intrinsics
     | _ ->

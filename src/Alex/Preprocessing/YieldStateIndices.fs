@@ -25,7 +25,7 @@
 ///    - Shared blocks: check, yield, done
 module Alex.Preprocessing.YieldStateIndices
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 
 // ═══════════════════════════════════════════════════════════════════════════

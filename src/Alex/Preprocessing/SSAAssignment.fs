@@ -11,7 +11,7 @@
 /// - Knows MLIR expansion costs: one PSG node may need multiple SSAs
 module Alex.Preprocessing.SSAAssignment
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open FSharp.Native.Compiler.Checking.Native.UnionFind
 open Alex.Dialects.Core.Types
@@ -62,8 +62,6 @@ type CaptureSlot = {
     SourceNodeId: NodeId option
     /// How the variable is captured
     Mode: CaptureMode
-    /// SSA for GEP to this slot during closure construction
-    GepSSA: SSA
 }
 
 /// Complete closure layout for a Lambda with captures
@@ -163,7 +161,7 @@ let private computeLambdaSSACost (captures: CaptureInfo list) : int =
     if n = 0 then
         0  // Simple function - no closure struct needed
     else
-        2 * n + 3  // addressof + N extracts + undef + (1 + N) insertvalues
+        n + 3  // addressof + undef + insertvalue(code_ptr) + N insertvalues(captures)
 
 /// Minimal NativeType to MLIRType mapping for capture slots
 /// This is a subset of TypeMapping.mapNativeType, inlined here to avoid
@@ -253,13 +251,17 @@ let private buildEnvStructType (arch: Architecture) (captures: CaptureInfo list)
 /// Build complete ClosureLayout from Lambda captures and pre-assigned SSAs
 /// This is computed once during SSAAssignment - witnesses observe the result
 ///
-/// TRUE FLAT CLOSURE SSA layout for N captures (total 2N+3 SSAs):
+/// TRUE FLAT CLOSURE SSA layout for N captures (total N+3 SSAs):
 ///   ssas[0]           = addressof code_ptr
-///   ssas[1..N]        = extractvalue SSAs (for callee extraction)
-///   ssas[N+1]         = undef closure struct
-///   ssas[N+2]         = insertvalue code_ptr at [0]
-///   ssas[N+3..2N+2]   = insertvalue for each capture at [1..N]
-///   ssas[2N+2]        = final result (last insertvalue)
+///   ssas[1]           = undef closure struct
+///   ssas[2]           = insertvalue code_ptr at [0]
+///   ssas[3..N+2]      = insertvalue for each capture at [1..N]
+///   ssas[N+2]         = final result (last insertvalue)
+///
+/// NOTE: Capture EXTRACTION SSAs (used in callee) are derived at emission time
+/// from capture count, not pre-allocated here. This cleanly separates:
+/// - Parent scope: closure CONSTRUCTION (these SSAs)
+/// - Child scope: capture EXTRACTION (v0..v(N-1), derived from PSG structure)
 let private buildClosureLayout
     (arch: Architecture)
     (graph: SemanticGraph)
@@ -272,17 +274,17 @@ let private buildClosureLayout
 
     let n = List.length captures
 
-    // Extract SSAs by position for TRUE FLAT CLOSURE
+    // Extract SSAs by position for closure CONSTRUCTION (parent scope)
     let codeAddrSSA = ssas.[0]
-    let gepSSAs = ssas.[1..n]  // N SSAs for extractvalue in callee
-    let undefSSA = ssas.[n + 1]
-    let withCodeSSA = ssas.[n + 2]
-    // InsertValue SSAs for captures: ssas[N+3], ssas[N+4], ..., ssas[2N+2]
-    let captureInsertSSAs = ssas.[(n + 3)..(2 * n + 2)]
+    let undefSSA = ssas.[1]
+    let withCodeSSA = ssas.[2]
+    // InsertValue SSAs for captures: ssas[3], ssas[4], ..., ssas[N+2]
+    let captureInsertSSAs = ssas.[3..(n + 2)]
     // The final result is the last insertvalue SSA
-    let resultSSA = ssas.[2 * n + 2]
+    let resultSSA = ssas.[n + 2]
 
-    // Build capture slots with their GEP SSAs (for extraction in callee)
+    // Build capture slots (structural info only - no SSAs for extraction)
+    // Extraction SSAs are derived at emission time from SlotIndex
     let captureSlots =
         captures
         |> List.mapi (fun i capture ->
@@ -292,7 +294,6 @@ let private buildClosureLayout
                 SlotType = captureSlotType arch capture
                 SourceNodeId = capture.SourceNodeId
                 Mode = if capture.IsMutable then ByRef else ByValue
-                GepSSA = gepSSAs.[i]
             })
 
     // Build env struct type (for internal tracking, kept for compatibility)
@@ -449,6 +450,19 @@ let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode
                 | IntrinsicModule.Lazy, "force" -> 20      // PRD-14: check + branch + cached/compute paths + phi
                 | IntrinsicModule.Lazy, "isValueCreated" -> 3  // PRD-14: GEP + load flag
                 | IntrinsicModule.Lazy, _ -> 10            // other Lazy ops
+                // PRD-16: Seq operations - wrapper creation costs
+                | IntrinsicModule.Seq, "map" -> 15         // undef + insertvalue x 5 (state, current, moveNext_ptr, inner, mapper)
+                | IntrinsicModule.Seq, "filter" -> 15      // same structure as map
+                | IntrinsicModule.Seq, "take" -> 15        // undef + insertvalue x 5 (state, current, moveNext_ptr, inner, remaining)
+                | IntrinsicModule.Seq, "fold" -> 25        // loop setup: alloca seq + alloca acc + moveNext calls
+                | IntrinsicModule.Seq, "collect" -> 20     // complex: outer + mapper + inner seq slot
+                | IntrinsicModule.Seq, "iter" -> 20        // loop like fold but no accumulator
+                | IntrinsicModule.Seq, "toArray" -> 30     // iteration + dynamic array building
+                | IntrinsicModule.Seq, "toList" -> 30      // iteration + list cons
+                | IntrinsicModule.Seq, "isEmpty" -> 10     // single MoveNext call
+                | IntrinsicModule.Seq, "head" -> 12        // MoveNext + extract current
+                | IntrinsicModule.Seq, "length" -> 20      // full iteration with counter
+                | IntrinsicModule.Seq, _ -> 15             // default for other Seq ops
                 | IntrinsicModule.Bits, "htons" | IntrinsicModule.Bits, "ntohs" -> 2  // byte swap uint16
                 | IntrinsicModule.Bits, "htonl" | IntrinsicModule.Bits, "ntohl" -> 2  // byte swap uint32
                 | IntrinsicModule.Bits, _ -> 1             // bitcast operations
@@ -553,11 +567,16 @@ let private nodeExpansionCost (graph: SemanticGraph) (node: SemanticNode) : int 
     // PatternBinding needs SSAs for extraction + conversion
     // For tuple patterns: elemExtract + payloadExtract + convert = 3
     | SemanticKind.PatternBinding _ -> 3
-    // PRD-14: Lazy values
-    // For simple thunks: 4 (thin closure: funcPtr + null + undef + insert) + 4 (lazy struct) = 8
-    // For closing thunks: just 4 (lazy struct, closure from Lambda)
-    | SemanticKind.LazyExpr _ -> 12   // thin closure construction + lazy struct creation
-    | SemanticKind.LazyForce _ -> 20  // check flag + branch + cached/compute paths + phi
+    // PRD-14: Lazy values - SSA costs derived from PSG structure
+    // LazyExpr: 5 base + N captures (per LazyWitness documentation)
+    //   - 1: false constant, 1: undef struct, 1: insert computed
+    //   - 1: addressof code_ptr, 1: insert code_ptr
+    //   - N: insert each capture
+    | SemanticKind.LazyExpr (_, captures) -> 5 + List.length captures
+    // LazyForce: 4 fixed (per LazyWitness documentation)
+    //   - 1: extract code_ptr, 1: const 1 for alloca
+    //   - 1: alloca for lazy struct, 1: indirect call result
+    | SemanticKind.LazyForce _ -> 4
     // PRD-15: Sequence expressions
     // SeqExpr: 5 base + captures + (2 * internal state fields)
     // Internal state = let mutable bindings inside seq body (through-line from PRD-11)
@@ -675,16 +694,41 @@ let rec private assignFunctionBody
     match Map.tryFind nodeId graph.Nodes with
     | None -> scope
     | Some node ->
-        // Post-order: process children first
+        // Architectural fix (January 2026): Filter out SeparateFunction children.
+        // These are Lambda/SeqExpr body nodes - processed by their parent, not during children traversal.
+        // This makes SSA assignment deterministic based on EmissionStrategy, not SemanticKind special-cases.
+        let childrenToProcess =
+            node.Children
+            |> List.filter (fun childId ->
+                match Map.tryFind childId graph.Nodes with
+                | Some child ->
+                    match child.EmissionStrategy with
+                    | EmissionStrategy.SeparateFunction _ -> false  // Skip, parent handles it
+                    | EmissionStrategy.MainPrologue -> false  // Skip, main handles it
+                    | EmissionStrategy.Inline -> true
+                | None -> true)
+
+        // Post-order: process filtered children first
         let scopeAfterChildren =
-            node.Children |> List.fold (fun s childId -> assignFunctionBody arch graph closureLayouts s childId) scope
+            childrenToProcess |> List.fold (fun s childId -> assignFunctionBody arch graph closureLayouts s childId) scope
 
         // Special handling for nested Lambdas - they get their own scope
         // (but we still assign this Lambda node SSAs in parent scope for closure construction)
         match node.Kind with
         | SemanticKind.Lambda(_params, bodyId, captures, enclosingFuncOpt, context) ->
-            // Process Lambda body in a NEW scope (SSA counter resets)
-            let _innerScope = assignFunctionBody arch graph closureLayouts FunctionScope.empty bodyId
+            // Process Lambda body in a NEW scope.
+            // Architectural fix (January 2026): Start SSA counter AFTER capture extraction SSAs.
+            // The body's EmissionStrategy.SeparateFunction carries the captureCount.
+            // Capture extraction emits v0, v1, ..., v(captureCount-1), so body starts at v(captureCount).
+            let startCounter =
+                match Map.tryFind bodyId graph.Nodes with
+                | Some bodyNode ->
+                    match bodyNode.EmissionStrategy with
+                    | EmissionStrategy.SeparateFunction captureCount -> captureCount
+                    | _ -> 0  // Shouldn't happen - Lambda bodies are marked SeparateFunction
+                | None -> 0
+            let innerStartScope = { FunctionScope.empty with Counter = startCounter }
+            let _innerScope = assignFunctionBody arch graph closureLayouts innerStartScope bodyId
 
             // DISTINCTION: Nested NAMED functions with captures use parameter-passing, NOT closure structs.
             // Anonymous lambdas (fun x -> ...) that escape STILL need closure structs.

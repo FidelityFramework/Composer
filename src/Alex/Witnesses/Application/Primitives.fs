@@ -4,7 +4,7 @@
 /// Returns structured MLIROp, uses coeffects from WitnessContext.
 module Alex.Witnesses.Application.Primitives
 
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open Alex.Dialects.Core.Types
 open Alex.Traversal.PSGZipper
 open Alex.Patterns.SemanticPatterns

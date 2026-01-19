@@ -8,7 +8,7 @@ module Alex.CodeGeneration.TypeMapping
 
 open FSharp.Native.Compiler.Checking.Native.NativeTypes
 open FSharp.Native.Compiler.Checking.Native.UnionFind
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open Alex.Dialects.Core.Types
 open Alex.Bindings.PlatformTypes
 

@@ -15,7 +15,7 @@ module Alex.Preprocessing.PreprocessingSerializer
 
 open System.IO
 open System.Text.Json
-open FSharp.Native.Compiler.Checking.Native.SemanticGraph
+open FSharp.Native.Compiler.PSG.SemanticGraph
 open Alex.Preprocessing.SSAAssignment
 open Alex.Dialects.Core.Types
 
