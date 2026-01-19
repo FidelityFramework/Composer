@@ -1,6 +1,124 @@
 # PRD-16: Sequence Operations
 
-> **Sample**: `16_SeqOperations` | **Status**: Planned | **Depends On**: PRD-15 (SimpleSeq), PRD-12 (HOFs)
+> **Sample**: `16_SeqOperations` | **Status**: Planned | **Depends On**: PRD-15 (SimpleSeq), PRD-14 (Lazy), PRD-12 (HOFs), PRD-11 (Closures)
+
+---
+
+## CONTEXT WINDOW RESET PROTOCOL
+
+> **At the START of every new context window, IMMEDIATELY review this section to establish bearings.**
+
+### Quick Start Checklist
+
+1. **Activate Firefly project**: `mcp__serena-local__activate_project "Firefly"`
+2. **Read progress memory**: `mcp__serena-local__read_memory "prd16_seqoperations_progress"`
+3. **Review this PRD**: Understand the architectural through-line
+4. **Check standing art files**: Review the key implementation files listed below
+
+### Standing Art Files (PRD-11, PRD-14, PRD-15)
+
+These files contain the patterns that PRD-16 MUST compose from:
+
+#### Witness Layer (`src/Alex/Witnesses/`)
+
+| File | Purpose | Key Exports to Study |
+|------|---------|---------------------|
+| `SeqWitness.fs` | Seq struct creation & MoveNext | `seqStructTypeFull`, `witnessSeqCreateFull`, `witnessMoveNextWhileBased`, `WhileBasedMoveNextInfo`, `YieldBlockInfo` |
+| `LazyWitness.fs` | Lazy thunk pattern (simpler precursor) | `lazyStructType`, `witnessLazyCreate`, `witnessLazyForce` |
+| `LambdaWitness.fs` | Flat closure construction | `buildClosureConstruction`, `buildCaptureExtractionOps`, `witness` |
+
+#### Preprocessing Layer (`src/Alex/Preprocessing/`)
+
+| File | Purpose | Key Exports to Study |
+|------|---------|---------------------|
+| `SSAAssignment.fs` | SSA allocation + ClosureLayout coeffect | `ClosureLayout`, `CaptureSlot`, `CaptureMode` (ByValue/ByRef), `computeSeqExprSSACost`, `buildClosureLayout`, `computeLambdaSSACost` |
+| `YieldStateIndices.fs` | Seq body structure analysis | `SeqYieldInfo`, `WhileBodyInfo`, `InternalStateField`, `YieldInfo`, `analyzeBodyStructure`, `collectMutableBindings` |
+
+#### Transfer/Traversal Layer (`src/Alex/Traversal/`)
+
+| File | Purpose | Key Patterns |
+|------|---------|--------------|
+| `FNCSTransfer.fs` | PSG traversal → MLIR emission | `SemanticKind.SeqExpr` handling (~line 408, ~1128), WhileBased pattern with `loadVar`/`storeVar`, capture extraction |
+
+#### Type Mapping (`src/Alex/CodeGeneration/`)
+
+| File | Purpose |
+|------|---------|
+| `TypeMapping.fs` | `NativeType` → `MLIRType` conversion, `mapNativeTypeWithGraphForArch` |
+
+### Architectural Through-Line
+
+```
+PRD-11 (Closures)     → Flat closure: {code_ptr, cap₀, cap₁, ...}
+         ↓ extends (adds state prefix)
+PRD-14 (Lazy)         → Extended closure: {computed: i1, value: T, code_ptr, cap₀...}
+         ↓ extends (adds internal state suffix)
+PRD-15 (SimpleSeq)    → State machine: {state: i32, current: T, code_ptr, cap₀..., internalState₀...}
+         ↓ composes (nests inner structures)
+PRD-16 (SeqOperations)→ Wrapper sequences: {state, current, code_ptr, inner_seq, closure}
+```
+
+### Key Serena Memories
+
+- `architecture_principles` - Layer separation, non-dispatch model
+- `negative_examples` - Anti-patterns to avoid
+- `lazy_seq_flat_closure_architecture` - Flat closure model specifics
+- `true_flat_closures_implementation` - PRD-11 closure patterns
+- `fncs_functional_decomposition_principle` - How intrinsics should decompose
+- `prd16_seqoperations_progress` - **EPHEMERAL**: Current implementation progress
+
+---
+
+## NORMATIVE SPEC REFERENCES
+
+> **The fsnative-spec repository contains the authoritative specifications. These documents are the "north star" for implementation.**
+
+### Primary Spec Chapters (fsnative-spec/spec/)
+
+| Chapter | Path | PRD-16 Relevance |
+|---------|------|------------------|
+| **Closure Representation** | `spec/closure-representation.md` | §3: Flat closure struct layout; §8: Nested functions vs escaping closures (mappers/predicates are ESCAPING) |
+| **Lazy Representation** | `spec/lazy-representation.md` | §4: Struct pointer passing convention; foundation pattern for MoveNext |
+| **Seq Representation** | `spec/seq-representation.md` | §3: Base seq struct layout; §4: MoveNext calling convention; §5: Sequential flattening |
+| **Backend Lowering** | `spec/drafts/backend-lowering-architecture.md` | §3: Flat closure pattern requires backend-specific MLIR (addressof, indirect call) |
+
+### NEW: Seq Operations Representation (Draft)
+
+**Path**: `fsnative-spec/spec/drafts/seq-operations-representation.md`
+
+This draft chapter was created to fill a spec gap identified during PRD-16 development. It specifies:
+
+- §4: Wrapper struct layouts (MapSeq, FilterSeq, TakeSeq, CollectSeq)
+- §5: Copy semantics - inner seq and closure copied by VALUE
+- §6: Composition model - nested structs for pipelines
+- §7: MoveNext algorithms for each operation
+- §8: Seq.fold as eager consumer (no wrapper)
+
+**ACTION REQUIRED**: This draft should be promoted to a formal spec chapter before PRD-16 implementation is complete.
+
+### Key Spec Constraints for PRD-16
+
+From the spec audit, these constraints MUST be honored:
+
+1. **Flat Representation** (closure-representation.md §2.2): Wrappers use flat closures, NO `env_ptr`
+2. **Copy Semantics** (seq-operations-representation.md §5): Inner seq and closure copied by value at wrapper creation
+3. **Escaping Closure Classification** (closure-representation.md §8.3): Mappers/predicates are escaping (passed as values), use closure struct not parameter-passing
+4. **Struct Pointer Passing** (lazy-representation.md §4.1): MoveNext receives pointer to containing struct
+5. **Module-Level Exclusion** (lazy-representation.md §5.1): Module-level bindings are NOT captured
+6. **Backend-Specific Operations** (backend-lowering.md §3): Taking function address requires `llvm.mlir.addressof`, struct manipulation requires `llvm.insertvalue`/`llvm.extractvalue`
+
+### Spec Gap Identified and Addressed
+
+**Gap**: The original `seq-representation.md` covered PRD-15 (seq expressions) but NOT PRD-16 (Seq module operations).
+
+**Resolution**: Created `spec/drafts/seq-operations-representation.md` covering:
+- Wrapper sequence structures
+- Copy semantics rationale
+- Composition (nested struct) model
+- MoveNext algorithm specifications
+- SSA cost formulas
+
+---
 
 ## 1. Executive Summary
 
@@ -793,61 +911,350 @@ llvm.func @fold_sum(%folder: !folder_closure, %initial: i32, %seq_val: !seq_type
 }
 ```
 
-## 7. Validation
+## 7. Validation and Sample Coverage Requirements
 
-### 7.1 Sample Code
+> **CRITICAL**: The sample MUST exercise ALL feature variants. Incomplete samples lead to incomplete implementations.
+
+### 7.1 Sample Structure Overview
+
+Sample 16 (`16_SeqOperations`) must comprehensively test:
+
+| Part | Feature Area | Coverage Goal |
+|------|--------------|---------------|
+| 1 | Source sequences | PRD-15 constructs as inputs |
+| 2 | Seq.map | No-capture and with-capture variants |
+| 3 | Seq.filter | No-capture and with-capture variants |
+| 4 | Seq.take | Normal case and edge cases |
+| 5 | Seq.fold | No-capture and with-capture variants |
+| 6 | Composed pipelines (no captures) | Multiple operation chains |
+| 7 | Manual comparison | Verify equivalence |
+| **8** | **Closures with captures** | **CRITICAL: Tests flat closure model** |
+| **9** | **Seq.collect (flatMap)** | **Nested sequence production** |
+| **10** | **Composed pipelines with captures** | **Full integration test** |
+| **11** | **Edge cases** | **Empty, single, boundary conditions** |
+| **12** | **Deep composition** | **3+ operations chained** |
+
+### 7.2 Part-by-Part Test Specifications
+
+#### Part 1: Source Sequences (PRD-15 Foundation)
+```fsharp
+let range (start: int) (stop: int) = seq { ... }
+let naturals (n: int) = range 1 n
+```
+**Purpose**: Establish PRD-15 sequences as inputs for transformation operations.
+
+#### Part 2: Seq.map - Basic (No Captures)
+```fsharp
+let doubled = Seq.map (fun x -> x * 2) (naturals 5)      // Expected: 2 4 6 8 10
+let squared = Seq.map (fun x -> x * x) (naturals 5)      // Expected: 1 4 9 16 25
+let addTen = Seq.map (fun x -> x + 10) (naturals 5)      // Expected: 11 12 13 14 15
+```
+**Validates**: Basic transformation with inline computation.
+
+#### Part 3: Seq.filter - Basic (No Captures)
+```fsharp
+let evens = Seq.filter (fun x -> x % 2 = 0) (naturals 10)       // Expected: 2 4 6 8 10
+let odds = Seq.filter (fun x -> x % 2 = 1) (naturals 10)        // Expected: 1 3 5 7 9
+let greaterThan5 = Seq.filter (fun x -> x > 5) (naturals 10)    // Expected: 6 7 8 9 10
+```
+**Validates**: Predicate filtering with inline conditions.
+
+#### Part 4: Seq.take
+```fsharp
+let firstThree = Seq.take 3 (naturals 100)    // Expected: 1 2 3
+let exactlyFive = Seq.take 5 (naturals 5)     // Expected: 1 2 3 4 5 (boundary)
+let takeMoreThanAvailable = Seq.take 10 (naturals 3)  // Expected: 1 2 3 (graceful)
+```
+**Validates**: Count limiting with boundary conditions.
+
+#### Part 5: Seq.fold - Basic (No Captures)
+```fsharp
+let sum = Seq.fold (fun acc x -> acc + x) 0 (naturals 10)           // Expected: 55
+let product = Seq.fold (fun acc x -> acc * x) 1 (naturals 5)        // Expected: 120
+let findMax = Seq.fold (fun acc x -> if x > acc then x else acc) 0 (naturals 10)  // Expected: 10
+let countElements = Seq.fold (fun acc _ -> acc + 1) 0 (naturals 10) // Expected: 10
+```
+**Validates**: Eager consumption with various accumulation patterns.
+
+#### Part 6: Composed Pipelines (No Captures)
+```fsharp
+let evensSquared = naturals 10 |> Seq.filter (fun x -> x % 2 = 0) |> Seq.map (fun x -> x * x)
+// Expected: 4 16 36 64 100
+
+let squaresOver10 = naturals 10 |> Seq.map (fun x -> x * x) |> Seq.filter (fun x -> x > 10)
+// Expected: 16 25 36 49 64 81 100
+
+let first3EvensDoubled = naturals 100 
+    |> Seq.filter (fun x -> x % 2 = 0) 
+    |> Seq.map (fun x -> x * 2) 
+    |> Seq.take 3
+// Expected: 4 8 12
+
+let sumEvenSquares = naturals 10 
+    |> Seq.filter (fun x -> x % 2 = 0) 
+    |> Seq.map (fun x -> x * x) 
+    |> Seq.fold (fun acc x -> acc + x) 0
+// Expected: 220 (4+16+36+64+100)
+```
+**Validates**: Multiple operations compose correctly with nested structs.
+
+#### Part 7: Manual Comparison
+```fsharp
+let manualSum (s: seq<int>) : int = ...
+let manualCount (s: seq<int>) : int = ...
+```
+**Validates**: Seq.fold behaves equivalently to manual for-loop consumption.
+
+#### Part 8: Closures with Captures (CRITICAL)
+
+> **This part exercises the flat closure model. Without it, capture handling is untested.**
 
 ```fsharp
-module SeqOperationsSample
+// === Seq.map with captured value ===
+let scale (factor: int) (xs: seq<int>) = 
+    Seq.map (fun x -> x * factor) xs  // 'factor' is captured
 
-let numbers = seq {
-    let mutable i = 1
-    while i <= 10 do
-        yield i
-        i <- i + 1
-}
+let scaledBy3 = scale 3 (naturals 5)
+// Expected: 3 6 9 12 15
 
-[<EntryPoint>]
-let main _ =
-    Console.writeln "=== Seq Operations Test ==="
+let scaledBy7 = scale 7 (naturals 3)
+// Expected: 7 14 21
 
-    Console.writeln "--- Seq.map ---"
-    let doubled = Seq.map (fun x -> x * 2) numbers
-    for x in Seq.take 5 doubled do
-        Console.writeln (Format.int x)
+// === Seq.filter with captured value ===
+let aboveThreshold (threshold: int) (xs: seq<int>) =
+    Seq.filter (fun x -> x > threshold) xs  // 'threshold' is captured
 
-    Console.writeln "--- Seq.filter ---"
-    let evens = Seq.filter (fun x -> x % 2 = 0) numbers
-    for x in evens do
-        Console.writeln (Format.int x)
+let above5 = aboveThreshold 5 (naturals 10)
+// Expected: 6 7 8 9 10
 
-    Console.writeln "--- Seq.fold ---"
-    let sum = Seq.fold (fun acc x -> acc + x) 0 numbers
-    Console.write "Sum: "
-    Console.writeln (Format.int sum)
+let above0 = aboveThreshold 0 (naturals 5)
+// Expected: 1 2 3 4 5
 
-    0
+// === Seq.fold with captured value ===
+let sumWithOffset (offset: int) (xs: seq<int>) =
+    Seq.fold (fun acc x -> acc + x + offset) 0 xs  // 'offset' captured in folder
+
+let sumPlus10Each = sumWithOffset 10 (naturals 5)
+// Expected: 65 (1+10 + 2+10 + 3+10 + 4+10 + 5+10 = 15 + 50)
+
+// === Multiple captures ===
+let rangeTransform (lo: int) (hi: int) (xs: seq<int>) =
+    Seq.map (fun x -> x * lo + hi) xs  // Both 'lo' and 'hi' captured
+
+let transformed = rangeTransform 2 100 (naturals 3)
+// Expected: 102 104 106
 ```
 
-### 7.2 Expected Output
+**Validates**: 
+- Flat closure struct includes capture fields
+- Capture extraction at invocation time
+- Multiple captures work correctly
+- Captures don't interfere with inner seq state
+
+#### Part 9: Seq.collect (flatMap)
+
+```fsharp
+// === Basic flatMap ===
+let expandDouble = Seq.collect (fun x -> seq { yield x; yield x * 2 }) (naturals 3)
+// Expected: 1 2 2 4 3 6
+
+let expandTriple = Seq.collect (fun x -> seq { yield x; yield x; yield x }) (naturals 2)
+// Expected: 1 1 1 2 2 2
+
+// === flatMap with captured value ===
+let expandWithFactor (factor: int) (xs: seq<int>) =
+    Seq.collect (fun x -> seq { yield x; yield x * factor }) xs
+
+let expandBy10 = expandWithFactor 10 (naturals 3)
+// Expected: 1 10 2 20 3 30
+
+// === flatMap producing variable-length sequences ===
+let repeat (xs: seq<int>) =
+    Seq.collect (fun x -> seq {
+        let mutable i = 0
+        while i < x do
+            yield x
+            i <- i + 1
+    }) xs
+
+let repeated = repeat (range 1 4)
+// Expected: 1  2 2  3 3 3  4 4 4 4
+```
+
+**Validates**:
+- Inner sequence production from mapper
+- Nested iteration (outer advances only after inner exhausted)
+- Captures in the mapper that produces sequences
+
+#### Part 10: Composed Pipelines with Captures
+
+```fsharp
+// === Pipeline where each operation captures ===
+let complexPipeline (threshold: int) (multiplier: int) (count: int) =
+    naturals 20
+    |> Seq.filter (fun x -> x > threshold)      // captures 'threshold'
+    |> Seq.map (fun x -> x * multiplier)        // captures 'multiplier'
+    |> Seq.take count                            // captures 'count'
+
+let result1 = complexPipeline 5 2 5
+// naturals 20 = 1..20
+// filter > 5 = 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+// map * 2 = 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40
+// take 5 = 12 14 16 18 20
+// Expected: 12 14 16 18 20
+
+// === Fold at the end with captures throughout ===
+let sumFilteredScaled (minVal: int) (factor: int) (xs: seq<int>) =
+    xs
+    |> Seq.filter (fun x -> x >= minVal)
+    |> Seq.map (fun x -> x * factor)
+    |> Seq.fold (fun acc x -> acc + x) 0
+
+let total = sumFilteredScaled 3 10 (naturals 5)
+// filter >= 3: 3 4 5
+// map * 10: 30 40 50
+// fold sum: 120
+// Expected: 120
+```
+
+**Validates**:
+- Each wrapper correctly captures its own closure
+- Nested struct contains multiple closure instances
+- Captures from different pipeline stages don't interfere
+
+#### Part 11: Edge Cases
+
+```fsharp
+// === Empty source sequence ===
+let emptySource = seq { if false then yield 0 }
+let mapEmpty = Seq.map (fun x -> x * 2) emptySource
+let filterEmpty = Seq.filter (fun x -> x > 0) emptySource
+let foldEmpty = Seq.fold (fun acc x -> acc + x) 42 emptySource
+// Expected: mapEmpty yields nothing, filterEmpty yields nothing, foldEmpty = 42
+
+// === Single element ===
+let singleElement = seq { yield 99 }
+let mapSingle = Seq.map (fun x -> x + 1) singleElement
+// Expected: 100
+
+// === Filter removes all ===
+let filterNone = Seq.filter (fun x -> x > 100) (naturals 10)
+// Expected: (empty)
+
+// === Take zero ===
+let takeZero = Seq.take 0 (naturals 10)
+// Expected: (empty)
+
+// === Take from empty ===
+let takeFromEmpty = Seq.take 5 emptySource
+// Expected: (empty)
+```
+
+**Validates**: Boundary conditions handled gracefully without crashes.
+
+#### Part 12: Deep Composition (3+ Operations)
+
+```fsharp
+// === Four operations chained ===
+let deepPipeline1 =
+    naturals 50
+    |> Seq.filter (fun x -> x % 2 = 0)    // evens: 2 4 6 8 ... 50
+    |> Seq.map (fun x -> x / 2)           // halved: 1 2 3 4 ... 25
+    |> Seq.filter (fun x -> x % 3 = 0)    // div by 3: 3 6 9 12 15 18 21 24
+    |> Seq.take 5
+// Expected: 3 6 9 12 15
+
+// === Five operations with fold ===
+let deepPipelineWithFold =
+    naturals 100
+    |> Seq.filter (fun x -> x % 5 = 0)    // 5 10 15 20 ... 100 (20 elements)
+    |> Seq.map (fun x -> x * 2)           // 10 20 30 40 ... 200
+    |> Seq.filter (fun x -> x > 50)       // 60 70 80 ... 200 (15 elements)
+    |> Seq.take 5                          // 60 70 80 90 100
+    |> Seq.fold (fun acc x -> acc + x) 0
+// Expected: 400 (60+70+80+90+100)
+```
+
+**Validates**: Struct nesting works correctly at depth 4-5.
+
+### 7.3 Complete Expected Output Summary
 
 ```
-=== Seq Operations Test ===
---- Seq.map ---
-2
-4
-6
-8
-10
---- Seq.filter ---
-2
-4
-6
-8
-10
---- Seq.fold ---
-Sum: 55
+=== Sample 16: Sequence Operations ===
+
+--- Part 2: Seq.map ---
+naturals 5: 1 2 3 4 5
+doubled (x*2): 2 4 6 8 10
+squared (x*x): 1 4 9 16 25
+addTen (x+10): 11 12 13 14 15
+
+--- Part 3: Seq.filter ---
+evens from 1..10: 2 4 6 8 10
+odds from 1..10: 1 3 5 7 9
+greaterThan5 from 1..10: 6 7 8 9 10
+
+--- Part 4: Seq.take ---
+firstThree from 1..100: 1 2 3
+exactlyFive from 1..5: 1 2 3 4 5
+takeMoreThanAvailable: 1 2 3
+
+--- Part 5: Seq.fold ---
+sum of 1..10: 55
+product of 1..5: 120
+max of 1..10: 10
+count of 1..10: 10
+
+--- Part 6: Composed Operations ---
+evensSquared: 4 16 36 64 100
+squaresOver10: 16 25 36 49 64 81 100
+first3EvensDoubled: 4 8 12
+sumEvenSquares: 220
+
+--- Part 7: Manual vs Seq.fold ---
+manualSum 1..10: 55
+manualCount 1..10: 10
+
+--- Part 8: Closures with Captures ---
+scaledBy3: 3 6 9 12 15
+scaledBy7: 7 14 21
+above5: 6 7 8 9 10
+above0: 1 2 3 4 5
+sumPlus10Each: 65
+transformed (2*x+100): 102 104 106
+
+--- Part 9: Seq.collect ---
+expandDouble: 1 2 2 4 3 6
+expandTriple: 1 1 1 2 2 2
+expandBy10: 1 10 2 20 3 30
+repeated: 1 2 2 3 3 3 4 4 4 4
+
+--- Part 10: Composed with Captures ---
+complexPipeline 5 2 5: 12 14 16 18 20
+sumFilteredScaled 3 10: 120
+
+--- Part 11: Edge Cases ---
+mapEmpty: (done)
+filterEmpty: (done)
+foldEmpty: 42
+mapSingle: 100
+filterNone: (done)
+takeZero: (done)
+takeFromEmpty: (done)
+
+--- Part 12: Deep Composition ---
+deepPipeline1: 3 6 9 12 15
+deepPipelineWithFold: 400
 ```
+
+### 7.4 Validation Checklist
+
+- [ ] **Parts 1-7**: All basic operations work with no-capture lambdas
+- [ ] **Part 8**: Closure with captures works for map, filter, fold
+- [ ] **Part 9**: Seq.collect (flatMap) works with nested iteration
+- [ ] **Part 10**: Composed pipelines with captures don't interfere
+- [ ] **Part 11**: All edge cases handled gracefully
+- [ ] **Part 12**: Deep composition (4-5 operations) works correctly
+- [ ] **Regression**: Samples 01-15 still pass
 
 ## 8. Implementation Checklist
 
