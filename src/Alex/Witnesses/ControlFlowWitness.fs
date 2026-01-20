@@ -17,10 +17,26 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.PSGZipper
+open Alex.Traversal.TransferTypes
 open Alex.CodeGeneration.TypeMapping
 
 module SCF = Alex.Dialects.SCF.Templates
 module MutAnalysis = PSGElaboration.MutabilityAnalysis
+module SSAAssignment = PSGElaboration.SSAAssignment
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS (WitnessContext accessors)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get all pre-assigned SSAs for a node
+let private requireNodeSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
+    match SSAAssignment.lookupSSAs nodeId ctx.Coeffects.SSA with
+    | Some ssas -> ssas
+    | None -> failwithf "No SSAs for node %A" nodeId
+
+/// Recall the result (SSA, type) for a previously-processed node
+let private recallNodeResult (nodeId: NodeId) (ctx: WitnessContext) : (SSA * MLIRType) option =
+    MLIRAccumulator.recallNode (NodeId.value nodeId) ctx.Accumulator
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE HELPERS
@@ -43,12 +59,12 @@ let private isUnitType (ty: NativeType) : bool =
 /// Returns the result of the last expression.
 /// NOTE: Sequential does NOT produce its own SSA - it passes through the last child's result.
 /// We use recallNodeResult (from NodeBindings) because that's the actual emitted SSA.
-let witnessSequential (z: PSGZipper) (nodeIds: NodeId list) : MLIROp list * TransferResult =
+let witnessSequential (ctx: WitnessContext) (nodeIds: NodeId list) : MLIROp list * TransferResult =
     match List.tryLast nodeIds with
     | Some lastId ->
         // Use recallNodeResult to get the ACTUAL emitted SSA (from NodeBindings),
         // not lookupNodeSSA which gets the pre-assigned SSA.
-        match recallNodeResult (NodeId.value lastId) z with
+        match recallNodeResult lastId ctx with
         | Some (ssa, ty) ->
             // Pass through the last child's result
             [], TRValue { SSA = ssa; Type = ty }
@@ -67,7 +83,7 @@ let witnessSequential (z: PSGZipper) (nodeIds: NodeId list) : MLIROp list * Tran
 /// Uses pre-assigned SSAs: result[0], thenZero[1], elseZero[2]
 let witnessIfThenElse
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (condSSA: SSA)
     (thenOps: MLIROp list)
     (thenResultSSA: SSA option)
@@ -77,7 +93,7 @@ let witnessIfThenElse
     : MLIROp list * TransferResult =
 
     // Get pre-assigned SSAs for IfThenElse: result[0], thenZero[1], elseZero[2]
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
 
     // Build then region with yield
     let thenYieldOps =
@@ -128,7 +144,7 @@ let witnessIfThenElse
 /// Note: When iterArgs is implemented via coeffects, SSAs for result will be pre-assigned
 let witnessWhileLoop
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (condOps: MLIROp list)
     (condResultSSA: SSA)
     (bodyOps: MLIROp list)
@@ -148,7 +164,7 @@ let witnessWhileLoop
     let resultSSAs =
         if List.isEmpty iterArgs then []
         else
-            let ssas = requireNodeSSAs nodeId z
+            let ssas = requireNodeSSAs nodeId ctx
             iterArgs |> List.mapi (fun i _ -> ssas.[i])
 
     let whileOp = SCFOp.While (resultSSAs, condRegion, bodyRegion, iterArgs)
@@ -167,7 +183,7 @@ let witnessWhileLoop
 /// Note: ivSSA and stepSSA come from ForLoop node's pre-assigned SSAs
 let witnessForLoop
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (ivSSA: SSA)
     (startSSA: SSA)
     (stopSSA: SSA)
@@ -186,7 +202,7 @@ let witnessForLoop
     let resultSSAs =
         if List.isEmpty iterArgs then []
         else
-            let ssas = requireNodeSSAs nodeId z
+            let ssas = requireNodeSSAs nodeId ctx
             iterArgs |> List.mapi (fun i _ -> ssas.[2 + i])
 
     let forOp = SCFOp.For (resultSSAs, ivSSA, startSSA, stopSSA, stepSSA, bodyRegion, iterArgs)
@@ -235,7 +251,7 @@ let private requiresTagComparison (pattern: Pattern) : bool =
 /// Uses pre-assigned SSAs for all intermediates
 let witnessMatch
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (scrutineeSSA: SSA)
     (scrutineeType: MLIRType)
     (cases: (Pattern * SSA option * MLIROp list * SSA option) list)  // (pattern, guardSSA, ops, resultSSA)
@@ -243,7 +259,7 @@ let witnessMatch
     : MLIROp list * TransferResult =
 
     // Get pre-assigned SSAs for match
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]

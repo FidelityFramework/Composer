@@ -20,7 +20,7 @@ open Alex.Bindings.PlatformTypes
 module SyscallBindings = Alex.Bindings.SyscallBindings
 module PlatformHelpers = Alex.Bindings.PlatformHelpers
 open Core.FNCS.Integration
-open Alex.Traversal.FNCSTransfer
+open Alex.Traversal.MLIRTransfer
 
 // FNCS Project module - unified project loading
 open FSharp.Native.Compiler.Project

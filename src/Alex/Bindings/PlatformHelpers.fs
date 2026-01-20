@@ -12,9 +12,11 @@ open Alex.Dialects.Core.Types
 open Alex.Dialects.Arith.Templates
 open Alex.Dialects.LLVM.Templates
 open Alex.Dialects.SCF.Templates
-open Alex.Traversal.PSGZipper
 open Alex.Bindings.PlatformTypes
 open Alex.Bindings.BindingTypes
+
+// SSA lookup alias from BindingTypes
+module SSALookup = PSGElaboration.SSAAssignment
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helper Names
@@ -480,18 +482,23 @@ let buildStringContainsCharFunc () : FuncOp =
 let mutable private registeredHelpers : Set<string> = Set.empty
 let mutable private registeredExterns : Set<string> = Set.empty
 
-let private ensureHelper (name: string) (builder: unit -> FuncOp) (z: PSGZipper) : MLIROp list =
+/// Ensure a helper function definition is returned (once per session)
+/// Returns the helper ops if not yet registered, empty list if already registered
+let private ensureHelper (name: string) (builder: unit -> FuncOp) : MLIROp list =
     if registeredHelpers.Contains name then
         []
     else
         registeredHelpers <- registeredHelpers.Add name
         [MLIROp.FuncOp (builder ())]
 
-/// Ensure an extern function declaration is emitted to TopLevel (once)
-let private ensureExternDecl (name: string) (argTypes: MLIRType list) (retTy: MLIRType) (z: PSGZipper) : unit =
-    if not (registeredExterns.Contains name) then
+/// Ensure an extern function declaration is returned (once per session)
+/// Returns the extern decl op if not yet registered, empty list if already registered
+let private ensureExternDecl (name: string) (argTypes: MLIRType list) (retTy: MLIRType) : MLIROp list =
+    if registeredExterns.Contains name then
+        []
+    else
         registeredExterns <- registeredExterns.Add name
-        emitTopLevel (MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, Private))) z
+        [MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, Private))]
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BINDINGS FOR HELPER CALLS
@@ -502,37 +509,37 @@ let inline val' ssa ty : Val = { SSA = ssa; Type = ty }
 
 /// Emit call to fidelity_parse_int
 /// Uses pre-assigned SSA from Application node
-let bindParseInt (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindParseInt (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [str] ->
-        let helperOps = ensureHelper ParseIntHelper buildParseIntFunc z
-        let resultSSA = requireNodeSSA appNodeId z
+        let helperOps = ensureHelper ParseIntHelper buildParseIntFunc
+        let resultSSA = requireSSA appNodeId ssa
         let callOp = MLIROp.FuncOp (FuncCall (Some resultSSA, ParseIntHelper, [str], MLIRTypes.i64))
-        BoundOps (helperOps @ [callOp], Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+        BoundOps ([callOp], helperOps, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
     | _ ->
         NotSupported "parseint requires (string)"
 
 /// Emit call to fidelity_parse_float
 /// Uses pre-assigned SSA from Application node
-let bindParseFloat (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindParseFloat (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [str] ->
-        let helperOps = ensureHelper ParseFloatHelper buildParseFloatFunc z
-        let resultSSA = requireNodeSSA appNodeId z
+        let helperOps = ensureHelper ParseFloatHelper buildParseFloatFunc
+        let resultSSA = requireSSA appNodeId ssa
         let callOp = MLIROp.FuncOp (FuncCall (Some resultSSA, ParseFloatHelper, [str], MLIRTypes.f64))
-        BoundOps (helperOps @ [callOp], Some { SSA = resultSSA; Type = MLIRTypes.f64 })
+        BoundOps ([callOp], helperOps, Some { SSA = resultSSA; Type = MLIRTypes.f64 })
     | _ ->
         NotSupported "parsefloat requires (string)"
 
 /// Emit call to fidelity_string_contains_char
 /// Uses pre-assigned SSA from Application node
-let bindStringContainsChar (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindStringContainsChar (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [str; char'] ->
-        let helperOps = ensureHelper StringContainsCharHelper buildStringContainsCharFunc z
-        let resultSSA = requireNodeSSA appNodeId z
+        let helperOps = ensureHelper StringContainsCharHelper buildStringContainsCharFunc
+        let resultSSA = requireSSA appNodeId ssa
         let callOp = MLIROp.FuncOp (FuncCall (Some resultSSA, StringContainsCharHelper, [str; char'], MLIRTypes.i1))
-        BoundOps (helperOps @ [callOp], Some { SSA = resultSSA; Type = MLIRTypes.i1 })
+        BoundOps ([callOp], helperOps, Some { SSA = resultSSA; Type = MLIRTypes.i1 })
     | _ ->
         NotSupported "stringContainsChar requires (string, char)"
 
@@ -541,13 +548,13 @@ let bindStringContainsChar (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPri
 // These are more complex and will be added incrementally
 // ═══════════════════════════════════════════════════════════════════════════
 
-let bindBase64Encode (_appNodeId: NodeId) (_z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+let bindBase64Encode (_appNodeId: NodeId) (_ssa: SSALookup.SSAAssignment) (_prim: PlatformPrimitive) : BindingResult =
     NotSupported "base64Encode not yet implemented with structured ops"
 
-let bindBase64Decode (_appNodeId: NodeId) (_z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+let bindBase64Decode (_appNodeId: NodeId) (_ssa: SSALookup.SSAAssignment) (_prim: PlatformPrimitive) : BindingResult =
     NotSupported "base64Decode not yet implemented with structured ops"
 
-let bindSha1 (_appNodeId: NodeId) (_z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+let bindSha1 (_appNodeId: NodeId) (_ssa: SSALookup.SSAAssignment) (_prim: PlatformPrimitive) : BindingResult =
     NotSupported "sha1 not yet implemented with structured ops"
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -556,7 +563,7 @@ let bindSha1 (_appNodeId: NodeId) (_z: PSGZipper) (_prim: PlatformPrimitive) : B
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// DateTime.now - delegates to Sys.clock_gettime (returns ms since epoch)
-let bindDateTimeNow (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeNow (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (_prim: PlatformPrimitive) : BindingResult =
     // DateTime.now is identical to Sys.clock_gettime - just dispatch to it
     let sysPrim: PlatformPrimitive = {
         EntryPoint = "Sys.clock_gettime"
@@ -566,13 +573,13 @@ let bindDateTimeNow (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPrimitive
         ReturnType = MLIRTypes.i64
         BindingStrategy = Static
     }
-    PlatformDispatch.dispatch appNodeId z sysPrim
+    PlatformDispatch.dispatch appNodeId ssa sysPrim
 
 /// DateTime.hour - extract hour component (0-23) from ms since epoch
-let bindDateTimeHour (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeHour (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [msVal] ->
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
         // ms / 3600000 % 24
         let c3600000 = ssas.[0]
         let c24 = ssas.[1]
@@ -586,14 +593,14 @@ let bindDateTimeHour (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive
             MLIROp.ArithOp (ArithOp.RemSI (hoursDay, hoursFull, c24, MLIRTypes.i64))
             MLIROp.ArithOp (ArithOp.TruncI (hoursTrunc, hoursDay, MLIRTypes.i64, MLIRTypes.i32))
         ]
-        BoundOps (ops, Some { SSA = hoursTrunc; Type = MLIRTypes.i32 })
+        BoundOps (ops, [], Some { SSA = hoursTrunc; Type = MLIRTypes.i32 })
     | _ -> NotSupported "DateTime.hour requires 1 argument"
 
 /// DateTime.minute - extract minute component (0-59) from ms since epoch
-let bindDateTimeMinute (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeMinute (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [msVal] ->
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
         // ms / 60000 % 60
         let c60000 = ssas.[0]
         let c60 = ssas.[1]
@@ -607,14 +614,14 @@ let bindDateTimeMinute (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimiti
             MLIROp.ArithOp (ArithOp.RemSI (minsHour, minsFull, c60, MLIRTypes.i64))
             MLIROp.ArithOp (ArithOp.TruncI (minsTrunc, minsHour, MLIRTypes.i64, MLIRTypes.i32))
         ]
-        BoundOps (ops, Some { SSA = minsTrunc; Type = MLIRTypes.i32 })
+        BoundOps (ops, [], Some { SSA = minsTrunc; Type = MLIRTypes.i32 })
     | _ -> NotSupported "DateTime.minute requires 1 argument"
 
 /// DateTime.second - extract second component (0-59) from ms since epoch
-let bindDateTimeSecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeSecond (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [msVal] ->
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
         // ms / 1000 % 60
         let c1000 = ssas.[0]
         let c60 = ssas.[1]
@@ -628,14 +635,14 @@ let bindDateTimeSecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimiti
             MLIROp.ArithOp (ArithOp.RemSI (secsMin, secsFull, c60, MLIRTypes.i64))
             MLIROp.ArithOp (ArithOp.TruncI (secsTrunc, secsMin, MLIRTypes.i64, MLIRTypes.i32))
         ]
-        BoundOps (ops, Some { SSA = secsTrunc; Type = MLIRTypes.i32 })
+        BoundOps (ops, [], Some { SSA = secsTrunc; Type = MLIRTypes.i32 })
     | _ -> NotSupported "DateTime.second requires 1 argument"
 
 /// DateTime.millisecond - extract millisecond component (0-999) from ms since epoch
-let bindDateTimeMillisecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeMillisecond (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [msVal] ->
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
         // ms % 1000
         let c1000 = ssas.[0]
         let msRem = ssas.[1]
@@ -645,17 +652,17 @@ let bindDateTimeMillisecond (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPr
             MLIROp.ArithOp (ArithOp.RemSI (msRem, msVal.SSA, c1000, MLIRTypes.i64))
             MLIROp.ArithOp (ArithOp.TruncI (msTrunc, msRem, MLIRTypes.i64, MLIRTypes.i32))
         ]
-        BoundOps (ops, Some { SSA = msTrunc; Type = MLIRTypes.i32 })
+        BoundOps (ops, [], Some { SSA = msTrunc; Type = MLIRTypes.i32 })
     | _ -> NotSupported "DateTime.millisecond requires 1 argument"
 
 /// DateTime.utcOffset - get local timezone offset in seconds from UTC
 /// Uses libc localtime_r() to get tm_gmtoff from struct tm
 /// struct tm layout on Linux x86_64:
 ///   - 9 ints (36 bytes) + 4 padding = offset 40 for tm_gmtoff (long, 8 bytes)
-let bindDateTimeUtcOffset (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeUtcOffset (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (_prim: PlatformPrimitive) : BindingResult =
     // Ensure localtime_r is declared at module level: ptr localtime_r(ptr, ptr)
-    ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr z
-    let ssas = requireNodeSSAs appNodeId z
+    let externDecl = ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr
+    let ssas = requireSSAs appNodeId ssa
     // SSA allocation:
     // 0: const 1 for alloca
     // 1: time_t alloca (8 bytes)
@@ -740,18 +747,18 @@ let bindDateTimeUtcOffset (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPri
         // Truncate to i32 for return
         MLIROp.ArithOp (ArithOp.TruncI (resultSSA, gmtoffVal, MLIRTypes.i64, MLIRTypes.i32))
     ]
-    BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i32 })
+    BoundOps (ops, externDecl, Some { SSA = resultSSA; Type = MLIRTypes.i32 })
 
 /// DateTime.toLocal - convert UTC milliseconds to local milliseconds
 /// Adds the UTC offset (in seconds) * 1000 to the input
-let bindDateTimeToLocal (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeToLocal (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     // Ensure localtime_r is declared at module level
-    ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr z
+    let externDecl = ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr
     match prim.Args with
     | [utcMs] ->
         // Get UTC offset via the same mechanism as utcOffset
         // Then: localMs = utcMs + (offsetSeconds * 1000)
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
 
         // First get the offset (reuse utcOffset logic but inline it)
         let c1 = ssas.[0]
@@ -815,17 +822,17 @@ let bindDateTimeToLocal (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimit
             // Add offset to input
             MLIROp.ArithOp (ArithOp.AddI (resultSSA, utcMs.SSA, offsetMs, MLIRTypes.i64))
         ]
-        BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+        BoundOps (ops, externDecl, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
     | _ -> NotSupported "DateTime.toLocal requires 1 argument"
 
 /// DateTime.toUtc - convert local milliseconds to UTC milliseconds
 /// Subtracts the UTC offset (in seconds) * 1000 from the input
-let bindDateTimeToUtc (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let bindDateTimeToUtc (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     // Ensure localtime_r is declared at module level
-    ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr z
+    let externDecl = ensureExternDecl "localtime_r" [MLIRTypes.ptr; MLIRTypes.ptr] MLIRTypes.ptr
     match prim.Args with
     | [localMs] ->
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
 
         let c1 = ssas.[0]
         let timespecAlloca = ssas.[1]
@@ -886,7 +893,7 @@ let bindDateTimeToUtc (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitiv
             // Subtract offset from input
             MLIROp.ArithOp (ArithOp.SubI (resultSSA, localMs.SSA, offsetMs, MLIRTypes.i64))
         ]
-        BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+        BoundOps (ops, externDecl, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
     | _ -> NotSupported "DateTime.toUtc requires 1 argument"
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -18,7 +18,26 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.PSGZipper
+open Alex.Traversal.TransferTypes
 open Alex.CodeGeneration.TypeMapping
+
+module SSAAssignment = PSGElaboration.SSAAssignment
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS (WitnessContext accessors)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get all pre-assigned SSAs for a node
+let private requireNodeSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
+    match SSAAssignment.lookupSSAs nodeId ctx.Coeffects.SSA with
+    | Some ssas -> ssas
+    | None -> failwithf "No SSAs for node %A" nodeId
+
+/// Get single pre-assigned SSA for a node
+let private requireNodeSSA (nodeId: NodeId) (ctx: WitnessContext) : SSA =
+    match requireNodeSSAs nodeId ctx with
+    | [s] -> s
+    | ssas -> failwithf "Expected 1 SSA for node %A, got %d" nodeId (List.length ssas)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE HELPERS
@@ -39,14 +58,14 @@ let private isNativeStrType (ty: MLIRType) : bool =
 /// Uses 2 pre-assigned SSAs: gep[0], load[1]
 let witnessIndexGet
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (collSSA: SSA)
     (collType: MLIRType)
     (indexSSA: SSA)
     (elemType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
 
     // GEP to compute element address
     let ptrSSA = ssas.[0]
@@ -63,14 +82,14 @@ let witnessIndexGet
 /// Uses 1 pre-assigned SSA: gep[0]
 let witnessIndexSet
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (collSSA: SSA)
     (indexSSA: SSA)
     (valueSSA: SSA)
     (elemType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
 
     // GEP to compute element address
     let ptrSSA = ssas.[0]
@@ -91,7 +110,7 @@ let witnessIndexSet
 /// Uses up to 2 pre-assigned SSAs: const[0], alloca[1]
 let witnessAddressOf
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (exprSSA: SSA)
     (exprType: MLIRType)
     (isMutable: bool)
@@ -102,7 +121,7 @@ let witnessAddressOf
         // The SSA is the pointer to the mutable slot
         [], TRValue { SSA = exprSSA; Type = TPtr }
     else
-        let ssas = requireNodeSSAs nodeId z
+        let ssas = requireNodeSSAs nodeId ctx
         // Need to allocate stack space and store the value
         let oneSSA = ssas.[0]
         let allocaSSA = ssas.[1]
@@ -124,14 +143,14 @@ let witnessAddressOf
 /// Uses 1 pre-assigned SSA: extract[0]
 let witnessFieldGet
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (structSSA: SSA)
     (structType: MLIRType)
     (fieldIndex: int)
     (fieldType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let fieldSSA = requireNodeSSA nodeId z
+    let fieldSSA = requireNodeSSA nodeId ctx
     let extractOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (fieldSSA, structSSA, [fieldIndex], structType))
 
     [extractOp], TRValue { SSA = fieldSSA; Type = fieldType }
@@ -141,14 +160,14 @@ let witnessFieldGet
 /// Uses 1 pre-assigned SSA: extract[0]
 let witnessNestedFieldGet
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (structSSA: SSA)
     (structType: MLIRType)
     (indices: int list)
     (fieldType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let fieldSSA = requireNodeSSA nodeId z
+    let fieldSSA = requireNodeSSA nodeId ctx
     let extractOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (fieldSSA, structSSA, indices, structType))
 
     [extractOp], TRValue { SSA = fieldSSA; Type = fieldType }
@@ -158,14 +177,14 @@ let witnessNestedFieldGet
 /// Uses 1 pre-assigned SSA: insert[0]
 let witnessFieldSet
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (structSSA: SSA)
     (structType: MLIRType)
     (fieldIndex: int)
     (valueSSA: SSA)
     : MLIROp list * TransferResult =
 
-    let newStructSSA = requireNodeSSA nodeId z
+    let newStructSSA = requireNodeSSA nodeId ctx
     let insertOp = MLIROp.LLVMOp (LLVMOp.InsertValue (newStructSSA, structSSA, valueSSA, [fieldIndex], structType))
 
     [insertOp], TRValue { SSA = newStructSSA; Type = structType }
@@ -179,11 +198,11 @@ let witnessFieldSet
 /// Uses N+1 pre-assigned SSAs: undef[0], insert[1..N]
 let witnessTupleExpr
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (elements: Val list)
     : MLIROp list * TransferResult =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
     let elemTypes = elements |> List.map (fun v -> v.Type)
     let tupleType = TStruct elemTypes
 
@@ -212,12 +231,12 @@ let witnessTupleExpr
 /// Uses N+1 pre-assigned SSAs: undef[0], insert[1..N]
 let witnessRecordExpr
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (fields: (string * Val) list)
     (recordType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
 
     // Start with undef
     let undefSSA = ssas.[0]
@@ -240,7 +259,7 @@ let witnessRecordExpr
 /// Uses N pre-assigned SSAs for insertvalue operations (N = number of updated fields)
 let witnessRecordCopyUpdate
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (origVal: Val)
     (fieldDefs: (string * FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NativeType) list)
     (updatedFields: (string * Val) list)
@@ -251,7 +270,7 @@ let witnessRecordCopyUpdate
         // No updates - just return the original
         [], TRValue origVal
     else
-        let ssas = requireNodeSSAs nodeId z
+        let ssas = requireNodeSSAs nodeId ctx
 
         // Build map of field names to their indices
         let fieldIndexMap =
@@ -281,12 +300,12 @@ let witnessRecordCopyUpdate
 /// Uses 5 + 2*N pre-assigned SSAs: count[0], alloca[1], (idx,gep)*N, undef, withPtr, result
 let witnessArrayExpr
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (elements: Val list)
     (elemType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]
@@ -342,13 +361,13 @@ let witnessArrayExpr
 /// Uses same SSAs as witnessArrayExpr (delegates)
 let witnessListExpr
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (elements: Val list)
     (elemType: MLIRType)
     : MLIROp list * TransferResult =
 
     // Use same representation as arrays for now
-    witnessArrayExpr nodeId z elements elemType
+    witnessArrayExpr nodeId ctx elements elemType
 
 // ═══════════════════════════════════════════════════════════════════════════
 // UNION CASE CONSTRUCTION
@@ -361,13 +380,13 @@ let witnessListExpr
 /// Uses 3-5 pre-assigned SSAs depending on payload conversion needs
 let witnessUnionCase
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (tag: int)
     (payload: Val option)
     (unionType: MLIRType)
     : MLIROp list * TransferResult =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireNodeSSAs nodeId ctx
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]
@@ -558,7 +577,7 @@ let witnessTuplePatternExtract
 /// Uses 1 pre-assigned SSA: result[0]
 let witnessTraitCall
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     (receiverSSA: SSA)
     (receiverType: MLIRType)
     (memberName: string)
@@ -569,7 +588,7 @@ let witnessTraitCall
     // For method-like traits, this would need to generate a call
     // The specific implementation depends on the resolved member
 
-    let resultSSA = requireNodeSSA nodeId z
+    let resultSSA = requireNodeSSA nodeId ctx
 
     match memberName with
     | "Length" when isNativeStrType receiverType ->

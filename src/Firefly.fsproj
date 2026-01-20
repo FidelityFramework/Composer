@@ -72,10 +72,13 @@
       <Compile Include="PSGElaboration/PatternBindingAnalysis.fs" />
       <Compile Include="PSGElaboration/PreprocessingSerializer.fs" />
 
-      <!-- Alex Traversal - PSGZipper: Huet zipper with emission state -->
+      <!-- Alex Traversal - PSGZipper: Pure Huet zipper for navigation -->
       <Compile Include="Alex/Traversal/PSGZipper.fs" />
 
-      <!-- Alex Bindings - Base types (need PSGZipper for Binding type) -->
+      <!-- Alex Traversal - TransferTypes: Types witnesses receive (ctx: WitnessContext) -->
+      <Compile Include="Alex/Traversal/TransferTypes.fs" />
+
+      <!-- Alex Bindings - Base types -->
       <Compile Include="Alex/Bindings/BindingTypes.fs" />
       <Compile Include="Alex/Bindings/PlatformHelpers.fs" />
       <Compile Include="Alex/Bindings/SyscallBindings.fs" />
@@ -86,13 +89,11 @@
       <!-- Alex Patterns - Active patterns for semantic classification -->
       <Compile Include="Alex/Patterns/SemanticPatterns.fs" />
 
-
       <!-- Alex XParsec - Composable PSG pattern matchers -->
       <Compile Include="Alex/XParsec/PSGCombinators.fs" />
 
-      <!-- Alex Witnesses - Category-based MLIR generation (legacy, being migrated) -->
+      <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="Alex/Witnesses/LiteralWitness.fs" />
-      <Compile Include="Alex/Witnesses/BindingWitness.fs" />
       <!-- Application Witnesses (factored from ApplicationWitness.fs) -->
       <Compile Include="Alex/Witnesses/Application/Primitives.fs" />
       <Compile Include="Alex/Witnesses/Application/Format.fs" />
@@ -105,8 +106,8 @@
       <Compile Include="Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="Alex/Witnesses/LambdaWitness.fs" />
 
-      <!-- Alex Traversal - FNCS SemanticGraph → PSGZipper (witnessing fold) -->
-      <Compile Include="Alex/Traversal/FNCSTransfer.fs" />
+      <!-- Alex Traversal - MLIR Transfer via Zipper + XParsec (pull model) -->
+      <Compile Include="Alex/Traversal/MLIRTransfer.fs" />
 
       <!-- Alex Pipeline Types -->
       <Compile Include="Alex/Pipeline/CompilationTypes.fs" />

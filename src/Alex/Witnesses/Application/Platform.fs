@@ -13,34 +13,39 @@ module Alex.Witnesses.Application.Platform
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
 open Alex.Bindings.BindingTypes
+open Alex.Bindings.PlatformTypes
 open Alex.CodeGeneration.TypeMapping
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+
+// SSA lookup alias from BindingTypes
+module SSALookup = PSGElaboration.SSAAssignment
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RESULT CONVERSION
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Convert BindingResult to witness return format
-let private bindingResultToTransfer (result: BindingResult) : (MLIROp list * TransferResult) option =
+/// Returns (bodyOps, topLevelOps, result)
+let private bindingResultToTransfer (result: BindingResult) : (MLIROp list * MLIROp list * TransferResult) option =
     match result with
-    | BoundOps (ops, Some resultVal) ->
-        Some (ops, TRValue resultVal)
-    | BoundOps (ops, None) ->
-        Some (ops, TRVoid)
+    | BoundOps (ops, topLevelOps, Some resultVal) ->
+        Some (ops, topLevelOps, TRValue resultVal)
+    | BoundOps (ops, topLevelOps, None) ->
+        Some (ops, topLevelOps, TRVoid)
     | NotSupported _ ->
         None
 
 /// Convert BindingResult with error propagation
-let private bindingResultToTransferWithError (result: BindingResult) : MLIROp list * TransferResult =
+/// Returns (bodyOps, topLevelOps, result)
+let private bindingResultToTransferWithError (result: BindingResult) : MLIROp list * MLIROp list * TransferResult =
     match result with
-    | BoundOps (ops, Some resultVal) ->
-        ops, TRValue resultVal
-    | BoundOps (ops, None) ->
-        ops, TRVoid
+    | BoundOps (ops, topLevelOps, Some resultVal) ->
+        ops, topLevelOps, TRValue resultVal
+    | BoundOps (ops, topLevelOps, None) ->
+        ops, topLevelOps, TRVoid
     | NotSupported reason ->
-        [], TRError reason
+        [], [], TRError reason
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM BINDING DISPATCH
@@ -48,14 +53,14 @@ let private bindingResultToTransferWithError (result: BindingResult) : MLIROp li
 
 /// Witness a platform binding operation
 /// Entry point for SemanticKind.PlatformBinding nodes
-/// Uses pre-assigned SSAs from Application node
+/// Uses pre-assigned SSAs from SSAAssignment coeffects
 let witnessPlatformBinding
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSALookup.SSAAssignment)
     (entryPoint: string)
     (args: Val list)
     (returnType: MLIRType)
-    : (MLIROp list * TransferResult) option =
+    : (MLIROp list * MLIROp list * TransferResult) option =
 
     let prim: PlatformPrimitive = {
         EntryPoint = entryPoint
@@ -66,18 +71,18 @@ let witnessPlatformBinding
         BindingStrategy = Static
     }
 
-    let result = PlatformDispatch.dispatch appNodeId z prim
+    let result = PlatformDispatch.dispatch appNodeId ssa prim
     bindingResultToTransfer result
 
 /// Witness a platform binding, returning error on failure
-/// Uses pre-assigned SSAs from Application node
+/// Uses pre-assigned SSAs from SSAAssignment coeffects
 let witnessPlatformBindingRequired
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSALookup.SSAAssignment)
     (entryPoint: string)
     (args: Val list)
     (returnType: MLIRType)
-    : MLIROp list * TransferResult =
+    : MLIROp list * MLIROp list * TransferResult =
 
     let prim: PlatformPrimitive = {
         EntryPoint = entryPoint
@@ -88,7 +93,7 @@ let witnessPlatformBindingRequired
         BindingStrategy = Static
     }
 
-    let result = PlatformDispatch.dispatch appNodeId z prim
+    let result = PlatformDispatch.dispatch appNodeId ssa prim
     bindingResultToTransferWithError result
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -100,11 +105,11 @@ let witnessPlatformBindingRequired
 /// This is a THIN ADAPTER - syscall logic lives in Bindings/SyscallBindings.fs
 let witnessSysOp
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSALookup.SSAAssignment)
     (opName: string)
     (args: Val list)
     (returnType: MLIRType)
-    : (MLIROp list * TransferResult) option =
+    : (MLIROp list * MLIROp list * TransferResult) option =
 
     // Build entry point as "Sys.{opName}" for dispatch lookup
     let entryPoint = $"Sys.{opName}"
@@ -118,7 +123,7 @@ let witnessSysOp
         BindingStrategy = Static
     }
 
-    let result = PlatformDispatch.dispatch appNodeId z prim
+    let result = PlatformDispatch.dispatch appNodeId ssa prim
     bindingResultToTransfer result
 
 // NOTE: witnessConsoleOp removed - Console is NOT an intrinsic
@@ -131,15 +136,16 @@ let witnessSysOp
 
 /// Witness with NativeType conversion
 /// Uses TypeMapping.mapNativeType for authoritative type mapping
-/// Uses pre-assigned SSAs from Application node
+/// Uses pre-assigned SSAs from SSAAssignment coeffects
 let witnessPlatformBindingNative
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSALookup.SSAAssignment)
+    (arch: Architecture)
     (entryPoint: string)
     (args: Val list)
     (returnType: NativeType)
-    : (MLIROp list * TransferResult) option =
+    : (MLIROp list * MLIROp list * TransferResult) option =
 
-    let mlirReturnType = mapNativeTypeForArch z.State.Platform.TargetArch returnType
-    witnessPlatformBinding appNodeId z entryPoint args mlirReturnType
+    let mlirReturnType = mapNativeTypeForArch arch returnType
+    witnessPlatformBinding appNodeId ssa entryPoint args mlirReturnType
 

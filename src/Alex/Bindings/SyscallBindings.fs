@@ -9,9 +9,11 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
 open Alex.Bindings.PlatformTypes
 open Alex.Bindings.BindingTypes
+
+// SSA lookup alias from BindingTypes
+module SSALookup = PSGElaboration.SSAAssignment
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LINUX X86_64 SYSCALL NUMBERS
@@ -42,14 +44,14 @@ let private syscall2ArgConstraints = "={rax},{rax},{rdi},{rsi},~{rcx},~{r11},~{m
 /// Linux syscall 1 = write(fd, buf, count)
 /// ARCHITECTURAL NOTE: The syscall returns i64 (ssize_t on LP64).
 /// prim.ReturnType MUST match - if it doesn't, that's a type system bug to surface.
-let private bindSysWrite (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let private bindSysWrite (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     // Type check: syscall returns i64, FNCS should resolve int → i64 on 64-bit
     if prim.ReturnType <> MLIRTypes.i64 then
         NotSupported $"Sys.write return type mismatch: expected i64 (ssize_t), got {prim.ReturnType}. Check FNCS type resolution for 'int' on this platform."
     else
         match prim.Args with
         | [fdVal; ptrVal; lenVal] ->
-            let ssas = requireNodeSSAs appNodeId z
+            let ssas = requireSSAs appNodeId ssa
             // SSAs: syscallNum[0], resultSSA[1], fdExt[2], lenExt[3]
             let syscallNum = ssas.[0]
             let resultSSA = ssas.[1]
@@ -87,7 +89,7 @@ let private bindSysWrite (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimi
                         true,
                         false))
                 ]
-            BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+            BoundOps (ops, [], Some { SSA = resultSSA; Type = MLIRTypes.i64 })
         | _ ->
             NotSupported "Sys.write requires 3 arguments: fd, ptr, len"
 
@@ -95,14 +97,14 @@ let private bindSysWrite (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimi
 /// Linux syscall 0 = read(fd, buf, count)
 /// ARCHITECTURAL NOTE: The syscall returns i64 (ssize_t on LP64).
 /// prim.ReturnType MUST match - if it doesn't, that's a type system bug to surface.
-let private bindSysRead (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let private bindSysRead (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     // Type check: syscall returns i64, FNCS should resolve int → i64 on 64-bit
     if prim.ReturnType <> MLIRTypes.i64 then
         NotSupported $"Sys.read return type mismatch: expected i64 (ssize_t), got {prim.ReturnType}. Check FNCS type resolution for 'int' on this platform."
     else
         match prim.Args with
         | [fdVal; ptrVal; lenVal] ->
-            let ssas = requireNodeSSAs appNodeId z
+            let ssas = requireSSAs appNodeId ssa
             // SSAs: syscallNum[0], resultSSA[1], fdExt[2], lenExt[3]
             let syscallNum = ssas.[0]
             let resultSSA = ssas.[1]
@@ -140,15 +142,15 @@ let private bindSysRead (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimit
                         true,
                         false))
                 ]
-            BoundOps (ops, Some { SSA = resultSSA; Type = MLIRTypes.i64 })
+            BoundOps (ops, [], Some { SSA = resultSSA; Type = MLIRTypes.i64 })
         | _ ->
             NotSupported "Sys.read requires 3 arguments: fd, ptr, len"
 
 /// Sys.clock_gettime: unit -> int64
 /// Linux syscall 228 = clock_gettime(clockid, timespec*)
 /// Returns milliseconds since epoch as int64: (tv_sec * 1000) + (tv_nsec / 1_000_000)
-let private bindSysClockGettime (appNodeId: NodeId) (z: PSGZipper) (_prim: PlatformPrimitive) : BindingResult =
-    let ssas = requireNodeSSAs appNodeId z
+let private bindSysClockGettime (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (_prim: PlatformPrimitive) : BindingResult =
+    let ssas = requireSSAs appNodeId ssa
     // SSAs: clockId[0], one[1], allocaSSA[2], syscallNum[3], resultSSA[4],
     //       structVal[5], secVal[6], nsecVal[7],
     //       thousand[8], million[9], secMs[10], nsecMs[11], totalMs[12]
@@ -200,15 +202,15 @@ let private bindSysClockGettime (appNodeId: NodeId) (z: PSGZipper) (_prim: Platf
         MLIROp.ArithOp (ArithOp.AddI (totalMs, secMs, nsecMs, MLIRTypes.i64))
     ]
     // Return total milliseconds since epoch
-    BoundOps (ops, Some { SSA = totalMs; Type = MLIRTypes.i64 })
+    BoundOps (ops, [], Some { SSA = totalMs; Type = MLIRTypes.i64 })
 
 /// Sys.nanosleep: int64 -> unit
 /// Linux syscall 35 = nanosleep(timespec*, timespec*)
 /// Takes nanoseconds to sleep, converts to timespec internally
-let private bindSysNanosleep (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformPrimitive) : BindingResult =
+let private bindSysNanosleep (appNodeId: NodeId) (ssa: SSALookup.SSAAssignment) (prim: PlatformPrimitive) : BindingResult =
     match prim.Args with
     | [nsVal] ->
-        let ssas = requireNodeSSAs appNodeId z
+        let ssas = requireSSAs appNodeId ssa
         // SSAs: nsExt[0], one[1], allocaSSA[2], billion[3], secCalc[4], nsecCalc[5],
         //       idx0[6], secPtr[7], idx1[8], nsecPtr[9], nullPtr[10], syscallNum[11], resultSSA[12]
         let nsExt = ssas.[0]
@@ -272,7 +274,7 @@ let private bindSysNanosleep (appNodeId: NodeId) (z: PSGZipper) (prim: PlatformP
                 true,
                 false))
         ]
-        BoundOps (ops, None)  // Returns unit
+        BoundOps (ops, [], None)  // Returns unit
     | _ ->
         NotSupported "Sys.nanosleep requires 1 argument: nanoseconds"
 

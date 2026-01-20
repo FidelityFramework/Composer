@@ -42,7 +42,18 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
+
+module SSAAssign = PSGElaboration.SSAAssignment
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSA HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get pre-assigned SSAs for a node, fail if not found
+let private requireSSAs (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA list =
+    match SSAAssign.lookupSSAs nodeId ssa with
+    | Some ssas -> ssas
+    | None -> failwithf "No SSAs for node %A" nodeId
 
 // Module aliases for dialect templates
 module CF = Alex.Dialects.CF.Templates
@@ -195,7 +206,7 @@ let storeStructVarSSACost : int = 1
 ///   - N: insert each capture
 let witnessSeqCreate
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (moveNextName: string)
     (elementType: MLIRType)
     (captureVals: Val list)
@@ -203,7 +214,7 @@ let witnessSeqCreate
 
     let captureTypes = captureVals |> List.map (fun v -> v.Type)
     let seqType = seqStructType elementType captureTypes
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
 
     // Pre-assigned SSAs (from SSAAssignment coeffect)
     let zeroSSA = ssas.[0]
@@ -268,7 +279,7 @@ let witnessSeqCreate
 /// SSA cost: 5 + numCaptures + numInternalState
 let witnessSeqCreateFull
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (moveNextName: string)
     (elementType: MLIRType)
     (captureVals: Val list)
@@ -277,7 +288,7 @@ let witnessSeqCreateFull
 
     let captureTypes = captureVals |> List.map (fun v -> v.Type)
     let seqType = seqStructTypeFull elementType captureTypes internalStateTypes
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
     let numCaptures = List.length captureVals
     let numInternalState = List.length internalStateTypes
 
@@ -835,13 +846,13 @@ module SCF = Alex.Dialects.SCF.Templates
 ///   - Body region: seqReloadSSA, currentSSA (2)
 let witnessForEach
     (nodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (seqVal: Val)
     (elementType: MLIRType)
     (bodyOps: MLIROp list)
     : (MLIROp list * TransferResult) =
 
-    let ssas = requireNodeSSAs nodeId z
+    let ssas = requireSSAs nodeId ssa
     let seqStructTy = seqVal.Type
 
     // Pre-assigned SSAs (from SSAAssignment coeffect)

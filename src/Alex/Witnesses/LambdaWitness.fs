@@ -29,11 +29,10 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.PSGZipper
+open Alex.Traversal.TransferTypes
 open Alex.CodeGeneration.TypeMapping
 open PSGElaboration.Coeffects
 open PSGElaboration.SSAAssignment
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL ARENA ALLOCATION
@@ -73,7 +72,7 @@ let private allocateInClosureArena (layout: ClosureLayout) : MLIROp list * SSA =
 let private buildClosureConstruction
     (layout: ClosureLayout)
     (lambdaName: string)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     : MLIROp list =
 
     // 1. Get address of the lambda function (SSA from ClosureLayout)
@@ -93,10 +92,10 @@ let private buildClosureConstruction
         layout.Captures
         |> List.mapi (fun i slot ->
             let capturedSSA =
-                // Helper to look up variable in PARENT scope (since z is in inner scope)
+                // Look up variable in PARENT scope (current scope is inner lambda)
                 let recallParentVarSSA name =
-                    match z.State.VarBindingsStack with
-                    | parentBindings :: _ -> Map.tryFind name parentBindings
+                    match ctx.Accumulator.ScopeStack with
+                    | parentScope :: _ -> Map.tryFind name parentScope.VarAssoc
                     | [] -> None
 
                 match recallParentVarSSA slot.Name with
@@ -104,10 +103,10 @@ let private buildClosureConstruction
                 | None ->
                     match slot.SourceNodeId with
                     | Some srcId ->
-                        match recallNodeResult (NodeId.value srcId) z with
+                        match MLIRAccumulator.recallNode (NodeId.value srcId) ctx.Accumulator with
                         | Some (ssa, _ty) -> ssa
                         | None ->
-                            match lookupSSA srcId z.State.SSAAssignment with
+                            match lookupSSA srcId ctx.Coeffects.SSA with
                             | Some s -> s
                             | None -> V 0
                     | None -> V 0
@@ -165,7 +164,7 @@ let private buildClosureConstruction
 /// SSA layout: v0..v(N-1) = extraction, vN = struct load, v(N+1)+ = body
 let private buildCaptureExtractionOps
     (layout: ClosureLayout)
-    (_z: PSGZipper)
+    (_ctx: WitnessContext)
     : MLIROp list =
 
     // Arg 0 is the environment pointer (passed as TPtr)
@@ -200,12 +199,12 @@ let private buildCaptureExtractionOps
 /// Bind entry point parameters for C-style main
 /// At OS entry point: %arg0: i32 = argc, %arg1: !llvm.ptr = argv
 /// For F# string[] parameter, pattern matching handles conversion at use site
-let private bindArgvParameters (paramName: string) (z: PSGZipper) : PSGZipper =
+let private bindArgvParameters (paramName: string) (ctx: WitnessContext) : unit =
     // Bind C-style argc/argv under well-known names using STRUCTURED types
-    let z1 = bindVarSSA "__argc" (Arg 0) MLIRTypes.i32 z
-    let z2 = bindVarSSA "__argv" (Arg 1) MLIRTypes.ptr z1
+    MLIRAccumulator.bindVar "__argc" (Arg 0) MLIRTypes.i32 ctx.Accumulator
+    MLIRAccumulator.bindVar "__argv" (Arg 1) MLIRTypes.ptr ctx.Accumulator
     // Bind F# parameter name to argv pointer
-    bindVarSSA paramName (Arg 1) MLIRTypes.ptr z2
+    MLIRAccumulator.bindVar paramName (Arg 1) MLIRTypes.ptr ctx.Accumulator
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Function Body Building
@@ -231,23 +230,27 @@ let private extractFinalReturnType (ty: NativeType) (paramCount: int) : NativeTy
 
 // ... (Lambda Witnessing) ...
 
+/// Check if function is internal (private visibility)
+/// Main is public, all others are private
+let private isFuncInternal (name: string) : bool =
+    name <> "main"
+
 let private witnessInFunctionScope
     (lambdaName: string)
     (node: SemanticNode)
     (bodyId: NodeId)
-    (witnessBody: PSGZipper -> MLIROp list * TransferResult)
+    (witnessBody: WitnessContext -> MLIROp list * TransferResult)
     (funcParams: (SSA * MLIRType) list)
     (closureLayoutOpt: ClosureLayout option)
-    (z: PSGZipper)
+    (ctx: WitnessContext)
     : MLIROp option * MLIROp list * TransferResult =
 
-    // ... (paramCount logic) ...
     let paramCount =
         match node.Kind with
         | SemanticKind.Lambda (params', _bodyId, _captures, _, _) -> List.length params'
         | _ -> 0
     let finalRetType = extractFinalReturnType node.Type paramCount
-    let declaredRetType = mapNativeTypeWithGraphForArch z.State.Platform.TargetArch z.Graph finalRetType
+    let declaredRetType = mapNativeTypeWithGraphForArch ctx.Coeffects.Platform.TargetArch ctx.Graph finalRetType
 
     // FLAT CLOSURE PATTERN (January 2026):
     // Closures (address taken via llvm.mlir.addressof) need llvm.func + llvm.return
@@ -262,7 +265,7 @@ let private witnessInFunctionScope
         | _ -> false
     let isClosure = closureLayoutOpt.IsSome || isLazyThunk
 
-    let bodyOps, bodyRes = witnessBody z
+    let bodyOps, bodyRes = witnessBody ctx
     let terminator, actualRetType =
         match bodyRes with
         | TRValue { SSA = ssa; Type = bodyType } ->
@@ -287,7 +290,7 @@ let private witnessInFunctionScope
 
     let captureExtractionOps =
         match closureLayoutOpt with
-        | Some layout -> buildCaptureExtractionOps layout z
+        | Some layout -> buildCaptureExtractionOps layout ctx
         | None -> []
 
     let completeBodyOps = captureExtractionOps @ bodyOps @ [terminator]
@@ -296,7 +299,7 @@ let private witnessInFunctionScope
     // For TRUE FLAT CLOSURES: first parameter is the environment pointer
     let finalMlirParams =
         match closureLayoutOpt with
-        | Some layout ->
+        | Some _layout ->
             // Prepend env pointer (Arg 0) - passed as opaque ptr
             (Arg 0, MLIRTypes.ptr) :: funcParams
         | None ->
@@ -317,9 +320,9 @@ let private witnessInFunctionScope
     match closureLayoutOpt, isLazyThunk with
     | Some layout, _ ->
         // CLOSING LAMBDA: use llvm.func (address will be taken)
-        let llvmVisibility = if isFuncInternal lambdaName z then LLVMPrivate else LLVMPrivate // closures always private
+        let llvmVisibility = if isFuncInternal lambdaName then LLVMPrivate else LLVMPrivate // closures always private
         let llvmFuncDef = LLVMOp.LLVMFuncDef (lambdaName, finalMlirParams, actualRetType, bodyRegion, llvmVisibility)
-        let closureOps = buildClosureConstruction layout lambdaName z
+        let closureOps = buildClosureConstruction layout lambdaName ctx
         // Return: funcDef for TopLevel, closureOps for CurrentOps, TRValue with closure
         // FIX: The result of buildClosureConstruction is now {ptr, ptr} (generic closure),
         // NOT layout.ClosureStructType (flat struct). The flat struct is hidden in the arena.
@@ -331,7 +334,7 @@ let private witnessInFunctionScope
         Some (MLIROp.LLVMOp llvmFuncDef), [], TRVoid
     | None, false ->
         // Simple lambda: no closure construction, use func.func (MLIR portable)
-        let visibility = if isFuncInternal lambdaName z then Private else Public
+        let visibility = if isFuncInternal lambdaName then Private else Public
         let funcDef = FuncOp.FuncDef (lambdaName, finalMlirParams, actualRetType, bodyRegion, visibility)
         Some (MLIROp.FuncOp funcDef), [], TRVoid
 
@@ -342,7 +345,7 @@ let private witnessInFunctionScope
 /// - result: The TransferResult for this node (TRVoid for simple, TRValue for closing)
 ///
 /// PHOTOGRAPHER PRINCIPLE: This witness OBSERVES and RETURNS.
-/// It does NOT emit directly. The caller (FNCSTransfer) handles accumulation.
+/// It does NOT emit directly. The caller (MLIRTransfer) handles accumulation.
 ///
 /// CLOSURE HANDLING:
 /// - Simple Lambda (no captures): Return funcDef, [], TRVoid
@@ -351,28 +354,23 @@ let witness
     (params': (string * NativeType * NodeId) list)
     (bodyId: NodeId)
     (node: SemanticNode)
-    (witnessBody: PSGZipper -> MLIROp list * TransferResult)
-    (z: PSGZipper)
+    (funcParams: (SSA * MLIRType) list)
+    (witnessBody: WitnessContext -> MLIROp list * TransferResult)
+    (ctx: WitnessContext)
     : MLIROp option * MLIROp list * TransferResult =
-
-    // Get function parameters from state (set by preBindParams)
-    let funcParams =
-        match z.State.CurrentFuncParams with
-        | Some ps -> ps
-        | None -> []
 
     // Get lambda name directly from SSAAssignment coeffects (NOT from mutable Focus state)
     // Focus can be corrupted by nested lambda processing; coeffects are immutable truth
     let lambdaName =
-        match lookupLambdaName node.Id z.State.SSAAssignment with
+        match lookupLambdaName node.Id ctx.Coeffects.SSA with
         | Some name -> name
         | None -> sprintf "lambda_%d" (NodeId.value node.Id)
 
     // Look up ClosureLayout coeffect - determines if this is a closing lambda
     // For closing lambdas, SSAAssignment has pre-computed all layout information
-    let closureLayoutOpt = lookupClosureLayout node.Id z.State.SSAAssignment
+    let closureLayoutOpt = lookupClosureLayout node.Id ctx.Coeffects.SSA
 
-    witnessInFunctionScope lambdaName node bodyId witnessBody funcParams closureLayoutOpt z
+    witnessInFunctionScope lambdaName node bodyId witnessBody funcParams closureLayoutOpt ctx
 
 /// Check if a type is unit
 let private isUnitType (ty: NativeType) : bool =
@@ -396,16 +394,16 @@ let private isUnitType (ty: NativeType) : bool =
 /// - Arg 0 is the env_ptr (all other args shift by 1)
 /// - Captured variables are bound by emitting GEP+Load from env struct at function entry
 /// - These entry ops are prepended to body ops later
-let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
+let preBindParams (ctx: WitnessContext) (node: SemanticNode) : (SSA * MLIRType) list =
     match node.Kind with
     | SemanticKind.Lambda (params', _bodyId, captures, _, _) ->
         let nodeIdVal = NodeId.value node.Id
         // ARCHITECTURAL FIX: Use SSAAssignment coeffect for lambda names
         // This respects binding names when Lambda is bound via `let name = ...`
         let lambdaName =
-            match PSGElaboration.SSAAssignment.lookupLambdaName node.Id z.State.SSAAssignment with
+            match PSGElaboration.SSAAssignment.lookupLambdaName node.Id ctx.Coeffects.SSA with
             | Some name -> name
-            | None -> yieldLambdaNameForNode nodeIdVal z  // fallback for anonymous
+            | None -> sprintf "lambda_%d" nodeIdVal  // fallback for anonymous
 
         // For main, use C-style signature
         let isMain = (lambdaName = "main")
@@ -461,12 +459,12 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
                 // 1. Escaping closures (with ClosureLayout): Arg 0 is env_ptr, params shift by 1
                 // 2. Nested functions with captures (no ClosureLayout): captures become explicit params
                 // 3. Simple lambdas (no captures): no offset
-                let closureLayoutOpt = lookupClosureLayout node.Id z.State.SSAAssignment
+                let closureLayoutOpt = lookupClosureLayout node.Id ctx.Coeffects.SSA
                 let hasEscapingClosure = Option.isSome closureLayoutOpt
                 let hasNestedCaptures = not (List.isEmpty captures) && Option.isNone closureLayoutOpt
 
                 // Use graph-aware type mapping for record types
-                let mapTypeWithGraph = mapNativeTypeWithGraphForArch z.State.Platform.TargetArch z.Graph
+                let mapTypeWithGraph = mapNativeTypeWithGraphForArch ctx.Coeffects.Platform.TargetArch ctx.Graph
 
                 // Build capture params for nested functions
                 let captureParams, captureBindings =
@@ -514,79 +512,64 @@ let preBindParams (z: PSGZipper) (node: SemanticNode) : PSGZipper =
 
                 mlirPs, bindings, false, isUnitParam
 
-        // Use graph-aware type mapping for return type (may be record type)
-        let mapTypeWithGraph = mapNativeTypeWithGraphForArch z.State.Platform.TargetArch z.Graph
+        // Determine captured variables and mutables for scope creation
+        let closureLayoutOpt = lookupClosureLayout node.Id ctx.Coeffects.SSA
+        let capturedVarNames, capturedMutNames =
+            match closureLayoutOpt with
+            | Some layout ->
+                let varNames = layout.Captures |> List.map (fun slot -> slot.Name) |> Set.ofList
+                let mutNames = layout.Captures
+                               |> List.filter (fun slot -> slot.Mode = ByRef)
+                               |> List.map (fun slot -> slot.Name)
+                               |> Set.ofList
+                varNames, mutNames
+            | None ->
+                Set.empty, Set.empty
 
-        // Return type
-        // PLATFORM-AWARE (January 2026): Use actual F# type for ALL functions including main.
-        // F#'s `int` is NTUint (platform word), NOT fixed i32.
-        // The _start wrapper handles conversion to exit syscall requirements.
-        // See: zipper_state_pollution_remediation memory, PlatformBindingResolution.fs
-        let returnType =
-            let paramCount =
-                if List.isEmpty params' && (match node.Type with NativeType.TFun(d, _) -> isUnitType d | _ -> false)
-                then 1
-                else List.length params'
-            let finalRetTy = extractFinalReturnType node.Type paramCount
-            mapTypeWithGraph finalRetTy
+        // Create and push a new scope for this function with captured var/mut info
+        let functionScope = {
+            VarAssoc = Map.empty
+            NodeAssoc = Map.empty
+            CapturedVars = capturedVarNames
+            CapturedMuts = capturedMutNames
+        }
+        MLIRAccumulator.pushScope functionScope ctx.Accumulator
 
-        // Determine visibility
-        let visibility = if isMain then FuncVisibility.Public else FuncVisibility.Private
-
-        // Check if this is a closing lambda (has captures)
-        let closureLayoutOpt = lookupClosureLayout node.Id z.State.SSAAssignment
-        let hasCapturesClosure = Option.isSome closureLayoutOpt
-
-        // For TRUE FLAT CLOSURES (Arena): parameters start at Arg 1.
-        // Arg 0 (env_ptr) is prepended by witnessInFunctionScope.
-        // We pass only user params here.
-        let finalMlirParams = mlirParams
-
-        // Enter function scope - this sets State.Focus = InFunction lambdaName
-        let z1 = enterFunction lambdaName finalMlirParams returnType visibility z
-
-        let z2 =
-            if needsArgvConversion && not (List.isEmpty paramBindings) then
-                let paramName = fst (List.head paramBindings)
-                bindArgvParameters paramName z1
-            else
-                paramBindings
-                |> List.fold (fun acc (paramName, bindingOpt) ->
-                    match bindingOpt with
-                    | Some (argSSA, mlirType) ->
-                        let paramNodeIdOpt =
-                            params'
-                            |> List.tryFind (fun (n, _, _) -> n = paramName)
-                            |> Option.map (fun (_, _, id) -> id)
-                        let acc' = bindVarSSA paramName argSSA mlirType acc
-                        match paramNodeIdOpt with
-                        | Some id -> bindNodeResult (NodeId.value id) argSSA mlirType acc'
-                        | None -> acc'
-                    | None -> acc
-                ) z1
+        // Bind parameters in the accumulator
+        if needsArgvConversion && not (List.isEmpty paramBindings) then
+            let paramName = fst (List.head paramBindings)
+            bindArgvParameters paramName ctx
+        else
+            paramBindings
+            |> List.iter (fun (paramName, bindingOpt) ->
+                match bindingOpt with
+                | Some (argSSA, mlirType) ->
+                    let paramNodeIdOpt =
+                        params'
+                        |> List.tryFind (fun (n, _, _) -> n = paramName)
+                        |> Option.map (fun (_, _, id) -> id)
+                    MLIRAccumulator.bindVar paramName argSSA mlirType ctx.Accumulator
+                    match paramNodeIdOpt with
+                    | Some id -> MLIRAccumulator.bindNode (NodeId.value id) argSSA mlirType ctx.Accumulator
+                    | None -> ()
+                | None -> ()
+            )
 
         // For closing lambdas: bind captured variables
         // TRUE FLAT CLOSURE: Captures are extracted from closure struct (Arg 0) at indices 1, 2, ...
         // We bind SSAs here; actual extractvalue ops are emitted by witness
-        let z3 =
-            match closureLayoutOpt with
-            | Some layout ->
-                // Bind each captured variable name to its extraction SSA
-                // Extraction SSAs are derived from SlotIndex: v0, v1, ..., v(N-1)
-                // For ByRef captures: SSA is a pointer, mark as captured mutable
-                // For ByValue captures: SSA is the value itself
-                layout.Captures
-                |> List.fold (fun acc slot ->
-                    let extractSSA = V slot.SlotIndex  // Derived from PSG structure
-                    let acc' = bindVarSSA slot.Name extractSSA slot.SlotType acc
-                    // Mark ALL captures so VarRef knows to use VarBindings (not NodeBindings)
-                    let acc'' = markCapturedVariable slot.Name acc'
-                    // Additionally mark ByRef captures so VarRef/Set know to load/store through pointer
-                    match slot.Mode with
-                    | ByRef -> markCapturedMutable slot.Name acc''
-                    | ByValue -> acc''
-                ) z2
-            | None -> z2
+        match closureLayoutOpt with
+        | Some layout ->
+            // Bind each captured variable name to its extraction SSA
+            // Extraction SSAs are derived from SlotIndex: v0, v1, ..., v(N-1)
+            // CapturedVars/CapturedMuts are already set in the scope above
+            layout.Captures
+            |> List.iter (fun slot ->
+                let extractSSA = V slot.SlotIndex  // Derived from PSG structure
+                MLIRAccumulator.bindVar slot.Name extractSSA slot.SlotType ctx.Accumulator
+            )
+        | None -> ()
 
-        z3
-    | _ -> z
+        // Return the computed MLIR params
+        mlirParams
+    | _ -> []

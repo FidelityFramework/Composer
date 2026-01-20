@@ -45,7 +45,24 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
+
+module SSAAssign = PSGElaboration.SSAAssignment
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSA HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get pre-assigned SSAs for a node, fail if not found
+let private requireSSAs (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA list =
+    match SSAAssign.lookupSSAs nodeId ssa with
+    | Some ssas -> ssas
+    | None -> failwithf "No SSAs for node %A" nodeId
+
+/// Get single SSA for a node
+let private requireSSA (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA =
+    match requireSSAs nodeId ssa with
+    | [s] -> s
+    | ssas -> failwithf "Expected 1 SSA for node %A, got %d" nodeId (List.length ssas)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LAZY STRUCT TYPE (FLAT CLOSURE MODEL)
@@ -85,7 +102,7 @@ let lazyStructTypeNoCaptures (elementType: MLIRType) : MLIRType =
 ///   - N: insert each capture
 let witnessLazyCreate
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (thunkName: string)
     (elementType: MLIRType)
     (captureVals: Val list)
@@ -93,7 +110,7 @@ let witnessLazyCreate
 
     let captureTypes = captureVals |> List.map (fun v -> v.Type)
     let lazyType = lazyStructType elementType captureTypes
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
 
     // Pre-assigned SSAs (from SSAAssignment coeffect)
     let falseSSA = ssas.[0]
@@ -167,12 +184,12 @@ let witnessLazyCreate
 ///   - 1: indirect call result
 let witnessLazyForce
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (lazyVal: Val)
     (elementType: MLIRType)
     : (MLIROp list * TransferResult) =
 
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
     let lazyStructType = lazyVal.Type
 
     // Pre-assigned SSAs (from SSAAssignment coeffect)
@@ -210,11 +227,11 @@ let witnessLazyForce
 /// Returns the computed flag from the lazy struct
 let witnessLazyIsValueCreated
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (lazyVal: Val)
     : (MLIROp list * TransferResult) =
 
-    let resultSSA = requireNodeSSA appNodeId z
+    let resultSSA = requireSSA appNodeId ssa
 
     let ops = [
         // Extract computed flag from lazy struct (index 0)

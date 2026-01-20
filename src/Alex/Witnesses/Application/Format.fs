@@ -13,7 +13,18 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
 open Alex.Dialects.SCF.Templates
-open Alex.Traversal.PSGZipper
+
+module SSAAssign = PSGElaboration.SSAAssignment
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSA HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get pre-assigned SSAs for a node, fail if not found
+let private requireSSAs (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA list =
+    match SSAAssign.lookupSSAs nodeId ssa with
+    | Some ssas -> ssas
+    | None -> failwithf "No SSAs for node %A" nodeId
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -28,8 +39,8 @@ open Alex.Traversal.PSGZipper
 /// Convert an integer value to a string (fat pointer)
 /// Uses a while loop to extract digits, handles sign, zero case
 /// Uses ~40 pre-assigned SSAs
-let intToString (nodeId: NodeId) (z: PSGZipper) (intVal: Val) : MLIROp list * Val =
-    let ssas = requireNodeSSAs nodeId z
+let intToString (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) (intVal: Val) : MLIROp list * Val =
+    let ssas = requireSSAs nodeId ssa
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]
@@ -217,8 +228,8 @@ let intToString (nodeId: NodeId) (z: PSGZipper) (intVal: Val) : MLIROp list * Va
 /// Convert a float value to a string (fat pointer)
 /// Format: [-]digits.digits (6 decimal places)
 /// Uses ~70 pre-assigned SSAs
-let floatToString (nodeId: NodeId) (z: PSGZipper) (floatVal: Val) : MLIROp list * Val =
-    let ssas = requireNodeSSAs nodeId z
+let floatToString (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) (floatVal: Val) : MLIROp list * Val =
+    let ssas = requireSSAs nodeId ssa
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]
@@ -507,8 +518,8 @@ let floatToString (nodeId: NodeId) (z: PSGZipper) (floatVal: Val) : MLIROp list 
 /// Convert a string to an integer
 /// Handles sign prefix and digit characters
 /// Uses ~30 pre-assigned SSAs
-let stringToInt (nodeId: NodeId) (z: PSGZipper) (strVal: Val) : MLIROp list * Val =
-    let ssas = requireNodeSSAs nodeId z
+let stringToInt (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) (strVal: Val) : MLIROp list * Val =
+    let ssas = requireSSAs nodeId ssa
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]
@@ -637,8 +648,8 @@ let stringToInt (nodeId: NodeId) (z: PSGZipper) (strVal: Val) : MLIROp list * Va
 /// Convert string to f64: Parse.float
 /// Algorithm: Two-pass parsing (integer part, then fractional part)
 /// Handles: [sign] digits [. digits]
-let stringToFloat (nodeId: NodeId) (z: PSGZipper) (strVal: Val) : MLIROp list * Val =
-    let ssas = requireNodeSSAs nodeId z
+let stringToFloat (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) (strVal: Val) : MLIROp list * Val =
+    let ssas = requireSSAs nodeId ssa
     let mutable ssaIdx = 0
     let nextSSA () =
         let ssa = ssas.[ssaIdx]

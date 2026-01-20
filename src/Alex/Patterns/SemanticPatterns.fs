@@ -400,3 +400,39 @@ let isBoolType (tyStr: string) =
     match tyStr with
     | BoolType -> true
     | _ -> false
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MUTABLE CLASSIFICATION PATTERNS
+// Used by the fold to classify Let/VarRef/Set for direct template emission
+// ═══════════════════════════════════════════════════════════════════════════
+
+module MutAnalysis = PSGElaboration.MutabilityAnalysis
+
+/// Classify a mutable let expression
+/// Returns: Some (globalName) for module-level, None otherwise
+let (|ModuleLevelMutable|_|) (nodeIdVal: int) (mutability: MutAnalysis.MutabilityAnalysisResult) =
+    mutability.ModuleLevelMutableBindings
+    |> List.tryFind (fun m -> m.BindingId = nodeIdVal)
+    |> Option.map (fun m -> sprintf "g_%s" m.Name)
+
+/// Check if a let expression needs alloca (addressed mutable)
+let (|AddressedMutable|_|) (nodeIdVal: int) (mutability: MutAnalysis.MutabilityAnalysisResult) =
+    if Set.contains nodeIdVal mutability.AddressedMutableBindings then
+        Some ()
+    else
+        None
+
+/// Classify a VarRef to module-level mutable
+/// Returns: Some (globalName) for module-level
+let (|ModuleLevelMutableRef|_|) (name: string) (mutability: MutAnalysis.MutabilityAnalysisResult) =
+    mutability.ModuleLevelMutableBindings
+    |> List.tryFind (fun m -> m.Name = name)
+    |> Option.map (fun m -> sprintf "g_%s" m.Name)
+
+/// Check if a VarRef targets an addressed mutable
+let (|AddressedMutableRef|_|) (defIdVal: int) (mutability: MutAnalysis.MutabilityAnalysisResult) =
+    if Set.contains defIdVal mutability.AddressedMutableBindings then
+        Some ()
+    else
+        None

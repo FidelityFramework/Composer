@@ -39,6 +39,20 @@
 | 16 | TRecord/TApp dual representation | Causes unification failures | Single TApp representation + SemanticGraph lookup |
 | 17 | Incomplete conversion witness coverage | Valid code fails at emission | Add witnesses for ALL operations in intrinsic modules |
 
+## TRANSFER ARCHITECTURE VIOLATIONS
+
+| # | Anti-Pattern | Why Wrong | Fix |
+|---|--------------|-----------|-----|
+| A0 | "Binding" abstraction layer | Conflates Let/VarRef/Set into one concept - these are fundamentally different | Handle each directly in fold with Active Patterns + Templates |
+| A1 | Push-model emission (`emit op; emit op2`) | Couples witnesses to mutable state | Witnesses RETURN codata, caller folds |
+| A2 | EmissionState pollution in zipper | Zipper should be pure navigation | Three concerns: PSGZipper, TransferCoeffects, MLIRAccumulator |
+| A3 | Filling FNCS gaps in Firefly transfer | PSG must be semantically complete BEFORE transfer | Fix in FNCS/PSGSaturation, not MLIRTransfer |
+| A4 | Mutating coeffects during transfer | Coeffects are immutable by definition | Fix in nanopass if more data needed |
+| A5 | `z.State.*` access patterns | Accessing polluted zipper state | Use `coeffs.*` or `acc.*` explicitly |
+| A6 | Mutable SSA counters in transfer | SSAs should be pre-computed | Add to SSAAssignment coeffect |
+
+**Canonical Reference**: See `mlir_transfer_canonical_architecture` memory.
+
 ## FOUNDATIONAL VIOLATIONS
 
 | # | Anti-Pattern | Why Wrong | Fix |

@@ -30,21 +30,22 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
 open Alex.Witnesses.SeqWitness
+
+module SSAAssign = PSGElaboration.SSAAssignment
 
 // Module aliases for dialect templates
 module CF = Alex.Dialects.CF.Templates
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
+// SSA HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Get pre-assigned SSAs for a node from the SSAAssignment coeffect
-let private requireNodeSSAs nodeId (z: PSGZipper) =
-    match PSGElaboration.SSAAssignment.lookupSSAs nodeId z.State.SSAAssignment with
+/// Get pre-assigned SSAs for a node, fail if not found
+let private requireSSAs (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA list =
+    match SSAAssign.lookupSSAs nodeId ssa with
     | Some ssas -> ssas
-    | None -> failwithf "SeqOpWitness: No SSAs pre-assigned for node %d" (NodeId.value nodeId)
+    | None -> failwithf "SeqOpWitness: No SSAs for node %A" nodeId
 
 /// Standard uniform closure type: {code_ptr, env_ptr}
 let closureType = TStruct [TPtr; TPtr]
@@ -404,21 +405,23 @@ let private witnessTakeMoveNext
 // PUBLIC WITNESS FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Create a MapSeq wrapper for Seq.map and emit the MoveNext function
-/// Returns: (ops, result Val)
+/// Create a MapSeq wrapper for Seq.map
+/// Returns: (inlineOps, topLevelOps, result)
+/// - inlineOps: struct construction at call site
+/// - topLevelOps: MoveNext function definition (emitted at module level)
 let witnessSeqMap
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (mapper: Val)
     (innerSeq: Val)
     (inputElementType: MLIRType)
     (outputElementType: MLIRType)
-    : MLIROp list * TransferResult =
+    : MLIROp list * MLIROp list * TransferResult =
 
     let innerSeqType = innerSeq.Type
     let mapSeqType = mapSeqStructType outputElementType innerSeqType
     let moveNextName = generateMoveNextName "map" appNodeId
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
 
     // SSAs pre-assigned by SSAAssignment nanopass
     let zeroSSA = ssas.[0]
@@ -429,11 +432,10 @@ let witnessSeqMap
     let withInnerSeqSSA = ssas.[5]
     let resultSSA = ssas.[6]
 
-    // Emit MoveNext function at top level
+    // MoveNext function - returned as top-level op, caller accumulates
     let moveNextFuncOp = witnessMapMoveNext moveNextName mapSeqType inputElementType outputElementType innerSeqType
-    emitTopLevel moveNextFuncOp z
 
-    let ops = [
+    let inlineOps = [
         MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, MLIRTypes.i32))
         MLIROp.LLVMOp (LLVMOp.Undef (undefSSA, mapSeqType))
         MLIROp.LLVMOp (LLVMOp.InsertValue (withStateSSA, undefSSA, zeroSSA, [0], mapSeqType))
@@ -443,21 +445,22 @@ let witnessSeqMap
         MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withInnerSeqSSA, mapper.SSA, [4], mapSeqType))
     ]
 
-    (ops, TRValue { SSA = resultSSA; Type = mapSeqType })
+    (inlineOps, [moveNextFuncOp], TRValue { SSA = resultSSA; Type = mapSeqType })
 
-/// Create a FilterSeq wrapper for Seq.filter and emit the MoveNext function
+/// Create a FilterSeq wrapper for Seq.filter
+/// Returns: (inlineOps, topLevelOps, result)
 let witnessSeqFilter
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (predicate: Val)
     (innerSeq: Val)
     (elementType: MLIRType)
-    : MLIROp list * TransferResult =
+    : MLIROp list * MLIROp list * TransferResult =
 
     let innerSeqType = innerSeq.Type
     let filterSeqType = filterSeqStructType elementType innerSeqType
     let moveNextName = generateMoveNextName "filter" appNodeId
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
 
     let zeroSSA = ssas.[0]
     let undefSSA = ssas.[1]
@@ -468,9 +471,8 @@ let witnessSeqFilter
     let resultSSA = ssas.[6]
 
     let moveNextFuncOp = witnessFilterMoveNext moveNextName filterSeqType elementType innerSeqType
-    emitTopLevel moveNextFuncOp z
 
-    let ops = [
+    let inlineOps = [
         MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, MLIRTypes.i32))
         MLIROp.LLVMOp (LLVMOp.Undef (undefSSA, filterSeqType))
         MLIROp.LLVMOp (LLVMOp.InsertValue (withStateSSA, undefSSA, zeroSSA, [0], filterSeqType))
@@ -480,21 +482,22 @@ let witnessSeqFilter
         MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withInnerSeqSSA, predicate.SSA, [4], filterSeqType))
     ]
 
-    (ops, TRValue { SSA = resultSSA; Type = filterSeqType })
+    (inlineOps, [moveNextFuncOp], TRValue { SSA = resultSSA; Type = filterSeqType })
 
-/// Create a TakeSeq wrapper for Seq.take and emit the MoveNext function
+/// Create a TakeSeq wrapper for Seq.take
+/// Returns: (inlineOps, topLevelOps, result)
 let witnessSeqTake
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (count: Val)
     (innerSeq: Val)
     (elementType: MLIRType)
-    : MLIROp list * TransferResult =
+    : MLIROp list * MLIROp list * TransferResult =
 
     let innerSeqType = innerSeq.Type
     let takeSeqType = takeSeqStructType elementType innerSeqType
     let moveNextName = generateMoveNextName "take" appNodeId
-    let ssas = requireNodeSSAs appNodeId z
+    let ssas = requireSSAs appNodeId ssa
 
     let zeroSSA = ssas.[0]
     let undefSSA = ssas.[1]
@@ -505,9 +508,8 @@ let witnessSeqTake
     let resultSSA = ssas.[6]
 
     let moveNextFuncOp = witnessTakeMoveNext moveNextName takeSeqType elementType innerSeqType
-    emitTopLevel moveNextFuncOp z
 
-    let ops = [
+    let inlineOps = [
         MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, MLIRTypes.i32))
         MLIROp.LLVMOp (LLVMOp.Undef (undefSSA, takeSeqType))
         MLIROp.LLVMOp (LLVMOp.InsertValue (withStateSSA, undefSSA, zeroSSA, [0], takeSeqType))
@@ -517,28 +519,30 @@ let witnessSeqTake
         MLIROp.LLVMOp (LLVMOp.InsertValue (resultSSA, withInnerSeqSSA, count.SSA, [4], takeSeqType))
     ]
 
-    (ops, TRValue { SSA = resultSSA; Type = takeSeqType })
+    (inlineOps, [moveNextFuncOp], TRValue { SSA = resultSSA; Type = takeSeqType })
 
 /// Witness Seq.fold - an eager consumer that returns an accumulated value
-/// This requires inline loop generation - returns error for special handling in FNCSTransfer
+/// This requires inline loop generation - returns error for special handling
+/// Returns: (inlineOps, topLevelOps, result)
 let witnessSeqFold
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (folder: Val)
     (initial: Val)
     (seq: Val)
     (accType: MLIRType)
     (elementType: MLIRType)
-    : MLIROp list * TransferResult =
-    [], TRError (sprintf "Seq.fold requires special handling in FNCSTransfer - node %d" (NodeId.value appNodeId))
+    : MLIROp list * MLIROp list * TransferResult =
+    [], [], TRError (sprintf "Seq.fold requires special handling - node %d" (NodeId.value appNodeId))
 
 /// Seq.collect (flatMap) requires complex nested iteration state
 /// Returns error for special handling
+/// Returns: (inlineOps, topLevelOps, result)
 let witnessSeqCollect
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (mapper: Val)
     (outerSeq: Val)
     (outputElementType: MLIRType)
-    : MLIROp list * TransferResult =
-    [], TRError (sprintf "Seq.collect requires complex nested iteration - node %d" (NodeId.value appNodeId))
+    : MLIROp list * MLIROp list * TransferResult =
+    [], [], TRError (sprintf "Seq.collect requires complex nested iteration - node %d" (NodeId.value appNodeId))

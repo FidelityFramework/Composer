@@ -406,18 +406,18 @@ let tryMatch (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode)
     | Matched v, state' -> Some (v, state'.Zipper)
     | NoMatch _, _ -> None
 
-/// Create initial parser state from zipper (convenience)
-/// Extracts platform from zipper state - this is the common pattern
-let stateFromZipper (zipper: PSGZipper) (node: SemanticNode) : PSGParserState =
+/// Create initial parser state from zipper
+/// Platform must be passed explicitly (coeffect, not part of zipper)
+let stateFromZipper (zipper: PSGZipper) (node: SemanticNode) (platform: PlatformResolutionResult) : PSGParserState =
     {
         Graph = zipper.Graph
         Zipper = zipper
         Current = node
-        Platform = zipper.State.Platform
+        Platform = platform
     }
 
-/// Run a parser using zipper (most common usage)
-/// Platform is extracted from zipper.State.Platform
-let runParserWithZipper (parser: PSGParser<'T>) (zipper: PSGZipper) (node: SemanticNode) =
-    let state = stateFromZipper zipper node
+/// Run a parser using zipper
+/// Platform must be passed explicitly (coeffect, not part of zipper)
+let runParserWithZipper (parser: PSGParser<'T>) (zipper: PSGZipper) (node: SemanticNode) (platform: PlatformResolutionResult) =
+    let state = stateFromZipper zipper node platform
     parser state

@@ -8,8 +8,25 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
 open Alex.Patterns.SemanticPatterns
+
+module SSAAssign = PSGElaboration.SSAAssignment
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSA HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Get pre-assigned SSAs for a node, fail if not found
+let private requireSSAs (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA list =
+    match SSAAssign.lookupSSAs nodeId ssa with
+    | Some ssas -> ssas
+    | None -> failwithf "No SSAs for node %A" nodeId
+
+/// Get single SSA for a node
+let private requireSSA (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA =
+    match requireSSAs nodeId ssa with
+    | [s] -> s
+    | ssas -> failwithf "Expected 1 SSA for node %A, got %d" nodeId (List.length ssas)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE HELPERS
@@ -40,7 +57,7 @@ let private getFloatBitWidth (ty: MLIRType) : FloatBitWidth option =
 /// Witness a binary arithmetic operation using structured MLIROp
 let witnessBinaryArith
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (opName: string)
     (lhs: Val)
     (rhs: Val)
@@ -48,7 +65,7 @@ let witnessBinaryArith
 
     if not (typesMatch lhs.Type rhs.Type) then None
     else
-        let resultSSA = requireNodeSSA appNodeId z
+        let resultSSA = requireSSA appNodeId ssa
         let ty = lhs.Type
         
         match getIntBitWidth ty, getFloatBitWidth ty with
@@ -86,7 +103,7 @@ let witnessBinaryArith
 /// Witness a comparison operation using structured MLIROp
 let witnessComparison
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (opName: string)
     (lhs: Val)
     (rhs: Val)
@@ -94,7 +111,7 @@ let witnessComparison
 
     if not (typesMatch lhs.Type rhs.Type) then None
     else
-        let resultSSA = requireNodeSSA appNodeId z
+        let resultSSA = requireSSA appNodeId ssa
         let ty = lhs.Type
         let resultType = MLIRTypes.bool  // Comparisons always return i1
         
@@ -138,7 +155,7 @@ let witnessComparison
 /// Witness a bitwise binary operation using structured MLIROp
 let witnessBitwise
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (opName: string)
     (lhs: Val)
     (rhs: Val)
@@ -149,7 +166,7 @@ let witnessBitwise
         match getIntBitWidth lhs.Type with
         | None -> None
         | Some _ ->
-            let resultSSA = requireNodeSSA appNodeId z
+            let resultSSA = requireSSA appNodeId ssa
             let ty = lhs.Type
             
             let arithOp =
@@ -171,7 +188,7 @@ let witnessBitwise
 /// Witness a boolean binary operation (AND/OR on i1)
 let witnessBooleanBinary
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (opName: string)
     (lhs: Val)
     (rhs: Val)
@@ -179,7 +196,7 @@ let witnessBooleanBinary
 
     match lhs.Type, rhs.Type with
     | TInt I1, TInt I1 ->
-        let resultSSA = requireNodeSSA appNodeId z
+        let resultSSA = requireSSA appNodeId ssa
         let ty = MLIRTypes.bool
         
         let arithOp =
@@ -199,14 +216,14 @@ let witnessBooleanBinary
 /// Witness a unary operation
 let witnessUnary
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (opName: string)
     (arg: Val)
     : (MLIROp list * TransferResult) option =
 
     // Get pre-allocated SSAs - need 2 for most unary ops (const + result)
-    let ssas = requireNodeSSAs appNodeId z
-    let resultSSA = requireNodeSSA appNodeId z
+    let ssas = requireSSAs appNodeId ssa
+    let resultSSA = ssas.[List.length ssas - 1]  // Last SSA is the result
 
     match opName with
     | "not" when arg.Type = MLIRTypes.bool ->
@@ -255,14 +272,14 @@ let witnessUnary
 /// Try to witness any binary primitive operation
 let tryWitnessBinaryOp
     (appNodeId: NodeId)
-    (z: PSGZipper)
+    (ssa: SSAAssign.SSAAssignment)
     (opName: string)
     (lhs: Val)
     (rhs: Val)
     : (MLIROp list * TransferResult) option =
 
     // Try each category in order
-    witnessBinaryArith appNodeId z opName lhs rhs
-    |> Option.orElseWith (fun () -> witnessComparison appNodeId z opName lhs rhs)
-    |> Option.orElseWith (fun () -> witnessBitwise appNodeId z opName lhs rhs)
-    |> Option.orElseWith (fun () -> witnessBooleanBinary appNodeId z opName lhs rhs)
+    witnessBinaryArith appNodeId ssa opName lhs rhs
+    |> Option.orElseWith (fun () -> witnessComparison appNodeId ssa opName lhs rhs)
+    |> Option.orElseWith (fun () -> witnessBitwise appNodeId ssa opName lhs rhs)
+    |> Option.orElseWith (fun () -> witnessBooleanBinary appNodeId ssa opName lhs rhs)
