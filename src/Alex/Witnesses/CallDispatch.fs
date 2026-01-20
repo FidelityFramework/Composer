@@ -1,10 +1,9 @@
-/// Application/Witness - Witness function application semantics to MLIR
+/// CallDispatch - Witness function application semantics to MLIR
 ///
 /// ARCHITECTURAL PRINCIPLE (January 2026):
-/// This module handles APPLICATION node witnessing. It is NOT a central dispatcher.
-/// It delegates to factored modules (Primitives, Format, Platform) based on SemanticKind.
+/// This module handles APPLICATION node witnessing. It delegates to factored
+/// modules (ArithOps, FormatOps, SyscallOps) based on SemanticKind.
 ///
-/// The PSGZipper contains the Graph - no separate graph parameter needed.
 /// Returns structured MLIROp list via the factored witness modules.
 ///
 /// DIALECT BOUNDARY (January 2026):
@@ -22,7 +21,7 @@
 ///
 /// See fsnative-spec/spec/drafts/backend-lowering-architecture.md and
 /// Serena memory `mlir_dialect_architecture` for the full specification.
-module Alex.Witnesses.Application.Witness
+module Alex.Witnesses.CallDispatch
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
@@ -38,9 +37,9 @@ open Alex.Patterns.SemanticPatterns
 open Alex.Bindings.PlatformTypes
 
 // Import factored witness modules
-module Primitives = Alex.Witnesses.Application.Primitives
-module Format = Alex.Witnesses.Application.Format
-module Platform = Alex.Witnesses.Application.Platform
+module Primitives = Alex.Witnesses.ArithOps
+module Format = Alex.Witnesses.FormatOps
+module SyscallOps = Alex.Witnesses.SyscallOps
 module ArenaTemplates = Alex.Dialects.LLVM.Templates
 module SCF = Alex.Dialects.SCF.Templates
 module SSAAssignment = PSGElaboration.SSAAssignment
@@ -556,7 +555,7 @@ let private witnessIntrinsic
     match intrinsicInfo with
     // Platform operations - delegate to Platform module
     | SysOp opName ->
-        match Platform.witnessSysOp appNodeId ctx.Coeffects.SSA opName args mlirReturnType with
+        match SyscallOps.witnessSysOp appNodeId ctx.Coeffects.SSA opName args mlirReturnType with
         | Some (inlineOps, topLevelOps, result) -> Some (inlineOps @ topLevelOps, result)
         | None -> None
 
@@ -823,7 +822,7 @@ let private witnessIntrinsic
         match opName, args with
         | "now", [] | "utcNow", [] ->
             // Delegates to clock_gettime syscall
-            match Platform.witnessSysOp appNodeId ctx.Coeffects.SSA "clock_gettime" [] mlirReturnType with
+            match SyscallOps.witnessSysOp appNodeId ctx.Coeffects.SSA "clock_gettime" [] mlirReturnType with
             | Some (inlineOps, topLevelOps, result) -> Some (inlineOps @ topLevelOps, result)
             | None -> None
         | "hour", [msVal] ->
@@ -870,17 +869,17 @@ let private witnessIntrinsic
             Some (ops, TRValue { SSA = resultSSA; Type = MLIRTypes.i32 })
         | "utcOffset", [] ->
             // Get timezone offset via platform binding (uses libc localtime_r)
-            match Platform.witnessPlatformBinding appNodeId ctx.Coeffects.SSA "DateTime.utcOffset" [] mlirReturnType with
+            match SyscallOps.witnessPlatformBinding appNodeId ctx.Coeffects.SSA "DateTime.utcOffset" [] mlirReturnType with
             | Some (inlineOps, topLevelOps, result) -> Some (inlineOps @ topLevelOps, result)
             | None -> None
         | "toLocal", [utcMs] ->
             // Convert UTC to local via platform binding
-            match Platform.witnessPlatformBinding appNodeId ctx.Coeffects.SSA "DateTime.toLocal" [utcMs] mlirReturnType with
+            match SyscallOps.witnessPlatformBinding appNodeId ctx.Coeffects.SSA "DateTime.toLocal" [utcMs] mlirReturnType with
             | Some (inlineOps, topLevelOps, result) -> Some (inlineOps @ topLevelOps, result)
             | None -> None
         | "toUtc", [localMs] ->
             // Convert local to UTC via platform binding
-            match Platform.witnessPlatformBinding appNodeId ctx.Coeffects.SSA "DateTime.toUtc" [localMs] mlirReturnType with
+            match SyscallOps.witnessPlatformBinding appNodeId ctx.Coeffects.SSA "DateTime.toUtc" [localMs] mlirReturnType with
             | Some (inlineOps, topLevelOps, result) -> Some (inlineOps @ topLevelOps, result)
             | None -> None
         | _ ->
@@ -1112,7 +1111,7 @@ let witness
             match funcKind with
             // Platform bindings - delegate to Platform module
             | SemanticKind.PlatformBinding entryPoint ->
-                match Platform.witnessPlatformBinding appNodeId ctx.Coeffects.SSA entryPoint args mlirReturnType with
+                match SyscallOps.witnessPlatformBinding appNodeId ctx.Coeffects.SSA entryPoint args mlirReturnType with
                 | Some (inlineOps, topLevelOps, result) ->
                     inlineOps @ topLevelOps, result
                 | None ->

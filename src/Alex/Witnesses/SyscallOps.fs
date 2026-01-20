@@ -1,4 +1,4 @@
-/// Application/Platform - Witness platform operations to MLIR via bindings
+/// SyscallOps - Witness platform/syscall operations to MLIR via bindings
 ///
 /// ARCHITECTURAL PRINCIPLE (January 2026):
 /// This is a THIN ADAPTER layer. Platform-specific logic lives in Bindings/*.
@@ -8,7 +8,7 @@
 /// 3. Converts BindingResult to (MLIROp list * TransferResult)
 ///
 /// NO sprintf. NO platform-specific logic. Just dispatch coordination.
-module Alex.Witnesses.Application.Platform
+module Alex.Witnesses.SyscallOps
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core

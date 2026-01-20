@@ -368,7 +368,7 @@ and private classifyAndWitness
         let combinedArgs = WitnessOutput.combineAll argOutputs
 
         // Witness the application
-        let appOps, appResult = Alex.Witnesses.Application.Witness.witness ctx node
+        let appOps, appResult = Alex.Witnesses.CallDispatch.witness ctx node
 
         { InlineOps = funcOutput.InlineOps @ combinedArgs.InlineOps @ appOps
           TopLevelOps = funcOutput.TopLevelOps @ combinedArgs.TopLevelOps

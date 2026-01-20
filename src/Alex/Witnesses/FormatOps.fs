@@ -1,12 +1,10 @@
-/// Application/Format - Value to String Conversions
+/// FormatOps - Value to String Conversions
 ///
 /// ARCHITECTURAL PRINCIPLE (January 2026):
 /// Witnesses OBSERVE and RETURN structured MLIROp lists.
 /// All SSAs come from pre-computed SSAAssignment coeffect.
 /// No freshSynthSSA - all SSAs are pre-assigned.
-///
-/// Migrated from ApplicationWitness.fs emitIntToString, emitFloatToString, emitStringToInt
-module Alex.Witnesses.Application.Format
+module Alex.Witnesses.FormatOps
 
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types

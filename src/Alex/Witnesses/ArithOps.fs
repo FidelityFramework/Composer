@@ -1,8 +1,8 @@
-/// Application/Primitives - Witness primitive operations to MLIR
+/// ArithOps - Witness arithmetic/comparison/bitwise operations to MLIR
 ///
 /// Handles binary (arithmetic, comparison, bitwise) and unary operations.
 /// Returns structured MLIROp, uses coeffects from WitnessContext.
-module Alex.Witnesses.Application.Primitives
+module Alex.Witnesses.ArithOps
 
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types

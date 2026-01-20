@@ -94,14 +94,14 @@
 
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="Alex/Witnesses/LiteralWitness.fs" />
-      <!-- Application Witnesses (factored from ApplicationWitness.fs) -->
-      <Compile Include="Alex/Witnesses/Application/Primitives.fs" />
-      <Compile Include="Alex/Witnesses/Application/Format.fs" />
-      <Compile Include="Alex/Witnesses/Application/Platform.fs" />
+      <!-- Factored Witnesses -->
+      <Compile Include="Alex/Witnesses/ArithOps.fs" />
+      <Compile Include="Alex/Witnesses/FormatOps.fs" />
+      <Compile Include="Alex/Witnesses/SyscallOps.fs" />
       <Compile Include="Alex/Witnesses/LazyWitness.fs" />
       <Compile Include="Alex/Witnesses/SeqWitness.fs" />
       <Compile Include="Alex/Witnesses/SeqOpWitness.fs" />
-      <Compile Include="Alex/Witnesses/Application/Witness.fs" />
+      <Compile Include="Alex/Witnesses/CallDispatch.fs" />
       <Compile Include="Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="Alex/Witnesses/LambdaWitness.fs" />
