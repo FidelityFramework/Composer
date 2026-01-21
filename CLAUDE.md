@@ -685,6 +685,88 @@ Firefly compile HelloWorld.fidproj -k
 
 **Do NOT claim a feature works until you have executed the binary and verified the output.**
 
+### Regression Test Runner (PRIMARY)
+
+**ALWAYS use the regression runner to validate changes.** It tests all samples automatically.
+
+```bash
+# Run full test suite (from any directory)
+cd /home/hhh/repos/Firefly/tests/regression
+dotnet fsi Runner.fsx
+
+# Run in parallel (faster)
+dotnet fsi Runner.fsx -- --parallel
+
+# Run specific sample(s)
+dotnet fsi Runner.fsx -- --sample 05_AddNumbers
+dotnet fsi Runner.fsx -- --sample 07_BitsTest --sample 08_Option
+
+# Verbose output (shows compile errors and output diffs)
+dotnet fsi Runner.fsx -- --verbose
+
+# Combined
+dotnet fsi Runner.fsx -- --parallel --verbose
+```
+
+The runner:
+1. Builds the compiler once
+2. Compiles all samples defined in `Manifest.toml` **with `-k` flag (intermediates always generated)**
+3. Executes compiled binaries and compares output to expected
+4. Reports pass/fail/mismatch status
+
+**IMPORTANT: Intermediates are ALWAYS available after a runner run.** After running the test suite, you can immediately inspect intermediates at:
+```
+samples/console/FidelityHelloWorld/<sample>/target/intermediates/
+```
+
+### Ordinal Artifact Naming Scheme (January 2026)
+
+All intermediate artifacts use a **global ordinal numbering** across the entire compilation pipeline. This enables `ls` to show them in pipeline order, regardless of which compiler stage produced them:
+
+| Artifact | Stage | Description |
+|----------|-------|-------------|
+| `01_psg0.json` | FNCS | Initial PSG with reachability (PSG₀) |
+| `02_intrinsic_recipes.json` | FNCS | Intrinsic elaboration recipes |
+| `03_psg1.json` | FNCS | PSG after intrinsic fold-in (PSG₁) |
+| `04_saturation_recipes.json` | FNCS | Baker saturation recipes |
+| `05_psg2.json` | FNCS | Final saturated PSG to Alex (PSG₂) |
+| `06_coeffects.json` | Alex | Coeffect analysis (SSA, mutability, yields, patterns, strings) |
+| `07_output.mlir` | Alex | MLIR output |
+| `08_output.ll` | Alex | LLVM IR |
+
+**CRITICAL Debugging Pattern**: When a sample fails, inspect intermediates in pipeline order:
+
+1. **Check PSG₀** (`01_psg0.json`) - Is the initial structure correct?
+2. **Check recipes** (`02_intrinsic_recipes.json`, `04_saturation_recipes.json`) - Are elaborations creating the right replacement structures?
+3. **Check PSG₂** (`05_psg2.json`) - Did fold-in correctly integrate the recipes?
+4. **Check coeffects** (`06_coeffects.json`) - Are SSA assignments correct? Are PatternBindings getting SSAs?
+5. **Check MLIR** (`07_output.mlir`) - Is the MLIR well-formed?
+
+This pipeline-order inspection reveals WHERE in the pipeline a bug originates, not just where it manifests.
+
+**Never re-run compilation just to get intermediates.** They are always fresh after a test run.
+
+**Output format:**
+```
+=== Compilation Phase ===
+[PASS] 01_HelloWorldDirect (1.09s)
+[FAIL] 05_AddNumbers (733ms)
+
+=== Execution Phase ===
+[PASS] 01_HelloWorldDirect (30ms)
+[MISMATCH] 08_Option (30ms)
+  First diff at line 2:
+    Expected: Some 42: 42
+    Actual:   Some 42: Done!
+
+=== Summary ===
+Compilation: 7/16 passed, 9 failed
+Execution: 4/7 passed, 3 failed
+Status: FAILED
+```
+
+See `/home/hhh/repos/Firefly/tests/regression/README.md` for full documentation.
+
 ## Key Files
 
 | File | Purpose |

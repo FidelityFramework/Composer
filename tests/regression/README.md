@@ -38,9 +38,14 @@ dotnet fsi Runner.fsx -- --timeout 60
 
 1. **Single Build**: The harness builds the Firefly compiler once at startup (which pulls in fsnative if needed).
 2. **Sample Discovery**: Reads `Manifest.toml` for sample definitions and expected outputs.
-3. **Compilation Phase**: Compiles each sample using the built compiler.
+3. **Compilation Phase**: Compiles each sample using the built compiler **with `-k` flag**.
 4. **Execution Phase**: Runs successfully compiled binaries and compares output.
 5. **Reporting**: Generates a summary report with pass/fail status.
+
+**Note**: The `-k` flag is always passed to the compiler, so intermediates are always generated. After a test run, you can immediately inspect:
+```
+samples/console/FidelityHelloWorld/<sample>/target/intermediates/
+```
 
 ## Manifest Format
 

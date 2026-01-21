@@ -269,7 +269,8 @@ let compileProject (options: CompilationOptions) : int =
         // Write MLIR if keeping intermediates
         match intermediatesDir with
         | Some dir ->
-            let mlirPath = Path.Combine(dir, config.Name + ".mlir")
+            // Use ordinal naming scheme for pipeline visibility (artifact 07)
+            let mlirPath = Path.Combine(dir, FNCSPhaseConfig.artifactFilename FNCSPhaseConfig.ArtifactId.Mlir)
             File.WriteAllText(mlirPath, mlirResult.Content)
 
             if options.EmitMLIROnly then
@@ -287,7 +288,8 @@ let compileProject (options: CompilationOptions) : int =
                 1
             else
                 // Step 3: Lower MLIR → LLVM (via Toolchain)
-                let llPath = Path.Combine(dir, config.Name + ".ll")
+                // Use ordinal naming scheme for pipeline visibility (artifact 08)
+                let llPath = Path.Combine(dir, FNCSPhaseConfig.artifactFilename FNCSPhaseConfig.ArtifactId.Llvm)
 
                 let llvmResult =
                     Core.Timing.timePhase "MLIR-LOWER" "Lowering MLIR to LLVM IR" (fun () ->

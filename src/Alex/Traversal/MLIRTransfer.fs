@@ -548,7 +548,8 @@ and private classifyAndWitness
     // Each semantic kind must be explicitly listed for proper diagnostics
     // ─────────────────────────────────────────────────────────────────────
     | SemanticKind.Match _ ->
-        WitnessOutput.error (sprintf "Match expressions not yet implemented (node %d)" (NodeId.value node.Id))
+        // Match expressions should be elaborated away by Baker into IfThenElse chains
+        WitnessOutput.error (sprintf "Match expression should have been elaborated by Baker (node %d)" (NodeId.value node.Id))
     | SemanticKind.ForLoop _ ->
         WitnessOutput.error (sprintf "ForLoop not yet implemented (node %d)" (NodeId.value node.Id))
     | SemanticKind.ForEach _ ->

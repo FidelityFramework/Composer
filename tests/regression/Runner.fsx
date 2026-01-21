@@ -79,7 +79,8 @@ let runWithTimeoutMeasured cmd args workDir stdin timeoutMs =
     (result, sw.ElapsedMilliseconds)
 
 let compileSample compilerPath projectDir projectFile timeoutMs =
-    let (result, ms) = runWithTimeoutMeasured compilerPath $"compile {projectFile}" projectDir None timeoutMs
+    // Always use -k to generate intermediates for debugging
+    let (result, ms) = runWithTimeoutMeasured compilerPath $"compile {projectFile} -k" projectDir None timeoutMs
     match result with
     | Completed (0, _, _) -> CompileSuccess ms
     | Completed (code, _, stderr) -> CompileFailed (code, stderr, ms)

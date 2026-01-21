@@ -11,13 +11,14 @@
 /// - Pattern bindings: What variables emerge from each pattern match
 /// - String table: All string literals and their global names
 ///
-/// All coeffects are serialized to alex_coeffects.json when -k flag is used.
+/// Output: Artifact 06 (06_coeffects.json) in the global ordinal naming scheme.
 module PSGElaboration.PreprocessingSerializer
 
 open System.IO
 open System.Text.Json
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open FSharp.Native.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open PSGElaboration.Coeffects
 open PSGElaboration.SSAAssignment
@@ -399,8 +400,8 @@ let serialize
     (entryPointLambdaIds: Set<int>)
     (graph: SemanticGraph)
     : unit =
-    
-    let coeffectsPath = Path.Combine(intermediatesDir, "alex_coeffects.json")
+
+    let coeffectsPath = Path.Combine(intermediatesDir, artifactFilename ArtifactId.Coeffects)
     
     // Note: Full coeffects are passed via the new serializeAll function
     // This legacy signature is maintained for backward compatibility
@@ -427,8 +428,8 @@ let serializeAll
     (entryPointLambdaIds: Set<int>)
     (graph: SemanticGraph)
     : unit =
-    
-    let coeffectsPath = Path.Combine(intermediatesDir, "alex_coeffects.json")
+
+    let coeffectsPath = Path.Combine(intermediatesDir, artifactFilename ArtifactId.Coeffects)
     
     let data = {|
         version = "2.0"
