@@ -40,6 +40,30 @@ let platformWordWidth (arch: Architecture) : IntBitWidth =
     | X86_64 | ARM64 | RISCV64 -> I64
     | ARM32_Thumb | RISCV32 | WASM32 -> I32
 
+/// DU tag width - platform-aware policy for discriminated union tags
+///
+/// The semantic requirement: tag must distinguish N cases (ceil(log2(N)) bits).
+/// The practical minimum: smallest byte-addressable unit (i8 for ≤256 cases).
+///
+/// Platform policy MAY choose larger widths for alignment efficiency:
+/// - On 64-bit with i64 payload: {i8, i64} pads to 16 bytes anyway
+/// - Using {i64, i64} is same size but naturally aligned
+///
+/// Current policy: use minimum width on all platforms.
+/// Future: could tune per-platform for alignment vs memory trade-off.
+let duTagWidth (arch: Architecture) (caseCount: int) : IntBitWidth =
+    // Minimum width to represent case indices 0..N-1
+    let minWidth =
+        if caseCount <= 256 then I8
+        elif caseCount <= 65536 then I16
+        else I32
+
+    // Platform-specific policy (currently: minimum on all platforms)
+    // Future optimization: word-aligned tags on 64-bit for cache efficiency
+    match arch with
+    | X86_64 | ARM64 | RISCV64 -> minWidth
+    | ARM32_Thumb | RISCV32 | WASM32 -> minWidth
+
 /// Complete platform identification
 type TargetPlatform = {
     OS: OSFamily

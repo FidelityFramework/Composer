@@ -21,6 +21,35 @@ open Alex.Bindings.PlatformTypes
 let NativeStrType = TStruct [TPtr; TInt I64]
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TYPE SIZE COMPUTATION (for DU slot sizing)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Compute byte size of an MLIRType (for DU payload slot sizing)
+/// This is used to determine which payload type is larger for heterogeneous DUs
+let rec mlirTypeSize (ty: MLIRType) : int =
+    match ty with
+    | TInt I1 -> 1
+    | TInt I8 -> 1
+    | TInt I16 -> 2
+    | TInt I32 -> 4
+    | TInt I64 -> 8
+    | TFloat F32 -> 4
+    | TFloat F64 -> 8
+    | TPtr -> 8  // 64-bit platform
+    | TStruct fields -> fields |> List.sumBy mlirTypeSize
+    | TArray (count, elemTy) -> count * mlirTypeSize elemTy
+    | TFunc _ -> 16  // Function pointer + closure = 2 words
+    | TMemRef _ -> 8  // Pointer-sized
+    | TVector (_, elemTy) -> mlirTypeSize elemTy  // Vector element size (shape is complex)
+    | TIndex -> 8  // Platform word
+    | TUnit -> 0
+    | TError _ -> 0  // Error types have no runtime size
+
+/// Return the larger of two MLIR types by byte size
+let maxMLIRType (ty1: MLIRType) (ty2: MLIRType) : MLIRType =
+    if mlirTypeSize ty1 >= mlirTypeSize ty2 then ty1 else ty2
+
+// ═══════════════════════════════════════════════════════════════════════════
 // NTUKind DIRECT MAPPING (for literals)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -130,17 +159,26 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
             | "byref" | "inref" | "outref" -> TPtr
             | "Ptr" | "nativeptr" -> TPtr
             | "option" ->
+                // Option is a DU with 2 cases (None, Some) - tag must be i8, not i1
+                // DU tags are ALWAYS i8 (or i16 for >256 cases), never boolean
                 match args with
-                | [innerTy] -> TStruct [TInt I1; mapNativeTypeForArch arch innerTy]
+                | [innerTy] -> TStruct [TInt I8; mapNativeTypeForArch arch innerTy]
                 | _ -> failwithf "option type requires exactly one type argument: %A" ty
             | "voption" ->
+                // ValueOption is a DU with 2 cases (ValueNone, ValueSome) - tag must be i8
                 match args with
-                | [innerTy] -> TStruct [TInt I1; mapNativeTypeForArch arch innerTy]
+                | [innerTy] -> TStruct [TInt I8; mapNativeTypeForArch arch innerTy]
                 | _ -> failwithf "voption type requires exactly one type argument: %A" ty
             | "result" ->
                 // Result<'T, 'E> is a DU with Ok and Error cases
+                // Per DU architecture: use SINGLE payload slot sized for largest case
+                // Witnesses will bitcast when needed (e.g., int64 ↔ string bits)
                 match args with
-                | [okTy; errorTy] -> TStruct [TInt I8; mapNativeTypeForArch arch okTy; mapNativeTypeForArch arch errorTy]
+                | [okTy; errorTy] ->
+                    let okMlir = mapNativeTypeForArch arch okTy
+                    let errorMlir = mapNativeTypeForArch arch errorTy
+                    let payloadSlot = maxMLIRType okMlir errorMlir
+                    TStruct [TInt I8; payloadSlot]
                 | _ -> failwithf "result type requires exactly two type arguments: %A" ty
             | "list" ->
                 // PRD-13a: list<'T> is a pointer to cons cell (linked list)
