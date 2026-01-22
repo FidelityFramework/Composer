@@ -557,6 +557,10 @@ and private classifyAndWitness
         | TRValue duVal ->
             let tagOps, tagResult =
                 Alex.Witnesses.MemoryWitness.witnessDUGetTag node.Id ctx duVal.SSA duType
+            // Bind the tag result for later lookup (e.g., when used in comparison)
+            match tagResult with
+            | TRValue tv -> MLIRAccumulator.bindNode (NodeId.value node.Id) tv.SSA tv.Type acc
+            | _ -> ()
             { InlineOps = duOutput.InlineOps @ tagOps
               TopLevelOps = duOutput.TopLevelOps
               Result = tagResult }
@@ -609,8 +613,30 @@ and private classifyAndWitness
 
     | SemanticKind.UnionCase _ ->
         WitnessOutput.error (sprintf "UnionCase not yet implemented (node %d)" (NodeId.value node.Id))
-    | SemanticKind.TupleExpr _ ->
-        WitnessOutput.error (sprintf "TupleExpr not yet implemented (node %d)" (NodeId.value node.Id))
+    | SemanticKind.TupleExpr elemIds ->
+        // Build tuple by visiting elements and constructing struct
+        let elemOutputs = elemIds |> List.map (visitNode ctx z)
+        let combinedElems = WitnessOutput.combineAll elemOutputs
+        let elemVals =
+            elemOutputs
+            |> List.choose (fun o ->
+                match o.Result with
+                | TRValue v -> Some v
+                | _ -> None)
+        if List.length elemVals <> List.length elemIds then
+            // Some element failed - propagate error
+            match combinedElems.Result with
+            | TRError msg -> combinedElems
+            | _ -> WitnessOutput.error (sprintf "TupleExpr: element expression failed (node %d)" (NodeId.value node.Id))
+        else
+            let tupleOps, tupleResult =
+                Alex.Witnesses.MemoryWitness.witnessTupleExpr node.Id ctx elemVals
+            match tupleResult with
+            | TRValue tv -> MLIRAccumulator.bindNode (NodeId.value node.Id) tv.SSA tv.Type acc
+            | _ -> ()
+            { InlineOps = combinedElems.InlineOps @ tupleOps
+              TopLevelOps = combinedElems.TopLevelOps
+              Result = tupleResult }
     | SemanticKind.ArrayExpr _ ->
         WitnessOutput.error (sprintf "ArrayExpr not yet implemented (node %d)" (NodeId.value node.Id))
     | SemanticKind.ListExpr _ ->
