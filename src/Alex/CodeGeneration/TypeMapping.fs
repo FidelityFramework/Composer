@@ -45,9 +45,9 @@ let rec mlirTypeSize (ty: MLIRType) : int =
     | TUnit -> 0
     | TError _ -> 0  // Error types have no runtime size
 
-/// Return the larger of two MLIR types by byte size
-let maxMLIRType (ty1: MLIRType) (ty2: MLIRType) : MLIRType =
-    if mlirTypeSize ty1 >= mlirTypeSize ty2 then ty1 else ty2
+/// Compute max payload size in bytes for heterogeneous DUs
+let maxPayloadBytes (ty1: MLIRType) (ty2: MLIRType) : int =
+    max (mlirTypeSize ty1) (mlirTypeSize ty2)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NTUKind DIRECT MAPPING (for literals)
@@ -170,16 +170,9 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 | [innerTy] -> TStruct [TInt I8; mapNativeTypeForArch arch innerTy]
                 | _ -> failwithf "voption type requires exactly one type argument: %A" ty
             | "result" ->
-                // Result<'T, 'E> is a DU with Ok and Error cases
-                // Per DU architecture: use SINGLE payload slot sized for largest case
-                // Witnesses will bitcast when needed (e.g., int64 ↔ string bits)
-                match args with
-                | [okTy; errorTy] ->
-                    let okMlir = mapNativeTypeForArch arch okTy
-                    let errorMlir = mapNativeTypeForArch arch errorTy
-                    let payloadSlot = maxMLIRType okMlir errorMlir
-                    TStruct [TInt I8; payloadSlot]
-                | _ -> failwithf "result type requires exactly two type arguments: %A" ty
+                // Result<'T, 'E> is a pointer to arena-allocated case-specific storage
+                // Per architecture: "DU values are pointers"
+                TPtr
             | "list" ->
                 // PRD-13a: list<'T> is a pointer to cons cell (linked list)
                 TPtr

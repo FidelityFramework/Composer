@@ -273,6 +273,94 @@ let private buildClosureLayout
         LazyStructType = lazyStructType
     }
 
+/// Build complete DULayout from DUConstruct node and pre-assigned SSAs
+/// This follows the flat closure model: build case-specific struct, store to arena, return pointer
+///
+/// SSA layout for DU with payload (13 SSAs total):
+///   ssas[0]           = undef case struct
+///   ssas[1]           = tag constant
+///   ssas[2]           = insertvalue tag at [0]
+///   ssas[3]           = insertvalue payload at [1]
+///   ssas[4..7]        = size computation (nullPtr, const1, gep, ptrtoint)
+///   ssas[8..12]       = arena allocation (posPtrSSA, posSSA, baseSSA, resultPtrSSA, newPosSSA)
+///
+/// SSA layout for nullary DU (12 SSAs total):
+///   ssas[0]           = undef case struct
+///   ssas[1]           = tag constant
+///   ssas[2]           = insertvalue tag at [0]
+///   ssas[3..6]        = size computation
+///   ssas[7..11]       = arena allocation
+let private buildDULayout
+    (arch: Architecture)
+    (graph: SemanticGraph)
+    (duConstructNodeId: NodeId)
+    (caseName: string)
+    (caseIndex: int)
+    (payloadOpt: NodeId option)
+    (ssas: SSA list)
+    : DULayout =
+
+    let hasPayload = Option.isSome payloadOpt
+
+    // Extract SSAs by position
+    // Struct construction
+    let structUndefSSA = ssas.[0]
+    let tagConstSSA = ssas.[1]
+    let withTagSSA = ssas.[2]
+    let withPayloadSSA, sizeOffset =
+        if hasPayload then
+            Some ssas.[3], 4
+        else
+            None, 3
+
+    // Size computation (4 SSAs)
+    let sizeNullPtrSSA = ssas.[sizeOffset]
+    let sizeOneSSA = ssas.[sizeOffset + 1]
+    let sizeGepSSA = ssas.[sizeOffset + 2]
+    let sizeSSA = ssas.[sizeOffset + 3]
+
+    // Arena allocation (5 SSAs)
+    let arenaOffset = sizeOffset + 4
+    let heapPosPtrSSA = ssas.[arenaOffset]
+    let heapPosSSA = ssas.[arenaOffset + 1]
+    let heapBaseSSA = ssas.[arenaOffset + 2]
+    let heapResultPtrSSA = ssas.[arenaOffset + 3]
+    let heapNewPosSSA = ssas.[arenaOffset + 4]
+
+    // Get payload type from payload node if present
+    let payloadType =
+        payloadOpt
+        |> Option.bind (fun payloadId -> Map.tryFind payloadId graph.Nodes)
+        |> Option.map (fun node -> mapCaptureType arch node.Type)
+
+    // Build case-specific struct type: {i8, PayloadType} or {i8} for nullary
+    let caseStructType =
+        match payloadType with
+        | Some pType -> TStruct [TInt I8; pType]
+        | None -> TStruct [TInt I8]
+
+    {
+        DUConstructNodeId = duConstructNodeId
+        CaseName = caseName
+        CaseIndex = caseIndex
+        HasPayload = hasPayload
+        StructUndefSSA = structUndefSSA
+        TagConstSSA = tagConstSSA
+        WithTagSSA = withTagSSA
+        WithPayloadSSA = withPayloadSSA
+        SizeNullPtrSSA = sizeNullPtrSSA
+        SizeOneSSA = sizeOneSSA
+        SizeGepSSA = sizeGepSSA
+        SizeSSA = sizeSSA
+        HeapPosPtrSSA = heapPosPtrSSA
+        HeapPosSSA = heapPosSSA
+        HeapBaseSSA = heapBaseSSA
+        HeapResultPtrSSA = heapResultPtrSSA
+        HeapNewPosSSA = heapNewPosSSA
+        CaseStructType = caseStructType
+        PayloadType = payloadType
+    }
+
 /// Calculate SSA cost for interpolated string based on parts
 let private interpolatedStringCost (parts: InterpolatedPart list) : int =
     // Count string parts (each needs 5 SSAs for fat pointer construction)
@@ -487,14 +575,29 @@ let private computeUnionCaseSSACost (payloadOpt: NodeId option) : int =
     | None -> 3    // tag + undef + withTag (no payload)
 
 /// Compute the DU slot type from a DU's NativeType
-/// DU layout: Inline (size, align) where size = tagSize + payloadSize
-/// The slot type is determined by payloadSize (the storage type, not case-specific)
+/// Must match the logic in TypeMapping.fs for consistency
 let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType option =
     match duType with
-    | NativeType.TApp (tycon, _) ->
-        match tycon.Layout with
-        | TypeLayout.Inline (size, align) when size > 8 ->
-            // DU layout: tag + payload
+    | NativeType.TApp (tycon, args) ->
+        match tycon.Name, tycon.Layout with
+        // Option/ValueOption: slot type = payload type (homogeneous)
+        | "option", _ | "voption", _ ->
+            match args with
+            | [innerTy] -> Some (mapCaptureType arch innerTy)
+            | _ -> None
+        // Result: slot type = max of Ok and Error types (heterogeneous)
+        | "result", _ ->
+            match args with
+            | [okTy; errorTy] ->
+                let okMlir = mapCaptureType arch okTy
+                let errorMlir = mapCaptureType arch errorTy
+                // Pick the larger type (same logic as TypeMapping.maxMLIRType)
+                let okSize = Alex.CodeGeneration.TypeMapping.mlirTypeSize okMlir
+                let errorSize = Alex.CodeGeneration.TypeMapping.mlirTypeSize errorMlir
+                Some (if okSize >= errorSize then okMlir else errorMlir)
+            | _ -> None
+        // Other DUs with known layout
+        | _, TypeLayout.Inline (size, align) when size > 8 ->
             let tagSize = size % align
             let payloadSize = size - tagSize
             let slotType =
@@ -508,29 +611,40 @@ let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType o
         | _ -> None
     | _ -> None
 
+/// Check if a DU type needs arena allocation
+/// Heterogeneous DUs (like Result<'T, 'E>) need arena; homogeneous DUs (like Option<'T>) use inline struct
+let private needsDUArenaAllocation (duType: NativeType) : bool =
+    match duType with
+    | NativeType.TApp (tycon, _) ->
+        match tycon.Name with
+        | "result" -> true   // Result is heterogeneous, needs arena
+        | "option" | "voption" -> false  // Option is homogeneous, inline struct
+        | _ -> false  // Default to inline for other DUs
+    | _ -> false
+
 /// Compute exact SSA count for DUConstruct based on actual types
-/// Examines both the DU slot type and payload type to determine if bitcast is needed
 ///
-/// SSA breakdown:
+/// For homogeneous DUs (Option): inline struct
 /// - Nullary (no payload): 3 (undef + tagConst + withTag)
-/// - With payload, no bitcast needed: 4 (undef + tagConst + withTag + result)
-/// - With payload, bitcast needed: 5 (undef + tagConst + withTag + bitcast + result)
+/// - With payload: 4 (undef + tagConst + withTag + result)
+///
+/// For heterogeneous DUs (Result): arena allocation (flat closure model)
+/// - Struct construction: 3-4 SSAs (undef + tagConst + withTag [+ withPayload])
+/// - Size computation: 4 SSAs (nullPtr + const1 + gep + ptrtoint)
+/// - Arena allocation: 5 SSAs (posPtrSSA + posSSA + baseSSA + resultPtrSSA + newPosSSA)
+/// - Total: 12-13 SSAs
 let private computeDUConstructSSACost (arch: Architecture) (graph: SemanticGraph) (duType: NativeType) (payloadOpt: NodeId option) : int =
-    match payloadOpt with
-    | None -> 3  // Nullary case: undef + tagConst + withTag
-    | Some payloadId ->
-        // Look up payload node to get its type
-        match Map.tryFind payloadId graph.Nodes with
-        | None -> 4  // Fallback if payload node not found
-        | Some payloadNode ->
-            let payloadMlirType = mapCaptureType arch payloadNode.Type
-            match getDUSlotType arch duType with
-            | None -> 4  // Fallback if DU slot type can't be determined
-            | Some slotType ->
-                if slotType = payloadMlirType then
-                    4  // Types match: undef + tagConst + withTag + result
-                else
-                    5  // Types differ: undef + tagConst + withTag + bitcast + result
+    if needsDUArenaAllocation duType then
+        // Arena allocation path (flat closure model)
+        // Struct: 3-4, Size: 4, Arena: 5 = 12-13 total
+        match payloadOpt with
+        | None -> 12   // Nullary: 3 struct + 4 size + 5 arena
+        | Some _ -> 13 // With payload: 4 struct + 4 size + 5 arena
+    else
+        // Inline struct path (existing behavior for Option)
+        match payloadOpt with
+        | None -> 3  // Nullary case: undef + tagConst + withTag
+        | Some _ -> 4  // With payload: undef + tagConst + withTag + result
 
 /// Count mutable bindings in a subtree (internal state fields for seq)
 /// PRD-15 THROUGH-LINE: Internal state is unique to Seq - mutable vars declared inside body
@@ -627,10 +741,17 @@ let private nodeExpansionCost (arch: Architecture) (graph: SemanticGraph) (node:
     // ForEach: 7 (setup: 4 + condition: 1 + body: 2)
     | SemanticKind.ForEach _ -> 7
     // DU Operations (January 2026)
-    // DUGetTag: 1 (extractvalue for tag)
-    | SemanticKind.DUGetTag _ -> 1
-    // DUEliminate: 2 (extractvalue + potential bitcast for type conversion)
-    | SemanticKind.DUEliminate _ -> 2
+    // DUGetTag: For pointer-based DUs, need load + extractvalue (2 SSAs)
+    //           For inline DUs, just extractvalue (1 SSA)
+    | SemanticKind.DUGetTag (_, duType) ->
+        if needsDUArenaAllocation duType then 2 else 1
+    // DUEliminate: For pointer-based DUs, need load + extractvalue + potential bitcast (2-3 SSAs)
+    //              For inline DUs, extractvalue + potential bitcast (1-2 SSAs)
+    | SemanticKind.DUEliminate (_, _, _, _) ->
+        // Check the DU type from the scrutinee - but we don't have easy access here
+        // For now, use 3 SSAs for all cases (covers both paths with bitcast)
+        // TODO: Could optimize by checking scrutinee's type
+        3
     // DUConstruct: SSA count depends on whether payload type matches slot type
     // Computed deterministically from PSG structure
     | SemanticKind.DUConstruct (_, _, payloadOpt, _) ->
@@ -739,6 +860,9 @@ type SSAAssignment = {
     /// Closure layouts for Lambdas with captures (NodeId.value -> ClosureLayout)
     /// Empty for simple lambdas (no captures)
     ClosureLayouts: Map<int, ClosureLayout>
+    /// DU layouts for DUConstruct nodes needing arena allocation (NodeId.value -> DULayout)
+    /// Empty for homogeneous DUs like Option that use inline struct
+    DULayouts: Map<int, DULayout>
 }
 
 /// Assign SSA names to all nodes in a function body
@@ -747,6 +871,7 @@ let rec private assignFunctionBody
     (arch: Architecture)
     (graph: SemanticGraph)
     (closureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>)
+    (duLayouts: System.Collections.Generic.Dictionary<int, DULayout>)
     (scope: FunctionScope)
     (nodeId: NodeId)
     : FunctionScope =
@@ -770,7 +895,7 @@ let rec private assignFunctionBody
 
         // Post-order: process filtered children first
         let scopeAfterChildren =
-            childrenToProcess |> List.fold (fun s childId -> assignFunctionBody arch graph closureLayouts s childId) scope
+            childrenToProcess |> List.fold (fun s childId -> assignFunctionBody arch graph closureLayouts duLayouts s childId) scope
 
         // Special handling for nested Lambdas - they get their own scope
         // (but we still assign this Lambda node SSAs in parent scope for closure construction)
@@ -790,7 +915,7 @@ let rec private assignFunctionBody
                     | _ -> 0  // Shouldn't happen - Lambda bodies are marked SeparateFunction
                 | None -> 0
             let innerStartScope = { FunctionScope.empty with Counter = startCounter }
-            let _innerScope = assignFunctionBody arch graph closureLayouts innerStartScope bodyId
+            let _innerScope = assignFunctionBody arch graph closureLayouts duLayouts innerStartScope bodyId
 
             // DISTINCTION: Nested NAMED functions with captures use parameter-passing, NOT closure structs.
             // Anonymous lambdas (fun x -> ...) that escape STILL need closure structs.
@@ -843,6 +968,21 @@ let rec private assignFunctionBody
             let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
             let alloc = NodeSSAAllocation.multi ssas
             FunctionScope.assign node.Id alloc scopeWithSSAs
+
+        // DUConstruct: Build DULayout coeffect for arena-allocated heterogeneous DUs
+        | SemanticKind.DUConstruct (caseName, caseIndex, payloadOpt, _guardExpr) ->
+            let cost = nodeExpansionCost arch graph node
+            let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
+            let alloc = NodeSSAAllocation.multi ssas
+            let scopeWithAlloc = FunctionScope.assign node.Id alloc scopeWithSSAs
+
+            // Build DULayout for heterogeneous DUs needing arena allocation
+            if needsDUArenaAllocation node.Type then
+                let layout = buildDULayout arch graph node.Id caseName caseIndex payloadOpt ssas
+                if not (duLayouts.ContainsKey(NodeId.value node.Id)) then
+                    duLayouts.Add(NodeId.value node.Id, layout)
+
+            scopeWithAlloc
 
         | _ ->
             // Regular node - assign SSAs based on structural analysis
@@ -1052,6 +1192,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
 
     let mutable allAssignments = Map.empty
     let mutableClosureLayouts = System.Collections.Generic.Dictionary<int, ClosureLayout>()
+    let mutableDULayouts = System.Collections.Generic.Dictionary<int, DULayout>()
 
     // Find the main Lambda
     let mainLambdaIdOpt = findMainLambdaId graph entryPoints
@@ -1070,7 +1211,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
     let moduleLevelScope =
         moduleLevelValueBindings
         |> List.fold (fun scope bindingId ->
-            assignFunctionBody arch graph mutableClosureLayouts scope bindingId
+            assignFunctionBody arch graph mutableClosureLayouts mutableDULayouts scope bindingId
         ) FunctionScope.empty
 
     // Track the counter after module-level bindings
@@ -1107,7 +1248,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
 
             // Assign SSAs to body nodes
             // This will also compute ClosureLayouts for any nested lambdas found in the body
-            let bodyScope = assignFunctionBody arch graph mutableClosureLayouts paramScope bodyId
+            let bodyScope = assignFunctionBody arch graph mutableClosureLayouts mutableDULayouts paramScope bodyId
 
             // Merge into global assignments (including parameter SSAs)
             for kvp in paramScope.Assignments do
@@ -1126,7 +1267,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
         | SemanticKind.SeqExpr (bodyId, _captures) ->
             // MoveNext function: %arg0 = seqPtr, body SSAs start at v1
             let initialScope = { FunctionScope.empty with Counter = 1 }
-            let bodyScope = assignFunctionBody arch graph mutableClosureLayouts initialScope bodyId
+            let bodyScope = assignFunctionBody arch graph mutableClosureLayouts mutableDULayouts initialScope bodyId
 
             // Merge SeqExpr body assignments
             for kvp in bodyScope.Assignments do
@@ -1134,9 +1275,14 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
 
         | _ -> ()
 
-    // Convert mutable dictionary to immutable map
+    // Convert mutable dictionaries to immutable maps
     let closureLayouts = 
         mutableClosureLayouts
+        |> Seq.map (fun kvp -> kvp.Key, kvp.Value)
+        |> Map.ofSeq
+
+    let duLayouts =
+        mutableDULayouts
         |> Seq.map (fun kvp -> kvp.Key, kvp.Value)
         |> Map.ofSeq
 
@@ -1145,6 +1291,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
         LambdaNames = lambdaNames
         EntryPointLambdas = entryPoints
         ClosureLayouts = closureLayouts
+        DULayouts = duLayouts
     }
 
 /// Look up the full SSA allocation for a node (coeffect lookup)
@@ -1175,6 +1322,15 @@ let lookupClosureLayout (nodeId: NodeId) (assignment: SSAAssignment) : ClosureLa
 /// Check if a Lambda has captures (is a closure)
 let hasClosure (nodeId: NodeId) (assignment: SSAAssignment) : bool =
     Map.containsKey (NodeId.value nodeId) assignment.ClosureLayouts
+
+/// Look up DULayout for a DUConstruct node needing arena allocation (coeffect lookup)
+/// Returns None for homogeneous DUs like Option that use inline struct
+let lookupDULayout (nodeId: NodeId) (assignment: SSAAssignment) : DULayout option =
+    Map.tryFind (NodeId.value nodeId) assignment.DULayouts
+
+/// Check if a DUConstruct node needs arena allocation
+let hasDULayout (nodeId: NodeId) (assignment: SSAAssignment) : bool =
+    Map.containsKey (NodeId.value nodeId) assignment.DULayouts
 
 /// PRD-14/PRD-15: Get the actual return type for a function that may return a lazy or seq with captures.
 /// If the function body is a LazyExpr with captures, returns the actual lazy struct type

@@ -151,3 +151,73 @@ let closureExtractionBaseIndex (layout: ClosureLayout) : int =
     | LambdaContext.RegularClosure -> 1
     | LambdaContext.LazyThunk -> 3
     | LambdaContext.SeqGenerator -> 3
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DU LAYOUT COEFFECT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// For heterogeneous DUs (like Result<'T, 'E>) that need arena allocation,
+// we pre-compute the complete DU layout. This follows the flat closure model:
+// build case-specific struct inline, then store to arena, return pointer.
+//
+// Homogeneous DUs (like Option<'T>) use inline struct representation and
+// don't need a DULayout - they're handled directly by witnessDUConstruct.
+
+/// Complete DU layout for a DUConstruct node that needs arena allocation.
+/// This coeffect tells MemoryWitness exactly how to construct arena-allocated DUs.
+type DULayout = {
+    /// The DUConstruct node this layout is for
+    DUConstructNodeId: NodeId
+    /// Case name (e.g., "Ok", "Error")
+    CaseName: string
+    /// Case index (0 for first case, 1 for second, etc.)
+    CaseIndex: int
+    /// Whether this case has a payload
+    HasPayload: bool
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CASE-SPECIFIC STRUCT CONSTRUCTION SSAs
+    // ─────────────────────────────────────────────────────────────────────────
+    /// SSA for undef case struct
+    StructUndefSSA: SSA
+    /// SSA for tag constant
+    TagConstSSA: SSA
+    /// SSA for insertvalue of tag at [0]
+    WithTagSSA: SSA
+    /// SSA for insertvalue of payload at [1] (only used if HasPayload)
+    WithPayloadSSA: SSA option
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SIZE COMPUTATION SSAs
+    // ─────────────────────────────────────────────────────────────────────────
+    /// SSA for null pointer (GEP base for size computation)
+    SizeNullPtrSSA: SSA
+    /// SSA for constant 1 (GEP index)
+    SizeOneSSA: SSA
+    /// SSA for GEP null[1] result
+    SizeGepSSA: SSA
+    /// SSA for ptrtoint (size in bytes)
+    SizeSSA: SSA
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ARENA ALLOCATION SSAs (uses closure_heap arena)
+    // ─────────────────────────────────────────────────────────────────────────
+    /// SSA for addressof closure_pos
+    HeapPosPtrSSA: SSA
+    /// SSA for load current position
+    HeapPosSSA: SSA
+    /// SSA for addressof closure_heap
+    HeapBaseSSA: SSA
+    /// SSA for GEP heap_base + pos (result pointer)
+    HeapResultPtrSSA: SSA
+    /// SSA for pos + size (new position)
+    HeapNewPosSSA: SSA
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TYPE INFORMATION
+    // ─────────────────────────────────────────────────────────────────────────
+    /// MLIR type of the case-specific struct: {i8, PayloadType}
+    CaseStructType: MLIRType
+    /// MLIR type of the payload (if HasPayload)
+    PayloadType: MLIRType option
+}
