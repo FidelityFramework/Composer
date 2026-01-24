@@ -203,8 +203,9 @@ let witnessFieldGet
             // DU layout: (tag, payload) with case-specific payload type
             TStruct [TInt I8; fieldType]
         | _ ->
-            // Tag extraction, string fields, records - use standard mapping
-            mapNativeType structNativeType
+            // Tag extraction, string fields, records - use graph-aware mapping
+            // that correctly handles nested record types
+            mapType structNativeType ctx
 
     let fieldSSA = requireNodeSSA nodeId ctx
     let extractOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (fieldSSA, structSSA, [fieldIndex], structMlirType))
@@ -694,8 +695,8 @@ let witnessDUGetTag
     let ssas = requireNodeSSAs nodeId ctx
     let tagType = MLIRTypes.i8
 
-    // Map the DU type to get the MLIR type
-    let duMlirType = mapNativeType duType
+    // Map the DU type to get the MLIR type (graph-aware for consistency)
+    let duMlirType = mapType duType ctx
 
     // Check if this is a pointer-based DU (heterogeneous like Result)
     match duMlirType with

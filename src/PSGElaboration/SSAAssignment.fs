@@ -984,6 +984,33 @@ let rec private assignFunctionBody
 
             scopeWithAlloc
 
+        // ─────────────────────────────────────────────────────────────────────
+        // PATTERN BINDING SSA ALIASING (January 2026)
+        // Record pattern bindings: `{ Age = a }` creates PatternBinding with FieldGet child.
+        // The PatternBinding is just a NAME for the FieldGet result - it should ALIAS
+        // the child's SSA, not allocate new SSAs.
+        // Lambda parameter PatternBindings: have no children, Lambda assigns them as Arg.
+        // ─────────────────────────────────────────────────────────────────────
+        | SemanticKind.PatternBinding _ ->
+            if not (List.isEmpty node.Children) then
+                // Record pattern binding - alias the first child's SSA (the FieldGet)
+                let childId = List.head node.Children
+                match Map.tryFind (NodeId.value childId) scopeAfterChildren.Assignments with
+                | Some childSSA ->
+                    // Alias: PatternBinding gets the same SSA as its FieldGet child
+                    FunctionScope.assign node.Id childSSA scopeAfterChildren
+                | None ->
+                    // Child not in assignments - shouldn't happen with post-order
+                    // Fall back to normal allocation
+                    let cost = nodeExpansionCost arch graph node
+                    let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
+                    let alloc = NodeSSAAllocation.multi ssas
+                    FunctionScope.assign node.Id alloc scopeWithSSAs
+            else
+                // Lambda parameter - no children, Lambda processing assigns Arg SSAs
+                // Just pass through - don't allocate here
+                scopeAfterChildren
+
         | _ ->
             // Regular node - assign SSAs based on structural analysis
             if producesValue node.Kind then

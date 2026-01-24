@@ -19,6 +19,7 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Bindings.PlatformTypes
 open PSGElaboration.PlatformConfig
+open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODULE ALIASES (for type definitions)
@@ -179,3 +180,9 @@ let requireSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
 /// Get target architecture from coeffects
 let targetArch (ctx: WitnessContext) : Architecture =
     ctx.Coeffects.Platform.TargetArch
+
+/// CANONICAL TYPE MAPPING - the ONLY way to map NativeType to MLIRType
+/// Uses graph-aware mapping that correctly handles records by looking up
+/// field types from TypeDef nodes. ALL type mapping should go through this.
+let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
+    mapNativeTypeWithGraphForArch ctx.Coeffects.Platform.TargetArch ctx.Graph ty

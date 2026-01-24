@@ -35,6 +35,7 @@ module StringCollect = PSGElaboration.StringCollection
 module PatternAnalysis = PSGElaboration.PatternBindingAnalysis
 module YieldStateIndices = PSGElaboration.YieldStateIndices
 module PlatformRes = PSGElaboration.PlatformBindingResolution
+module CoeffectValidation = PSGElaboration.CoeffectValidation
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COEFFECT ACCESSORS (Local versions for backward compatibility)
@@ -492,10 +493,18 @@ and private classifyAndWitness
         WitnessOutput.empty
 
     // ─────────────────────────────────────────────────────────────────────
-    // PATTERN (Parameter) - handled by Lambda preBindParams
+    // PATTERN BINDING - Traversal only, SSA aliasing in elaboration coeffects
+    // Lambda parameters: no children, Lambda preBinds them
+    // Record patterns: have FieldGet children that must be visited to emit code
     // ─────────────────────────────────────────────────────────────────────
     | SemanticKind.PatternBinding _ ->
-        WitnessOutput.empty
+        if List.isEmpty node.Children then
+            // Lambda parameter - already bound by Lambda witness
+            WitnessOutput.empty
+        else
+            // Record pattern - visit children (FieldGet) to emit extraction code
+            // The FieldGet produces the value; recordResult binds it to accumulator
+            visitChildren ctx z node.Children
 
     // ─────────────────────────────────────────────────────────────────────
     // FIELD GET - struct.field or record.field access
@@ -507,7 +516,7 @@ and private classifyAndWitness
             match SemanticGraph.tryGetNode structId ctx.Graph with
             | Some structNode ->
                 let structNativeType = structNode.Type
-                let fieldMlirType = mapNativeType node.Type
+                let fieldMlirType = mapType node.Type ctx
 
                 // Delegate field resolution to witness
                 let fieldOps, fieldResult =
@@ -566,7 +575,7 @@ and private classifyAndWitness
             | TRError msg -> combinedFields
             | _ -> WitnessOutput.error (sprintf "RecordExpr: field expression failed (node %d)" (NodeId.value node.Id))
         else
-            let recordMlirType = mapNativeType node.Type
+            let recordMlirType = mapType node.Type ctx
             match copyFromOpt with
             | None ->
                 // Full record construction: { Name = "Alice"; Age = 30 }
@@ -629,7 +638,7 @@ and private classifyAndWitness
         let duOutput = visitNode ctx z duValueId
         match duOutput.Result with
         | TRValue duVal ->
-            let payloadMlirType = mapNativeType payloadType
+            let payloadMlirType = mapType payloadType ctx
             // Pass the ACTUAL DU type for extraction, plus the desired payload type
             // The DU type determines the extractvalue struct annotation;
             // if payload types differ, a bitcast is needed
@@ -654,14 +663,14 @@ and private classifyAndWitness
         match payloadOutput.Result with
         | TRValue pv ->
             let constructOps, constructResult =
-                Alex.Witnesses.MemoryWitness.witnessDUConstruct node.Id ctx caseName caseIndex (Some pv) (mapNativeType node.Type)
+                Alex.Witnesses.MemoryWitness.witnessDUConstruct node.Id ctx caseName caseIndex (Some pv) (mapType node.Type ctx)
             { InlineOps = payloadOutput.InlineOps @ constructOps
               TopLevelOps = payloadOutput.TopLevelOps
               Result = constructResult }
         | TRVoid ->
             // Nullary case (no payload)
             let constructOps, constructResult =
-                Alex.Witnesses.MemoryWitness.witnessDUConstruct node.Id ctx caseName caseIndex None (mapNativeType node.Type)
+                Alex.Witnesses.MemoryWitness.witnessDUConstruct node.Id ctx caseName caseIndex None (mapType node.Type ctx)
             { InlineOps = constructOps
               TopLevelOps = []
               Result = constructResult }
@@ -784,7 +793,7 @@ and private classifyAndWitness
         match tupleOutput.Result with
         | TRValue tupleVal ->
             let elemSSA = requireSSAFromCoeffs node.Id ctx.Coeffects
-            let elemType = mapNativeType node.Type
+            let elemType = mapType node.Type ctx
             let extractOp = MLIROp.LLVMOp (LLVMOp.ExtractValue (elemSSA, tupleVal.SSA, [index], tupleVal.Type))
             MLIRAccumulator.bindNode (NodeId.value node.Id) elemSSA elemType acc
             { InlineOps = tupleOutput.InlineOps @ [extractOp]
@@ -878,6 +887,13 @@ let transferGraphWithDiagnostics
             coeffects.EntryPointLambdaIds
             graph
     | None -> ()
+
+    // Validate coeffects - catch semantic errors BEFORE transfer begins
+    match CoeffectValidation.validate graph coeffects.PatternBindings coeffects.SSA with
+    | CoeffectValidation.Valid -> ()
+    | CoeffectValidation.Invalid errors ->
+        let errorMsg = CoeffectValidation.formatErrors errors
+        failwithf "Coeffect validation failed:\n%s" errorMsg
 
     // Create accumulator
     let acc = MLIRAccumulator.empty()

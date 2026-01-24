@@ -554,7 +554,7 @@ let private witnessIntrinsic
     (returnType: NativeType)
     : (MLIROp list * TransferResult) option =
 
-    let mlirReturnType = mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch returnType
+    let mlirReturnType = mapType returnType ctx
     // Get pre-assigned result SSA for this Application node
     let resultSSA = requireNodeSSA appNodeId ctx
 
@@ -611,7 +611,7 @@ let private witnessIntrinsic
         // For stackalloc, we need the element type from the NativeType (not just ptr)
         match opKind with
         | PtrStackAlloc ->
-            match extractPtrElementType returnType, args with
+            match extractPtrElementTypeWithGraph ctx.Coeffects.Platform.TargetArch ctx.Graph returnType, args with
             | Some elemType, [count] ->
                 if count.Type = MLIRTypes.i64 then
                     let op = MLIROp.LLVMOp (LLVMOp.Alloca (resultSSA, count.SSA, elemType, None))
@@ -989,7 +989,7 @@ let private witnessIntrinsic
             // Seq.map : ('T -> 'U) -> seq<'T> -> seq<'U>
             let outputElementType =
                 match returnType with
-                | NativeType.TSeq elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSeq elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64  // Fallback
             let inputElementType =
                 match innerSeq.Type with
@@ -1002,7 +1002,7 @@ let private witnessIntrinsic
             // Seq.filter : ('T -> bool) -> seq<'T> -> seq<'T>
             let elementType =
                 match returnType with
-                | NativeType.TSeq elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSeq elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (inlineOps, topLevelOps, result) = SeqOpWitness.witnessSeqFilter appNodeId ctx.Coeffects.SSA predicate innerSeq elementType
             Some (topLevelOps @ inlineOps, result)
@@ -1011,14 +1011,14 @@ let private witnessIntrinsic
             // Seq.take : int -> seq<'T> -> seq<'T>
             let elementType =
                 match returnType with
-                | NativeType.TSeq elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSeq elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (inlineOps, topLevelOps, result) = SeqOpWitness.witnessSeqTake appNodeId ctx.Coeffects.SSA count innerSeq elementType
             Some (topLevelOps @ inlineOps, result)
 
         | "fold", [folder; initial; seq] ->
             // Seq.fold : ('S -> 'T -> 'S) -> 'S -> seq<'T> -> 'S
-            let accType = mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch returnType
+            let accType = mapType returnType ctx
             let elementType =
                 match seq.Type with
                 | TStruct (TInt I32 :: elemTy :: _) -> elemTy
@@ -1030,7 +1030,7 @@ let private witnessIntrinsic
             // Seq.collect : ('T -> seq<'U>) -> seq<'T> -> seq<'U>
             let outputElementType =
                 match returnType with
-                | NativeType.TSeq elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSeq elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (inlineOps, topLevelOps, result) = SeqOpWitness.witnessSeqCollect appNodeId ctx.Coeffects.SSA mapper outerSeq outputElementType
             Some (topLevelOps @ inlineOps, result)
@@ -1053,7 +1053,7 @@ let private witnessIntrinsic
         | "head", [listVal] ->
             let elementType =
                 match returnType with
-                | NativeType.TList elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TList elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (ops, result) = ListWitness.witnessHead appNodeId ctx.Coeffects.SSA listVal elementType
             Some (ops, result)
@@ -1107,15 +1107,15 @@ let private witnessIntrinsic
         | "values", [mapVal] ->
             let valueType =
                 match returnType with
-                | NativeType.TList valueTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch valueTy
+                | NativeType.TList valueTy -> mapType valueTy ctx
                 | _ -> MLIRTypes.i64
             let (ops, result) = MapWitness.witnessValues appNodeId ctx.Coeffects.SSA mapVal valueType
             Some (ops, result)
-        
+
         | "keys", [mapVal] ->
             let keyType =
                 match returnType with
-                | NativeType.TList keyTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch keyTy
+                | NativeType.TList keyTy -> mapType keyTy ctx
                 | _ -> MLIRTypes.i64
             let (ops, result) = MapWitness.witnessKeys appNodeId ctx.Coeffects.SSA mapVal keyType
             Some (ops, result)
@@ -1153,7 +1153,7 @@ let private witnessIntrinsic
         | "union", [set1Val; set2Val] ->
             let elementType =
                 match returnType with
-                | NativeType.TSet elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSet elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (ops, result) = SetWitness.witnessUnion appNodeId ctx.Coeffects.SSA set1Val set2Val elementType
             Some (ops, result)
@@ -1161,7 +1161,7 @@ let private witnessIntrinsic
         | "intersect", [set1Val; set2Val] ->
             let elementType =
                 match returnType with
-                | NativeType.TSet elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSet elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (ops, result) = SetWitness.witnessIntersect appNodeId ctx.Coeffects.SSA set1Val set2Val elementType
             Some (ops, result)
@@ -1169,7 +1169,7 @@ let private witnessIntrinsic
         | "difference", [set1Val; set2Val] ->
             let elementType =
                 match returnType with
-                | NativeType.TSet elemTy -> mapNativeTypeForArch ctx.Coeffects.Platform.TargetArch elemTy
+                | NativeType.TSet elemTy -> mapType elemTy ctx
                 | _ -> MLIRTypes.i64
             let (ops, result) = SetWitness.witnessDifference appNodeId ctx.Coeffects.SSA set1Val set2Val elementType
             Some (ops, result)

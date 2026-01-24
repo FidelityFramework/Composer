@@ -390,12 +390,23 @@ let mapTypeApp (conRef: TypeConRef) (args: NativeType list) : string =
 
 /// Extract element type from a pointer type (nativeptr<T> → T)
 /// Returns the MLIR type of the element, or None if not a pointer type
+/// DEPRECATED: Use extractPtrElementTypeWithGraph for correct record handling
 let extractPtrElementType (ty: NativeType) : MLIRType option =
     match ty with
     | NativeType.TApp(tycon, [elemTy]) when tycon.Name = "nativeptr" || tycon.Name = "Ptr" ->
         Some (mapNativeType elemTy)
     | NativeType.TNativePtr elemTy ->
         Some (mapNativeType elemTy)
+    | _ -> None
+
+/// Extract element type from a pointer type with graph-aware mapping
+/// CANONICAL: Use this version for correct record type handling
+let extractPtrElementTypeWithGraph (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : MLIRType option =
+    match ty with
+    | NativeType.TApp(tycon, [elemTy]) when tycon.Name = "nativeptr" || tycon.Name = "Ptr" ->
+        Some (mapNativeTypeWithGraphForArch arch graph elemTy)
+    | NativeType.TNativePtr elemTy ->
+        Some (mapNativeTypeWithGraphForArch arch graph elemTy)
     | _ -> None
 
 /// Extract return type from a function type as string

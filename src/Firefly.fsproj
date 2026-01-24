@@ -70,6 +70,7 @@
       <Compile Include="PSGElaboration/PlatformConfig.fs" />
       <Compile Include="PSGElaboration/PlatformBindingResolution.fs" />
       <Compile Include="PSGElaboration/PatternBindingAnalysis.fs" />
+      <Compile Include="PSGElaboration/CoeffectValidation.fs" />
       <Compile Include="PSGElaboration/PreprocessingSerializer.fs" />
 
       <!-- Alex Traversal - PSGZipper: Pure Huet zipper for navigation -->

@@ -34,10 +34,15 @@ type PatternBindingAnalysisResult = {
     /// Map from Match case NodeId to list of bindings introduced by that pattern
     /// Used during emission to know what variables to bind
     CasePatternBindings: Map<int, PatternBinding list>
-    
+
     /// Map from Lambda entry point NodeId to bindings from entry patterns (e.g., argv)
     /// Used for entry point argument pattern bindings
     EntryPatternBindings: Map<int, PatternBinding list>
+
+    /// Map from binding name to PatternBinding NodeId
+    /// This is the authoritative source after saturation - found by scanning
+    /// PatternBinding nodes directly rather than inferring from Match patterns
+    AllPatternBindings: Map<string, int>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -85,11 +90,36 @@ let rec extractPatternBindings (pattern: Pattern) : PatternBinding list =
 // Graph-Level Analysis
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Find all PatternBinding nodes directly in the graph
+/// This is the ground truth for pattern bindings - FNCS creates these nodes
+/// and they survive saturation transformations.
+///
+/// ARCHITECTURAL NOTE (January 2026):
+/// After Baker saturation, Match nodes become IfThenElse structures.
+/// But PatternBinding nodes persist as the authoritative source of bindings.
+/// This function scans for them directly rather than inferring from Match patterns.
+let findAllPatternBindingNodes (graph: SemanticGraph) : Map<string, int> =
+    let mutable result = Map.empty
+
+    for KeyValue(_, node) in graph.Nodes do
+        match node.Kind with
+        | SemanticKind.PatternBinding name ->
+            if node.IsReachable then
+                // Map binding name to its PatternBinding NodeId
+                // Note: same name may appear in different scopes, but each
+                // VarRef knows its specific definition via the definition field
+                result <- Map.add name (NodeId.value node.Id) result
+        | _ -> ()
+
+    result
+
 /// Find all match cases in the graph and compute their pattern bindings
 /// Returns a map from case body NodeId to list of bindings
+/// NOTE: This may find fewer bindings after saturation transforms Match nodes.
+/// The findAllPatternBindingNodes function provides the complete picture.
 let findAllCasePatternBindings (graph: SemanticGraph) : Map<int, PatternBinding list> =
     let mutable result = Map.empty
-    
+
     for KeyValue(_, node) in graph.Nodes do
         match node.Kind with
         | SemanticKind.Match (_, cases) ->
@@ -99,7 +129,7 @@ let findAllCasePatternBindings (graph: SemanticGraph) : Map<int, PatternBinding 
                 if not (List.isEmpty bindings) then
                     result <- Map.add (NodeId.value case.Body) bindings result
         | _ -> ()
-    
+
     result
 
 /// Find entry point Lambda patterns and compute their bindings
@@ -147,6 +177,7 @@ let analyze (graph: SemanticGraph) : PatternBindingAnalysisResult =
     {
         CasePatternBindings = findAllCasePatternBindings graph
         EntryPatternBindings = findEntryPatternBindings graph
+        AllPatternBindings = findAllPatternBindingNodes graph
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
