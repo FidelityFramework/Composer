@@ -1,6 +1,6 @@
 # Demo Day UI Stretch Goal: FidelityUI
 
-This document outlines a stretch goal for demo day: building graphical user interfaces for both the Keystation (Libre Sweet Potato with WaveShare display) and a desktop companion app for QuantumCredential operations. The goal is to demonstrate the full Fidelity vision—F# functional UI code compiled to native binaries, running without runtime overhead.
+This document outlines a stretch goal for demo day: building graphical user interfaces for both the Keystation (Libre Sweet Potato with WaveShare display) and a desktop companion app for QuantumCredential operations. The goal is to demonstrate the full Fidelity vision: F# functional UI code compiled to native binaries, running without runtime overhead.
 
 ## Executive Summary
 
@@ -9,7 +9,7 @@ The stretch goal is to have **two FidelityUI applications** demonstrating Quantu
 1. **Keystation UI** - Running on the Libre Sweet Potato with WaveShare 7" touchscreen (LVGL backend)
 2. **Desktop Companion App** - Running on Linux x86_64 for QuantumCredential demo interactions (GTK4 backend)
 
-Both applications share the same **F# MVU codebase**, compiled to their respective native targets via Firefly with different rendering backends. This demonstrates the true Fidelity promise: **F# is the universal syntax—what it binds to is an implementation detail.**
+Both applications share the same **F# MVU codebase**, compiled to their respective native targets via Firefly with different rendering backends. This demonstrates the true Fidelity promise: **F# is the universal syntax: what it binds to is an implementation detail.**
 
 ## The Multi-Backend Strategy
 
@@ -202,7 +202,7 @@ For the Sweet Potato running embedded Linux without a desktop environment:
 
 ### WaveShare Touch Driver
 
-Modern [WaveShare 7" displays](https://www.waveshare.com/wiki/7inch_HDMI_LCD_(C)) (Rev 2.1+) use standard HID protocol—no custom driver needed. For older revisions, the [community driver](https://github.com/derekhe/waveshare-7inch-touchscreen-driver) provides support.
+Modern [WaveShare 7" displays](https://www.waveshare.com/wiki/7inch_HDMI_LCD_(C)) (Rev 2.1+) use standard HID protocol: no custom driver needed. For older revisions, the [community driver](https://github.com/derekhe/waveshare-7inch-touchscreen-driver) provides support.
 
 The key is ensuring `hid-multitouch` kernel module is available:
 

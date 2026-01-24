@@ -17,13 +17,13 @@ A single avalanche noise source, while quantum in nature, may exhibit bias. Phys
 - **Component tolerances** create systematic bias in the noise distribution
 - **ADC nonlinearity** introduces quantization bias at certain code points
 
-A source that produces 55% ones and 45% zeros has a 5% bias. For cryptographic applications, this is unacceptable—an attacker could exploit any statistical deviation from perfect randomness.
+A source that produces 55% ones and 45% zeros has a 5% bias. For cryptographic applications, this is unacceptable; an attacker could exploit any statistical deviation from perfect randomness.
 
 ### Traditional Solutions and Their Costs
 
 **Von Neumann Debiasing**: Read pairs of bits; output only when they differ (01→0, 10→1, discard 00 and 11). This guarantees unbiased output but discards roughly 75% of samples when bias exists, and 50% even with perfect sources. It fundamentally cannot exceed 50% efficiency.
 
-**Whitening Functions**: Apply cryptographic transforms (SHA-256, AES) to spread entropy. This adds computational overhead and requires trust in the whitening algorithm itself—problematic for a hardware random number generator whose purpose is to avoid algorithmic dependencies.
+**Whitening Functions**: Apply cryptographic transforms (SHA-256, AES) to spread entropy. This adds computational overhead and requires trust in the whitening algorithm itself; problematic for a hardware random number generator whose purpose is to avoid algorithmic dependencies.
 
 **Our Approach**: Combine multiple independent sources with XOR. No samples discarded. No algorithmic transforms. Pure bitwise combination with mathematical guarantees.
 
@@ -50,7 +50,7 @@ Consider two bit sources A and B where A is perfectly random (50/50) and B is he
 
 Since A acts as a random selector between B and its complement, the output is 50/50 regardless of B's bias. The randomness of A "masks" any bias in B.
 
-This property means XOR **never degrades entropy**—it can only preserve or improve it.
+This property means XOR **never degrades entropy**; it can only preserve or improve it.
 
 ### Quantifying Bias Reduction
 
@@ -58,7 +58,7 @@ Let ε (epsilon) represent the deviation from perfect balance. A source with bia
 - P(one) = 0.5 + ε
 - P(zero) = 0.5 - ε
 
-For example, ε = 0.05 means 55% ones, 45% zeros—a 5% bias.
+For example, ε = 0.05 means 55% ones, 45% zeros; a 5% bias.
 
 When two independent sources with bias ε are XOR'd, we can calculate the output bias:
 
@@ -126,17 +126,17 @@ Starting with ε = 0.05 (5% bias per channel):
 | Two channels | 2ε² | 0.005 | 0.5% |
 | Four channels (tree) | 8ε⁴ | 0.00005 | 0.005% |
 
-The four-channel tree reduces 5% bias to 0.005%—a factor of 1000 improvement. This approaches cryptographic quality without any algorithmic intervention.
+The four-channel tree reduces 5% bias to 0.005%; a factor of 1000 improvement. This approaches cryptographic quality without any algorithmic intervention.
 
 ### Why Independence Matters
 
-The mathematical analysis assumes the four sources are **independent**—the noise in one channel has no correlation with noise in another. This requires:
+The mathematical analysis assumes the four sources are **independent**; the noise in one channel has no correlation with noise in another. This requires:
 
 - **Separate avalanche diodes**: Each channel has its own Zener, not shared
 - **Isolated bias networks**: No common current paths that could create correlation
 - **Independent power filtering**: Decoupling capacitors per channel
 
-If channels were correlated, the XOR would not achieve the full ε⁴ reduction. For example, if CH0 and CH1 produced identical values, their XOR would always be zero—no entropy at all.
+If channels were correlated, the XOR would not achieve the full ε⁴ reduction. For example, if CH0 and CH1 produced identical values, their XOR would always be zero; no entropy at all.
 
 ---
 
@@ -223,7 +223,7 @@ In MLIR, the two Level-1 operations have no data dependency and can be scheduled
 
 ### ADC Sampling Interface
 
-The ADC read operation is a platform binding—Fidelity's Alex component provides the native implementation:
+The ADC read operation is a platform binding; Fidelity's Alex component provides the native implementation:
 
 ```fsharp
 module Platform.Bindings.ADC =
@@ -409,7 +409,7 @@ Chris Tacke noted that I2C ADC access on the YoshiPi is significantly slower tha
 | I2C (100 kHz) | ~200 µs | ~3,200 ms |
 | I2C (400 kHz) | ~50 µs | ~820 ms |
 
-Even with I2C at standard speed, the method remains practical—3.2 seconds is long but acceptable for one-time credential generation. The mathematical soundness is preserved regardless of bus speed.
+Even with I2C at standard speed, the method remains practical; 3.2 seconds is long but acceptable for one-time credential generation. The mathematical soundness is preserved regardless of bus speed.
 
 ---
 
@@ -423,7 +423,7 @@ The XOR combination provides resilience against partial failures:
 - **Two channels fail**: Two sources still XOR'd; bias reduction is ε² instead of ε⁴
 - **Three channels fail**: Single source remains; output has original bias ε
 
-Complete failure requires all four independent quantum processes to be compromised simultaneously—an extremely unlikely scenario for properly isolated circuits.
+Complete failure requires all four independent quantum processes to be compromised simultaneously; an extremely unlikely scenario for properly isolated circuits.
 
 ### No Algorithmic Trust Required
 
@@ -458,7 +458,7 @@ The F# implementation lowers cleanly through Fidelity to MLIR, preserving the pa
 
 ### The Back-Pocket Explanation
 
-> "Each of my four avalanche circuits might have slight bias—maybe 55/45 instead of perfect 50/50. That's a 5% deviation, which we call epsilon. When I XOR two independent sources, the bias squares. When I XOR four sources in a parallel tree, the bias goes to the fourth power. So my 5% bias becomes 0.005%—a thousand times better. That's why four independent quantum sources combined with XOR gives cryptographic-quality randomness even if each individual source isn't perfect."
+> "Each of my four avalanche circuits might have slight bias; maybe 55/45 instead of perfect 50/50. That's a 5% deviation, which we call epsilon. When I XOR two independent sources, the bias squares. When I XOR four sources in a parallel tree, the bias goes to the fourth power. So my 5% bias becomes 0.005%; a thousand times better. That's why four independent quantum sources combined with XOR gives cryptographic-quality randomness even if each individual source isn't perfect."
 
 ### The Tree Diagram
 

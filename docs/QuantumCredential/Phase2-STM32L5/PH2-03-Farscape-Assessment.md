@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-Farscape is a C/C++ binding generator that aims to produce F# interop code from native headers. The architecture is sound—it uses [CppSharp](https://github.com/mono/CppSharp) (built on libclang) for parsing and has a reasonable pipeline from AST to code generation. However, **the core parsing functionality is currently non-functional**: all headers except a hardcoded cJSON.h example return empty declaration lists.
+Farscape is a C/C++ binding generator that aims to produce F# interop code from native headers. The architecture is sound: it uses [CppSharp](https://github.com/mono/CppSharp) (built on libclang) for parsing and has a reasonable pipeline from AST to code generation. However, **the core parsing functionality is currently non-functional**: all headers except a hardcoded cJSON.h example return empty declaration lists.
 
 For the January demo goal of compiling F# code that interfaces with CMSIS HAL on STM32L5, four gaps must be addressed:
 
