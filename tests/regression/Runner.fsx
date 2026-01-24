@@ -1,6 +1,9 @@
 #!/usr/bin/env dotnet fsi
 // Runner.fsx - Firefly Regression Test Runner
 // Usage: dotnet fsi Runner.fsx [options]
+//
+// Fixed: Proper async process handling to avoid pipe buffer deadlocks
+// Fixed: Task-based parallelism with proper fan-out/fold-in
 
 #r "/home/hhh/repos/Firefly/src/bin/Debug/net10.0/XParsec.dll"
 #r "/home/hhh/repos/Fidelity.Toml/src/bin/Debug/net10.0/Fidelity.Toml.dll"
@@ -9,6 +12,7 @@ open System
 open System.IO
 open System.Diagnostics
 open System.Text
+open System.Threading
 open System.Threading.Tasks
 open Fidelity.Toml
 
@@ -52,35 +56,62 @@ type TestReport = { RunId: string; ManifestPath: string; CompilerPath: string; S
 type CliOptions = { ManifestPath: string; TargetSamples: string list; Verbose: bool; TimeoutOverride: int option; Parallel: bool }
 
 // =============================================================================
-// Process Runner
+// Process Runner - Fixed async stream reading
 // =============================================================================
 
-let runWithTimeout cmd args workDir stdin (timeoutMs: int) =
-    try
-        use proc = new Process()
-        proc.StartInfo <- ProcessStartInfo(
-            FileName = cmd, Arguments = args, WorkingDirectory = workDir,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            RedirectStandardInput = Option.isSome stdin, UseShellExecute = false, CreateNoWindow = true)
-        proc.Start() |> ignore
-        match stdin with
-        | Some input -> proc.StandardInput.Write(input: string); proc.StandardInput.Close()
-        | None -> ()
-        if not (proc.WaitForExit(timeoutMs)) then
-            try proc.Kill() with _ -> ()
-            Timeout timeoutMs
-        else Completed(proc.ExitCode, proc.StandardOutput.ReadToEnd(), proc.StandardError.ReadToEnd())
-    with ex -> Failed ex
+/// Run a process with proper async stdout/stderr reading to avoid pipe buffer deadlocks.
+/// This is the correct pattern for .NET Process - read streams WHILE process runs, not after.
+let runProcessAsync cmd args workDir (stdin: string option) (timeoutMs: int) : Task<ProcessResult * int64> =
+    task {
+        let sw = Stopwatch.StartNew()
+        try
+            use proc = new Process()
+            proc.StartInfo <- ProcessStartInfo(
+                FileName = cmd,
+                Arguments = args,
+                WorkingDirectory = workDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = Option.isSome stdin,
+                UseShellExecute = false,
+                CreateNoWindow = true)
 
-let runWithTimeoutMeasured cmd args workDir stdin timeoutMs =
-    let sw = Stopwatch.StartNew()
-    let result = runWithTimeout cmd args workDir stdin timeoutMs
-    sw.Stop()
-    (result, sw.ElapsedMilliseconds)
+            proc.Start() |> ignore
+
+            // Write stdin if provided
+            match stdin with
+            | Some input ->
+                proc.StandardInput.Write(input)
+                proc.StandardInput.Close()
+            | None -> ()
+
+            // Read stdout and stderr asynchronously WHILE process runs
+            // This prevents pipe buffer deadlock
+            let! stdoutTask = proc.StandardOutput.ReadToEndAsync()
+            let! stderrTask = proc.StandardError.ReadToEndAsync()
+
+            // Now wait for exit with timeout
+            use cts = new CancellationTokenSource(timeoutMs)
+            try
+                do! proc.WaitForExitAsync(cts.Token)
+                sw.Stop()
+                return (Completed(proc.ExitCode, stdoutTask, stderrTask), sw.ElapsedMilliseconds)
+            with :? OperationCanceledException ->
+                try proc.Kill() with _ -> ()
+                sw.Stop()
+                return (Timeout timeoutMs, sw.ElapsedMilliseconds)
+        with ex ->
+            sw.Stop()
+            return (Failed ex, sw.ElapsedMilliseconds)
+    }
+
+/// Synchronous wrapper for compatibility
+let runWithTimeout cmd args workDir stdin timeoutMs =
+    let (result, ms) = (runProcessAsync cmd args workDir stdin timeoutMs).Result
+    (result, ms)
 
 let compileSample compilerPath projectDir projectFile timeoutMs =
-    // Always use -k to generate intermediates for debugging
-    let (result, ms) = runWithTimeoutMeasured compilerPath $"compile {projectFile} -k" projectDir None timeoutMs
+    let (result, ms) = runWithTimeout compilerPath $"compile {projectFile} -k" projectDir None timeoutMs
     match result with
     | Completed (0, _, _) -> CompileSuccess ms
     | Completed (code, _, stderr) -> CompileFailed (code, stderr, ms)
@@ -88,7 +119,7 @@ let compileSample compilerPath projectDir projectFile timeoutMs =
     | Failed ex -> CompileFailed (-1, ex.Message, ms)
 
 let runBinary binaryPath workDir stdin timeoutMs =
-    let (result, ms) = runWithTimeoutMeasured binaryPath "" workDir stdin timeoutMs
+    let (result, ms) = runWithTimeout binaryPath "" workDir stdin timeoutMs
     match result with
     | Completed (0, stdout, _) -> (RunSuccess ms, stdout)
     | Completed (code, stdout, stderr) -> (RunFailed (code, stdout, stderr, ms), stdout)
@@ -177,7 +208,14 @@ let generateReport (report: TestReport) verbose =
     sb.AppendLine("=== Compilation Phase ===") |> ignore
     for r in report.Results do
         let dur = match r.CompileResult with CompileSuccess ms | CompileFailed (_,_,ms) -> formatDuration ms | CompileTimeout ms -> $">{ms}ms" | CompileSkipped _ -> "-"
-        let extra = match r.CompileResult with CompileSkipped reason -> $" ({reason})" | _ -> ""
+        let extra =
+            match r.CompileResult with
+            | CompileSkipped reason -> $" ({reason})"
+            | CompileFailed (_, stderr, _) when verbose && stderr.Length > 0 ->
+                let preview = if stderr.Length > 200 then stderr.Substring(0, 200) + "..." else stderr
+                let formatted = preview.Replace("\n", "\n            ")
+                $"\n    stderr: {formatted}"
+            | _ -> ""
         sb.AppendLine($"[{compileStatusStr r.CompileResult}] {r.Sample.Name} ({dur}){extra}") |> ignore
     sb.AppendLine().AppendLine("=== Execution Phase ===") |> ignore
     for r in report.Results do
@@ -211,59 +249,81 @@ let didPass report =
     cFail = 0 && rFail = 0
 
 // =============================================================================
-// Test Execution
+// Test Execution - Task-based with proper fan-out/fold-in
 // =============================================================================
 
-let runSampleTest config sample verbose =
-    let sampleDir = getSampleDir config sample
-    let binaryPath = getBinaryPath config sample
-    let stdinContent = getStdinContent config sample
-    let timeoutMs = sample.TimeoutSeconds * 1000
-    if verbose then printfn "  Testing: %s" sample.Name
-    if sample.Skip then
-        let reason = defaultArg sample.SkipReason "No reason"
-        if verbose then printfn "    Skipped: %s" reason
-        { Sample = sample; CompileResult = CompileSkipped reason; RunResult = Some (RunSkipped reason) }
-    else
-        if verbose then printfn "    Compiling..."
-        let compileResult = compileSample config.CompilerPath sampleDir sample.ProjectFile timeoutMs
-        match compileResult with
-        | CompileSuccess ms ->
-            if verbose then printfn "    Compiled in %dms, executing..." ms
-            let (runResult, actual) = runBinary binaryPath sampleDir stdinContent timeoutMs
-            match runResult with
-            | RunSuccess ms ->
-                if outputMatches sample.ExpectedOutput actual then
-                    if verbose then printfn "    Passed in %dms" ms
-                    { Sample = sample; CompileResult = compileResult; RunResult = Some (RunSuccess ms) }
-                else
-                    if verbose then printfn "    Output mismatch!"
-                    { Sample = sample; CompileResult = compileResult; RunResult = Some (OutputMismatch (sample.ExpectedOutput, actual, ms)) }
-            | other -> { Sample = sample; CompileResult = compileResult; RunResult = Some other }
-        | CompileFailed (code, stderr, ms) ->
-            if verbose then printfn "    Compile failed (exit %d)" code
-            { Sample = sample; CompileResult = compileResult; RunResult = None }
-        | CompileTimeout _ ->
-            if verbose then printfn "    Compile timed out"
-            { Sample = sample; CompileResult = compileResult; RunResult = None }
-        | CompileSkipped reason -> { Sample = sample; CompileResult = compileResult; RunResult = Some (RunSkipped reason) }
+/// Run a single sample test (compile + execute + verify) - completely isolated
+let runSampleTestAsync config sample : Task<TestResult> =
+    task {
+        let sampleDir = getSampleDir config sample
+        let binaryPath = getBinaryPath config sample
+        let stdinContent = getStdinContent config sample
+        let timeoutMs = sample.TimeoutSeconds * 1000
 
-let buildCompiler compilerDir verbose =
-    if verbose then printfn "Building compiler..."
-    let (result, ms) = runWithTimeoutMeasured "dotnet" "build" compilerDir None 120000
-    match result with
-    | Completed (0, _, _) ->
-        if verbose then printfn "Built in %dms" ms
-        true
-    | Completed (code, _, stderr) ->
-        printfn "Build failed (exit %d): %s" code (stderr.Substring(0, min 500 stderr.Length))
-        false
-    | Timeout _ ->
-        printfn "Build timed out"
-        false
-    | Failed ex ->
-        printfn "Build exception: %s" ex.Message
-        false
+        if sample.Skip then
+            let reason = defaultArg sample.SkipReason "No reason"
+            return { Sample = sample; CompileResult = CompileSkipped reason; RunResult = Some (RunSkipped reason) }
+        else
+            // Compile
+            let! (compileResult, compileMs) = runProcessAsync config.CompilerPath $"compile {sample.ProjectFile} -k" sampleDir None timeoutMs
+            match compileResult with
+            | Completed (0, _, _) ->
+                // Execute
+                let! (runResult, runMs) = runProcessAsync binaryPath "" sampleDir stdinContent timeoutMs
+                match runResult with
+                | Completed (0, stdout, _) ->
+                    if outputMatches sample.ExpectedOutput stdout then
+                        return { Sample = sample; CompileResult = CompileSuccess compileMs; RunResult = Some (RunSuccess runMs) }
+                    else
+                        return { Sample = sample; CompileResult = CompileSuccess compileMs; RunResult = Some (OutputMismatch (sample.ExpectedOutput, stdout, runMs)) }
+                | Completed (code, stdout, stderr) ->
+                    return { Sample = sample; CompileResult = CompileSuccess compileMs; RunResult = Some (RunFailed (code, stdout, stderr, runMs)) }
+                | Timeout t ->
+                    return { Sample = sample; CompileResult = CompileSuccess compileMs; RunResult = Some (RunTimeout t) }
+                | Failed ex ->
+                    return { Sample = sample; CompileResult = CompileSuccess compileMs; RunResult = Some (RunFailed (-1, "", ex.Message, runMs)) }
+            | Completed (code, _, stderr) ->
+                return { Sample = sample; CompileResult = CompileFailed (code, stderr, compileMs); RunResult = None }
+            | Timeout t ->
+                return { Sample = sample; CompileResult = CompileTimeout t; RunResult = None }
+            | Failed ex ->
+                return { Sample = sample; CompileResult = CompileFailed (-1, ex.Message, compileMs); RunResult = None }
+    }
+
+/// Fan-out: Start all tests as independent tasks
+/// Fold-in: Await all results, then tabulate
+let runAllTestsAsync config samples runParallel =
+    task {
+        if runParallel then
+            // Fan-out: Create all tasks (they start immediately)
+            let tasks = samples |> List.map (fun s -> runSampleTestAsync config s)
+            // Fold-in: Wait for all to complete
+            let! results = Task.WhenAll(tasks)
+            return Array.toList results
+        else
+            // Sequential execution
+            let mutable results = []
+            for sample in samples do
+                let! result = runSampleTestAsync config sample
+                results <- results @ [result]
+            return results
+    }
+
+let buildCompilerAsync compilerDir =
+    task {
+        let! (result, ms) = runProcessAsync "dotnet" "build" compilerDir None 120000
+        match result with
+        | Completed (0, _, _) -> return Some ms
+        | Completed (code, _, stderr) ->
+            printfn "Build failed (exit %d): %s" code (if stderr.Length > 500 then stderr.Substring(0, 500) else stderr)
+            return None
+        | Timeout _ ->
+            printfn "Build timed out"
+            return None
+        | Failed ex ->
+            printfn "Build exception: %s" ex.Message
+            return None
+    }
 
 // =============================================================================
 // CLI and Main
@@ -283,48 +343,62 @@ let rec parseArgs args opts =
         printfn "Options:"
         printfn "  --sample NAME    Run specific sample(s) (can be repeated)"
         printfn "  --verbose        Show detailed output"
-        printfn "  --parallel       Run samples in parallel"
+        printfn "  --parallel       Run samples in parallel (fan-out/fold-in)"
         printfn "  --timeout SEC    Override timeout for all samples"
         printfn "  --help           Show this help"
         exit 0
     | _ :: rest -> parseArgs rest opts
 
-let main argv =
-    let opts = parseArgs (Array.toList argv) defaultOptions
-    printfn "=== Firefly Regression Test Runner ===\n"
-    if not (File.Exists opts.ManifestPath) then printfn "ERROR: Manifest not found at %s" opts.ManifestPath; exit 1
-    let (config, allSamples) = loadManifest opts.ManifestPath
-    let samples = match opts.TimeoutOverride with Some t -> allSamples |> List.map (fun s -> { s with TimeoutSeconds = t }) | None -> allSamples
-    let samplesToRun =
-        match opts.TargetSamples with
-        | [] -> samples  // No specific samples = run all
-        | targets ->
-            let targetSet = Set.ofList targets
-            let found = samples |> List.filter (fun s -> Set.contains s.Name targetSet)
-            let missing = targets |> List.filter (fun t -> not (List.exists (fun s -> s.Name = t) found))
-            if not (List.isEmpty missing) then
-                printfn "WARNING: Sample(s) not found: %s" (String.concat ", " missing)
-            found
-    printfn "Manifest: %s\nCompiler: %s\nSamples: %d%s\n"
-        opts.ManifestPath config.CompilerPath samplesToRun.Length
-        (if opts.Parallel then " (parallel)" else "")
-    let srcDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(config.CompilerPath), "..", "..", "..", ".."))
-    if not (buildCompiler srcDir opts.Verbose) then exit 1
-    printfn "\nRunning %d tests...\n" samplesToRun.Length
-    let startTime = DateTime.Now
-    let results =
-        if opts.Parallel then
-            // Run samples in parallel
-            samplesToRun
-            |> List.toArray
-            |> Array.Parallel.map (fun s -> runSampleTest config s opts.Verbose)
-            |> Array.toList
+let mainAsync argv =
+    task {
+        let opts = parseArgs (Array.toList argv) defaultOptions
+        printfn "=== Firefly Regression Test Runner ===\n"
+        if not (File.Exists opts.ManifestPath) then
+            printfn "ERROR: Manifest not found at %s" opts.ManifestPath
+            return 1
         else
-            // Run samples sequentially
-            samplesToRun |> List.map (fun s -> runSampleTest config s opts.Verbose)
-    let endTime = DateTime.Now
-    let report = { RunId = startTime.ToString("yyyy-MM-ddTHH:mm:ss"); ManifestPath = opts.ManifestPath; CompilerPath = config.CompilerPath; StartTime = startTime; EndTime = endTime; Results = results }
-    printfn "\n%s" (generateReport report opts.Verbose)
-    if didPass report then 0 else 1
+            let (config, allSamples) = loadManifest opts.ManifestPath
+            let samples = match opts.TimeoutOverride with Some t -> allSamples |> List.map (fun s -> { s with TimeoutSeconds = t }) | None -> allSamples
+            let samplesToRun =
+                match opts.TargetSamples with
+                | [] -> samples
+                | targets ->
+                    let targetSet = Set.ofList targets
+                    let found = samples |> List.filter (fun s -> Set.contains s.Name targetSet)
+                    let missing = targets |> List.filter (fun t -> not (List.exists (fun s -> s.Name = t) found))
+                    if not (List.isEmpty missing) then
+                        printfn "WARNING: Sample(s) not found: %s" (String.concat ", " missing)
+                    found
+            printfn "Manifest: %s\nCompiler: %s\nSamples: %d%s\n"
+                opts.ManifestPath config.CompilerPath samplesToRun.Length
+                (if opts.Parallel then " (parallel)" else "")
 
-exit (main (Environment.GetCommandLineArgs() |> Array.skip 2))
+            // Build compiler
+            let srcDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(config.CompilerPath), "..", "..", "..", ".."))
+            printfn "Building compiler..."
+            let! buildResult = buildCompilerAsync srcDir
+            match buildResult with
+            | None -> return 1
+            | Some buildMs ->
+                printfn "Built in %dms\n" buildMs
+                printfn "Running %d tests...\n" samplesToRun.Length
+
+                let startTime = DateTime.Now
+
+                // Fan-out/fold-in test execution
+                let! results = runAllTestsAsync config samplesToRun opts.Parallel
+
+                let endTime = DateTime.Now
+                let report = {
+                    RunId = startTime.ToString("yyyy-MM-ddTHH:mm:ss")
+                    ManifestPath = opts.ManifestPath
+                    CompilerPath = config.CompilerPath
+                    StartTime = startTime
+                    EndTime = endTime
+                    Results = results
+                }
+                printfn "\n%s" (generateReport report opts.Verbose)
+                return if didPass report then 0 else 1
+    }
+
+exit ((mainAsync (Environment.GetCommandLineArgs() |> Array.skip 2)).Result)
