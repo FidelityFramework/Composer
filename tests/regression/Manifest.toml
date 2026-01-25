@@ -150,6 +150,13 @@ Contact: Bob, Springfield - bob@example.com
 Age 10: Minor
 Age 35: Adult
 Age 70: Senior
+
+=== Multi-field Pattern ===
+Summary: Alice is 30
+
+=== Nested Pattern ===
+Contact city: Springfield
+Name only: Diana
 """
 
 # =============================================================================

@@ -46,6 +46,21 @@ let ageCategory (p: Person) : string =
     | { Age = a } when a < 65 -> "Adult"
     | _ -> "Senior"
 
+/// Multi-field pattern extraction
+let personSummary (p: Person) : string =
+    match p with
+    | { Name = n; Age = a } -> $"{n} is {Format.int a}"
+
+/// Nested record pattern matching
+let getContactCity (c: Contact) : string =
+    match c with
+    | { Address = { City = city } } -> city
+
+/// Wildcard with partial extraction
+let getPersonName (p: Person) : string =
+    match p with
+    | { Name = n; Age = _ } -> n
+
 [<EntryPoint>]
 let main _ =
     Console.writeln "=== Records Test ==="
@@ -91,5 +106,21 @@ let main _ =
     Console.writeln (ageCategory adult)
     Console.write "Age 70: "
     Console.writeln (ageCategory senior)
+
+    // Multi-field pattern extraction
+    Console.writeln ""
+    Console.writeln "=== Multi-field Pattern ==="
+    Console.write "Summary: "
+    Console.writeln (personSummary alice)
+
+    // Nested record pattern
+    Console.writeln ""
+    Console.writeln "=== Nested Pattern ==="
+    Console.write "Contact city: "
+    Console.writeln (getContactCity contact)
+
+    // Wildcard pattern
+    Console.write "Name only: "
+    Console.writeln (getPersonName adult)
 
     0

@@ -6,38 +6,51 @@
 
 This sample introduces F# record types as structured data with named fields. Records are fundamental for closures, state machines, and typed IPC messages.
 
-**Key Achievement**: Established struct layout computation with GEP-based field access and copy-and-update semantics.
+**Key Achievements**:
+- Struct layout computation with GEP-based field access
+- Copy-and-update semantics (`{ r with Field = value }`)
+- Pattern matching: single-field, multi-field, nested, and wildcard patterns
+- Guard expressions with pattern-bound variables
 
 ---
 
 ## 2. Surface Feature
 
 ```fsharp
-module RecordTest
+module RecordsSample
 
-type Person = {
-    Name: string
-    Age: int
-}
+type Person = { Name: string; Age: int }
+type Address = { Street: string; City: string; Zip: string }
+type Contact = { Person: Person; Address: Address; Email: string }
 
-type Address = {
-    Street: string
-    City: string
-}
-
-type Contact = {
-    Person: Person
-    Address: Address
-}
-
+// Construction and field access
 let alice = { Name = "Alice"; Age = 30 }
-let olderAlice = { alice with Age = 31 }
+Console.writeln $"Hello, {alice.Name}! You are {alice.Age} years old."
 
-let printPerson (p: Person) =
-    Console.writeln $"{p.Name} is {p.Age} years old"
+// Copy-and-update
+let olderAlice = { alice with Age = alice.Age + 1 }
 
-printPerson alice
-printPerson olderAlice
+// Single-field pattern with guard
+let ageCategory (p: Person) =
+    match p with
+    | { Age = a } when a < 18 -> "Minor"
+    | { Age = a } when a < 65 -> "Adult"
+    | _ -> "Senior"
+
+// Multi-field pattern extraction
+let personSummary (p: Person) =
+    match p with
+    | { Name = n; Age = a } -> $"{n} is {Format.int a}"
+
+// Nested record pattern
+let getContactCity (c: Contact) =
+    match c with
+    | { Address = { City = city } } -> city
+
+// Wildcard with partial extraction
+let getPersonName (p: Person) =
+    match p with
+    | { Name = n; Age = _ } -> n
 ```
 
 ---
@@ -152,6 +165,10 @@ Total: 56 bytes
 
 ### 3.7 Pattern Matching on Records
 
+Record patterns support field extraction, nested patterns, and wildcards.
+
+#### Single-Field Pattern with Guard
+
 ```fsharp
 match person with
 | { Age = a } when a >= 18 -> "Adult"
@@ -167,6 +184,64 @@ IfThenElse
 ├── Then: "Adult"
 └── Else: "Minor"
 ```
+
+#### Multi-Field Pattern Extraction
+
+```fsharp
+let personSummary (p: Person) : string =
+    match p with
+    | { Name = n; Age = a } -> $"{n} is {Format.int a}"
+```
+
+Multiple fields are extracted in sequence:
+
+```
+Let n = p.Name
+Let a = p.Age
+InterpolatedString [n; " is "; a]
+```
+
+#### Nested Record Patterns
+
+```fsharp
+let getContactCity (c: Contact) : string =
+    match c with
+    | { Address = { City = city } } -> city
+```
+
+Nested patterns recurse through field access:
+
+```
+Let addr = c.Address
+Let city = addr.City
+city
+```
+
+**MLIR**:
+```mlir
+// Access nested field: c.Address.City
+%addr_ptr = llvm.getelementptr %contact[0, 1] : !contact_t
+%addr = llvm.load %addr_ptr : !address_t
+%city_ptr = llvm.getelementptr %addr[0, 1] : !address_t
+%city = llvm.load %city_ptr : !string_t
+```
+
+#### Wildcard with Partial Extraction
+
+```fsharp
+let getPersonName (p: Person) : string =
+    match p with
+    | { Name = n; Age = _ } -> n
+```
+
+Wildcards are optimized away - no `FieldGet` is emitted for ignored fields:
+
+```
+Let n = p.Name
+n
+```
+
+**Architectural Note**: Wildcard handling is a principled optimization. Creating a `FieldGet` for a wildcard would produce an orphaned node (no binding consumes it). Baker detects `Pattern.Wildcard` and skips emission.
 
 ---
 
@@ -234,11 +309,31 @@ ModuleOrNamespace: RecordTest
 
 ```bash
 cd samples/console/FidelityHelloWorld/10_Records
-/path/to/Firefly compile RecordTest.fidproj
-./RecordTest
-# Output:
-# Alice is 30 years old
-# Alice is 31 years old
+/path/to/Firefly compile Records.fidproj
+./target/records
+```
+
+**Expected Output**:
+```
+=== Records Test ===
+Hello, Alice! You are 30 years old.
+After birthday: Hello, Alice! You are 31 years old.
+Name field: Alice
+Age field: 30
+Category: Adult
+Contact: Bob, Springfield - bob@example.com
+
+=== Age Categories ===
+Age 10: Minor
+Age 35: Adult
+Age 70: Senior
+
+=== Multi-field Pattern ===
+Summary: Alice is 30
+
+=== Nested Pattern ===
+Contact city: Springfield
+Name only: Diana
 ```
 
 ---
