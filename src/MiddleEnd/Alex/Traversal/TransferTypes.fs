@@ -19,6 +19,7 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open PSGElaboration.PlatformConfig
 open Alex.CodeGeneration.TypeMapping
+open Alex.Traversal.PSGZipper
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODULE ALIASES (for type definitions)

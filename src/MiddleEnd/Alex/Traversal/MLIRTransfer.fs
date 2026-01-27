@@ -288,9 +288,9 @@ let transfer
 
             let output = visitNode ctx entryNodeId acc
 
-        MLIRAccumulator.addTopLevelOps output.InlineOps acc
-        MLIRAccumulator.addTopLevelOps output.TopLevelOps acc
+            MLIRAccumulator.addTopLevelOps output.InlineOps acc
+            MLIRAccumulator.addTopLevelOps output.TopLevelOps acc
 
-        match output.Result with
-        | TRError msg -> Error msg
-        | _ -> Ok (List.rev acc.TopLevelOps, [])
+            match output.Result with
+            | TRError msg -> Error msg
+            | _ -> Ok (List.rev acc.TopLevelOps, [])
