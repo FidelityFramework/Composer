@@ -116,6 +116,12 @@
       <!-- Alex Pipeline Orchestration -->
       <Compile Include="MiddleEnd/Alex/Pipeline/CompilationOrchestrator.fs" />
 
+      <!-- MiddleEnd - MLIR Optimization -->
+      <Compile Include="MiddleEnd/MLIROpt/Lowering.fs" />
+
+      <!-- BackEnd - LLVM Code Generation -->
+      <Compile Include="BackEnd/LLVM/Codegen.fs" />
+
       <!-- CLI Infrastructure -->
       <Compile Include="CLI/Diagnostics/EnvironmentInfo.fs" />
       <Compile Include="CLI/Diagnostics/ToolChainVerification.fs" />

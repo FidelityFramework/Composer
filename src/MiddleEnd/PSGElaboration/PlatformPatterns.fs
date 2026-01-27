@@ -153,16 +153,17 @@ let (|SysClockGetTime|_|) (graph: SemanticGraph) (node: SemanticNode) : unit opt
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Recognize any platform operation (analogous to Farscape's recognizeMemoryOperation)
+/// This is a partially applied function - graph is provided when PlatformModel is created
 let recognizePlatformOperation (graph: SemanticGraph) (node: SemanticNode) : PlatformOperation option =
     match node with
-    | SysWrite (graph) (fd, buffer, count) ->
+    | SysWrite graph (fd, buffer, count) ->
         Some (PlatformOperation.SysWrite (fd, buffer, count))
-    | SysRead (graph) (fd, buffer, count) ->
+    | SysRead graph (fd, buffer, count) ->
         Some (PlatformOperation.SysRead (fd, buffer, count))
-    | SysExit (graph) code ->
+    | SysExit graph code ->
         Some (PlatformOperation.SysExit code)
-    | SysNanosleep (graph) (req, rem) ->
+    | SysNanosleep graph (req, rem) ->
         Some (PlatformOperation.SysNanosleep (req, rem))
-    | SysClockGetTime (graph) _ ->
+    | SysClockGetTime graph _ ->
         Some PlatformOperation.SysClockGetTime
     | _ -> None

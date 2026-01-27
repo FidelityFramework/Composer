@@ -221,10 +221,41 @@ type PlatformModel = {
     /// Maps operation names to syscall numbers
     SyscallNumbers: Microsoft.FSharp.Quotations.Expr<Map<string, int>>
 
-    /// Recognition function (PSG node → platform operation)
+    /// Recognition function (PSG graph + node → platform operation)
     /// Analogous to Farscape's MemoryModel.Recognize
-    Recognize: FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.SemanticNode -> PlatformOperation option
+    /// Takes both graph (for traversal) and node (to recognize)
+    Recognize: FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.SemanticGraph ->
+               FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.SemanticNode ->
+               PlatformOperation option
 
     /// Whether _start wrapper is needed (freestanding mode)
     NeedsStartWrapper: bool
 }
+
+/// Build PlatformModel from FNCS PlatformContext
+let fromPlatformContext (ctx: FSharp.Native.Compiler.NativeTypedTree.NativeTypes.PlatformContext) (mode: RuntimeMode) : PlatformModel =
+    // Parse platform ID to extract OS and architecture
+    // Format is typically "Linux_x86_64", "Windows_ARM64", etc.
+    let (os, arch) =
+        match ctx.PlatformId with
+        | id when id.Contains("Linux") && id.Contains("x86_64") -> (Linux, X86_64)
+        | id when id.Contains("Linux") && id.Contains("ARM64") -> (Linux, ARM64)
+        | id when id.Contains("Windows") && id.Contains("x86_64") -> (Windows, X86_64)
+        | id when id.Contains("MacOS") && id.Contains("x86_64") -> (MacOS, X86_64)
+        | id when id.Contains("MacOS") && id.Contains("ARM64") -> (MacOS, ARM64)
+        | _ -> (Linux, X86_64)  // Default fallback
+
+    {
+        TargetOS = os
+        TargetArch = arch
+        RuntimeMode = mode
+        PlatformWordType = platformWordType arch
+        // Quotations: For now, use placeholder empty quotations
+        // TODO: Load actual quotations from PlatformLibraryPath when available
+        PlatformDescriptor = <@ obj() @>
+        SyscallConvention = <@ obj() @>
+        SyscallNumbers = <@ Map.empty<string, int> @>
+        // Recognition function from PlatformPatterns
+        Recognize = PlatformPatterns.recognizePlatformOperation
+        NeedsStartWrapper = (mode = Freestanding)
+    }

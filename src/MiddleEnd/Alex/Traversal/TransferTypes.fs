@@ -37,7 +37,7 @@ module YieldStateIndices = PSGElaboration.YieldStateIndices
 /// Pre-computed coeffects - computed ONCE before traversal, NEVER modified
 type TransferCoeffects = {
     SSA: SSAAssign.SSAAssignment
-    Platform: PlatformResolutionResult
+    Platform: PlatformModel
     Mutability: MutAnalysis.MutabilityAnalysisResult
     PatternBindings: PatternAnalysis.PatternBindingAnalysisResult
     Strings: StringCollect.StringTable
