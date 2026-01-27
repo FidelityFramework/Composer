@@ -9,6 +9,7 @@ module Alex.Witnesses.LiteralWitness
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Dialects.Core.Types
+open Alex.Traversal.TransferTypes
 open Alex.Dialects.Arith.Templates
 open Alex.Dialects.LLVM.Templates
 open Alex.Bindings.PlatformTypes

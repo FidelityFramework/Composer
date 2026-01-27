@@ -13,6 +13,7 @@ module Alex.Witnesses.SyscallOps
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
+open Alex.Traversal.TransferTypes
 open Alex.Bindings.BindingTypes
 open Alex.Bindings.PlatformTypes
 open Alex.CodeGeneration.TypeMapping

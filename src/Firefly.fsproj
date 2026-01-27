@@ -93,6 +93,12 @@
       <!-- Alex XParsec - Composable PSG pattern matchers -->
       <Compile Include="Alex/XParsec/PSGCombinators.fs" />
 
+      <!-- Alex Elements - Atomic MLIR ops (internal, XParsec-based) -->
+      <Compile Include="Alex/Elements/MLIRElements.fs" />
+
+      <!-- Alex Elision Patterns - Composable MLIR templates (public, XParsec-based) -->
+      <Compile Include="Alex/Patterns/ElisionPatterns.fs" />
+
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="Alex/Witnesses/LiteralWitness.fs" />
       <!-- Factored Witnesses -->

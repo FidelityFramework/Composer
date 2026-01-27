@@ -117,16 +117,8 @@ let val' ssa ty = { SSA = ssa; Type = ty }
 // TRANSFER RESULT
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Result of transferring a PSG node to MLIR
-/// - TRValue: Has an SSA result with type
-/// - TRVoid: No result (unit operations, statements)
-/// - TRError: Compilation error with message
-/// - TRBuiltin: Handled specially (platform bindings defer to dispatch)
-type TransferResult =
-    | TRValue of Val
-    | TRVoid
-    | TRError of string
-    | TRBuiltin of name: string * args: Val list
+// TransferResult moved to Alex.Traversal.TransferTypes (January 2026)
+// This was causing a duplicate type error with the canonical location
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPARISON PREDICATES

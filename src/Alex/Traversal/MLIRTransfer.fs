@@ -1,259 +1,269 @@
-/// MLIRTransfer - Thin fold from SemanticGraph to MLIR via XParsec + Witnesses
+/// MLIRTransfer - Thin fold from SemanticGraph to MLIR via Four Pillars
 ///
-/// ARCHITECTURE (January 2026 Greenfield):
-/// - XParsec: Pattern match PSG node structure
-/// - Witnesses: Extract data, delegate to Patterns
-/// - Patterns: Compose Elements into MLIR ops
-/// - Elements: Atomic MLIR operation emission
+/// FOUR PILLARS ARCHITECTURE:
+/// 1. XParsec - Pattern match PSG node structure
+/// 2. Patterns - Composable MLIR elision templates
+/// 3. Zipper - Bidirectional PSG navigation
+/// 4. Templates - Type-safe MLIR construction (Elements)
 ///
-/// This file does ONE thing: fold PSG structure via XParsec, dispatch to witnesses.
-/// NO transform logic. NO inline MLIR construction. ONLY orchestration.
+/// This file ONLY orchestrates: fold PSG structure, dispatch to witnesses.
+/// Witnesses use XParsec + Patterns + Elements to elide PSG → MLIR.
+///
+/// NO CallDispatch. NO Bindings. EVER.
+/// Those bypass FNCS PSG formation and are architectural violations.
 module Alex.Traversal.MLIRTransfer
 
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
-open Alex.Traversal.PSGZipper
 open Alex.Traversal.TransferTypes
-open Alex.XParsec.PSGCombinators
-open Alex.CodeGeneration.TypeMapping
 open PSGElaboration.PlatformConfig
 
 // ═══════════════════════════════════════════════════════════════════════════
-// WITNESS OUTPUT (Codata Return Type)
+// WITNESS MODULES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Witness output - witnesses RETURN this, fold accumulates
-type WitnessOutput = {
-    InlineOps: MLIROp list      // Operations to emit inline
-    TopLevelOps: MLIROp list    // Top-level declarations (functions, globals)
-    Result: TransferResult      // Resulting value/block/error
-}
-
-module WitnessOutput =
-    let inline value (ops: MLIROp list) (val_: Val) : WitnessOutput =
-        { InlineOps = ops; TopLevelOps = []; Result = TRValue val_ }
-
-    let inline valueWithTopLevel (inlineOps: MLIROp list) (topOps: MLIROp list) (val_: Val) : WitnessOutput =
-        { InlineOps = inlineOps; TopLevelOps = topOps; Result = TRValue val_ }
-
-    let inline block (ops: MLIROp list) (blockId: BlockId) : WitnessOutput =
-        { InlineOps = ops; TopLevelOps = []; Result = TRBlock blockId }
-
-    let inline error (msg: string) : WitnessOutput =
-        { InlineOps = []; TopLevelOps = []; Result = TRError msg }
-
-    let inline unit_ (ops: MLIROp list) : WitnessOutput =
-        { InlineOps = ops; TopLevelOps = []; Result = TRUnit }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// WITNESS CONTEXT (Immutable Context for Witnesses)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Context passed to witnesses - immutable, contains coeffects and platform info
-type WitnessContext = {
-    Graph: SemanticGraph
-    Coeffects: TransferCoeffects
-    Platform: PlatformResolutionResult
-    Zipper: PSGZipper
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MLIR ACCUMULATOR (Mutable Fold State)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Mutable accumulator for MLIR generation
-/// The fold is pure (witnesses return codata), but we accumulate into this structure
-type MLIRAccumulator = {
-    mutable InlineOps: MLIROp list
-    mutable TopLevelOps: MLIROp list
-    mutable NodeBindings: Map<int, Val>  // NodeId.value -> Val
-}
-
-module MLIRAccumulator =
-    let create () : MLIRAccumulator = {
-        InlineOps = []
-        TopLevelOps = []
-        NodeBindings = Map.empty
-    }
-
-    let accumulate (output: WitnessOutput) (acc: MLIRAccumulator) : unit =
-        acc.InlineOps <- acc.InlineOps @ output.InlineOps
-        acc.TopLevelOps <- acc.TopLevelOps @ output.TopLevelOps
-
-    let bindNode (nodeId: int) (val_: Val) (acc: MLIRAccumulator) : unit =
-        acc.NodeBindings <- Map.add nodeId val_ acc.NodeBindings
-
-    let tryGetBinding (nodeId: int) (acc: MLIRAccumulator) : Val option =
-        Map.tryFind nodeId acc.NodeBindings
+module LazyWitness = Alex.Witnesses.LazyWitness
 
 // ═══════════════════════════════════════════════════════════════════════════
 // THE FOLD (Core Transfer Logic)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Visit a single PSG node - dispatch to appropriate witness via XParsec
-let rec visitNode (ctx: WitnessContext) (z: PSGZipper) (nodeId: NodeId) (acc: MLIRAccumulator) : WitnessOutput =
+/// Fold over PSG node - witnesses use XParsec to pattern match and elide
+let rec visitNode (ctx: WitnessContext) (nodeId: NodeId) (acc: MLIRAccumulator) : WitnessOutput =
 
     // Check if already processed
-    match MLIRAccumulator.tryGetBinding (NodeId.value nodeId) acc with
-    | Some existingVal ->
-        // Already processed - return cached value
-        WitnessOutput.value [] existingVal
-    | None ->
-        // Get node from graph
+    match MLIRAccumulator.isVisited (NodeId.value nodeId) acc with
+    | true ->
+        match MLIRAccumulator.recallNode (NodeId.value nodeId) acc with
+        | Some (ssa, ty) -> WitnessOutput.value { SSA = ssa; Type = ty }
+        | None -> WitnessOutput.error (sprintf "Node %d visited but no binding" (NodeId.value nodeId))
+    | false ->
+        MLIRAccumulator.markVisited (NodeId.value nodeId) acc
+
         match SemanticGraph.tryGetNode nodeId ctx.Graph with
-        | None ->
-            WitnessOutput.error (sprintf "Node %d not found in graph" (NodeId.value nodeId))
+        | None -> WitnessOutput.error (sprintf "Node %d not found" (NodeId.value nodeId))
         | Some node ->
-            // Dispatch based on SemanticKind
             match node.Kind with
 
-            // ═══════════════════════════════════════════════════════════
-            // LITERALS
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // LAZY (PRD-14) - XParsec Architecture Pilot
+            // ═════════════════════════════════════════════════════════════════
 
-            | SemanticKind.Const (ConstKind.Bool b) ->
-                WitnessOutput.error "Bool literal not implemented - needs witness"
+            | SemanticKind.LazyExpr (bodyId, captures) ->
+                LazyWitness.witnessLazyExpr ctx node
 
-            | SemanticKind.Const (ConstKind.Int32 i) ->
-                WitnessOutput.error "Int32 literal not implemented - needs witness"
+            | SemanticKind.LazyForce lazyValueId ->
+                LazyWitness.witnessLazyForce ctx node
 
-            | SemanticKind.Const (ConstKind.Int64 i) ->
-                WitnessOutput.error "Int64 literal not implemented - needs witness"
+            // ═════════════════════════════════════════════════════════════════
+            // LITERALS - needs LiteralWitness
+            // ═════════════════════════════════════════════════════════════════
 
-            | SemanticKind.Const (ConstKind.String s) ->
-                WitnessOutput.error "String literal not implemented - needs witness"
+            | SemanticKind.Literal _ ->
+                WitnessOutput.error "Literal - needs LiteralWitness (XParsec + Patterns)"
 
-            | SemanticKind.Const kind ->
-                WitnessOutput.error (sprintf "Const kind %A not implemented" kind)
+            // ═════════════════════════════════════════════════════════════════
+            // BINDINGS AND LAMBDAS - needs LambdaWitness
+            // ═════════════════════════════════════════════════════════════════
 
-            // ═══════════════════════════════════════════════════════════
-            // BINDINGS
-            // ═══════════════════════════════════════════════════════════
-
-            | SemanticKind.Let (bindingId, bodyId) ->
-                // Process binding, then body
-                let bindingOutput = visitNode ctx z bindingId acc
-                MLIRAccumulator.accumulate bindingOutput acc
-                visitNode ctx z bodyId acc
-
-            | SemanticKind.LetRec (bindings, bodyId) ->
-                // Process all bindings, then body
-                for bindingId in bindings do
-                    let bindingOutput = visitNode ctx z bindingId acc
-                    MLIRAccumulator.accumulate bindingOutput acc
-                visitNode ctx z bodyId acc
+            | SemanticKind.Binding _ ->
+                WitnessOutput.error "Binding - structural traversal needed"
 
             | SemanticKind.Lambda _ ->
-                WitnessOutput.error "Lambda not implemented - needs witness"
+                WitnessOutput.error "Lambda - needs LambdaWitness (XParsec + Patterns)"
 
-            // ═══════════════════════════════════════════════════════════
-            // APPLICATION
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // APPLICATION - needs ApplicationWitness
+            // ═════════════════════════════════════════════════════════════════
 
-            | SemanticKind.Application (funcNodeId, argNodeIds) ->
-                WitnessOutput.error "Application not implemented - needs witness dispatcher"
+            | SemanticKind.Application _ ->
+                WitnessOutput.error "Application - needs ApplicationWitness (XParsec + Patterns)"
 
-            // ═══════════════════════════════════════════════════════════
-            // CONTROL FLOW
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // CONTROL FLOW - needs ControlFlowWitness
+            // ═════════════════════════════════════════════════════════════════
 
-            | SemanticKind.IfThenElse (condId, thenId, elseId) ->
-                WitnessOutput.error "IfThenElse not implemented - needs witness"
+            | SemanticKind.IfThenElse _ ->
+                WitnessOutput.error "IfThenElse - needs ControlFlowWitness"
 
             | SemanticKind.WhileLoop _ ->
-                WitnessOutput.error "WhileLoop not implemented - needs witness"
+                WitnessOutput.error "WhileLoop - needs ControlFlowWitness"
+
+            | SemanticKind.ForLoop _ ->
+                WitnessOutput.error "ForLoop - needs ControlFlowWitness"
+
+            | SemanticKind.ForEach _ ->
+                WitnessOutput.error "ForEach - needs ControlFlowWitness"
 
             | SemanticKind.Match _ ->
-                WitnessOutput.error "Match not implemented - needs witness"
+                WitnessOutput.error "Match - needs ControlFlowWitness"
 
-            // ═══════════════════════════════════════════════════════════
-            // LAZY (PRD-14)
-            // ═══════════════════════════════════════════════════════════
+            | SemanticKind.TryWith _ ->
+                WitnessOutput.error "TryWith - needs ControlFlowWitness"
 
-            | SemanticKind.LazyExpr _ ->
-                // Use XParsec to match LazyExpr structure
-                match tryMatch pLazyExpr ctx.Graph node z ctx.Platform with
-                | Some ((bodyId, captures), _) ->
-                    WitnessOutput.error "LazyExpr matched via XParsec - needs LazyWitness.witnessLazyCreate"
-                | None ->
-                    WitnessOutput.error "LazyExpr XParsec pattern match failed"
+            | SemanticKind.TryFinally _ ->
+                WitnessOutput.error "TryFinally - needs ControlFlowWitness"
 
-            | SemanticKind.LazyForce _ ->
-                // Use XParsec to match LazyForce structure
-                match tryMatch pLazyForce ctx.Graph node z ctx.Platform with
-                | Some (lazyNodeId, _) ->
-                    WitnessOutput.error "LazyForce matched via XParsec - needs LazyWitness.witnessLazyForce"
-                | None ->
-                    WitnessOutput.error "LazyForce XParsec pattern match failed"
-
-            // ═══════════════════════════════════════════════════════════
-            // SEQUENCES (PRD-15)
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // SEQUENCES (PRD-15) - needs SeqWitness
+            // ═════════════════════════════════════════════════════════════════
 
             | SemanticKind.SeqExpr _ ->
-                WitnessOutput.error "SeqExpr not implemented - needs witness"
+                WitnessOutput.error "SeqExpr - needs SeqWitness (XParsec + Patterns)"
 
             | SemanticKind.Yield _ ->
-                WitnessOutput.error "Yield not implemented - needs witness"
+                WitnessOutput.error "Yield - needs SeqWitness"
 
             | SemanticKind.YieldBang _ ->
-                WitnessOutput.error "YieldBang not implemented - needs witness"
+                WitnessOutput.error "YieldBang - needs SeqWitness"
 
-            // ═══════════════════════════════════════════════════════════
-            // REFERENCES
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // REFERENCES - needs ReferenceWitness
+            // ═════════════════════════════════════════════════════════════════
 
             | SemanticKind.VarRef _ ->
-                WitnessOutput.error "VarRef not implemented - needs witness"
+                WitnessOutput.error "VarRef - needs ReferenceWitness"
 
-            | SemanticKind.FuncRef _ ->
-                WitnessOutput.error "FuncRef not implemented - needs witness"
+            | SemanticKind.Set _ ->
+                WitnessOutput.error "Set - needs ReferenceWitness"
 
-            // ═══════════════════════════════════════════════════════════
-            // TUPLES
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // TUPLES - needs TupleWitness
+            // ═════════════════════════════════════════════════════════════════
 
-            | SemanticKind.Tuple elemIds ->
-                WitnessOutput.error "Tuple not implemented - needs witness"
+            | SemanticKind.TupleExpr _ ->
+                WitnessOutput.error "TupleExpr - needs TupleWitness"
 
-            | SemanticKind.TupleGet (tupleId, index) ->
-                WitnessOutput.error "TupleGet not implemented - needs witness"
+            | SemanticKind.TupleGet _ ->
+                WitnessOutput.error "TupleGet - needs TupleWitness"
 
-            // ═══════════════════════════════════════════════════════════
-            // RECORDS
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // RECORDS - needs RecordWitness
+            // ═════════════════════════════════════════════════════════════════
 
             | SemanticKind.RecordExpr _ ->
-                WitnessOutput.error "RecordExpr not implemented - needs witness"
+                WitnessOutput.error "RecordExpr - needs RecordWitness"
 
             | SemanticKind.FieldGet _ ->
-                WitnessOutput.error "FieldGet not implemented - needs witness"
+                WitnessOutput.error "FieldGet - needs RecordWitness"
 
             | SemanticKind.FieldSet _ ->
-                WitnessOutput.error "FieldSet not implemented - needs witness"
+                WitnessOutput.error "FieldSet - needs RecordWitness"
 
-            // ═══════════════════════════════════════════════════════════
-            // UNIONS
-            // ═══════════════════════════════════════════════════════════
+            // ═════════════════════════════════════════════════════════════════
+            // UNIONS - needs UnionWitness
+            // ═════════════════════════════════════════════════════════════════
 
             | SemanticKind.UnionCase _ ->
-                WitnessOutput.error "UnionCase not implemented - needs witness"
+                WitnessOutput.error "UnionCase - needs UnionWitness"
 
-            // ═══════════════════════════════════════════════════════════
-            // INTRINSICS
-            // ═══════════════════════════════════════════════════════════
+            | SemanticKind.DUGetTag _ ->
+                WitnessOutput.error "DUGetTag - needs UnionWitness"
+
+            | SemanticKind.DUEliminate _ ->
+                WitnessOutput.error "DUEliminate - needs UnionWitness"
+
+            | SemanticKind.DUConstruct _ ->
+                WitnessOutput.error "DUConstruct - needs UnionWitness"
+
+            // ═════════════════════════════════════════════════════════════════
+            // ARRAYS AND LISTS - needs CollectionWitness
+            // ═════════════════════════════════════════════════════════════════
+
+            | SemanticKind.ArrayExpr _ ->
+                WitnessOutput.error "ArrayExpr - needs CollectionWitness"
+
+            | SemanticKind.ListExpr _ ->
+                WitnessOutput.error "ListExpr - needs CollectionWitness"
+
+            | SemanticKind.IndexGet _ ->
+                WitnessOutput.error "IndexGet - needs CollectionWitness"
+
+            | SemanticKind.IndexSet _ ->
+                WitnessOutput.error "IndexSet - needs CollectionWitness"
+
+            | SemanticKind.NamedIndexedPropertySet _ ->
+                WitnessOutput.error "NamedIndexedPropertySet - needs CollectionWitness"
+
+            // ═════════════════════════════════════════════════════════════════
+            // TYPE OPERATIONS
+            // ═════════════════════════════════════════════════════════════════
+
+            | SemanticKind.TypeAnnotation (exprId, _) ->
+                // Type annotations are metadata - process expression
+                visitNode ctx exprId acc
+
+            | SemanticKind.Upcast _ ->
+                WitnessOutput.error "Upcast - needs CastWitness"
+
+            | SemanticKind.Downcast _ ->
+                WitnessOutput.error "Downcast - needs CastWitness"
+
+            | SemanticKind.TypeTest _ ->
+                WitnessOutput.error "TypeTest - needs CastWitness"
+
+            // ═════════════════════════════════════════════════════════════════
+            // POINTERS - needs PointerWitness
+            // ═════════════════════════════════════════════════════════════════
+
+            | SemanticKind.AddressOf _ ->
+                WitnessOutput.error "AddressOf - needs PointerWitness"
+
+            | SemanticKind.Deref _ ->
+                WitnessOutput.error "Deref - needs PointerWitness"
+
+            // ═════════════════════════════════════════════════════════════════
+            // INTRINSICS - needs IntrinsicWitness
+            // ═════════════════════════════════════════════════════════════════
 
             | SemanticKind.Intrinsic info ->
-                WitnessOutput.error (sprintf "Intrinsic %A not implemented - needs witness" info)
+                WitnessOutput.error (sprintf "Intrinsic %A - needs IntrinsicWitness" info)
 
-            // ═══════════════════════════════════════════════════════════
-            // UNHANDLED
-            // ═══════════════════════════════════════════════════════════
+            | SemanticKind.PlatformBinding name ->
+                WitnessOutput.error (sprintf "PlatformBinding %s - needs PlatformWitness" name)
 
-            | kind ->
-                WitnessOutput.error (sprintf "Unhandled SemanticKind: %A" kind)
+            | SemanticKind.TraitCall _ ->
+                WitnessOutput.error "TraitCall - needs TraitWitness"
+
+            // ═════════════════════════════════════════════════════════════════
+            // SPECIAL CONSTRUCTS
+            // ═════════════════════════════════════════════════════════════════
+
+            | SemanticKind.Sequential _ ->
+                WitnessOutput.error "Sequential - needs sequential processing"
+
+            | SemanticKind.Quote _ ->
+                WitnessOutput.error "Quote - quotations not supported"
+
+            | SemanticKind.InterpolatedString _ ->
+                WitnessOutput.error "InterpolatedString - needs StringWitness"
+
+            | SemanticKind.PatternBinding _ ->
+                WitnessOutput.error "PatternBinding - needs PatternWitness"
+
+            // ═════════════════════════════════════════════════════════════════
+            // DEFINITIONS (metadata nodes - should not be visited)
+            // ═════════════════════════════════════════════════════════════════
+
+            | SemanticKind.ObjectExpr _ ->
+                WitnessOutput.error "ObjectExpr - not supported"
+
+            | SemanticKind.ModuleDef _ ->
+                WitnessOutput.error "ModuleDef - metadata node"
+
+            | SemanticKind.TypeDef _ ->
+                WitnessOutput.error "TypeDef - metadata node"
+
+            | SemanticKind.MemberDef _ ->
+                WitnessOutput.error "MemberDef - metadata node"
+
+            // ═════════════════════════════════════════════════════════════════
+            // ERRORS
+            // ═════════════════════════════════════════════════════════════════
+
+            | SemanticKind.Error msg ->
+                WitnessOutput.error (sprintf "PSG Error: %s" msg)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC API
@@ -264,30 +274,24 @@ let transfer
     (graph: SemanticGraph)
     (entryNodeId: NodeId)
     (coeffects: TransferCoeffects)
-    (platform: PlatformResolutionResult)
     : Result<MLIROp list * MLIROp list, string> =
 
-    // Create zipper at entry point
     match SemanticGraph.tryGetNode entryNodeId graph with
     | None ->
         Error (sprintf "Entry node %d not found" (NodeId.value entryNodeId))
-    | Some entryNode ->
-        let zipper = PSGZipper.create graph entryNode
+    | Some _ ->
+        let acc = MLIRAccumulator.empty ()
         let ctx = {
             Graph = graph
             Coeffects = coeffects
-            Platform = platform
-            Zipper = zipper
+            Accumulator = acc
         }
-        let acc = MLIRAccumulator.create ()
 
-        // Fold over entry point
-        let output = visitNode ctx zipper entryNodeId acc
-        MLIRAccumulator.accumulate output acc
+        let output = visitNode ctx entryNodeId acc
 
-        // Check for errors
+        MLIRAccumulator.addTopLevelOps output.InlineOps acc
+        MLIRAccumulator.addTopLevelOps output.TopLevelOps acc
+
         match output.Result with
-        | TRError msg ->
-            Error msg
-        | _ ->
-            Ok (acc.InlineOps, acc.TopLevelOps)
+        | TRError msg -> Error msg
+        | _ -> Ok (List.rev acc.TopLevelOps, [])

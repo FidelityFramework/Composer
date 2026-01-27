@@ -289,7 +289,6 @@ let private witnessInFunctionScope
             else
                 MLIROp.FuncOp (FuncOp.FuncReturn []), MLIRTypes.unit
         | TRError msg -> failwithf "Lambda body error: %s" msg
-        | TRBuiltin (name, _) -> failwithf "Lambda body cannot be builtin: %s" name
 
     let captureExtractionOps =
         match closureLayoutOpt with

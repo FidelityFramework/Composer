@@ -128,6 +128,16 @@ module MLIRAccumulator =
         | [] -> ()
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRANSFER RESULT (Result of witnessing a node)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Result of witnessing a PSG node
+type TransferResult =
+    | TRValue of Val                    // Produces a value (SSA + type)
+    | TRVoid                             // Produces no value (effect only)
+    | TRError of string                  // Error (gap in coverage)
+
+// ═══════════════════════════════════════════════════════════════════════════
 // WITNESS OUTPUT (What witnesses return)
 // ═══════════════════════════════════════════════════════════════════════════
 

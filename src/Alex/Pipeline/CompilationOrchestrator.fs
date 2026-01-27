@@ -147,12 +147,13 @@ let generateMLIRFromFNCS (projectResult: ProjectCheckResult) (targetTriple: stri
             let entryCount = List.length graph.EntryPoints
 
             // Generate MLIR via witness-based transfer (codata architecture)
-            let mlirContent, transferErrors = transferGraphWithDiagnostics graph isFreestanding intermediatesDir
+            // TODO: Need to compute coeffects before calling transfer
+            // let mlirContent, transferErrors = transferGraphWithDiagnostics graph isFreestanding intermediatesDir
 
             {
-                Content = mlirContent
-                HasErrors = not (List.isEmpty transferErrors)
-                Errors = transferErrors
+                Content = "(; MLIR transfer not yet integrated - needs coeffects ;)"
+                HasErrors = true
+                Errors = ["MLIR transfer not integrated with new architecture"]
                 CollectedFunctions = []
             }
 

@@ -8,6 +8,7 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
+open Alex.Traversal.TransferTypes
 open Alex.Patterns.SemanticPatterns
 
 module SSAAssign = PSGElaboration.SSAAssignment
