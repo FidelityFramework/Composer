@@ -33,10 +33,10 @@
       <Compile Include="Core/Toolchain.fs" />
 
       <!-- FNCS Integration (thin layer receiving SemanticGraph) -->
-      <Compile Include="Core/FNCS/Integration.fs" />
+      <Compile Include="FrontEnd/FNCS/Integration.fs" />
       <!-- Platform Templates -->
-      <Compile Include="Core/Templates/TemplateTypes.fs" />
-      <Compile Include="Core/Templates/TemplateLoader.fs" />
+      <Compile Include="FrontEnd/Templates/TemplateTypes.fs" />
+      <Compile Include="FrontEnd/Templates/TemplateLoader.fs" />
 
       <!-- Alex Dialects - Structured MLIR types (ZERO sprintf architecture) -->
       <!-- Core types and serialization - MUST come first -->
