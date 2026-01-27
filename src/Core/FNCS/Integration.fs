@@ -96,6 +96,10 @@ let errors (result: FNCSCheckResult) : Diagnostic list =
 let warnings (result: FNCSCheckResult) : Diagnostic list =
     CheckResult.warnings result
 
+/// Get platform context from check result (for Alex code generation)
+let platformContext (result: FNCSCheckResult) : PlatformContext option =
+    result.PlatformContext
+
 /// Format a type for display
 let formatTypeStr (ty: FNCSType) : string =
     formatType ty

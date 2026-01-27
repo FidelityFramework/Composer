@@ -181,3 +181,50 @@ let empty (mode: RuntimeMode) (os: OSFamily) (arch: Architecture) : PlatformReso
         Bindings = Map.empty
         NeedsStartWrapper = (mode = Freestanding)
     }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLATFORM MODEL (Quotation-Based Architecture, following Farscape pattern)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Platform operation recognized from PSG (analogous to Farscape's MemoryOperation)
+type PlatformOperation =
+    | SysWrite of fd: int * buffer: SSA * count: SSA
+    | SysRead of fd: int * buffer: SSA * count: SSA
+    | SysExit of code: SSA
+    | SysNanosleep of req: SSA * rem: SSA
+    | SysClockGetTime
+
+/// Platform model for quotation-based binding (analogous to Farscape's MemoryModel)
+/// This follows the Farscape pattern: quotations + active patterns + recognize function
+type PlatformModel = {
+    /// Target operating system
+    TargetOS: OSFamily
+
+    /// Target architecture
+    TargetArch: Architecture
+
+    /// Runtime mode (freestanding or console)
+    RuntimeMode: RuntimeMode
+
+    /// Platform word type (i64 on 64-bit, i32 on 32-bit)
+    PlatformWordType: MLIRType
+
+    /// Platform descriptor quotation from Fidelity.Platform
+    /// Contains type layouts, calling conventions, memory regions
+    PlatformDescriptor: Microsoft.FSharp.Quotations.Expr<obj>
+
+    /// Syscall convention quotation from Fidelity.Platform
+    /// Contains register assignments, calling convention
+    SyscallConvention: Microsoft.FSharp.Quotations.Expr<obj>
+
+    /// Syscall number table quotation from Fidelity.Platform
+    /// Maps operation names to syscall numbers
+    SyscallNumbers: Microsoft.FSharp.Quotations.Expr<Map<string, int>>
+
+    /// Recognition function (PSG node → platform operation)
+    /// Analogous to Farscape's MemoryModel.Recognize
+    Recognize: FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.SemanticNode -> PlatformOperation option
+
+    /// Whether _start wrapper is needed (freestanding mode)
+    NeedsStartWrapper: bool
+}
