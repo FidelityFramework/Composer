@@ -4,12 +4,16 @@
 /// They do NOT emit. The FOLD accumulates via withOps.
 /// ZERO SPRINTF - all operations through structured types.
 /// SSAs come from pre-computed SSAAssignment coeffect, NOT freshSynthSSA.
+///
+/// NANOPASS: This witness handles ONLY Literal nodes.
+/// All other nodes return WitnessOutput.skip for other nanopasses to handle.
 module Alex.Witnesses.LiteralWitness
 
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
+open Alex.Traversal.NanopassArchitecture
 open Alex.CodeGeneration.TypeMapping
 
 module SSAAssign = PSGElaboration.SSAAssignment
@@ -110,3 +114,28 @@ let witness
 
     | _ ->
         [], TRError $"Unsupported literal: {lit}"
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CATEGORY-SELECTIVE WITNESS (Private)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Witness Literal nodes - category-selective (handles only Literal nodes)
+let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    match node.Kind with
+    | SemanticKind.Literal lit ->
+        // Delegate to existing witness function
+        let ops, result = witness ctx.Coeffects.SSA (targetArch ctx) node.Id lit
+        { InlineOps = ops; TopLevelOps = []; Result = result }
+
+    // Skip all other nodes (not Literal)
+    | _ -> WitnessOutput.skip
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NANOPASS REGISTRATION (Public)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Literal nanopass - witnesses Literal nodes (int, bool, char, float, etc.)
+let nanopass : Nanopass = {
+    Name = "Literal"
+    Witness = witnessLiteralNode
+}

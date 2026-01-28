@@ -97,6 +97,9 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/LambdaWitness.fs" />
 
+      <!-- Alex Traversal - Witness Registry (global registry of all nanopasses) -->
+      <Compile Include="MiddleEnd/Alex/Traversal/WitnessRegistry.fs" />
+
       <!-- Alex Traversal - MLIR Transfer via Zipper + XParsec (pull model) -->
       <Compile Include="MiddleEnd/Alex/Traversal/MLIRTransfer.fs" />
 
