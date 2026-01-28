@@ -134,34 +134,46 @@ All intrinsics are resolved at compile time to platform-specific implementations
 
 ## Hello World Example
 
-A minimal Firefly program uses FNCS intrinsics for I/O:
+Firefly compiles idiomatic F# code to native binaries with no runtime dependencies:
 
 ```fsharp
 module HelloWorld
 
-// String literal - becomes UTF-8 fat pointer {ptr, len}
-let greeting = "Hello, World!\n"
+let greet name =
+    Console.writeln $"Hello, {name}!"
 
 [<EntryPoint>]
-let main (args: string[]) : int =
-    // Sys.write is a compiler intrinsic
-    // fd=1 (stdout), NativePtr to string data, length
-    let written = Sys.write 1 (NativeStr.ptr greeting) (NativeStr.length greeting)
+let main argv =
+    Console.write "Enter your name: "
+    Console.readln()
+    |> greet
     0
 ```
 
+**This compiles to a native binary** with:
+- No .NET runtime or garbage collector
+- Direct syscalls for I/O operations
+- Stack-based string allocation (zero heap)
+- Optimized via MLIR → LLVM
+
 Compile and run:
 ```bash
-cd samples/console/FidelityHelloWorld/01_HelloWorldDirect
+cd samples/console/FidelityHelloWorld/03_HelloWorldHalfCurried
 firefly compile HelloWorld.fidproj
-./HelloWorld
+./HelloWorld  # Freestanding native binary
 ```
 
-See `/samples/console/FidelityHelloWorld/` for progressive complexity examples:
-- `01_HelloWorldDirect` - Direct syscall writes
-- `02_HelloWorldSaturated` - Let bindings and function calls
-- `03_HelloWorldHalfCurried` - Pipe operators and partial application
-- `04_HelloWorldFullCurried` - Full currying, Result.map, lambdas
+**The code looks like F#. The binary runs like C.**
+
+### Progressive Examples
+
+See `/samples/console/FidelityHelloWorld/` for progressive F# features:
+- `03_HelloWorldHalfCurried` - Pipe operators and string interpolation (shown above)
+- `04_HelloWorldFullCurried` - Currying and partial application
+- `05_AddNumbers` - Pattern matching with discriminated unions
+- `08_Option` - Option<'T> type (Some/None)
+- `11_Closures` - Closure capture with flat closures
+- `14_Lazy` - Lazy<'T> evaluation with memoization
 
 ## 🎛️ Project Configuration
 

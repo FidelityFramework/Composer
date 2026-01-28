@@ -420,6 +420,34 @@ let pLazyForce : PSGParser<NodeId> =
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SEQUENCE PARSERS (PRD-15, January 2026)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Match a SeqExpr node - sequence expression construction
+/// Returns: (bodyId, captures)
+let pSeqExpr : PSGParser<NodeId * CaptureInfo list> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.SeqExpr (bodyId, captures) ->
+            return (bodyId, captures)
+        | _ ->
+            return! fail (Message "Expected SeqExpr node")
+    }
+
+/// Match a ForEach node - for-in loop over sequence
+/// Returns: (var, collection, body)
+let pForEach : PSGParser<string * NodeId * NodeId> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.ForEach (var, collection, body) ->
+            return (var, collection, body)
+        | _ ->
+            return! fail (Message "Expected ForEach node")
+    }
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RUNNER (create Reader with empty string and custom state)
 // ═══════════════════════════════════════════════════════════════════════════
 

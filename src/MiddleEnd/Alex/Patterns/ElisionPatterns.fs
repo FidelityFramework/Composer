@@ -182,7 +182,9 @@ let pClosureCall (closureSSA: SSA) (captureCount: int) (args: Val list)
             |> sequence
 
         // Call with captures prepended to args
-        // TODO: Get capture types from ClosureLayoutCoeffect instead of placeholder
+        // Note: Capture types come from ClosureLayout coeffect (PSGElaboration provides this)
+        // Gap: Need to thread ClosureLayout through pattern parameters to get actual capture types
+        // For now using placeholder types - witnesses should pass correct types from coeffects
         let captureVals = extractSSAs.[1..] |> List.map (fun ssa -> { SSA = ssa; Type = TInt I64 })
         let allArgs = captureVals @ args
         let! callOp = pIndirectCall resultSSA codePtrSSA (allArgs |> List.map (fun v -> v.SSA))
@@ -224,18 +226,68 @@ let pLazyStruct (codePtr: SSA) (captures: Val list) (ssas: SSA list) : PSGParser
         return undefOp :: falseConstOp :: insertComputedOp :: insertCodeOp :: captureOps
     }
 
-/// Lazy force: check computed flag, branch to compute or return cached value
-let pLazyForce (lazySSA: SSA) (captureCount: int) (resultSSA: SSA)
-               (extractSSAs: SSA list) (computeLabel: string) (returnLabel: string) : PSGParser<MLIROp list> =
+/// Build lazy struct: High-level pattern for witnesses
+/// Combines pLazyStruct with proper result construction
+let pBuildLazyStruct (codePtr: SSA) (captures: Val list) (ssas: SSA list) (arch: Architecture)
+                     : PSGParser<MLIROp list * TransferResult> =
     parser {
-        // Extract computed flag from index 0
-        let computedSSA = extractSSAs.[0]
-        let! extractComputedOp = pExtractValue computedSSA lazySSA [0]
+        // Call low-level pattern to build struct
+        let! ops = pLazyStruct codePtr captures ssas
 
-        // Branch based on computed flag
-        let! branchOp = pCondBranch computedSSA returnLabel computeLabel
+        // Final SSA is the last one (after all insertions)
+        let finalSSA = ssas.[3 + captures.Length]
 
-        return [extractComputedOp; branchOp]
+        // Get the lazy type - it's a struct with {computed: i1, value: T, code_ptr, captures...}
+        let! state = getUserState
+        let lazyType = state.Current.Type
+        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch lazyType
+
+        return (ops, TRValue { SSA = finalSSA; Type = mlirType })
+    }
+
+/// Build lazy force: Call lazy thunk via struct pointer passing
+///
+/// LazyForce is a SIMPLE operation (not elaborated by FNCS).
+/// SSA cost: Fixed 4 (extract code_ptr, const 1, alloca, call)
+///
+/// Calling convention: Thunk receives pointer to lazy struct
+/// 1. Extract code_ptr from lazy struct [2]
+/// 2. Alloca space for lazy struct on stack (const 1 for size)
+/// 3. Store lazy struct to get pointer
+/// 4. Call thunk with pointer -> result
+///
+/// The thunk extracts captures internally using LazyLayout coeffect.
+///
+/// Lazy struct: {computed: i1, value: T, code_ptr: ptr, capture0, capture1, ...}
+let pBuildLazyForce (lazySSA: SSA) (resultSSA: SSA) (ssas: SSA list) (arch: Architecture)
+                    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // SSAs: [0] = code_ptr, [1] = const 1, [2] = alloca'd ptr
+        if ssas.Length < 3 then
+            return! pfail $"pBuildLazyForce: Expected at least 3 SSAs, got {ssas.Length}"
+
+        let codePtrSSA = ssas.[0]
+        let constOneSSA = ssas.[1]
+        let ptrSSA = ssas.[2]
+
+        // 1. Extract code_ptr from lazy struct [2]
+        let! extractCodePtrOp = pExtractValue codePtrSSA lazySSA [2]
+
+        // 2. Alloca space for lazy struct (1 element)
+        let! constOneOp = pConstI constOneSSA 1L
+        let! allocaOp = pAlloca ptrSSA (Some 1)
+
+        // 3. Store lazy struct to alloca'd space
+        let! storeOp = pStore lazySSA ptrSSA
+
+        // 4. Call thunk with pointer -> result
+        let! callOp = pIndirectCall resultSSA codePtrSSA [ptrSSA]
+
+        let! state = getUserState
+        let resultType = state.Current.Type
+        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch resultType
+
+        return ([extractCodePtrOp; constOneOp; allocaOp; storeOp; callOp], TRValue { SSA = resultSSA; Type = mlirType })
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -332,6 +384,57 @@ let pSeqMoveNext (seqSSA: SSA) (captureCount: int) (internalCount: int)
 
         return extractStateOp :: extractCodeOp :: extractCaptureOps
                @ extractInternalOps @ [callOp]
+    }
+
+/// Build seq struct: High-level pattern for SeqExpr witnesses
+/// Combines pSeqStruct with proper result construction
+///
+/// SeqExpr structure from FNCS: `SeqExpr of body: NodeId * captures: CaptureInfo list`
+/// The body is the MoveNext lambda that was elaborated by FNCS saturation.
+/// Captures are the closed-over variables.
+/// Internal state fields come from the body lambda's mutable locals.
+let pBuildSeqStruct (codePtr: SSA) (captures: Val list) (internalState: Val list)
+                    (ssas: SSA list) (arch: Architecture)
+                    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Call low-level pattern to build struct
+        // Initial state is 0 (unstarted)
+        let! ops = pSeqStruct 0L codePtr captures internalState ssas
+
+        // Final SSA is the last one (after all insertions)
+        let finalSSA = ssas.[3 + captures.Length + internalState.Length]
+
+        // Get the seq type - it's a struct with {state: i32, current: T, code_ptr, captures..., internal...}
+        let! state = getUserState
+        let seqType = state.Current.Type
+        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch seqType
+
+        return (ops, TRValue { SSA = finalSSA; Type = mlirType })
+    }
+
+/// Build ForEach loop: Iterate over sequence with MoveNext calls
+///
+/// ForEach structure from FNCS: `ForEach of var: string * collection: NodeId * body: NodeId`
+/// This generates a while loop calling MoveNext until exhausted.
+///
+/// Gap: MoveNext calling convention implementation needed
+/// Seq struct layout is: {state: i32, current: T, code_ptr: ptr, captures..., internal...}
+/// MoveNext should: extract code_ptr[2], alloca seq, store seq, call code_ptr(seq_ptr) -> i1
+let pBuildForEachLoop (collectionSSA: SSA) (bodyOps: MLIROp list)
+                      (arch: Architecture)
+                      : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // ForEach is a while loop structure:
+        // 1. Extract code_ptr from seq struct at [2]
+        // 2. Alloca space for seq, store seq to get pointer
+        // 3. Call code_ptr(seq_ptr) -> i1 (returns true if has next)
+        // 4. If true, extract current element, execute body, loop
+        // 5. If false, exit loop
+
+        // Implementation: Use SCF.While with:
+        //   - Condition region: call MoveNext, extract result
+        //   - Body region: extract current, execute bodyOps, yield
+        return! pfail "ForEach MoveNext implementation gap - needs: extract code_ptr[2], alloca/store seq, indirect call"
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -692,8 +795,9 @@ let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (arch: Architecture) : PSGPars
 
         | NativeLiteral.String _ ->
             // String literals need global string table + AddressOf operation
-            // This requires StringCollection coeffect and proper global emission
-            return! pfail "String literals need global string table implementation (FNCS elaboration required)"
+            // StringCollection coeffect (from PSGElaboration) provides the string table
+            // Gap: Need to emit global string data section and AddressOf operations
+            return! pfail "String literals need global string table + AddressOf implementation"
 
         | _ ->
             return! pfail $"Unsupported literal: {lit}"
@@ -735,29 +839,83 @@ let pStringConstruct (ptr: SSA) (length: SSA) (ssas: SSA list) : PSGParser<MLIRO
 // ═══════════════════════════════════════════════════════════
 
 /// Binary arithmetic operations (+, -, *, /, %)
-/// TODO: Implement full PSG intrinsic matching and SSA extraction
-let pBinaryArith : PSGParser<MLIROp list * TransferResult> =
+/// Takes: result SSA, LHS SSA, RHS SSA, architecture
+/// Matches intrinsic classification and emits appropriate operation
+let pBuildBinaryArith (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Architecture)
+                      : PSGParser<MLIROp list * TransferResult> =
     parser {
-        return! pfail "pBinaryArith: Pattern implementation needed (match intrinsic, extract operands, emit arith ops)"
+        let! (info, category) = pClassifiedIntrinsic
+
+        let! op =
+            parser {
+                match category with
+                | BinaryArith "addi" -> return! pAddI resultSSA lhsSSA rhsSSA
+                | BinaryArith "subi" -> return! pSubI resultSSA lhsSSA rhsSSA
+                | BinaryArith "muli" -> return! pMulI resultSSA lhsSSA rhsSSA
+                | BinaryArith "divsi" -> return! pDivSI resultSSA lhsSSA rhsSSA
+                | BinaryArith "divui" -> return! pDivUI resultSSA lhsSSA rhsSSA
+                | BinaryArith "remsi" -> return! pRemSI resultSSA lhsSSA rhsSSA
+                | BinaryArith "remui" -> return! pRemUI resultSSA lhsSSA rhsSSA
+                | BinaryArith "addf" -> return! pAddF resultSSA lhsSSA rhsSSA
+                | BinaryArith "subf" -> return! pSubF resultSSA lhsSSA rhsSSA
+                | BinaryArith "mulf" -> return! pMulF resultSSA lhsSSA rhsSSA
+                | BinaryArith "divf" -> return! pDivF resultSSA lhsSSA rhsSSA
+                | _ -> return! pfail $"Unsupported binary arithmetic intrinsic: {info.FullName}"
+            }
+
+        let! state = getUserState
+        let ty = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch state.Current.Type
+
+        return ([op], TRValue { SSA = resultSSA; Type = ty })
     }
 
 /// Comparison operations (<, <=, >, >=, ==, !=)
-/// TODO: Implement full PSG intrinsic matching and SSA extraction
-let pComparison : PSGParser<MLIROp list * TransferResult> =
+/// Takes: result SSA, LHS SSA, RHS SSA, architecture
+/// Emits CmpI or CmpF based on operand types
+let pBuildComparison (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Architecture)
+                     : PSGParser<MLIROp list * TransferResult> =
     parser {
-        return! pfail "pComparison: Pattern implementation needed (match intrinsic, extract operands, emit CmpI/CmpF)"
+        let! (info, category) = pClassifiedIntrinsic
+
+        let! predicate =
+            parser {
+                match category with
+                | Comparison "slt" -> return ICmpPred.Slt
+                | Comparison "sle" -> return ICmpPred.Sle
+                | Comparison "sgt" -> return ICmpPred.Sgt
+                | Comparison "sge" -> return ICmpPred.Sge
+                | Comparison "eq" -> return ICmpPred.Eq
+                | Comparison "ne" -> return ICmpPred.Ne
+                | Comparison "ult" -> return ICmpPred.Ult
+                | Comparison "ule" -> return ICmpPred.Ule
+                | Comparison "ugt" -> return ICmpPred.Ugt
+                | Comparison "uge" -> return ICmpPred.Uge
+                | _ -> return! pfail $"Unsupported comparison intrinsic: {info.FullName}"
+            }
+
+        let! ops = pCmpI resultSSA predicate lhsSSA rhsSSA
+
+        // Comparison always returns i1 (boolean)
+        let resultType = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType arch NTUKind.NTUbool
+
+        return (ops, TRValue { SSA = resultSSA; Type = resultType })
     }
 
 /// Bitwise operations (&, |, ^, <<, >>)
-/// TODO: Implement full PSG intrinsic matching and SSA extraction
-let pBitwise : PSGParser<MLIROp list * TransferResult> =
+/// Note: These are NOT currently in FNCS intrinsics - need to add them
+/// For now, return error indicating FNCS elaboration needed
+let pBuildBitwise (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Architecture)
+                  : PSGParser<MLIROp list * TransferResult> =
     parser {
-        return! pfail "pBitwise: Pattern implementation needed (match intrinsic, extract operands, emit And/Or/Xor/Shl/LShr/AShr)"
+        return! pfail "Bitwise operations not yet in FNCS intrinsics - need elaboration (AND, OR, XOR, SHL, SHR)"
     }
 
 /// Unary operations (-, not, ~)
-/// TODO: Implement full PSG intrinsic matching and SSA extraction
-let pUnary : PSGParser<MLIROp list * TransferResult> =
+/// Note: Unary minus is typically represented as 0 - x
+/// Logical not is typically xor with true (all 1s)
+/// For now, return error indicating these need special handling
+let pBuildUnary (resultSSA: SSA) (operandSSA: SSA) (arch: Architecture)
+                : PSGParser<MLIROp list * TransferResult> =
     parser {
-        return! pfail "pUnary: Pattern implementation needed (match intrinsic, extract operand, emit SubI or Xor)"
+        return! pfail "Unary operations need special handling - negation as (0 - x), not as (xor x, -1)"
     }

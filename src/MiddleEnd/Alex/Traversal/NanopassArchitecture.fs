@@ -39,7 +39,7 @@ let rec private visitAllNodes
     : unit =
 
     // Check if already visited
-    let nodeIdVal = match currentNode.Id with | FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.NodeId id -> id
+    let nodeIdVal = NodeId.value currentNode.Id
     if MLIRAccumulator.isVisited nodeIdVal accumulator then
         ()
     else

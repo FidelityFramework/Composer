@@ -8,6 +8,7 @@
 module Alex.Witnesses.LiteralWitness
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -21,7 +22,7 @@ module SSAAssign = PSGElaboration.SSAAssignment
 // ═══════════════════════════════════════════════════════════
 
 /// Get result SSA for a node (the final SSA from its allocation)
-let private getSingleSSA (nodeId: SemanticGraph.Types.NodeId) (ssa: SSAAssign.SSAAssignment) : SSA =
+let private getSingleSSA (nodeId: NodeId) (ssa: SSAAssign.SSAAssignment) : SSA =
     match SSAAssign.lookupSSA nodeId ssa with
     | Some s -> s
     | None -> failwithf "No result SSA for node %A" nodeId

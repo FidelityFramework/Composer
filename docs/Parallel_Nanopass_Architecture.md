@@ -282,6 +282,8 @@ tasks
 
 **Current**: All nanopasses run in parallel (no dependencies).
 
+> **NOTE**: "No dependencies" means no witness-to-witness execution dependencies. Shared Elements/Patterns are parallel-safe. See [Alex_Architecture_Overview.md](Alex_Architecture_Overview.md#the-key-distinction-shared-vocabulary-vs-execution-coupling) for the critical distinction between shared vocabulary (parallel-safe) and execution coupling (creates dependencies).
+
 **Future** (if needed): Tier nanopasses by dependencies.
 
 ```fsharp

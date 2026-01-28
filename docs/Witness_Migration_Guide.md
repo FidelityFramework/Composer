@@ -4,6 +4,8 @@
 **Status**: Implementation Complete - Ready for Migration
 **Next**: Migrate all witnesses to nanopass pattern
 
+> **CRITICAL**: See [Alex_Architecture_Overview.md](Alex_Architecture_Overview.md#the-three-layer-architecture-elements-patterns-witnesses) for the architectural foundation explaining how shared Elements/Patterns maintain witness independence.
+
 ---
 
 ## Quick Start: Migrating a Witness
