@@ -23,6 +23,12 @@ module LiteralWitness = Alex.Witnesses.LiteralWitness
 module ArithWitness = Alex.Witnesses.ArithWitness
 module PlatformWitness = Alex.Witnesses.PlatformWitness
 
+// Structural Witnesses (January 2026 - parallel fan-out)
+module BindingWitness = Alex.Witnesses.BindingWitness
+module VarRefWitness = Alex.Witnesses.VarRefWitness
+module SequentialWitness = Alex.Witnesses.SequentialWitness
+module ApplicationWitness = Alex.Witnesses.ApplicationWitness
+
 // Priority 2: Collection Witnesses
 // module OptionWitness = Alex.Witnesses.OptionWitness
 // module ListWitness = Alex.Witnesses.ListWitness
@@ -59,6 +65,12 @@ let initializeRegistry () =
         |> NanopassRegistry.register LiteralWitness.nanopass
         |> NanopassRegistry.register ArithWitness.nanopass
         |> NanopassRegistry.register PlatformWitness.nanopass
+
+        // Structural Witnesses (parallel fan-out)
+        |> NanopassRegistry.register BindingWitness.nanopass
+        |> NanopassRegistry.register VarRefWitness.nanopass
+        |> NanopassRegistry.register SequentialWitness.nanopass
+        |> NanopassRegistry.register ApplicationWitness.nanopass
 
         // Priority 2: Collection Witnesses
         // |> NanopassRegistry.register OptionWitness.nanopass

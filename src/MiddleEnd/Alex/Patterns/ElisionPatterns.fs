@@ -1004,3 +1004,26 @@ let pBuildUnary (resultSSA: SSA) (operandSSA: SSA) (arch: Architecture)
     parser {
         return! pfail "Unary operations need special handling - negation as (0 - x), not as (xor x, -1)"
     }
+
+// ═══════════════════════════════════════════════════════════
+// APPLICATION PATTERNS (Function Calls)
+// ═══════════════════════════════════════════════════════════
+
+/// Build function application (indirect call via function pointer)
+/// For known function names, use pDirectCall instead (future optimization)
+let pApplicationCall (resultSSA: SSA) (funcSSA: SSA) (argSSAs: SSA list) (retType: MLIRType)
+                     : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Emit indirect call via function pointer
+        let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (resultSSA, funcSSA, argSSAs, retType))
+        return ([callOp], TRValue { SSA = resultSSA; Type = retType })
+    }
+
+/// Build direct function call (for known function names - optimization)
+/// Future: Use this when funcId resolves to a known symbol name
+let pDirectCall (resultSSA: SSA) (funcName: string) (argSSAs: SSA list) (retType: MLIRType)
+                : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! callOp = pCall resultSSA funcName argSSAs
+        return ([callOp], TRValue { SSA = resultSSA; Type = retType })
+    }

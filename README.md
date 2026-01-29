@@ -10,7 +10,7 @@
 
 Firefly is an ahead-of-time F# compiler that produces native executables without managed runtime dependencies or garbage collection. Right now, we're bootstrapping this as a .NET CLI tool. Firefly leverages a newly forked [F# Native Compiler Services (FNCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, then generates MLIR through the Alex multi-targeting layer, and finally produces native binaries via LLVM.
 
-## 🎯 Vision
+## Design
 
 Firefly transforms F# from a managed runtime language into a true systems programming language with deterministic memory guarantees. By orchestrating compilation through MLIR, Firefly provides flexible memory management strategies - from zero-allocation stack-based code to arena-managed bulk operations and structured concurrency through actors. This enables developers to write everything from embedded firmware to high-performance services while preserving F#'s elegant syntax and type safety.
 
@@ -23,7 +23,7 @@ Central to Firefly's approach is the Program Semantic Graph (PSG) - a representa
 - **Progressive lowering** through MLIR dialects with continuous verification
 - **Platform-aware optimization** adapting to target hardware characteristics
 
-## 🏗️ Architecture
+## Structure
 
 Firefly is organized into five major layers:
 
@@ -76,7 +76,7 @@ LLVM IR
 Native Binary (no runtime dependencies)
 ```
 
-### Directory Structure
+### Directory Layout
 
 - **`CLI/`** - Command-line interface (commands, diagnostics)
 - **`Core/`** - Core types, configuration, timing utilities
@@ -100,7 +100,7 @@ Native Binary (no runtime dependencies)
 2. **Coeffects Over Runtime** - Pre-computed analysis (SSA, platform, lifetimes) guides generation
 3. **Zipper + XParsec** - Bidirectional PSG traversal with composable pattern matching
 4. **Element/Pattern/Witness** - Three-layer MLIR generation (atomic ops → compositions → observers)
-5. **Type Fidelity** - F# types map precisely to native representations, never erased
+5. **Type Fidelity** - F# types map precisely to MLIR representations and only erased at the final lowering
 
 ## Native Type System
 
@@ -193,11 +193,6 @@ output = "HelloWorld"
 output_kind = "console"         # "console" or "freestanding"
 ```
 
-### Output Kinds
-
-- **`console`** - Links with libc, suitable for desktop/server applications
-- **`freestanding`** - No libc dependency, for embedded or OS-level code
-
 ### Build Process
 
 1. FNCS type-checks F# source and produces PSG
@@ -236,57 +231,6 @@ dotnet fsi Runner.fsx           # Run all samples
 dotnet fsi Runner.fsx -- --parallel  # Parallel execution
 dotnet fsi Runner.fsx -- --sample 01_HelloWorldDirect  # Specific sample
 ```
-
-## 🎯 Current Status & Design Philosophy
-
-### ✅ What Firefly Provides Today
-
-- **No runtime dependencies** - Freestanding binaries or minimal libc linkage
-- **Type-preserving compilation** - F# types map precisely to native representations
-- **FNCS native type universe** - Compile-time type resolution (NTUKind)
-- **MLIR-based codegen** - Progressive lowering through verified dialects
-- **Platform-specific intrinsics** - Syscalls and memory operations adapted to target
-
-### 🏗️ Design Principles
-
-- **Upstream fixes** - Issues belong at their source in the pipeline, not patched downstream
-- **Coeffects over runtime** - Pre-computed analysis guides code generation
-- **Nanopass architecture** - Small, composable transformations
-- **Type-level firewalls** - Internal modules enforce architectural boundaries
-- **No semantic gaps** - Alex fills zero gaps; missing semantics belong in FNCS
-
-## 📁 Samples
-
-Located in `/samples/console/FidelityHelloWorld/`, these samples demonstrate progressive F# language features:
-
-### Basic I/O and Functions
-- `01_HelloWorldDirect` - Direct syscall writes
-- `02_HelloWorldSaturated` - Let bindings and saturated calls
-- `03_HelloWorldHalfCurried` - Pipe operators and partial application
-- `04_HelloWorldFullCurried` - Full currying, Result.map, lambdas
-- `05_AddNumbers` - Simple arithmetic operations
-- `06_AddNumbersInteractive` - User input and string parsing
-- `07_BitsTest` - Bitwise operations
-
-### Data Structures
-- `08_Option` - Option<'T> type (Some/None)
-- `09_Result` - Result<'T, 'E> type (Ok/Error)
-- `10_Records` - Record types with field access
-- `13a_SimpleCollections` - List, Map, Set operations
-
-### Functions and Control Flow
-- `11_Closures` - Closure capture and flat closures
-- `12_HigherOrderFunctions` - Functions as values, map, filter
-- `13_Recursion` - Recursive functions and pattern matching
-
-### Advanced Features
-- `14_Lazy` - Lazy<'T> evaluation (flat closures + memoization)
-- `15_SimpleSeq` - Seq<'T> basic iteration
-- `16_SeqOperations` - Seq.map, Seq.filter, etc.
-
-### Other Samples
-- `TimeLoop/` - Mutable state, while loops, platform time operations
-- `SignalTest/` - Signal handling (POSIX signals)
 
 Run the test suite: `cd tests/regression && dotnet fsi Runner.fsx`
 
@@ -377,12 +321,12 @@ Firefly development follows category-prefixed PRDs (Product Requirement Document
 
 ## 🤝 Contributing
 
-We will welcome contributions after establishing a solid baseline. Areas of particular interest:
+While we're working internally, we will be welcoming contributions after establishing a solid baseline. Areas of particular interest:
 
 - **Memory optimization patterns** - Novel approaches to deterministic memory management
-- **MLIR dialect design** - Preserving F# semantics through compilation
+- **MLIR dialect design** - Abstracting away LLVM calls that we make now in the MiddleEnd
 - **Platform targets** - Backend support for new architectures
-- **Verification** - Formal proofs of memory safety properties
+- **First Stages of Verification** - F\* integration and related proof scaffolding of memory safety properties
 
 ## License
 

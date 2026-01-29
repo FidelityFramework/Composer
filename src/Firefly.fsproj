@@ -65,6 +65,7 @@
 
       <!-- Alex Traversal - Two-Phase Nanopasses (ContentPhase → StructuralPhase, IcedTasks) -->
       <Compile Include="MiddleEnd/Alex/Traversal/NanopassArchitecture.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/CoverageValidation.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/TwoPhaseNanopass.fs" />
 
       <!-- Alex CodeGeneration - TypeSizing uses TypeMapping (moved earlier) -->
@@ -104,6 +105,10 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/BindingWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/VarRefWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/SequentialWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/ApplicationWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/LambdaWitness.fs" />
 
       <!-- Alex Traversal - Witness Registry (global registry of all nanopasses) -->

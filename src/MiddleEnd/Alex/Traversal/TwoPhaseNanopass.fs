@@ -12,6 +12,7 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
+open Alex.Traversal.CoverageValidation
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TWO-PHASE EXECUTION (ContentPhase → StructuralPhase)
@@ -204,4 +205,33 @@ let executeNanopasses
         // MERGE PHASES: Overlay Phase 1 and Phase 2
         // ═════════════════════════════════════════════════════════════════════════
 
-        overlayAccumulators phase1Accumulator phase2Accumulator
+        let mergedAccumulator = overlayAccumulators phase1Accumulator phase2Accumulator
+
+        // ═════════════════════════════════════════════════════════════════════════
+        // COVERAGE VALIDATION: Detect unwitnessed reachable nodes
+        // ═════════════════════════════════════════════════════════════════════════
+
+        let coverageErrors = CoverageValidation.validateCoverage graph mergedAccumulator
+        let stats = CoverageValidation.calculateStats graph mergedAccumulator
+
+        // Add coverage errors to accumulator (addError mutates in place)
+        coverageErrors |> List.iter (fun diag -> MLIRAccumulator.addError diag mergedAccumulator)
+
+        // Serialize coverage report if intermediates enabled
+        match intermediatesDir with
+        | Some dir ->
+            let coverageReport = {|
+                TotalNodes = stats.TotalNodes
+                ReachableNodes = stats.ReachableNodes
+                WitnessedNodes = stats.WitnessedNodes
+                UnwitnessedNodes = stats.UnwitnessedNodes
+                CoveragePercentage = stats.CoveragePercentage
+                CoverageErrors = coverageErrors |> List.map Diagnostic.format
+            |}
+            let json = JsonSerializer.Serialize(coverageReport, JsonSerializerOptions(WriteIndented = true))
+            let coveragePath = Path.Combine(dir, "08_coverage.json")
+            File.WriteAllText(coveragePath, json)
+            printfn "[Alex] Coverage: %d/%d witnessed (%.1f%%)" stats.WitnessedNodes stats.ReachableNodes stats.CoveragePercentage
+        | None -> ()
+
+        mergedAccumulator
