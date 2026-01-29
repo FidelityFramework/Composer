@@ -134,5 +134,6 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
 /// Set nanopass - witnesses Set primitive operations
 let nanopass : Nanopass = {
     Name = "Set"
+    Phase = ContentPhase
     Witness = witnessSet
 }

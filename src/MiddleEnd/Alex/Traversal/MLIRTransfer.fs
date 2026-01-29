@@ -14,7 +14,7 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.WitnessRegistry
-open Alex.Traversal.ParallelNanopass
+open Alex.Traversal.TwoPhaseNanopass
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC API

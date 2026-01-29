@@ -88,5 +88,6 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
 /// Seq nanopass - witnesses SeqExpr and ForEach nodes
 let nanopass : Nanopass = {
     Name = "Seq"
+    Phase = ContentPhase
     Witness = witnessSeq
 }

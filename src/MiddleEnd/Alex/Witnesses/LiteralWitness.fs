@@ -74,5 +74,6 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
 /// Literal nanopass - witnesses Literal nodes (int, bool, char, float, etc.)
 let nanopass : Nanopass = {
     Name = "Literal"
+    Phase = ContentPhase
     Witness = witnessLiteralNode
 }

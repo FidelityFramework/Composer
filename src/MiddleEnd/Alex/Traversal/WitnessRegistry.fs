@@ -31,9 +31,9 @@ module ArithWitness = Alex.Witnesses.ArithWitness
 // Priority 3: Control Flow (special - needs nanopass list for sub-graph traversal)
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
 
-// Priority 4: Memory & Lambda
+// Priority 4: Memory & Lambda (Lambda is special - needs nanopass list for body witnessing)
 // module MemoryWitness = Alex.Witnesses.MemoryWitness
-// module LambdaWitness = Alex.Witnesses.LambdaWitness
+module LambdaWitness = Alex.Witnesses.LambdaWitness
 
 // Priority 5: Advanced Features
 module LazyWitness = Alex.Witnesses.LazyWitness
@@ -51,6 +51,7 @@ let mutable globalRegistry = NanopassRegistry.empty
 /// Called once at startup to populate the registry with all witness nanopasses
 let initializeRegistry () =
     // First register leaf witnesses (literals, arithmetic, memory, etc.)
+    // These witnesses don't need sub-graph traversal
     let leafRegistry =
         NanopassRegistry.empty
         // Priority 1: Simple Witnesses
@@ -63,26 +64,33 @@ let initializeRegistry () =
         // |> NanopassRegistry.register MapWitness.nanopass
         // |> NanopassRegistry.register SetWitness.nanopass
 
-        // Priority 4: Memory & Lambda
+        // Priority 4: Memory
         // |> NanopassRegistry.register MemoryWitness.nanopass
-        // |> NanopassRegistry.register LambdaWitness.nanopass
 
         // Priority 5: Advanced Features
         |> NanopassRegistry.register LazyWitness.nanopass
         // |> NanopassRegistry.register SeqWitness.nanopass
 
-    // Now create ControlFlowWitness with the leaf nanopass list for sub-graph traversal
-    // ControlFlowWitness needs access to ALL witnesses (including itself) for recursive sub-graphs
-    let mutable finalRegistry = leafRegistry
-    let controlFlowNanopass = ControlFlowWitness.createNanopass (leafRegistry.Nanopasses)
-    finalRegistry <- NanopassRegistry.register controlFlowNanopass finalRegistry
+    // Now create composite witnesses (Lambda, ControlFlow) that need sub-graph traversal
+    // These witnesses need access to ALL other witnesses for witnessing sub-graphs
+    let mutable workingRegistry = leafRegistry
 
-    // Re-create ControlFlowWitness with FULL registry including itself (for recursive control flow)
-    let controlFlowNanopassRecursive = ControlFlowWitness.createNanopass (finalRegistry.Nanopasses)
-    finalRegistry <- { finalRegistry with
-                        Nanopasses = finalRegistry.Nanopasses
-                                     |> List.filter (fun np -> np.Name <> "ControlFlow")
-                                     |> List.append [controlFlowNanopassRecursive] }
+    // Add LambdaWitness (needs to witness function bodies)
+    let lambdaNanopass = LambdaWitness.createNanopass (workingRegistry.Nanopasses)
+    workingRegistry <- NanopassRegistry.register lambdaNanopass workingRegistry
+
+    // Add ControlFlowWitness (needs to witness branch bodies)
+    let controlFlowNanopass = ControlFlowWitness.createNanopass (workingRegistry.Nanopasses)
+    workingRegistry <- NanopassRegistry.register controlFlowNanopass workingRegistry
+
+    // Re-create composite witnesses with FULL registry (including themselves for recursion)
+    let lambdaNanopassRecursive = LambdaWitness.createNanopass (workingRegistry.Nanopasses)
+    let controlFlowNanopassRecursive = ControlFlowWitness.createNanopass (workingRegistry.Nanopasses)
+
+    let finalRegistry = { workingRegistry with
+                            Nanopasses = workingRegistry.Nanopasses
+                                         |> List.filter (fun np -> np.Name <> "Lambda" && np.Name <> "ControlFlow")
+                                         |> List.append [lambdaNanopassRecursive; controlFlowNanopassRecursive] }
 
     globalRegistry <- finalRegistry
 

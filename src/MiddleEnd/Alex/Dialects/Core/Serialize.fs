@@ -250,10 +250,11 @@ let rec opToString (op: MLIROp) : string =
             | None -> sprintf "func.call_indirect %s(%s) : %s" (ssaToString callee) argsStr (typeToString retTy)
         | FuncConstant (result, funcName, funcTy) ->
             sprintf "%s = func.constant @%s : %s" (ssaToString result) funcName (typeToString funcTy)
-        | Return (valueOpt, _tyOpt) ->
-            match valueOpt with
-            | Some value -> sprintf "func.return %s" (ssaToString value)
-            | None -> "func.return"
+        | Return (valueOpt, tyOpt) ->
+            match valueOpt, tyOpt with
+            | Some value, Some ty -> sprintf "func.return %s : %s" (ssaToString value) (typeToString ty)
+            | Some value, None -> sprintf "func.return %s" (ssaToString value)
+            | None, _ -> "func.return"
     | MLIROp.GlobalString (name, content, byteLength) ->
         // Escape the string content for MLIR
         let escaped = content.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\t", "\\t")

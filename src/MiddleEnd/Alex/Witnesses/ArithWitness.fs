@@ -60,5 +60,6 @@ let private witnessArithmetic (ctx: WitnessContext) (node: SemanticNode) : Witne
 /// Arithmetic nanopass - witnesses binary/unary arithmetic, comparisons, bitwise ops
 let nanopass : Nanopass = {
     Name = "Arithmetic"
+    Phase = ContentPhase
     Witness = witnessArithmetic
 }

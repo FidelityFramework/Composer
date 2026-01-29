@@ -77,5 +77,6 @@ let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
 /// Lazy nanopass - witnesses LazyExpr and LazyForce nodes
 let nanopass : Nanopass = {
     Name = "Lazy"
+    Phase = ContentPhase
     Witness = witnessLazy
 }

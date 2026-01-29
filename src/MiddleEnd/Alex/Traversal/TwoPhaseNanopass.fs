@@ -1,9 +1,9 @@
-/// ParallelNanopass - IcedTasks orchestration for parallel nanopasses
+/// TwoPhaseNanopass - Two-phase execution for content and structural nanopasses
 ///
-/// Runs multiple nanopasses in parallel via IcedTasks.ColdTask
-/// Collects results in envelope pass
-/// Overlays into cohesive MLIR graph
-module Alex.Traversal.ParallelNanopass
+/// Phase 1: ContentPhase witnesses (Literal, Arith, Collections) run in parallel
+/// Phase 2: StructuralPhase witnesses (Lambda, ControlFlow) wrap content in scope structures
+/// Both phases use IcedTasks for parallel execution within each phase
+module Alex.Traversal.TwoPhaseNanopass
 
 open System.IO
 open System.Text.Json
@@ -14,20 +14,22 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PARALLEL EXECUTION (Reactive - results collected as they arrive)
+// TWO-PHASE EXECUTION (ContentPhase → StructuralPhase)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// DESIGN DECISION: Full-fat parallel execution without pre-discovery
+// ARCHITECTURE: Two-phase execution prevents double-witnessing in nested scopes
 //
-// We run ALL registered nanopasses in parallel, even if some will be empty
-// (traverse and skip all nodes). This is the simple, correct approach.
+// Phase 1 (ContentPhase): Literal, Arith, Lazy, Collections witnesses
+//   - Run in parallel via IcedTasks
+//   - Respect scope boundaries (no recursion into Lambda/ControlFlow children)
+//   - Return operations for content nodes
 //
-// FUTURE OPTIMIZATION: For very large projects (10,000+ nodes), a discovery
-// pass could scan node types and filter nanopasses before parallel execution.
-// This optimization is intentionally deferred until profiling shows need.
+// Phase 2 (StructuralPhase): Lambda, ControlFlow witnesses
+//   - Run after Phase 1 completes
+//   - Use witnessSubgraph for scope bodies (reuses Phase 1 witnesses)
+//   - Wrap content operations in scope structures (FuncDef, SCFOp)
 //
-// Trade-off: Empty nanopass cost (~microseconds for HelloWorld) vs. discovery
-// pass cost (another full traversal). Current strategy favors simplicity.
+// Rationale: Content lives inside scopes. Scopes must see content before wrapping it.
 
 /// Run multiple nanopasses in parallel via IcedTasks
 /// Results collected AS THEY COMPLETE (order doesn't matter)
@@ -80,9 +82,9 @@ let collectEnvelope = collectEnvelopeReactive
 // MAIN ORCHESTRATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Configuration for parallel execution
-type ParallelConfig = {
-    /// Enable parallel execution (false for debugging)
+/// Configuration for two-phase execution
+type TwoPhaseConfig = {
+    /// Enable parallel execution within each phase (false for debugging)
     EnableParallel: bool
 
     /// FUTURE: Enable discovery pass for large projects
@@ -123,9 +125,9 @@ let private serializeNanopassResult (intermediatesDir: string) (nanopass: Nanopa
     File.WriteAllText(filePath, json)
     printfn "[Alex] Wrote nanopass result: %s" fileName
 
-/// Main entry point: Run all nanopasses and collect results
+/// Main entry point: Run all nanopasses in two phases and collect results
 let executeNanopasses
-    (config: ParallelConfig)
+    (config: TwoPhaseConfig)
     (registry: NanopassRegistry)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
@@ -142,21 +144,64 @@ let executeNanopasses
         //     let filteredRegistry = filterRelevantNanopasses registry presentKinds
         //     registry <- filteredRegistry
 
-        // Run nanopasses (parallel or sequential)
-        // Current: ALL registered nanopasses run (full-fat strategy)
-        let nanopassResults =
-            if config.EnableParallel then
-                runNanopassesParallel registry.Nanopasses graph coeffects
-            else
-                runNanopassesSequential registry.Nanopasses graph coeffects
+        // ═════════════════════════════════════════════════════════════════════════
+        // PHASE 1: Content Witnesses (Literal, Arith, Lazy, Collections)
+        // ═════════════════════════════════════════════════════════════════════════
 
-        // Serialize each nanopass result for debugging (if keeping intermediates)
+        let contentPasses =
+            registry.Nanopasses
+            |> List.filter (fun np -> np.Phase = ContentPhase)
+
+        let phase1Results =
+            if List.isEmpty contentPasses then
+                []
+            else
+                if config.EnableParallel then
+                    runNanopassesParallel contentPasses graph coeffects
+                else
+                    runNanopassesSequential contentPasses graph coeffects
+
+        // Serialize Phase 1 results
         match intermediatesDir with
         | Some dir ->
-            List.zip registry.Nanopasses nanopassResults
+            List.zip contentPasses phase1Results
             |> List.iter (fun (nanopass, accumulator) ->
                 serializeNanopassResult dir nanopass accumulator)
         | None -> ()
 
-        // Envelope pass: Collect and overlay results
-        collectEnvelope nanopassResults
+        // Overlay Phase 1 results into intermediate accumulator
+        let phase1Accumulator = collectEnvelope phase1Results
+
+        // ═════════════════════════════════════════════════════════════════════════
+        // PHASE 2: Structural Witnesses (Lambda, ControlFlow)
+        // ═════════════════════════════════════════════════════════════════════════
+
+        let structuralPasses =
+            registry.Nanopasses
+            |> List.filter (fun np -> np.Phase = StructuralPhase)
+
+        let phase2Results =
+            if List.isEmpty structuralPasses then
+                []
+            else
+                if config.EnableParallel then
+                    runNanopassesParallel structuralPasses graph coeffects
+                else
+                    runNanopassesSequential structuralPasses graph coeffects
+
+        // Serialize Phase 2 results
+        match intermediatesDir with
+        | Some dir ->
+            List.zip structuralPasses phase2Results
+            |> List.iter (fun (nanopass, accumulator) ->
+                serializeNanopassResult dir nanopass accumulator)
+        | None -> ()
+
+        // Overlay Phase 2 results
+        let phase2Accumulator = collectEnvelope phase2Results
+
+        // ═════════════════════════════════════════════════════════════════════════
+        // MERGE PHASES: Overlay Phase 1 and Phase 2
+        // ═════════════════════════════════════════════════════════════════════════
+
+        overlayAccumulators phase1Accumulator phase2Accumulator

@@ -15,10 +15,20 @@ open Alex.Traversal.PSGZipper
 // NANOPASS TYPE
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Nanopass execution phase
+/// ContentPhase: Witnesses run first, respect scope boundaries, don't recurse into scopes
+/// StructuralPhase: Witnesses run second, wrap content in scope structures (FuncDef, SCFOp)
+type NanopassPhase =
+    | ContentPhase      // Literal, Arith, Lazy, Collections - traverse but respect scopes
+    | StructuralPhase   // Lambda, ControlFlow - handle scope boundaries
+
 /// A nanopass is a complete PSG traversal that selectively witnesses nodes
 type Nanopass = {
     /// Nanopass name (e.g., "Literal", "Arithmetic", "ControlFlow")
     Name: string
+
+    /// Execution phase (ContentPhase runs before StructuralPhase)
+    Phase: NanopassPhase
 
     /// The witnessing function for this nanopass
     /// Returns skip for nodes it doesn't handle
@@ -28,6 +38,20 @@ type Nanopass = {
 // ═══════════════════════════════════════════════════════════════════════════
 // TRAVERSAL HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Check if this node defines a scope boundary (owns its children)
+/// Scope boundaries prevent child recursion during global traversal.
+/// Instead, scope-owning witnesses use witnessSubgraph to handle their children.
+let private isScopeBoundary (node: SemanticNode) : bool =
+    match node.Kind with
+    | SemanticKind.Lambda _ -> true
+    | SemanticKind.IfThenElse _ -> true
+    | SemanticKind.WhileLoop _ -> true
+    | SemanticKind.ForLoop _ -> true
+    | SemanticKind.ForEach _ -> true
+    | SemanticKind.Match _ -> true
+    | SemanticKind.TryWith _ -> true
+    | _ -> false
 
 /// Visit all nodes in PSG via zipper traversal
 /// Each nanopass traverses entire graph, selectively witnessing
@@ -67,11 +91,13 @@ let rec private visitAllNodes
             | TRError diag ->
                 MLIRAccumulator.addError diag accumulator
 
-            // Recursively visit children
-            for childId in currentNode.Children do
-                match SemanticGraph.tryGetNode childId visitedCtx.Graph with
-                | Some childNode -> visitAllNodes witness focusedCtx childNode accumulator
-                | None -> ()
+            // Recursively visit children ONLY if not a scope boundary
+            // Scope boundaries delegate child witnessing to witnessSubgraph
+            if not (isScopeBoundary currentNode) then
+                for childId in currentNode.Children do
+                    match SemanticGraph.tryGetNode childId visitedCtx.Graph with
+                    | Some childNode -> visitAllNodes witness focusedCtx childNode accumulator
+                    | None -> ()
 
 /// Witness a sub-graph rooted at a given node, returning collected operations
 ///
@@ -112,6 +138,61 @@ let witnessSubgraph
 
             // Return collected operations
             List.rev subAccumulator.TopLevelOps
+
+/// Witness a sub-graph rooted at a given node, returning body ops, module ops, and root result
+///
+/// Like witnessSubgraph, but separates operations into:
+/// - Body operations (for function/branch bodies)
+/// - Module-level operations (GlobalString declarations)
+/// - Root result (SSA binding for the sub-graph root)
+///
+/// Used by Lambda witness to properly distribute operations between function body and module level.
+let witnessSubgraphWithResult
+    rootNodeId
+    (ctx: WitnessContext)
+    (witness: WitnessContext -> SemanticNode -> WitnessOutput)
+    : MLIROp list * MLIROp list * (SSA * MLIRType) option =
+
+    // Create isolated accumulator for this sub-graph
+    let subAccumulator = MLIRAccumulator.empty()
+
+    // Get root node
+    match SemanticGraph.tryGetNode rootNodeId ctx.Graph with
+    | None -> ([], [], None)
+    | Some rootNode ->
+        // Focus zipper on root of sub-graph
+        match PSGZipper.focusOn rootNodeId ctx.Zipper with
+        | None -> ([], [], None)
+        | Some focusedZipper ->
+            // Create sub-context with isolated accumulator
+            let subCtx = {
+                Graph = ctx.Graph
+                Coeffects = ctx.Coeffects
+                Accumulator = subAccumulator
+                Zipper = focusedZipper
+            }
+
+            // Traverse sub-graph starting from root
+            visitAllNodes witness subCtx rootNode subAccumulator
+
+            // Get result binding for root node
+            let rootResult = MLIRAccumulator.recallNode rootNodeId subAccumulator
+
+            // Separate operations into body ops and module-level ops
+            let allOps = List.rev subAccumulator.TopLevelOps
+            let bodyOps = allOps |> List.filter (fun op ->
+                match op with
+                | MLIROp.GlobalString _ -> false  // Module-level
+                | _ -> true  // Body operation
+            )
+            let moduleOps = allOps |> List.filter (fun op ->
+                match op with
+                | MLIROp.GlobalString _ -> true  // Module-level
+                | _ -> false
+            )
+
+            // Return body ops, module ops, and root result
+            (bodyOps, moduleOps, rootResult)
 
 /// Run a single nanopass over entire PSG
 let runNanopass
