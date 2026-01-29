@@ -18,9 +18,6 @@ open Alex.Elements.ArithElements
 // HELPERS
 // ═══════════════════════════════════════════════════════════
 
-/// Create parser failure with error message
-let private pfail msg : PSGParser<'a> = fail (Message msg)
-
 /// Sequence a list of parsers into a parser of a list
 let rec private sequence (parsers: PSGParser<'a> list) : PSGParser<'a list> =
     match parsers with
@@ -51,8 +48,7 @@ let pExtractField (structSSA: SSA) (fieldIndex: int) (resultSSA: SSA) (fieldTy: 
 /// SSAs: [0] = const 1, [1] = alloca result
 let pAllocaImmutable (valueSSA: SSA) (valueType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length < 2 then
-            return! pfail $"pAllocaImmutable: Expected 2 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 2) $"pAllocaImmutable: Expected 2 SSAs, got {ssas.Length}"
 
         let constOneSSA = ssas.[0]
         let allocaSSA = ssas.[1]
@@ -121,8 +117,7 @@ let pExtractDUTag (duSSA: SSA) (duType: MLIRType) (tagSSA: SSA) : PSGParser<MLIR
 /// SSAs: [0] = extract, [1] = convert (if needed)
 let pExtractDUPayload (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (payloadType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length < 1 then
-            return! pfail $"pExtractDUPayload: Expected at least 1 SSA, got {ssas.Length}"
+        do! ensure (ssas.Length >= 1) $"pExtractDUPayload: Expected at least 1 SSA, got {ssas.Length}"
 
         let extractSSA = ssas.[0]
 
@@ -139,8 +134,7 @@ let pExtractDUPayload (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (paylo
         if slotType = payloadType then
             return [extractOp]
         else
-            if ssas.Length < 2 then
-                return! pfail $"pExtractDUPayload: Need 2 SSAs for conversion, got {ssas.Length}"
+            do! ensure (ssas.Length >= 2) $"pExtractDUPayload: Need 2 SSAs for conversion, got {ssas.Length}"
             let convertSSA = ssas.[1]
             let! convOps = pConvertType extractSSA slotType payloadType convertSSA
             return extractOp :: convOps
@@ -155,8 +149,7 @@ let pExtractDUPayload (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (paylo
 /// Updates: (fieldIndex, valueSSA) pairs
 let pRecordCopyWith (origSSA: SSA) (recordType: MLIRType) (updates: (int * SSA) list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length <> updates.Length then
-            return! pfail $"pRecordCopyWith: Expected {updates.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length = updates.Length) $"pRecordCopyWith: Expected {updates.Length} SSAs, got {ssas.Length}"
 
         // Fold over updates, threading prevSSA through
         let! result =
@@ -184,8 +177,7 @@ let pBuildArray (elements: Val list) (elemType: MLIRType) (ssas: SSA list) : PSG
         let count = List.length elements
         let expectedSSAs = 2 + (2 * count) + 3  // count, alloca, (idx,gep)*N, undef, withPtr, result
 
-        if ssas.Length < expectedSSAs then
-            return! pfail $"pBuildArray: Expected {expectedSSAs} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= expectedSSAs) $"pBuildArray: Expected {expectedSSAs} SSAs, got {ssas.Length}"
 
         let countSSA = ssas.[0]
         let allocaSSA = ssas.[1]

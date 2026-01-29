@@ -34,13 +34,18 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                 let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "SSA lookup") "String literal: No SSAs assigned"
                 WitnessOutput.errorDiag diag
             | Some ssas when ssas.Length >= 5 ->
-                match tryMatch (pBuildStringLiteral content ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                | Some (((inlineOps, globalName, strContent, byteLength), result), _) ->
-                    // Emit GlobalString to TopLevelOps
+                // Use trace-enabled variant to capture full execution path
+                match tryMatchWithTrace (pBuildStringLiteral content ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                | Result.Ok (((inlineOps, globalName, strContent, byteLength), result), _, _trace) ->
+                    // Success - emit GlobalString to TopLevelOps
                     let globalOp = Alex.Dialects.Core.Types.MLIROp.GlobalString (globalName, strContent, byteLength)
                     { InlineOps = inlineOps; TopLevelOps = [globalOp]; Result = result }
-                | None ->
-                    let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildStringLiteral") "String literal pattern emission failed"
+                | Result.Error (err, trace) ->
+                    // Failure - serialize trace for debugging
+                    // TODO: Serialize trace to intermediates/07_literal_witness_nodeXXX_trace.json
+                    let traceMsg = trace |> List.map ExecutionTrace.format |> String.concat "\n"
+                    let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildStringLiteral") 
+                                    (sprintf "String literal pattern emission failed:\nXParsec Error: %A\nExecution Trace:\n%s" err traceMsg)
                     WitnessOutput.errorDiag diag
             | Some ssas ->
                 let diag = Diagnostic.errorWithDetails (Some node.Id) (Some "Literal") (Some "SSA validation")

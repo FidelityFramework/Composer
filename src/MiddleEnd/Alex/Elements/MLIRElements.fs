@@ -13,24 +13,28 @@ open Alex.Dialects.Core.Types
 /// ExtractValue - caller provides type
 let pExtractValue (ssa: SSA) (value: SSA) (indices: int list) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
+        do! emitTrace "pExtractValue" (sprintf "ssa=%A, value=%A, indices=%A, ty=%A" ssa value indices ty)
         return MLIROp.LLVMOp (LLVMOp.ExtractValue (ssa, value, indices, ty))
     }
 
 /// InsertValue - caller provides type
 let pInsertValue (ssa: SSA) (struct_: SSA) (value: SSA) (indices: int list) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
+        do! emitTrace "pInsertValue" (sprintf "ssa=%A, struct=%A, value=%A, indices=%A, ty=%A" ssa struct_ value indices ty)
         return MLIROp.LLVMOp (LLVMOp.InsertValue (ssa, struct_, value, indices, ty))
     }
 
 /// Undef - caller provides type
 let pUndef (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
+        do! emitTrace "pUndef" (sprintf "ssa=%A, ty=%A" ssa ty)
         return MLIROp.LLVMOp (LLVMOp.Undef (ssa, ty))
     }
 
 /// ConstI - caller provides type
 let pConstI (ssa: SSA) (value: int64) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
+        do! emitTrace "pConstI" (sprintf "ssa=%A, value=%d, ty=%A" ssa value ty)
         return MLIROp.ArithOp (ArithOp.ConstI (ssa, value, ty))
     }
 
@@ -49,5 +53,6 @@ let pGlobalString (name: string) (content: string) (byteLength: int) : PSGParser
 /// AddressOf - get pointer to global symbol
 let pAddressOf (ssa: SSA) (globalName: string) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
+        do! emitTrace "pAddressOf" (sprintf "ssa=%A, globalName=%s, ty=%A" ssa globalName ty)
         return AddressOf (ssa, globalName, ty)
     }

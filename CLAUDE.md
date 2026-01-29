@@ -720,7 +720,7 @@ dotnet build
 
 # Compile sample 01
 cd /home/hhh/repos/Firefly/samples/console/FidelityHelloWorld/01_HelloWorldDirect
-/home/hhh/repos/Firefly/src/bin/Debug/net9.0/Firefly compile HelloWorld.fidproj
+/home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly compile HelloWorld.fidproj
 
 # CRITICAL: Execute and validate output
 ./HelloWorld
@@ -728,7 +728,7 @@ cd /home/hhh/repos/Firefly/samples/console/FidelityHelloWorld/01_HelloWorldDirec
 
 # If sample 01 passes, progress to sample 02, 03, 04
 cd ../02_HelloWorldSaturated
-/home/hhh/repos/Firefly/src/bin/Debug/net9.0/Firefly compile HelloWorld.fidproj
+/home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly compile HelloWorld.fidproj
 ./HelloWorld
 
 # With verbose output (for debugging)

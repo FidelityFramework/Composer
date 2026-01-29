@@ -82,8 +82,7 @@ let pArraySet (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (value: SSA) (gep
 /// Record struct via Undef + InsertValue chain
 let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length <> fields.Length + 1 then
-            return! pfail $"pRecordStruct: Expected {fields.Length + 1} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length = fields.Length + 1) $"pRecordStruct: Expected {fields.Length + 1} SSAs, got {ssas.Length}"
 
         // Compute struct type from field types
         let structTy = TStruct (fields |> List.map (fun f -> f.Type))
@@ -109,8 +108,7 @@ let pTupleStruct (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> 
 /// DU case construction: tag field (index 0) + payload fields
 let pDUCase (tag: int64) (payload: Val list) (ssas: SSA list) (ty: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length < 2 + payload.Length then
-            return! pfail $"pDUCase: Expected at least {2 + payload.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 2 + payload.Length) $"pDUCase: Expected at least {2 + payload.Length} SSAs, got {ssas.Length}"
 
         // Create undef struct
         let! undefOp = pUndef ssas.[0] ty
@@ -141,8 +139,7 @@ let pDUCase (tag: int64) (payload: Val list) (ssas: SSA list) (ty: MLIRType) : P
 /// Flat closure struct: code_ptr field + capture fields
 let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length < 2 + captures.Length then
-            return! pfail $"pFlatClosure: Expected at least {2 + captures.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 2 + captures.Length) $"pFlatClosure: Expected at least {2 + captures.Length} SSAs, got {ssas.Length}"
 
         // Compute closure type: {code_ptr: ptr, capture0, capture1, ...}
         let closureTy = TStruct (codePtrTy :: (captures |> List.map (fun cap -> cap.Type)))
@@ -168,12 +165,11 @@ let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas
     }
 
 /// Closure call: extract code_ptr, extract captures, call
-let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType list) 
+let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType list)
                  (args: Val list) (extractSSAs: SSA list) (resultSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         let captureCount = captureTypes.Length
-        if extractSSAs.Length <> captureCount + 1 then
-            return! pfail $"pClosureCall: Expected {captureCount + 1} extract SSAs, got {extractSSAs.Length}"
+        do! ensure (extractSSAs.Length = captureCount + 1) $"pClosureCall: Expected {captureCount + 1} extract SSAs, got {extractSSAs.Length}"
 
         // Extract code_ptr from index 0 (first field is always ptr type)
         let codePtrSSA = extractSSAs.[0]
@@ -205,8 +201,7 @@ let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType
 /// Lazy struct: {computed: i1, value: T, code_ptr, captures...}
 let pLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length < 4 + captures.Length then
-            return! pfail $"pLazyStruct: Expected at least {4 + captures.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 4 + captures.Length) $"pLazyStruct: Expected at least {4 + captures.Length} SSAs, got {ssas.Length}"
 
         // Compute lazy type: {computed: i1, value: T, code_ptr: ptr, captures...}
         let lazyTy = TStruct ([TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type)))
@@ -268,13 +263,12 @@ let pBuildLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (c
 /// The thunk extracts captures internally using LazyLayout coeffect.
 ///
 /// Lazy struct: {computed: i1, value: T, code_ptr: ptr, capture0, capture1, ...}
-let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy: MLIRType) 
+let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy: MLIRType)
                     (ssas: SSA list) (arch: Architecture)
                     : PSGParser<MLIROp list * TransferResult> =
     parser {
         // SSAs: [0] = code_ptr, [1] = const 1, [2] = alloca'd ptr
-        if ssas.Length < 3 then
-            return! pfail $"pBuildLazyForce: Expected at least 3 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 3) $"pBuildLazyForce: Expected at least 3 SSAs, got {ssas.Length}"
 
         let codePtrSSA = ssas.[0]
         let constOneSSA = ssas.[1]
@@ -303,12 +297,11 @@ let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy
 // ═══════════════════════════════════════════════════════════
 
 /// Seq struct: {state: i32, current: T, code_ptr, captures..., internal_state...}
-let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) 
+let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
                (captures: Val list) (internalState: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
         let minSSAs = 4 + captures.Length + internalState.Length
-        if ssas.Length < minSSAs then
-            return! pfail $"pSeqStruct: Expected at least {minSSAs} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= minSSAs) $"pSeqStruct: Expected at least {minSSAs} SSAs, got {ssas.Length}"
 
         // Compute seq type: {state: i32, current: T, code_ptr: ptr, captures..., internal...}
         let seqTy = TStruct ([TInt I32; currentTy; codePtrTy] 
@@ -355,14 +348,13 @@ let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (c
     }
 
 /// Seq MoveNext: extract state, load captures/internal, call code_ptr, update state/current
-let pSeqMoveNext (seqSSA: SSA) (seqTy: MLIRType) (captureTypes: MLIRType list) 
+let pSeqMoveNext (seqSSA: SSA) (seqTy: MLIRType) (captureTypes: MLIRType list)
                  (internalTypes: MLIRType list) (extractSSAs: SSA list) (resultSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         let captureCount = captureTypes.Length
         let internalCount = internalTypes.Length
         let expectedExtracts = 2 + captureCount + internalCount  // state, code_ptr, captures, internal
-        if extractSSAs.Length < expectedExtracts then
-            return! pfail $"pSeqMoveNext: Expected at least {expectedExtracts} extract SSAs, got {extractSSAs.Length}"
+        do! ensure (extractSSAs.Length >= expectedExtracts) $"pSeqMoveNext: Expected at least {expectedExtracts} extract SSAs, got {extractSSAs.Length}"
 
         // Extract state from index 0
         let stateSSA = extractSSAs.[0]
@@ -853,17 +845,25 @@ let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (arch: Architecture) : PSGPars
 let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
                          : PSGParser<(MLIROp list * string * string * int) * TransferResult> =
     parser {
-        if ssas.Length < 5 then
-            return! pfail $"pBuildStringLiteral: Expected 5 SSAs, got {ssas.Length}"
+        do! emitTrace "pBuildStringLiteral.entry" (sprintf "content='%s', ssas=%A, arch=%A" content ssas arch)
+
+        // Declarative guard - no imperative if statements
+        do! ensure (ssas.Length >= 5) $"pBuildStringLiteral: Expected 5 SSAs, got {ssas.Length}"
+
+        do! emitTrace "pBuildStringLiteral.ssa_validated" (sprintf "SSA count OK: %d" ssas.Length)
 
         // Use StringCollection pure derivation (coeffect model)
         let globalName = deriveGlobalRef content
         let byteLength = deriveByteLength content
 
+        do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
+
         // String type: {ptr: nativeptr<byte>, length: int}
         let ptrTy = TPtr
         let lengthTy = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType arch NTUKind.NTUint64
         let stringTy = TStruct [ptrTy; lengthTy]
+
+        do! emitTrace "pBuildStringLiteral.types" (sprintf "ptrTy=%A, lengthTy=%A, stringTy=%A" ptrTy lengthTy stringTy)
 
         // InlineOps: Build string struct {ptr, length}
         let ptrSSA = ssas.[0]
@@ -872,14 +872,29 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
         let withPtrSSA = ssas.[3]
         let resultSSA = ssas.[4]
 
+        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "ptr=%A, len=%A, undef=%A, withPtr=%A, result=%A" ptrSSA lengthSSA undefSSA withPtrSSA resultSSA)
+
+        do! emitTrace "pBuildStringLiteral.calling_pAddressOf" (sprintf "ptrSSA=%A, globalName=%s, ptrTy=%A" ptrSSA globalName ptrTy)
         let! addressOfOp = pAddressOf ptrSSA globalName ptrTy
+        
+        do! emitTrace "pBuildStringLiteral.calling_pConstI" (sprintf "lengthSSA=%A, byteLength=%d, lengthTy=%A" lengthSSA byteLength lengthTy)
         let! lengthConstOp = pConstI lengthSSA (int64 byteLength) lengthTy
+        
+        do! emitTrace "pBuildStringLiteral.calling_pUndef" (sprintf "undefSSA=%A, stringTy=%A" undefSSA stringTy)
         let! undefOp = pUndef undefSSA stringTy
+        
+        do! emitTrace "pBuildStringLiteral.calling_pInsertValue_ptr" (sprintf "withPtrSSA=%A, undefSSA=%A, ptrSSA=%A" withPtrSSA undefSSA ptrSSA)
         let! insertPtrOp = pInsertValue withPtrSSA undefSSA ptrSSA [0] stringTy
+        
+        do! emitTrace "pBuildStringLiteral.calling_pInsertValue_len" (sprintf "resultSSA=%A, withPtrSSA=%A, lengthSSA=%A" resultSSA withPtrSSA lengthSSA)
         let! insertLenOp = pInsertValue resultSSA withPtrSSA lengthSSA [1] stringTy
+
+        do! emitTrace "pBuildStringLiteral.elements_complete" "All Elements succeeded"
 
         let inlineOps = [addressOfOp; lengthConstOp; undefOp; insertPtrOp; insertLenOp]
         let result = TRValue { SSA = resultSSA; Type = stringTy }
+
+        do! emitTrace "pBuildStringLiteral.returning" (sprintf "Returning %d ops" (List.length inlineOps))
 
         // Return ops + (globalName, content, byteLength) for witness to emit GlobalString
         return ((inlineOps, globalName, content, byteLength), result)
@@ -903,8 +918,7 @@ let pStringGetLength (stringSSA: SSA) (lengthSSA: SSA) (lengthTy: MLIRType) : PS
 /// Construct string from pointer and length
 let pStringConstruct (ptrTy: MLIRType) (lengthTy: MLIRType) (ptr: SSA) (length: SSA) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        if ssas.Length < 3 then
-            return! pfail $"pStringConstruct: Expected at least 3 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 3) $"pStringConstruct: Expected at least 3 SSAs, got {ssas.Length}"
 
         // String type is {ptr: nativeptr<byte>, length: int}
         let stringTy = TStruct [ptrTy; lengthTy]

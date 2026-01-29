@@ -1,12 +1,20 @@
-/// MLIRGeneration - MiddleEnd entry point
+/// MLIRGeneration - MiddleEnd orchestration layer
 ///
-/// Clean public API: PSG + PlatformContext → MLIR text
-/// Internally orchestrates PSGElaboration coeffects + Alex transfer
+/// Firefly Pipeline Context:
+///   FrontEnd (FNCS) → PSG → MiddleEnd → MLIR text → BackEnd (mliropt/LLVM)
+///
+/// This module is the PUBLIC API for the MiddleEnd. It orchestrates:
+///   1. PSGElaboration: Compute coeffects (SSA, mutability, yields, etc.)
+///   2. Alex transfer: Witnesses traverse PSG → structured MLIROp
+///   3. Serialization: MLIROp → MLIR text (exit point)
+///
+/// Clean signature: PSG + PlatformContext → MLIR text
 module MiddleEnd.MLIRGeneration
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
+open Alex.Dialects.Core.Serialize
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.MLIRTransfer
 
@@ -73,7 +81,7 @@ let generate
     | entryId :: _ ->
         match transfer graph entryId coeffects intermediatesDir with
         | Result.Ok (topLevelOps, _) ->
-            // Serialize MLIR ops to text
-            let mlirText = sprintf "module {\n  // %d MLIR ops generated\n}\n" (List.length topLevelOps)
+            // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
+            let mlirText = moduleToString "main" topLevelOps
             Result.Ok mlirText
         | Result.Error msg -> Result.Error msg

@@ -49,6 +49,11 @@ type PSGParserState = {
     /// Platform resolution result (architecture, OS, word type, bindings)
     /// This is a coeffect - already computed, just look it up
     Platform: PlatformResolutionResult
+    
+    /// Optional execution trace collector (only enabled for diagnostic runs)
+    ExecutionTrace: Alex.Traversal.TransferTypes.TraceCollector option
+    /// Current depth in hierarchy (0=Witness, 1=Pattern, 2=Element)
+    CurrentDepth: int
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -467,8 +472,28 @@ let pForEach : PSGParser<string * NodeId * NodeId> =
 /// CRITICAL: Uses Reader.ofString with EMPTY STRING.
 /// PSG parsers don't consume characters - they navigate graph structure.
 let runParser (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode) (zipper: PSGZipper) (platform: PlatformResolutionResult) =
-    let state = { Graph = graph; Zipper = zipper; Current = node; Platform = platform }
+    let state = { 
+        Graph = graph
+        Zipper = zipper
+        Current = node
+        Platform = platform
+        ExecutionTrace = None  // No tracing by default
+        CurrentDepth = 0
+    }
     let reader = Reader.ofString "" state  // Empty string - we don't parse characters
+    parser reader
+
+/// Run parser with execution trace enabled (for diagnostics)
+let runParserWithTrace (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode) (zipper: PSGZipper) (platform: PlatformResolutionResult) (traceCollector: Alex.Traversal.TransferTypes.TraceCollector) =
+    let state = {
+        Graph = graph
+        Zipper = zipper
+        Current = node
+        Platform = platform
+        ExecutionTrace = Some traceCollector
+        CurrentDepth = 0
+    }
+    let reader = Reader.ofString "" state
     parser reader
 
 /// Try to match a pattern, returning option
@@ -478,6 +503,17 @@ let tryMatch (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode)
     | Ok success -> Some (success.Parsed, zipper)
     | Error _ -> None
 
+/// Try to match a pattern with diagnostic error capture
+/// Returns Result with detailed error information on failure
+/// Use this for debugging pattern match failures
+let tryMatchWithDiagnostics (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode) (zipper: PSGZipper) (platform: PlatformResolutionResult) =
+    match runParser parser graph node zipper platform with
+    | Ok success -> Result.Ok (success.Parsed, zipper)
+    | Error err -> 
+        // XParsec error contains position, expected, and messages
+        let errorMsg = sprintf "Pattern match failed at position %d. Error: %A" err.Position.Index err
+        Result.Error errorMsg
+
 /// Create initial parser state from zipper
 /// Platform must be passed explicitly (coeffect, not part of zipper)
 let stateFromZipper (zipper: PSGZipper) (node: SemanticNode) (platform: PlatformResolutionResult) : PSGParserState =
@@ -486,7 +522,33 @@ let stateFromZipper (zipper: PSGZipper) (node: SemanticNode) (platform: Platform
         Zipper = zipper
         Current = node
         Platform = platform
+        ExecutionTrace = None
+        CurrentDepth = 0
     }
+
+/// Emit a trace entry (if tracing is enabled)
+/// Use this from Elements and Patterns to record execution
+let emitTrace (componentName: string) (parameters: string) : PSGParser<unit> =
+    fun reader ->
+        let state = reader.State
+        match state.ExecutionTrace with
+        | Some collector ->
+            Alex.Traversal.TransferTypes.TraceCollector.add
+                state.CurrentDepth
+                componentName
+                (Some state.Current.Id)
+                parameters
+                collector
+        | None -> ()
+        preturn () reader
+
+/// Guard combinator - ensure a condition is true, or fail with message
+/// This is the DECLARATIVE alternative to imperative if statements
+let ensure (condition: bool) (errorMsg: string) : PSGParser<unit> =
+    if condition then
+        preturn ()
+    else
+        fail (Message errorMsg)
 
 /// Run a parser using zipper
 /// Platform must be passed explicitly (coeffect, not part of zipper)
@@ -494,6 +556,16 @@ let runParserWithZipper (parser: PSGParser<'T>) (zipper: PSGZipper) (node: Seman
     let state = stateFromZipper zipper node platform
     let reader = Reader.ofString "" state
     parser reader
+
+/// Try to match with diagnostic trace enabled
+/// Returns Result with trace attached on failure
+let tryMatchWithTrace (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode) (zipper: PSGZipper) (platform: PlatformResolutionResult) =
+    let traceCollector = Alex.Traversal.TransferTypes.TraceCollector.create()
+    match runParserWithTrace parser graph node zipper platform traceCollector with
+    | Ok success -> Result.Ok (success.Parsed, zipper, Alex.Traversal.TransferTypes.TraceCollector.toList traceCollector)
+    | Error err ->
+        let trace = Alex.Traversal.TransferTypes.TraceCollector.toList traceCollector
+        Result.Error (err, trace)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NOTE: Sub-graph witnessing infrastructure needed for control flow

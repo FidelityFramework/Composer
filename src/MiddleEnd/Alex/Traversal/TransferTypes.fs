@@ -47,6 +47,53 @@ type TransferCoeffects = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// EXECUTION TRACE (For Debugging Pattern Failures)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Execution trace entry - records each step in pattern execution
+type ExecutionTrace = {
+    /// Hierarchy depth: 0=Witness, 1=Pattern, 2=Element
+    Depth: int
+    
+    /// Component name: "LiteralWitness", "pBuildStringLiteral", "pAddressOf"
+    ComponentName: string
+    
+    /// PSG NodeId (if witness-level, otherwise None)
+    NodeId: NodeId option
+    
+    /// Serialized parameters for inspection
+    Parameters: string
+    
+    /// Sequential execution order
+    Timestamp: int
+}
+
+module ExecutionTrace =
+    /// Format trace entry for display
+    let format (trace: ExecutionTrace) : string =
+        let indent = String.replicate trace.Depth "  "
+        let nodeInfo = match trace.NodeId with Some nid -> sprintf "[Node %d] " (NodeId.value nid) | None -> ""
+        sprintf "%s%s%s(%s)" indent nodeInfo trace.ComponentName trace.Parameters
+
+/// Trace collector - mutable accumulator for execution traces
+type TraceCollector = ResizeArray<ExecutionTrace>
+
+module TraceCollector =
+    let create () : TraceCollector = ResizeArray<ExecutionTrace>()
+    
+    let add (depth: int) (componentName: string) (nodeId: NodeId option) (parameters: string) (collector: TraceCollector) =
+        collector.Add({
+            Depth = depth
+            ComponentName = componentName
+            NodeId = nodeId
+            Parameters = parameters
+            Timestamp = collector.Count
+        })
+    
+    let toList (collector: TraceCollector) : ExecutionTrace list =
+        collector |> Seq.toList
+
+// ═══════════════════════════════════════════════════════════════════════════
 // STRUCTURED DIAGNOSTICS
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -339,7 +339,7 @@ The `Backend.fsproj` and `Frontend.fsproj` files exist for **IDE support only** 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Fable.Core" Version="5.0.0-*" />
@@ -358,7 +358,7 @@ The `Backend.fsproj` and `Frontend.fsproj` files exist for **IDE support only** 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../Fidelity.Platform/src/Fidelity.Platform.fsproj" />

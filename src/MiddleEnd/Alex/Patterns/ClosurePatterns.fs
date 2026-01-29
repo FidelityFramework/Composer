@@ -18,9 +18,6 @@ open Alex.Elements.FuncElements
 // HELPERS
 // ═══════════════════════════════════════════════════════════
 
-/// Create parser failure with error message
-let private pfail msg : PSGParser<'a> = XParsec.Parsers.fail (Message msg)
-
 // ═══════════════════════════════════════════════════════════
 // ARENA ALLOCATION
 // ═══════════════════════════════════════════════════════════
@@ -30,8 +27,7 @@ let private pfail msg : PSGParser<'a> = XParsec.Parsers.fail (Message msg)
 /// Returns ops and the result pointer SSA
 let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * SSA> =
     parser {
-        if ssas.Length < 5 then
-            return! pfail $"pAllocateInArena: Expected 5 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 5) $"pAllocateInArena: Expected 5 SSAs, got {ssas.Length}"
 
         let heapPosPtrSSA = ssas.[0]
         let heapPosSSA = ssas.[1]
@@ -79,8 +75,7 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (retTy: MLIRTyp
 let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list) (structType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
         let captureCount = captureTypes.Length
-        if ssas.Length < captureCount + 1 then
-            return! pfail $"pExtractCaptures: Expected {captureCount + 1} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= captureCount + 1) $"pExtractCaptures: Expected {captureCount + 1} SSAs, got {ssas.Length}"
 
         let structLoadSSA = ssas.[0]
         let envPtrSSA = Arg 0  // First argument is always env_ptr for closures
