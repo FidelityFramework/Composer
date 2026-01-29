@@ -19,44 +19,13 @@ module SSAAssign = PSGElaboration.SSAAssignment
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
-/// Witness platform operations - category-selective (handles only Sys.* syscall nodes)
+/// Witness platform operations - RETIRED
+/// Platform intrinsic applications (Sys.*) are now handled by ApplicationWitness
 let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    match tryMatch pClassifiedAtomicOp ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-    | Some ((info, category), _) ->
-        match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
-        | None -> WitnessOutput.error "Platform: No SSA assigned"
-        | Some resultSSA ->
-            match category with
-            | PlatformOp op ->
-                // Platform operations have specific arity requirements
-                // Sys.write(fd: int, buffer: nativeptr<byte>, count: int) -> int
-                // Sys.read(fd: int, buffer: nativeptr<byte>, count: int) -> int
-                match op, node.Children with
-                | "write", [fdId; bufferPtrId; countId] ->
-                    match MLIRAccumulator.recallNode fdId ctx.Accumulator,
-                          MLIRAccumulator.recallNode bufferPtrId ctx.Accumulator,
-                          MLIRAccumulator.recallNode countId ctx.Accumulator with
-                    | Some (fdSSA, _), Some (bufferSSA, _), Some (countSSA, _) ->
-                        match tryMatch (pSysWrite resultSSA fdSSA bufferSSA countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                        | None -> WitnessOutput.error "Sys.write pattern emission failed"
-                    | _ -> WitnessOutput.error $"Sys.write operands not yet witnessed"
-
-                | "read", [fdId; bufferPtrId; countId] ->
-                    match MLIRAccumulator.recallNode fdId ctx.Accumulator,
-                          MLIRAccumulator.recallNode bufferPtrId ctx.Accumulator,
-                          MLIRAccumulator.recallNode countId ctx.Accumulator with
-                    | Some (fdSSA, _), Some (bufferSSA, _), Some (countSSA, _) ->
-                        match tryMatch (pSysRead resultSSA fdSSA bufferSSA countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                        | None -> WitnessOutput.error "Sys.read pattern emission failed"
-                    | _ -> WitnessOutput.error $"Sys.read operands not yet witnessed"
-
-                | _ -> WitnessOutput.skip  // Other platform operations not yet implemented
-
-            | _ -> WitnessOutput.skip  // Not a platform operation
-
-    | None -> WitnessOutput.skip  // Not an atomic operation
+    // Skip intrinsic nodes - ApplicationWitness handles all intrinsic applications
+    match node.Kind with
+    | SemanticKind.Intrinsic _ -> WitnessOutput.skip
+    | _ -> WitnessOutput.skip  // No non-intrinsic platform operations
 
 // ═══════════════════════════════════════════════════════════
 // NANOPASS REGISTRATION (Public)

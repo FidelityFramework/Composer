@@ -220,7 +220,7 @@ These resources are ESSENTIAL for understanding the project architecture and mak
 - **Encountering F# AST/syntax issues**: Explore `~/repos/fsharp` for FCS implementation details
 - **Type system questions**: Reference `~/repos/fslang-spec` for language semantics
 - **MLIR dialect patterns**: Look at `~/triton-cpu` for production examples
-- **Native type implementation**: Types are FNCS intrinsics (NTUKind), not library code. See `~/repos/fsnative/src/Compiler/Checking.Native/`
+- **Native type implementation**: Types are FNCS intrinsics (NTUKind), not library code. See `~/repos/fsnative/src/Compiler/NativeTypedTree/Expressions/`
 - **Architectural decisions**: Read `/docs/Architecture_Canonical.md` first
 - **Understanding "why"**: Check `~/repos/SpeakEZ/hugo/content/blog` for philosophy (including "Absorbing Alloy")
 
@@ -234,7 +234,7 @@ Before making any non-trivial change:
 4. **Synthesize understanding** before proposing changes
 
 Example agent tasks:
-- "Explore how FNCS defines string intrinsics in CheckExpressions.fs"
+- "Explore how FNCS defines string intrinsics in Intrinsics.fs"
 - "Search ~/repos/fsharp for how FCS represents extern declarations"
 - "Find examples of syscall bindings in ~/triton-cpu"
 - "Look up the F# spec section on statically resolved type parameters"
@@ -347,14 +347,14 @@ The typed tree zipper captures this resolution INTO the PSG. Downstream passes (
      - `Bindings/` - Platform-aware code generation patterns
      - `CodeGeneration/` - Type mapping, MLIR builders
 
-5. **FNCS Intrinsics** - External at `~/repos/fsnative/src/Compiler/Checking.Native/`
+5. **FNCS Intrinsics** - External at `~/repos/fsnative/src/Compiler/NativeTypedTree/Expressions/`
    - Types ARE the language: NTUKind defines the native type universe
    - Operations ARE intrinsics: Sys.*, NativePtr.*, Array.*, String.*, Math.*, Console.*, etc.
    - Platform resolution via quotations at compile time
    - Key files:
      - `NativeTypes.fs` - NTUKind enum defining all native types
      - `NativeGlobals.fs` - Type constructors with NTU metadata
-     - `CheckExpressions.fs` - Intrinsic module definitions
+     - `Intrinsics.fs` - Intrinsic module definitions
 
 ## CRITICAL: The Layer Separation Principle
 
@@ -453,11 +453,11 @@ match symbolName with
 let result = Console.writeln "Hello"  // If Console.writeln isn't a recognized FNCS intrinsic...
 ```
 
-**Why this is wrong**: If an operation isn't defined in FNCS CheckExpressions.fs as an intrinsic, FNCS doesn't know how to type it or mark it for Alex.
+**Why this is wrong**: If an operation isn't defined in FNCS Intrinsics.fs as an intrinsic, FNCS doesn't know how to type it or mark it for Alex.
 
 **The fix**: All operations that should compile to native code must be defined in FNCS as intrinsics:
 ```fsharp
-// In CheckExpressions.fs - FNCS intrinsic module
+// In Intrinsics.fs - FNCS intrinsic module
 | "Console.writeln" ->
     NativeType.TFun(env.Globals.StringType, env.Globals.UnitType)
 ```
@@ -518,7 +518,7 @@ module PSGEmitter =
 Platform operations are FNCS intrinsics in the `Sys` module:
 
 ```fsharp
-// FNCS CheckExpressions.fs - Sys intrinsic module
+// FNCS Intrinsics.fs - Sys intrinsic module
 | "Sys.write" ->
     // fd:int -> buffer:nativeptr<byte> -> count:int -> int
     NativeType.TFun(env.Globals.IntType,
@@ -593,7 +593,7 @@ If you cannot confidently answer all questions, you have not yet understood the 
 When a non-syntax issue arises:
 
 1. **FNCS Intrinsics Level**
-   - Is the operation defined as an intrinsic in CheckExpressions.fs?
+   - Is the operation defined as an intrinsic in Intrinsics.fs?
    - Does the intrinsic have the correct type signature?
    - Is the NTUKind mapping correct for the types involved?
 
@@ -847,7 +847,7 @@ See `/home/hhh/repos/Firefly/tests/regression/README.md` for full documentation.
 
 ## Common Pitfalls
 
-1. **Missing Intrinsics**: Operations that aren't defined in FNCS CheckExpressions.fs. If an operation should compile to native code, it must be a recognized FNCS intrinsic.
+1. **Missing Intrinsics**: Operations that aren't defined in FNCS Intrinsics.fs. If an operation should compile to native code, it must be a recognized FNCS intrinsic.
 
 2. **Namespace-Specific Logic**: Adding `if functionName = "X.Y"` logic anywhere in code generation. Alex should recognize intrinsic markers, not symbol names.
 
@@ -912,3 +912,71 @@ Before committing any change, ask:
 > "If someone deleted all the comments and looked only at what this code DOES, would they see library-specific logic in MLIR generation?"
 
 If yes, you have violated the layer separation principle. Revert and fix upstream.
+
+## CRITICAL: Use Serena MCP for Codebase Inspection
+
+**When you need to inspect, search, or understand code structure, ALWAYS use Serena MCP tools, NOT bash grep/find.**
+
+Serena provides semantic code understanding via LSP-aware tools:
+
+### Serena Tools (PREFERRED)
+
+| Task | Serena Tool | NOT Bash |
+|------|-------------|----------|
+| **Find symbol definitions** | `mcp__serena-local__find_symbol` | ~~grep -r "class Foo"~~ |
+| **Find references** | `mcp__serena-local__find_referencing_symbols` | ~~grep -r "Foo"~~ |
+| **Read file** | `mcp__serena-local__read_file` | ~~cat file.fs~~ |
+| **Search pattern** | `mcp__serena-local__search_for_pattern` | ~~grep -r "pattern"~~ |
+| **Get symbols overview** | `mcp__serena-local__get_symbols_overview` | ~~grep "type\|let\|module"~~ |
+| **List directory** | `mcp__serena-local__list_dir` | ~~ls -la~~ |
+
+### Why Serena, Not Bash?
+
+1. **Semantic awareness**: Serena understands F# syntax, modules, types, functions
+2. **Symbol resolution**: Follows references across files correctly
+3. **Type-aware**: Can filter by symbol kind (classes, functions, types)
+4. **Faster**: Indexed, doesn't re-scan every time
+5. **Accurate**: Won't match comments or strings, only actual code
+
+### Examples
+
+```fsharp
+// WRONG - Bash grep misses context, matches comments
+Bash: grep -r "witnessMemory" src/
+
+// RIGHT - Serena finds the actual function definition
+mcp__serena-local__find_symbol with name_path_pattern "witnessMemory"
+
+// WRONG - Bash grep finds all string occurrences
+Bash: grep -r "IntrinsicModule" src/
+
+// RIGHT - Serena finds references to the type
+mcp__serena-local__find_referencing_symbols with name_path "IntrinsicModule"
+
+// WRONG - Bash cat doesn't provide structure
+Bash: cat ApplicationWitness.fs
+
+// RIGHT - Serena provides symbol overview first
+mcp__serena-local__get_symbols_overview with relative_path "src/MiddleEnd/Alex/Witnesses/ApplicationWitness.fs"
+```
+
+### When to Use Bash
+
+- **Git operations**: `git status`, `git diff`, `git log`
+- **Build commands**: `dotnet build`, `dotnet test`
+- **System operations**: `mkdir`, `cd`, `mv`
+- **Tool invocation**: Running Firefly compiler
+
+**Rule of thumb**: If it's about UNDERSTANDING code, use Serena. If it's about RUNNING commands, use Bash.
+
+### Activating Projects
+
+Firefly has multiple related repos. Use `mcp__serena-local__activate_project` to switch:
+
+```
+mcp__serena-local__activate_project "Firefly"      # Main compiler
+mcp__serena-local__activate_project "fsnative"     # FNCS implementation
+mcp__serena-local__activate_project "fsnative-spec" # F# Native spec
+```
+
+After activation, Serena tools operate on that project's codebase.

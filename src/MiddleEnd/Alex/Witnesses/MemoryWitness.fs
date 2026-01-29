@@ -21,55 +21,15 @@ module SSAAssign = PSGElaboration.SSAAssignment
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
-/// Witness memory operations - category-selective (DU operations and MemoryOp atomic operations)
+/// Witness memory operations - category-selective (DU operations only)
+/// Intrinsic applications (NativePtr.*) are handled by ApplicationWitness
 let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    // First try MemoryOp atomic operations (NativePtr.*)
-    match tryMatch pClassifiedAtomicOp ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-    | Some ((info, category), _) ->
-        match category with
-        | MemoryOp op ->
-            match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
-            | None -> WitnessOutput.error "MemoryOp: No SSA assigned"
-            | Some resultSSA ->
-                match op with
-                | "stackalloc" ->
-                    // NativePtr.stackalloc<'T>() : nativeptr<'T>
-                    // No children - just allocates and returns pointer
-                    match tryMatch (pNativePtrStackAlloc resultSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "NativePtr.stackalloc pattern emission failed"
-
-                | "write" ->
-                    // NativePtr.write (ptr: nativeptr<'T>) (value: 'T) : unit
-                    match node.Children with
-                    | [ptrId; valueId] ->
-                        match MLIRAccumulator.recallNode ptrId ctx.Accumulator,
-                              MLIRAccumulator.recallNode valueId ctx.Accumulator with
-                        | Some (ptrSSA, _), Some (valueSSA, _) ->
-                            match tryMatch (pNativePtrWrite valueSSA ptrSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                            | None -> WitnessOutput.error "NativePtr.write pattern emission failed"
-                        | _ -> WitnessOutput.error "NativePtr.write: Operands not yet witnessed"
-                    | _ -> WitnessOutput.error $"NativePtr.write: Expected 2 children, got {node.Children.Length}"
-
-                | "read" ->
-                    // NativePtr.read (ptr: nativeptr<'T>) : 'T
-                    match node.Children with
-                    | [ptrId] ->
-                        match MLIRAccumulator.recallNode ptrId ctx.Accumulator with
-                        | Some (ptrSSA, _) ->
-                            match tryMatch (pNativePtrRead resultSSA ptrSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                            | None -> WitnessOutput.error "NativePtr.read pattern emission failed"
-                        | None -> WitnessOutput.error "NativePtr.read: Pointer not yet witnessed"
-                    | _ -> WitnessOutput.error $"NativePtr.read: Expected 1 child, got {node.Children.Length}"
-
-                | _ -> WitnessOutput.skip  // Other memory operations not yet implemented
-
-        | _ -> WitnessOutput.skip  // Not a MemoryOp
-
-    | None ->
-        // Not an atomic operation, try DU operations
+    // Skip intrinsic nodes - ApplicationWitness handles intrinsic applications
+    match node.Kind with
+    | SemanticKind.Intrinsic _ -> WitnessOutput.skip
+    | _ ->
+        // Only handle DU operations (not intrinsics)
+        // DU operations: GetTag, Eliminate, Construct
         match tryMatch pDUGetTag ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
         | Some ((duValueId, _duType), _) ->
             match MLIRAccumulator.recallNode duValueId ctx.Accumulator, SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with

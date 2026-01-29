@@ -67,14 +67,14 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
             // Mark scope entry
             MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
 
-            // Witness body nodes into shared accumulator
+            // Witness body nodes into shared accumulator with GLOBAL visited set
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
                     let bodyCtx = { ctx with Zipper = bodyZipper }
-                    let bodyVisited = ref Set.empty  // Fresh visited set for body traversal
-                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator bodyVisited
+                    // Use GLOBAL visited set (shared across all nanopasses and function bodies)
+                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator ctx.GlobalVisited
                 | None -> ()
             | None -> ()
 
@@ -114,16 +114,88 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
 
             { InlineOps = []; TopLevelOps = []; Result = TRVoid }
         else
-            // Non-entry-point Lambda
+            // Non-entry-point Lambda: Generate FuncDef for module-level function
+            // Extract function name from parent Binding node
+            let funcName =
+                match node.Parent with
+                | Some parentId ->
+                    match SemanticGraph.tryGetNode parentId ctx.Graph with
+                    | Some parentNode ->
+                        match parentNode.Kind.ToString().Split([|'\n'; '('|]) with
+                        | parts when parts.Length > 1 && parts.[0].Trim() = "Binding" ->
+                            // Extract binding name from: Binding ("writeln", ...)
+                            let name = parts.[1].Trim().Trim([|' '; '"'|])
+                            sprintf "@%s" name
+                        | _ -> sprintf "@lambda_%d" nodeIdValue
+                    | None -> sprintf "@lambda_%d" nodeIdValue
+                | None -> sprintf "@lambda_%d" nodeIdValue
+
+            let scopeLabel = sprintf "func_%d" nodeIdValue
+            let scopeKind = FunctionScope funcName
+
+            // Mark scope entry
+            MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
+
+            // Witness body nodes into shared accumulator with GLOBAL visited set
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
                     let bodyCtx = { ctx with Zipper = bodyZipper }
-                    let bodyVisited = ref Set.empty  // Fresh visited set for body traversal
-                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator bodyVisited
+                    // Use GLOBAL visited set (shared across all nanopasses and function bodies)
+                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator ctx.GlobalVisited
                 | None -> ()
             | None -> ()
+
+            // Mark scope exit
+            MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeExit (scopeKind, scopeLabel))) ctx.Accumulator
+
+            // Extract operations between markers
+            let scopeOps = MLIRAccumulator.extractScope scopeKind scopeLabel ctx.Accumulator
+
+            // Separate body ops from module-level ops (GlobalStrings, etc.)
+            let bodyOps = scopeOps |> List.filter (fun op -> match op with MLIROp.GlobalString _ | MLIROp.FuncOp (FuncOp.FuncDef _) -> false | _ -> true)
+            let moduleOps = scopeOps |> List.filter (fun op -> match op with MLIROp.GlobalString _ | MLIROp.FuncOp (FuncOp.FuncDef _) -> true | _ -> false)
+
+            // Get body result for return value
+            let bodyResult = MLIRAccumulator.recallNode bodyId ctx.Accumulator
+
+            // Map parameters to MLIR types and build parameter list with SSAs
+            let arch = ctx.Coeffects.Platform.TargetArch
+            let mlirParams =
+                params'
+                |> List.map (fun (paramName, paramType, paramNodeId) ->
+                    let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch paramType
+                    // Lookup SSA for parameter from coeffects
+                    match SSAAssign.lookupSSA paramNodeId ctx.Coeffects.SSA with
+                    | Some paramSSA -> (paramSSA, mlirType)
+                    | None ->
+                        // Fallback: create fresh SSA (shouldn't happen if coeffects are correct)
+                        let paramSSA = SSA.V (NodeId.value paramNodeId)
+                        (paramSSA, mlirType))
+
+            // Determine return type from Lambda type signature
+            let returnType =
+                match node.Type with
+                | NativeType.TFun (_, retType) -> Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch retType
+                | _ -> TInt I32  // Fallback
+
+            // Build return operation
+            let returnOp =
+                match bodyResult with
+                | Some (ssa, _) -> MLIROp.FuncOp (FuncOp.Return (Some ssa, Some returnType))
+                | None -> MLIROp.FuncOp (FuncOp.Return (None, Some returnType))
+
+            let completeBody = bodyOps @ [returnOp]
+
+            // Build FuncDef for module-level function
+            let funcDef = FuncOp.FuncDef(funcName, mlirParams, returnType, completeBody, Public)
+
+            // Replace scope with FuncDef
+            MLIRAccumulator.replaceScope scopeKind scopeLabel (MLIROp.FuncOp funcDef) ctx.Accumulator
+
+            // Add module-level ops separately
+            MLIRAccumulator.addOps moduleOps ctx.Accumulator
 
             { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 

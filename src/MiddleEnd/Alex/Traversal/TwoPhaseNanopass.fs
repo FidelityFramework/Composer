@@ -48,25 +48,23 @@ let private combineWitnesses (nanopasses: Nanopass list) : (WitnessContext -> Se
                     result
         tryWitnesses nanopasses
 
-/// Run nanopasses with SHARED accumulator via SINGLE combined traversal
-/// This ensures post-order guarantees hold across ALL witnesses, not just within each nanopass
+/// Run nanopasses with SHARED accumulator and GLOBAL visited set via SINGLE combined traversal
+/// This ensures post-order guarantees hold across ALL witnesses and phases
 let runNanopassesSequentialShared
     (nanopasses: Nanopass list)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
     (sharedAcc: MLIRAccumulator)
-    : (Nanopass * Set<FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NodeId>) list =
+    (globalVisited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across phases)
+    : unit =
 
     // Create combined witness that tries all nanopasses at each node
     let combinedWitness = combineWitnesses nanopasses
 
-    // Single traversal with combined witness (NOT separate traversals per nanopass)
-    let visited = ref Set.empty
-
-    // Visit ALL reachable nodes in a SINGLE post-order traversal
+    // Visit ALL reachable nodes in a SINGLE post-order traversal using GLOBAL visited set
     for kvp in graph.Nodes do
         let nodeId, node = kvp.Key, kvp.Value
-        if node.IsReachable && not (Set.contains nodeId !visited) then
+        if node.IsReachable && not (Set.contains nodeId !globalVisited) then
             match PSGZipper.create graph nodeId with
             | None -> ()
             | Some initialZipper ->
@@ -75,11 +73,9 @@ let runNanopassesSequentialShared
                     Coeffects = coeffects
                     Accumulator = sharedAcc
                     Zipper = initialZipper
+                    GlobalVisited = globalVisited
                 }
-                visitAllNodes combinedWitness nodeCtx node sharedAcc visited
-
-    // Return visited set for each nanopass (all nanopasses saw the same nodes)
-    nanopasses |> List.map (fun np -> (np, !visited))
+                visitAllNodes combinedWitness nodeCtx node sharedAcc globalVisited
 
 /// Run nanopasses in parallel with SHARED accumulator (future optimization)
 /// Current: Sequential execution (parallel execution requires locking on mutable accumulator)
@@ -88,11 +84,12 @@ let runNanopassesParallelShared
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
     (sharedAcc: MLIRAccumulator)
-    : (Nanopass * Set<FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NodeId>) list =
+    (globalVisited: ref<Set<NodeId>>)
+    : unit =
 
     // FUTURE: Parallel execution with lock-free data structures
     // Current: Sequential for correctness
-    runNanopassesSequentialShared nanopasses graph coeffects sharedAcc
+    runNanopassesSequentialShared nanopasses graph coeffects sharedAcc globalVisited
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REMOVED: Envelope/Merge Functions
@@ -132,16 +129,16 @@ let defaultConfig = {
 // NANOPASS RESULT SERIALIZATION (for -k flag debugging)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Serialize a nanopass result to JSON for debugging
-let private serializeNanopassResult (intermediatesDir: string) (nanopass: Nanopass) (accumulator: MLIRAccumulator) (visited: Set<NodeId>) : unit =
-    let fileName = sprintf "07_%s_witness.json" (nanopass.Name.ToLower())
+/// Serialize nanopass phase result to JSON for debugging
+let private serializePhaseResult (intermediatesDir: string) (phaseName: string) (accumulator: MLIRAccumulator) (globalVisited: ref<Set<NodeId>>) : unit =
+    let fileName = sprintf "07_%s_witness.json" (phaseName.ToLower())
     let filePath = Path.Combine(intermediatesDir, fileName)
 
     let summary = {|
-        NanopassName = nanopass.Name
+        NanopassName = phaseName
         OperationCount = List.length accumulator.AllOps
         ErrorCount = List.length accumulator.Errors
-        VisitedNodes = visited |> Set.toList |> List.map (fun nodeId -> NodeId.value nodeId)
+        VisitedNodes = !globalVisited |> Set.toList |> List.map (fun nodeId -> NodeId.value nodeId)
         Errors = accumulator.Errors |> List.map Diagnostic.format
         Operations = accumulator.AllOps |> List.map (fun op -> sprintf "%A" op)
     |}
@@ -165,6 +162,9 @@ let executeNanopasses
         // Create SINGLE shared accumulator for ALL nanopasses
         let sharedAcc = MLIRAccumulator.empty()
 
+        // Create SINGLE global visited set for ALL nanopasses (across both phases)
+        let globalVisited = ref Set.empty
+
         // ═════════════════════════════════════════════════════════════════════════
         // PHASE 1: Content Witnesses (Literal, Arith, Lazy, Collections)
         // ═════════════════════════════════════════════════════════════════════════
@@ -173,18 +173,13 @@ let executeNanopasses
             registry.Nanopasses
             |> List.filter (fun np -> np.Phase = ContentPhase)
 
-        let contentResults =
-            if not (List.isEmpty contentPasses) then
-                runNanopassesSequentialShared contentPasses graph coeffects sharedAcc
-            else
-                []
+        if not (List.isEmpty contentPasses) then
+            runNanopassesSequentialShared contentPasses graph coeffects sharedAcc globalVisited
 
-        // Serialize Phase 1 results (each nanopass gets snapshot of shared accumulator)
+        // Serialize Phase 1 results
         match intermediatesDir with
         | Some dir ->
-            contentResults
-            |> List.iter (fun (nanopass, visited) ->
-                serializeNanopassResult dir nanopass sharedAcc visited)
+            serializePhaseResult dir "content" sharedAcc globalVisited
         | None -> ()
 
         // ═════════════════════════════════════════════════════════════════════════
@@ -195,31 +190,21 @@ let executeNanopasses
             registry.Nanopasses
             |> List.filter (fun np -> np.Phase = StructuralPhase)
 
-        let structuralResults =
-            if not (List.isEmpty structuralPasses) then
-                runNanopassesSequentialShared structuralPasses graph coeffects sharedAcc
-            else
-                []
+        if not (List.isEmpty structuralPasses) then
+            runNanopassesSequentialShared structuralPasses graph coeffects sharedAcc globalVisited
 
         // Serialize Phase 2 results
         match intermediatesDir with
         | Some dir ->
-            structuralResults
-            |> List.iter (fun (nanopass, visited) ->
-                serializeNanopassResult dir nanopass sharedAcc visited)
+            serializePhaseResult dir "lambda" sharedAcc globalVisited
         | None -> ()
 
         // ═════════════════════════════════════════════════════════════════════════
         // COVERAGE VALIDATION: Detect unwitnessed reachable nodes
         // ═════════════════════════════════════════════════════════════════════════
 
-        // Merge all visited sets from all nanopasses
-        let allVisited =
-            (contentResults @ structuralResults)
-            |> List.fold (fun acc (_, visited) -> Set.union acc visited) Set.empty
-
-        let coverageErrors = CoverageValidation.validateCoverage graph allVisited
-        let stats = CoverageValidation.calculateStats graph allVisited
+        let coverageErrors = CoverageValidation.validateCoverage graph !globalVisited
+        let stats = CoverageValidation.calculateStats graph !globalVisited
 
         coverageErrors |> List.iter (fun diag -> MLIRAccumulator.addError diag sharedAcc)
 

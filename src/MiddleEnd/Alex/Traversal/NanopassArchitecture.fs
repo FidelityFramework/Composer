@@ -62,7 +62,7 @@ let rec visitAllNodes
     (visitedCtx: WitnessContext)
     (currentNode: SemanticNode)
     (accumulator: MLIRAccumulator)
-    (visited: ref<Set<NodeId>>)  // NEW: Separate visited set (per-nanopass)
+    (visited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across all nanopasses)
     : unit =
 
     // Check if already visited
@@ -116,22 +116,20 @@ let rec visitAllNodes
 /// 5. Wrap extracted ops in FuncDef/SCFOp
 /// 6. replaceScope to substitute wrapped operation for markers+contents
 
-/// Run a single nanopass over entire PSG with SHARED accumulator
+/// Run a single nanopass over entire PSG with SHARED accumulator and GLOBAL visited set
 let runNanopass
     (nanopass: Nanopass)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
     (sharedAcc: MLIRAccumulator)  // SHARED accumulator (ops, bindings, errors)
-    : Set<NodeId> =  // NEW: Returns visited set for serialization
-
-    // Each nanopass gets a FRESH visited set (not shared!)
-    let visited = ref Set.empty
+    (globalVisited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across ALL nanopasses)
+    : unit =
 
     // Visit ALL reachable nodes, not just entry-point-reachable nodes
     // This ensures nodes like Console.write/writeln (reachable via VarRef but not via child edges) are witnessed
     for kvp in graph.Nodes do
         let nodeId, node = kvp.Key, kvp.Value
-        if node.IsReachable && not (Set.contains nodeId !visited) then
+        if node.IsReachable && not (Set.contains nodeId !globalVisited) then
             match PSGZipper.create graph nodeId with
             | None -> ()
             | Some initialZipper ->
@@ -140,12 +138,10 @@ let runNanopass
                     Coeffects = coeffects
                     Accumulator = sharedAcc  // SHARED accumulator
                     Zipper = initialZipper
+                    GlobalVisited = globalVisited  // GLOBAL visited set
                 }
-                // Visit this reachable node (post-order)
-                visitAllNodes nanopass.Witness nodeCtx node sharedAcc visited
-
-    // Return visited set for this nanopass (for serialization)
-    !visited
+                // Visit this reachable node (post-order) with GLOBAL visited set
+                visitAllNodes nanopass.Witness nodeCtx node sharedAcc globalVisited
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REMOVED: overlayAccumulators

@@ -381,6 +381,7 @@ type WitnessContext = {
     Accumulator: MLIRAccumulator
     Graph: SemanticGraph
     Zipper: PSGZipper              // Navigation state (created ONCE by fold)
+    GlobalVisited: ref<Set<NodeId>>  // Global visited set (shared across all nanopasses and function bodies)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
