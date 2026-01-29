@@ -115,7 +115,7 @@ let private serializeNanopassResult (intermediatesDir: string) (nanopass: Nanopa
         OperationCount = List.length accumulator.TopLevelOps
         ErrorCount = List.length accumulator.Errors
         VisitedNodes = accumulator.Visited |> Set.toList |> List.map (fun nodeId -> NodeId.value nodeId)
-        Errors = accumulator.Errors
+        Errors = accumulator.Errors |> List.map Diagnostic.format
         Operations = accumulator.TopLevelOps |> List.map (fun op -> sprintf "%A" op)
     |}
 

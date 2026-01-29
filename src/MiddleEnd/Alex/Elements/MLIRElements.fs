@@ -39,3 +39,15 @@ let pConstF (ssa: SSA) (value: float) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
         return MLIROp.ArithOp (ArithOp.ConstF (ssa, value, ty))
     }
+
+/// GlobalString - module-level string constant
+let pGlobalString (name: string) (content: string) (byteLength: int) : PSGParser<MLIROp> =
+    parser {
+        return GlobalString (name, content, byteLength)
+    }
+
+/// AddressOf - get pointer to global symbol
+let pAddressOf (ssa: SSA) (globalName: string) (ty: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return AddressOf (ssa, globalName, ty)
+    }

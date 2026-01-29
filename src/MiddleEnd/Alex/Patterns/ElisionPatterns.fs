@@ -18,6 +18,7 @@ open Alex.Elements.CFElements
 open Alex.Elements.FuncElements
 open Alex.Elements.IndexElements
 open Alex.Elements.VectorElements
+open PSGElaboration.StringCollection  // For deriveGlobalRef, deriveByteLength
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 
 // ═══════════════════════════════════════════════════════════
@@ -833,10 +834,9 @@ let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (arch: Architecture) : PSGPars
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.String _ ->
-            // String literals need global string table + AddressOf operation
-            // StringCollection coeffect (from PSGElaboration) provides the string table
-            // Gap: Need to emit global string data section and AddressOf operations
-            return! pfail "String literals need global string table + AddressOf implementation"
+            // String literals require witness-level handling with multiple SSAs
+            // Use pBuildStringLiteral pattern instead
+            return! pfail "String literals require pBuildStringLiteral pattern with SSA list"
 
         | _ ->
             return! pfail $"Unsupported literal: {lit}"
@@ -845,6 +845,45 @@ let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (arch: Architecture) : PSGPars
 // ═══════════════════════════════════════════════════════════
 // STRING PATTERNS
 // ═══════════════════════════════════════════════════════════
+
+/// Build string literal: addressof global + construct fat pointer struct
+/// SSAs: [0] = addressof ptr, [1] = length const, [2] = undef, [3] = insert ptr, [4] = insert length (result)
+/// Returns: ((ops, globalName, content, byteLength), result)
+/// NOTE: Witness must emit GlobalString to TopLevelOps separately
+let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
+                         : PSGParser<(MLIROp list * string * string * int) * TransferResult> =
+    parser {
+        if ssas.Length < 5 then
+            return! pfail $"pBuildStringLiteral: Expected 5 SSAs, got {ssas.Length}"
+
+        // Use StringCollection pure derivation (coeffect model)
+        let globalName = deriveGlobalRef content
+        let byteLength = deriveByteLength content
+
+        // String type: {ptr: nativeptr<byte>, length: int}
+        let ptrTy = TPtr
+        let lengthTy = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType arch NTUKind.NTUint64
+        let stringTy = TStruct [ptrTy; lengthTy]
+
+        // InlineOps: Build string struct {ptr, length}
+        let ptrSSA = ssas.[0]
+        let lengthSSA = ssas.[1]
+        let undefSSA = ssas.[2]
+        let withPtrSSA = ssas.[3]
+        let resultSSA = ssas.[4]
+
+        let! addressOfOp = pAddressOf ptrSSA globalName ptrTy
+        let! lengthConstOp = pConstI lengthSSA (int64 byteLength) lengthTy
+        let! undefOp = pUndef undefSSA stringTy
+        let! insertPtrOp = pInsertValue withPtrSSA undefSSA ptrSSA [0] stringTy
+        let! insertLenOp = pInsertValue resultSSA withPtrSSA lengthSSA [1] stringTy
+
+        let inlineOps = [addressOfOp; lengthConstOp; undefOp; insertPtrOp; insertLenOp]
+        let result = TRValue { SSA = resultSSA; Type = stringTy }
+
+        // Return ops + (globalName, content, byteLength) for witness to emit GlobalString
+        return ((inlineOps, globalName, content, byteLength), result)
+    }
 
 /// String as fat pointer: {ptr: nativeptr<byte>, length: int}
 /// Extract pointer field (index 0)

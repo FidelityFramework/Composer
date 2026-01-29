@@ -69,11 +69,11 @@ let generate
 
     // Execute Alex transfer (parallel nanopasses)
     match graph.EntryPoints with
-    | [] -> Error "No entry points found in PSG"
+    | [] -> Result.Error "No entry points found in PSG"
     | entryId :: _ ->
         match transfer graph entryId coeffects intermediatesDir with
-        | Ok (topLevelOps, _) ->
+        | Result.Ok (topLevelOps, _) ->
             // Serialize MLIR ops to text
             let mlirText = sprintf "module {\n  // %d MLIR ops generated\n}\n" (List.length topLevelOps)
-            Ok mlirText
-        | Error msg -> Error msg
+            Result.Ok mlirText
+        | Result.Error msg -> Result.Error msg

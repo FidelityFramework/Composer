@@ -278,6 +278,9 @@ type MLIROp =
     | VectorOp of VectorOp
     | Block of string * MLIROp list                                 // label, ops
     | Region of MLIROp list                                         // blocks
+    // Module-level declarations (backend-agnostic)
+    | GlobalString of string * string * int                         // name, content, byteLength
+    | AddressOf of SSA * string * MLIRType                          // result, globalName, ptrType
 
 /// Structured Control Flow (SCF) dialect operations
 and SCFOp =

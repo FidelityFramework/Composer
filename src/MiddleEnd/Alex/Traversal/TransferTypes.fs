@@ -47,6 +47,97 @@ type TransferCoeffects = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// STRUCTURED DIAGNOSTICS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Diagnostic severity levels
+type DiagnosticSeverity =
+    | Error
+    | Warning
+    | Info
+
+/// Structured diagnostic capturing WHERE and WHAT went wrong
+type Diagnostic = {
+    /// Severity level
+    Severity: DiagnosticSeverity
+
+    /// NodeId where error occurred (if known)
+    NodeId: NodeId option
+
+    /// Source component (e.g., "Literal", "Arithmetic", "ControlFlow")
+    Source: string option
+
+    /// Phase/operation that failed (e.g., "pBuildStringLiteral", "SSA lookup")
+    Phase: string option
+
+    /// Human-readable message
+    Message: string
+
+    /// Optional: Expected vs Actual for validation errors
+    Details: (string * string) option
+}
+
+module Diagnostic =
+    /// Create an error diagnostic with full context
+    let error nodeId source phase message =
+        { Severity = Error
+          NodeId = nodeId
+          Source = source
+          Phase = phase
+          Message = message
+          Details = None }
+
+    /// Create an error diagnostic with just a message
+    let errorSimple message =
+        error None None None message
+
+    /// Create an error diagnostic with expected/actual details
+    let errorWithDetails nodeId source phase message expected actual =
+        { Severity = Error
+          NodeId = nodeId
+          Source = source
+          Phase = phase
+          Message = message
+          Details = Some (expected, actual) }
+
+    /// Format diagnostic to human-readable string
+    let format (diag: Diagnostic) : string =
+        let parts = [
+            // Severity
+            match diag.Severity with
+            | Error -> Some "[ERROR]"
+            | Warning -> Some "[WARNING]"
+            | Info -> Some "[INFO]"
+
+            // NodeId
+            match diag.NodeId with
+            | Some nid -> Some (sprintf "Node %d" (NodeId.value nid))
+            | None -> None
+
+            // Source
+            match diag.Source with
+            | Some src -> Some (sprintf "(%s)" src)
+            | None -> None
+
+            // Phase
+            match diag.Phase with
+            | Some phase -> Some (sprintf "in %s" phase)
+            | None -> None
+
+            // Message
+            Some diag.Message
+
+            // Details
+            match diag.Details with
+            | Some (expected, actual) ->
+                Some (sprintf "Expected: %s, Actual: %s" expected actual)
+            | None -> None
+        ]
+        parts
+        |> List.choose id
+        |> String.concat " "
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MLIR ACCUMULATOR (Mutable Fold State)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -61,7 +152,7 @@ type AccumulatorScope = {
 /// Mutable accumulator - the `acc` in the fold
 type MLIRAccumulator = {
     mutable TopLevelOps: MLIROp list
-    mutable Errors: string list
+    mutable Errors: Diagnostic list
     mutable Visited: Set<NodeId>
     mutable ScopeStack: AccumulatorScope list
     mutable CurrentScope: AccumulatorScope
@@ -89,7 +180,7 @@ module MLIRAccumulator =
     let addTopLevelOps (ops: MLIROp list) (acc: MLIRAccumulator) =
         acc.TopLevelOps <- List.rev ops @ acc.TopLevelOps
 
-    let addError (err: string) (acc: MLIRAccumulator) =
+    let addError (err: Diagnostic) (acc: MLIRAccumulator) =
         acc.Errors <- err :: acc.Errors
 
     let markVisited (nodeId: NodeId) (acc: MLIRAccumulator) =
@@ -135,7 +226,7 @@ module MLIRAccumulator =
 type TransferResult =
     | TRValue of Val                    // Produces a value (SSA + type)
     | TRVoid                             // Produces no value (effect only)
-    | TRError of string                  // Error (gap in coverage)
+    | TRError of Diagnostic              // Error with structured context
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITNESS OUTPUT (What witnesses return)
@@ -152,7 +243,12 @@ module WitnessOutput =
     let empty = { InlineOps = []; TopLevelOps = []; Result = TRVoid }
     let inline' ops result = { InlineOps = ops; TopLevelOps = []; Result = result }
     let value v = { InlineOps = []; TopLevelOps = []; Result = TRValue v }
-    let error msg = { InlineOps = []; TopLevelOps = []; Result = TRError msg }
+
+    /// Create error output with simple message
+    let error msg = { InlineOps = []; TopLevelOps = []; Result = TRError (Diagnostic.errorSimple msg) }
+
+    /// Create error output with full diagnostic context
+    let errorDiag diag = { InlineOps = []; TopLevelOps = []; Result = TRError diag }
 
     /// Skip this node (not handled by this nanopass)
     let skip = empty

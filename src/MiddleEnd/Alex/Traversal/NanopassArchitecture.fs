@@ -64,8 +64,8 @@ let rec private visitAllNodes
             | TRValue v ->
                 MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type accumulator
             | TRVoid -> ()
-            | TRError msg ->
-                MLIRAccumulator.addError msg accumulator
+            | TRError diag ->
+                MLIRAccumulator.addError diag accumulator
 
             // Recursively visit children
             for childId in currentNode.Children do

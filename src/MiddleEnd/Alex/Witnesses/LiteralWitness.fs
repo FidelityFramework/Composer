@@ -8,6 +8,7 @@
 module Alex.Witnesses.LiteralWitness
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
@@ -23,13 +24,41 @@ module SSAAssign = PSGElaboration.SSAAssignment
 let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     match tryMatch pLiteral ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
     | Some (lit, _) ->
-        match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
-        | None -> WitnessOutput.error "Literal: No SSA assigned"
-        | Some ssa ->
-            let arch = ctx.Coeffects.Platform.TargetArch
-            match tryMatch (pBuildLiteral lit ssa arch) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None -> WitnessOutput.error "Literal pattern emission failed"
+        let arch = ctx.Coeffects.Platform.TargetArch
+
+        // String literals need special handling (5 SSAs vs 1 SSA for other literals)
+        match lit with
+        | NativeLiteral.String content ->
+            match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
+            | None ->
+                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "SSA lookup") "String literal: No SSAs assigned"
+                WitnessOutput.errorDiag diag
+            | Some ssas when ssas.Length >= 5 ->
+                match tryMatch (pBuildStringLiteral content ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                | Some (((inlineOps, globalName, strContent, byteLength), result), _) ->
+                    // Emit GlobalString to TopLevelOps
+                    let globalOp = Alex.Dialects.Core.Types.MLIROp.GlobalString (globalName, strContent, byteLength)
+                    { InlineOps = inlineOps; TopLevelOps = [globalOp]; Result = result }
+                | None ->
+                    let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildStringLiteral") "String literal pattern emission failed"
+                    WitnessOutput.errorDiag diag
+            | Some ssas ->
+                let diag = Diagnostic.errorWithDetails (Some node.Id) (Some "Literal") (Some "SSA validation")
+                                "String literal: Incorrect SSA count" "5 SSAs" $"{ssas.Length} SSAs"
+                WitnessOutput.errorDiag diag
+
+        | _ ->
+            // Other literals (int, bool, float, char, etc.) use single SSA
+            match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
+            | None ->
+                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "SSA lookup") "Literal: No SSA assigned"
+                WitnessOutput.errorDiag diag
+            | Some ssa ->
+                match tryMatch (pBuildLiteral lit ssa arch) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | None ->
+                    let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildLiteral") "Literal pattern emission failed"
+                    WitnessOutput.errorDiag diag
 
     | None -> WitnessOutput.skip
 

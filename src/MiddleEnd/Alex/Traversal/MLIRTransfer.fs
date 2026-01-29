@@ -43,7 +43,7 @@ let transfer
     // Check entry point exists
     match SemanticGraph.tryGetNode entryNodeId graph with
     | None ->
-        Error (sprintf "Entry node %d not found" (NodeId.value entryNodeId))
+        Result.Error (sprintf "Entry node %d not found" (NodeId.value entryNodeId))
     | Some _ ->
         // Execute all nanopasses in parallel
         // Config: Enable parallel execution for production, sequential for debugging
@@ -59,8 +59,9 @@ let transfer
         match accumulator.Errors with
         | [] ->
             // Success - return accumulated MLIR operations
-            Ok (List.rev accumulator.TopLevelOps, [])
+            Result.Ok (List.rev accumulator.TopLevelOps, [])
         | errors ->
-            // Errors occurred - report them
-            Error (String.concat "; " errors)
+            // Errors occurred - format and report them
+            let formattedErrors = errors |> List.map Diagnostic.format |> String.concat "\n"
+            Result.Error formattedErrors
 
