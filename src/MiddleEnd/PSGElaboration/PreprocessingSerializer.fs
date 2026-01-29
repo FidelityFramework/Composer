@@ -71,6 +71,9 @@ type SSAAssignmentJson = {
     NodeSSAAssignments: NodeSSAAllocationJson list
     /// Closure layouts for lambdas with captures
     ClosureLayouts: ClosureLayoutJson list
+    /// FLAT QUERYABLE MAP: nodeId -> SSA display strings (e.g., "528" -> ["%v2", "%v3", "%v4", "%v5", "%v6"])
+    /// This makes jq queries simple: .ssaAssignment.NodeSSAMap["528"]
+    NodeSSAMap: Map<string, string list>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -274,6 +277,14 @@ let serializeSSAAssignment (ssa: SSAAssignment) (graph: SemanticGraph) : SSAAssi
                 ClosureStructType = sprintf "%A" layout.ClosureStructType
             })
 
+    // Flat queryable map for easy jq access
+    let nodeSSAMap =
+        ssa.NodeSSA
+        |> Map.toList
+        |> List.map (fun (nodeId, alloc) ->
+            (string nodeId, alloc.SSAs |> List.map (fun s -> sprintf "%%%s" (match s with V n -> sprintf "v%d" n | Arg n -> sprintf "arg%d" n))))
+        |> Map.ofList
+
     {
         LambdaNames = ssa.LambdaNames |> Map.toList
         Lambdas = lambdas
@@ -281,6 +292,7 @@ let serializeSSAAssignment (ssa: SSAAssignment) (graph: SemanticGraph) : SSAAssi
         NodeSSACount = Map.count ssa.NodeSSA
         NodeSSAAssignments = nodeSSAAssignments
         ClosureLayouts = closureLayouts
+        NodeSSAMap = nodeSSAMap
     }
 
 // ═══════════════════════════════════════════════════════════════════════════

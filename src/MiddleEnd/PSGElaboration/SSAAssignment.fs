@@ -1248,6 +1248,10 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
     // Non-main Lambdas start at counter 0
     // Main Lambda starts at moduleLevelCounter (continues from Pass 1)
     // ═══════════════════════════════════════════════════════════════════════════
+
+    // Track module-level SSA counter for top-level Lambda nodes
+    let mutable topLevelCounter = moduleLevelCounter
+
     for kvp in graph.Nodes do
         let node = kvp.Value
         match node.Kind with
@@ -1278,11 +1282,35 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
             for kvp in bodyScope.Assignments do
                 allAssignments <- Map.add kvp.Key kvp.Value allAssignments
 
-            // Note: ClosureLayout for THIS lambda itself is computed when its PARENT is visited
-            // or if it is visited as part of another lambda's body.
-            // If this lambda is a top-level binding value, it might be visited in Pass 1?
-            // Or if it's main, it's never "visited" as a child?
-            // Main doesn't have captures, so no layout needed.
+            // Assign SSAs to the Lambda node itself (for closure value)
+            // Top-level Lambdas (not visited during body traversal) need SSA assignments
+            // for closure construction if they have captures
+            let cost = computeLambdaSSACost captures
+            if cost > 0 then
+                // Lambda with captures needs SSAs for closure struct construction
+                let ssas = List.init cost (fun i -> V (topLevelCounter + i))
+                let alloc = NodeSSAAllocation.multi ssas
+                allAssignments <- Map.add nodeIdVal alloc allAssignments
+                topLevelCounter <- topLevelCounter + cost
+            // Note: Lambdas with no captures (cost=0) don't need SSA assignments
+            // They are emitted as direct function symbols
+
+            // Assign SSAs to parent Binding if this Lambda has one
+            // Lambda Bindings are filtered out of Pass 1, so they need SSA assignment here
+            match node.Parent with
+            | Some parentId ->
+                match Map.tryFind parentId graph.Nodes with
+                | Some parentNode when (match parentNode.Kind with SemanticKind.Binding _ -> true | _ -> false) ->
+                    let parentIdVal = NodeId.value parentId
+                    if not (Map.containsKey parentIdVal allAssignments) then
+                        // Binding needs SSAs (fixed cost of 3)
+                        let bindingCost = 3
+                        let bindingSSAs = List.init bindingCost (fun i -> V (topLevelCounter + i))
+                        let bindingAlloc = NodeSSAAllocation.multi bindingSSAs
+                        allAssignments <- Map.add parentIdVal bindingAlloc allAssignments
+                        topLevelCounter <- topLevelCounter + bindingCost
+                | _ -> ()
+            | None -> ()
 
         // PRD-15 FIX (January 2026): SeqExpr MoveNext bodies need their own SSA scope
         // MoveNext is a separate function with seqPtr as %arg0, body SSAs start at 1
@@ -1296,6 +1324,32 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) : SSAAssignment =
                 allAssignments <- Map.add kvp.Key kvp.Value allAssignments
 
         | _ -> ()
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // VALIDATION: Check for unassigned value-producing nodes
+    // ═══════════════════════════════════════════════════════════════════════════
+    let unassignedNodes =
+        graph.Nodes
+        |> Map.toList
+        |> List.filter (fun (_, node) ->
+            let nodeIdVal = NodeId.value node.Id
+            if not node.IsReachable then false
+            elif not (producesValue node.Kind) then false
+            elif Map.containsKey nodeIdVal allAssignments then false
+            else
+                // Node produces value but has no SSA - check if this is expected
+                match node.Kind with
+                | SemanticKind.Lambda (_, _, captures, _, _) ->
+                    // No-capture Lambdas are emitted as direct function symbols, not SSA values
+                    // Only Lambdas with captures need SSAs for closure struct construction
+                    not (List.isEmpty captures)
+                | _ -> true)
+        |> List.map (fun (_, node) -> NodeId.value node.Id, node.Kind)
+
+    if not (List.isEmpty unassignedNodes) then
+        printfn "[SSA VALIDATION] Found %d unassigned value-producing nodes:" (List.length unassignedNodes)
+        for (id, kind) in unassignedNodes |> List.take (min 10 (List.length unassignedNodes)) do
+            printfn "  Node %d: %A" id kind
 
     // Convert mutable dictionaries to immutable maps
     let closureLayouts = 
