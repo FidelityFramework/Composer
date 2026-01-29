@@ -1,4 +1,4 @@
-# Firefly: F# to Native Compiler
+# Firefly: F# Native Compiler
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](Commercial.md)
@@ -8,7 +8,7 @@
 <em>This project is in early development and not intended for production use.</em>
 </p>
 
-Firefly is an ahead-of-time F# compiler that produces native executables without runtime dependencies or garbage collection. Built as a .NET CLI tool, Firefly leverages [F# Native Compiler Services (FNCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, then generates MLIR through the Alex multi-targeting layer, and finally produces native binaries via LLVM.
+Firefly is an ahead-of-time F# compiler that produces native executables without managed runtime dependencies or garbage collection. Right now, we're bootstrapping this as a .NET CLI tool. Firefly leverages a newly forked [F# Native Compiler Services (FNCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, then generates MLIR through the Alex multi-targeting layer, and finally produces native binaries via LLVM.
 
 ## 🎯 Vision
 
