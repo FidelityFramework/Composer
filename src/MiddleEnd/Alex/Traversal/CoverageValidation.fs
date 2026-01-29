@@ -19,7 +19,7 @@ open Alex.Traversal.TransferTypes
 /// Returns list of diagnostics for any unwitnessed reachable nodes
 let validateCoverage
     (graph: SemanticGraph)
-    (accumulator: MLIRAccumulator)
+    (allVisited: Set<NodeId>)  // Merged visited set from all nanopasses
     : Diagnostic list =
 
     // Get all reachable nodes from the graph
@@ -34,7 +34,7 @@ let validateCoverage
     let unwitnessedNodes =
         reachableNodes
         |> List.filter (fun node ->
-            not (MLIRAccumulator.isVisited node.Id accumulator))
+            not (Set.contains node.Id allVisited))
 
     // Generate error diagnostics for each unwitnessed node
     unwitnessedNodes
@@ -64,8 +64,8 @@ type CoverageStats = {
     CoveragePercentage: float
 }
 
-/// Calculate coverage statistics from graph and accumulator
-let calculateStats (graph: SemanticGraph) (accumulator: MLIRAccumulator) : CoverageStats =
+/// Calculate coverage statistics from graph and merged visited set
+let calculateStats (graph: SemanticGraph) (allVisited: Set<NodeId>) : CoverageStats =
     let totalNodes = Map.count graph.Nodes
     let reachableNodes =
         graph.Nodes
@@ -73,7 +73,7 @@ let calculateStats (graph: SemanticGraph) (accumulator: MLIRAccumulator) : Cover
         |> Seq.map snd
         |> Seq.filter (fun n -> n.IsReachable)
         |> Seq.length
-    let witnessedNodes = Set.count accumulator.Visited
+    let witnessedNodes = Set.count allVisited
     let unwitnessedNodes = reachableNodes - witnessedNodes
     let coveragePercentage =
         if reachableNodes > 0 then

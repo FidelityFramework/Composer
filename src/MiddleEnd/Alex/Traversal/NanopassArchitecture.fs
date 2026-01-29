@@ -7,6 +7,7 @@ module Alex.Traversal.NanopassArchitecture
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.PSGZipper
@@ -53,21 +54,23 @@ let private isScopeBoundary (node: SemanticNode) : bool =
     | SemanticKind.TryWith _ -> true
     | _ -> false
 
-/// Visit all nodes in PSG via zipper traversal
-/// Each nanopass traverses entire graph, selectively witnessing
-let rec private visitAllNodes
+/// Visit all nodes in post-order (children before parents)
+/// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
+/// Post-order ensures children's SSA bindings are available when parent witnesses
+let rec visitAllNodes
     (witness: WitnessContext -> SemanticNode -> WitnessOutput)
     (visitedCtx: WitnessContext)
     (currentNode: SemanticNode)
     (accumulator: MLIRAccumulator)
+    (visited: ref<Set<NodeId>>)  // NEW: Separate visited set (per-nanopass)
     : unit =
 
     // Check if already visited
-    if MLIRAccumulator.isVisited currentNode.Id accumulator then
+    if Set.contains currentNode.Id !visited then
         ()
     else
         // Mark as visited
-        MLIRAccumulator.markVisited currentNode.Id accumulator
+        visited := Set.add currentNode.Id !visited
 
         // Focus zipper on this node
         match PSGZipper.focusOn currentNode.Id visitedCtx.Zipper with
@@ -76,14 +79,22 @@ let rec private visitAllNodes
             // Shadow context with focused zipper
             let focusedCtx = { visitedCtx with Zipper = focusedZipper }
 
-            // Witness this node (may skip if not relevant to this nanopass)
+            // POST-ORDER: Visit children FIRST (before witnessing current node)
+            // This ensures children's SSA bindings are available when parent witnesses
+            if not (isScopeBoundary currentNode) then
+                for childId in currentNode.Children do
+                    match SemanticGraph.tryGetNode childId visitedCtx.Graph with
+                    | Some childNode -> visitAllNodes witness focusedCtx childNode accumulator visited
+                    | None -> ()
+
+            // THEN witness current node (after children are done)
             let output = witness focusedCtx currentNode
 
-            // Add operations to accumulator (both inline and top-level go into TopLevelOps)
-            MLIRAccumulator.addTopLevelOps output.InlineOps accumulator
-            MLIRAccumulator.addTopLevelOps output.TopLevelOps accumulator
+            // Add operations to flat accumulator stream
+            MLIRAccumulator.addOps output.InlineOps accumulator
+            MLIRAccumulator.addOps output.TopLevelOps accumulator
 
-            // Bind result if value
+            // Bind result if value (global binding)
             match output.Result with
             | TRValue v ->
                 MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type accumulator
@@ -91,166 +102,60 @@ let rec private visitAllNodes
             | TRError diag ->
                 MLIRAccumulator.addError diag accumulator
 
-            // Recursively visit children ONLY if not a scope boundary
-            // Scope boundaries delegate child witnessing to witnessSubgraph
-            if not (isScopeBoundary currentNode) then
-                for childId in currentNode.Children do
-                    match SemanticGraph.tryGetNode childId visitedCtx.Graph with
-                    | Some childNode -> visitAllNodes witness focusedCtx childNode accumulator
-                    | None -> ()
-
-/// Witness a sub-graph rooted at a given node, returning collected operations
+/// REMOVED: witnessSubgraph and witnessSubgraphWithResult
 ///
-/// This is used by control flow witnesses to materialize branch sub-graphs
-/// as operation lists for structured control flow regions (SCF.If, SCF.While, etc.)
+/// These functions created isolated accumulators which broke SSA binding resolution.
+/// With the flat accumulator architecture, scope boundaries are handled via ScopeMarkers
+/// instead of isolated accumulators.
 ///
-/// Unlike visitAllNodes which accumulates into a shared accumulator, this:
-/// 1. Creates an isolated accumulator for the sub-graph
-/// 2. Witnesses all reachable nodes from the root
-/// 3. Returns operations as a list (for SCF region nesting)
-let witnessSubgraph
-    rootNodeId
-    (ctx: WitnessContext)
-    (witness: WitnessContext -> SemanticNode -> WitnessOutput)
-    : MLIROp list =
+/// Lambda and ControlFlow witnesses now use:
+/// 1. ScopeMarker (ScopeEnter) to mark scope start
+/// 2. Witness body nodes into shared accumulator
+/// 3. ScopeMarker (ScopeExit) to mark scope end
+/// 4. extractScope to get operations between markers
+/// 5. Wrap extracted ops in FuncDef/SCFOp
+/// 6. replaceScope to substitute wrapped operation for markers+contents
 
-    // Create isolated accumulator for this sub-graph
-    let subAccumulator = MLIRAccumulator.empty()
-
-    // Get root node
-    match SemanticGraph.tryGetNode rootNodeId ctx.Graph with
-    | None -> []
-    | Some rootNode ->
-        // Focus zipper on root of sub-graph
-        match PSGZipper.focusOn rootNodeId ctx.Zipper with
-        | None -> []
-        | Some focusedZipper ->
-            // Create sub-context with isolated accumulator
-            let subCtx = {
-                Graph = ctx.Graph
-                Coeffects = ctx.Coeffects
-                Accumulator = subAccumulator
-                Zipper = focusedZipper
-            }
-
-            // Traverse sub-graph starting from root
-            visitAllNodes witness subCtx rootNode subAccumulator
-
-            // Return collected operations
-            List.rev subAccumulator.TopLevelOps
-
-/// Witness a sub-graph rooted at a given node, returning body ops, module ops, and root result
-///
-/// Like witnessSubgraph, but separates operations into:
-/// - Body operations (for function/branch bodies)
-/// - Module-level operations (GlobalString declarations)
-/// - Root result (SSA binding for the sub-graph root)
-///
-/// Used by Lambda witness to properly distribute operations between function body and module level.
-let witnessSubgraphWithResult
-    rootNodeId
-    (ctx: WitnessContext)
-    (witness: WitnessContext -> SemanticNode -> WitnessOutput)
-    : MLIROp list * MLIROp list * (SSA * MLIRType) option =
-
-    // Create isolated accumulator for this sub-graph
-    let subAccumulator = MLIRAccumulator.empty()
-
-    // Get root node
-    match SemanticGraph.tryGetNode rootNodeId ctx.Graph with
-    | None -> ([], [], None)
-    | Some rootNode ->
-        // Focus zipper on root of sub-graph
-        match PSGZipper.focusOn rootNodeId ctx.Zipper with
-        | None -> ([], [], None)
-        | Some focusedZipper ->
-            // Create sub-context with isolated accumulator
-            let subCtx = {
-                Graph = ctx.Graph
-                Coeffects = ctx.Coeffects
-                Accumulator = subAccumulator
-                Zipper = focusedZipper
-            }
-
-            // Traverse sub-graph starting from root
-            visitAllNodes witness subCtx rootNode subAccumulator
-
-            // Get result binding for root node
-            let rootResult = MLIRAccumulator.recallNode rootNodeId subAccumulator
-
-            // Separate operations into body ops and module-level ops
-            let allOps = List.rev subAccumulator.TopLevelOps
-            let bodyOps = allOps |> List.filter (fun op ->
-                match op with
-                | MLIROp.GlobalString _ -> false  // Module-level
-                | _ -> true  // Body operation
-            )
-            let moduleOps = allOps |> List.filter (fun op ->
-                match op with
-                | MLIROp.GlobalString _ -> true  // Module-level
-                | _ -> false
-            )
-
-            // Return body ops, module ops, and root result
-            (bodyOps, moduleOps, rootResult)
-
-/// Run a single nanopass over entire PSG
+/// Run a single nanopass over entire PSG with SHARED accumulator
 let runNanopass
     (nanopass: Nanopass)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
-    : MLIRAccumulator =
+    (sharedAcc: MLIRAccumulator)  // SHARED accumulator (ops, bindings, errors)
+    : Set<NodeId> =  // NEW: Returns visited set for serialization
 
-    // Create fresh accumulator
-    let freshAcc = MLIRAccumulator.empty()
+    // Each nanopass gets a FRESH visited set (not shared!)
+    let visited = ref Set.empty
 
     // Visit ALL reachable nodes, not just entry-point-reachable nodes
     // This ensures nodes like Console.write/writeln (reachable via VarRef but not via child edges) are witnessed
     for kvp in graph.Nodes do
         let nodeId, node = kvp.Key, kvp.Value
-        if node.IsReachable && not (MLIRAccumulator.isVisited nodeId freshAcc) then
+        if node.IsReachable && not (Set.contains nodeId !visited) then
             match PSGZipper.create graph nodeId with
             | None -> ()
             | Some initialZipper ->
                 let nodeCtx = {
                     Graph = graph
                     Coeffects = coeffects
-                    Accumulator = freshAcc
+                    Accumulator = sharedAcc  // SHARED accumulator
                     Zipper = initialZipper
                 }
-                // Visit this reachable node
-                visitAllNodes nanopass.Witness nodeCtx node freshAcc
+                // Visit this reachable node (post-order)
+                visitAllNodes nanopass.Witness nodeCtx node sharedAcc visited
 
-    freshAcc
+    // Return visited set for this nanopass (for serialization)
+    !visited
 
 // ═══════════════════════════════════════════════════════════════════════════
-// OVERLAY MERGE (Associative)
+// REMOVED: overlayAccumulators
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Merge/overlay two accumulators from parallel nanopasses
-/// MUST be associative: merge (merge a b) c = merge a (merge b c)
-let overlayAccumulators (acc1: MLIRAccumulator) (acc2: MLIRAccumulator) : MLIRAccumulator =
-    let merged = MLIRAccumulator.empty()
-
-    // Merge top-level ops (order may vary, but all are included)
-    MLIRAccumulator.addTopLevelOps acc1.TopLevelOps merged
-    MLIRAccumulator.addTopLevelOps acc2.TopLevelOps merged
-
-    // Merge visited sets
-    merged.Visited <- Set.union acc1.Visited acc2.Visited
-
-    // Merge bindings (should be disjoint - different nanopasses handle different nodes)
-    merged.CurrentScope <-
-        { merged.CurrentScope with
-            NodeAssoc =
-                Map.fold (fun m k v -> Map.add k v m)
-                    acc1.CurrentScope.NodeAssoc
-                    acc2.CurrentScope.NodeAssoc }
-
-    // Merge errors
-    merged.Errors <- acc1.Errors @ acc2.Errors
-
-    merged
+/// REMOVED: overlayAccumulators
+///
+/// This function merged separate accumulators from parallel nanopasses.
+/// With the flat accumulator architecture, ALL nanopasses share a single accumulator,
+/// so no merging is needed. Operations and bindings accumulate directly during traversal.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS REGISTRY

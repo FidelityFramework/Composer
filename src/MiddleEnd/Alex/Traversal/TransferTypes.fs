@@ -188,82 +188,145 @@ module Diagnostic =
 // MLIR ACCUMULATOR (Mutable Fold State)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Scope for nested regions
-type AccumulatorScope = {
-    VarAssoc: Map<string, SSA * MLIRType>
-    NodeAssoc: Map<NodeId, SSA * MLIRType>
-    CapturedVars: Set<string>
-    CapturedMuts: Set<string>
-}
-
-/// Mutable accumulator - the `acc` in the fold
+/// Flat accumulator - all operations in single stream with scope markers
+/// SSA bindings are global (shared across all witnesses and scopes)
+/// NOTE: Visited set is NOT in accumulator - each nanopass gets its own visited set
 type MLIRAccumulator = {
-    mutable TopLevelOps: MLIROp list
+    mutable AllOps: MLIROp list                      // Flat operation stream with markers
     mutable Errors: Diagnostic list
-    mutable Visited: Set<NodeId>
-    mutable ScopeStack: AccumulatorScope list
-    mutable CurrentScope: AccumulatorScope
+    mutable NodeAssoc: Map<NodeId, SSA * MLIRType>  // Global SSA bindings
 }
 
 module MLIRAccumulator =
     let empty () : MLIRAccumulator =
-        let globalScope = {
-            VarAssoc = Map.empty
-            NodeAssoc = Map.empty
-            CapturedVars = Set.empty
-            CapturedMuts = Set.empty
-        }
         {
-            TopLevelOps = []
+            AllOps = []
             Errors = []
-            Visited = Set.empty
-            ScopeStack = []
-            CurrentScope = globalScope
+            NodeAssoc = Map.empty
         }
 
-    let addTopLevelOp (op: MLIROp) (acc: MLIRAccumulator) =
-        acc.TopLevelOps <- op :: acc.TopLevelOps
+    /// Add a single operation to the flat stream
+    let addOp (op: MLIROp) (acc: MLIRAccumulator) =
+        acc.AllOps <- op :: acc.AllOps
 
-    let addTopLevelOps (ops: MLIROp list) (acc: MLIRAccumulator) =
-        acc.TopLevelOps <- List.rev ops @ acc.TopLevelOps
+    /// Add multiple operations to the flat stream
+    let addOps (ops: MLIROp list) (acc: MLIRAccumulator) =
+        acc.AllOps <- List.rev ops @ acc.AllOps
 
+    /// Add an error diagnostic
     let addError (err: Diagnostic) (acc: MLIRAccumulator) =
         acc.Errors <- err :: acc.Errors
 
-    let markVisited (nodeId: NodeId) (acc: MLIRAccumulator) =
-        acc.Visited <- Set.add nodeId acc.Visited
-
-    let isVisited (nodeId: NodeId) (acc: MLIRAccumulator) =
-        Set.contains nodeId acc.Visited
-
-    let bindVar (name: string) (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
-        acc.CurrentScope <- { acc.CurrentScope with VarAssoc = Map.add name (ssa, ty) acc.CurrentScope.VarAssoc }
-
-    let recallVar (name: string) (acc: MLIRAccumulator) =
-        Map.tryFind name acc.CurrentScope.VarAssoc
-
+    /// Bind a PSG node to its SSA value (global binding)
     let bindNode (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
-        acc.CurrentScope <- { acc.CurrentScope with NodeAssoc = Map.add nodeId (ssa, ty) acc.CurrentScope.NodeAssoc }
+        acc.NodeAssoc <- Map.add nodeId (ssa, ty) acc.NodeAssoc
 
+    /// Recall the SSA binding for a PSG node (global lookup)
     let recallNode (nodeId: NodeId) (acc: MLIRAccumulator) =
-        Map.tryFind nodeId acc.CurrentScope.NodeAssoc
+        Map.tryFind nodeId acc.NodeAssoc
 
-    let isCapturedVariable (name: string) (acc: MLIRAccumulator) =
-        Set.contains name acc.CurrentScope.CapturedVars
+    /// Extract operations between scope markers (for wrapping in FuncDef/SCFOp)
+    let extractScope (kind: ScopeKind) (label: string) (acc: MLIRAccumulator) : MLIROp list =
+        let enterMarker = MLIROp.ScopeMarker (ScopeEnter (kind, label))
+        let exitMarker = MLIROp.ScopeMarker (ScopeExit (kind, label))
 
-    let isCapturedMutable (name: string) (acc: MLIRAccumulator) =
-        Set.contains name acc.CurrentScope.CapturedMuts
+        // Find operations between markers (reversed because ops are prepended)
+        let rec findBetween ops collecting result =
+            match ops with
+            | [] -> result  // Markers not found, return what we collected
+            | op :: rest ->
+                if op = exitMarker then
+                    findBetween rest true result
+                elif op = enterMarker then
+                    List.rev result  // Found both markers, return collected ops
+                elif collecting then
+                    findBetween rest true (op :: result)
+                else
+                    findBetween rest false result
 
-    let pushScope (scope: AccumulatorScope) (acc: MLIRAccumulator) =
-        acc.ScopeStack <- acc.CurrentScope :: acc.ScopeStack
-        acc.CurrentScope <- scope
+        findBetween acc.AllOps false []
 
-    let popScope (acc: MLIRAccumulator) =
-        match acc.ScopeStack with
-        | prev :: rest ->
-            acc.CurrentScope <- prev
-            acc.ScopeStack <- rest
-        | [] -> ()
+    /// Replace scope contents with a single operation (e.g., wrap in FuncDef)
+    let replaceScope (kind: ScopeKind) (label: string) (replacement: MLIROp) (acc: MLIRAccumulator) =
+        let enterMarker = MLIROp.ScopeMarker (ScopeEnter (kind, label))
+        let exitMarker = MLIROp.ScopeMarker (ScopeExit (kind, label))
+
+        // Remove operations between markers and the markers themselves
+        let rec removeScope ops collecting result =
+            match ops with
+            | [] -> List.rev result
+            | op :: rest ->
+                if op = exitMarker then
+                    // Start collecting (skipping marker)
+                    removeScope rest true result
+                elif op = enterMarker then
+                    // Found enter marker, insert replacement and stop collecting
+                    removeScope rest false (replacement :: result)
+                elif collecting then
+                    // Skip operations between markers
+                    removeScope rest true result
+                else
+                    // Keep operations outside scope
+                    removeScope rest false (op :: result)
+
+        acc.AllOps <- removeScope acc.AllOps false []
+
+    /// Remove scope entirely (markers and contents)
+    let removeScopeEntirely (kind: ScopeKind) (label: string) (acc: MLIRAccumulator) =
+        let enterMarker = MLIROp.ScopeMarker (ScopeEnter (kind, label))
+        let exitMarker = MLIROp.ScopeMarker (ScopeExit (kind, label))
+
+        // Remove operations between markers and the markers themselves
+        let rec doRemove ops collecting result =
+            match ops with
+            | [] -> List.rev result
+            | op :: rest ->
+                if op = exitMarker then
+                    // Start collecting (skipping marker)
+                    doRemove rest true result
+                elif op = enterMarker then
+                    // Found enter marker, skip it and stop collecting
+                    doRemove rest false result
+                elif collecting then
+                    // Skip operations between markers
+                    doRemove rest true result
+                else
+                    // Keep operations outside scope
+                    doRemove rest false (op :: result)
+
+        acc.AllOps <- doRemove acc.AllOps false []
+
+    /// Backward compatibility aliases
+    let addTopLevelOp = addOp
+    let addTopLevelOps = addOps
+
+    /// Property accessor for compatibility
+    let topLevelOps (acc: MLIRAccumulator) = acc.AllOps
+
+    /// Recursively count all operations (including nested in FuncDef, SCFOp, etc.)
+    /// ScopeMarkers are metadata and don't count as operations
+    let rec countOperations (ops: MLIROp list) : int =
+        ops |> List.sumBy (fun op ->
+            match op with
+            | MLIROp.ScopeMarker _ -> 0  // Metadata, not an operation
+            | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
+                1 + countOperations body
+            | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps)) ->
+                let elseCount = match elseOps with Some ops -> countOperations ops | None -> 0
+                1 + countOperations thenOps + elseCount
+            | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
+                1 + countOperations condOps + countOperations bodyOps
+            | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) ->
+                1 + countOperations bodyOps
+            | MLIROp.Block (_, blockOps) ->
+                1 + countOperations blockOps
+            | MLIROp.Region ops ->
+                1 + countOperations ops
+            | _ -> 1)
+
+    /// Get total operation count from accumulator (including all nested operations)
+    let totalOperations (acc: MLIRAccumulator) : int =
+        countOperations acc.AllOps
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TRANSFER RESULT (Result of witnessing a node)

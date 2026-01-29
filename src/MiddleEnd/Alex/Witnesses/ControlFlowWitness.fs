@@ -12,8 +12,12 @@
 module Alex.Witnesses.ControlFlowWitness
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
+open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ElisionPatterns
 
@@ -35,6 +39,35 @@ let private makeSubGraphCombinator (nanopasses: Nanopass list) : (WitnessContext
                 | output -> output
         tryWitnesses nanopasses
 
+/// Helper: Witness a branch/scope by marking boundaries and extracting operations
+let private witnessBranchScope (scopeKind: ScopeKind) (rootId: NodeId) ctx combinator : MLIROp list =
+    let scopeLabel = sprintf "scope_%d" (NodeId.value rootId)
+
+    // Mark scope entry
+    MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
+
+    // Witness branch nodes into shared accumulator
+    match SemanticGraph.tryGetNode rootId ctx.Graph with
+    | Some branchNode ->
+        match focusOn rootId ctx.Zipper with
+        | Some branchZipper ->
+            let branchCtx = { ctx with Zipper = branchZipper }
+            let branchVisited = ref Set.empty  // Fresh visited set for branch traversal
+            visitAllNodes combinator branchCtx branchNode ctx.Accumulator branchVisited
+        | None -> ()
+    | None -> ()
+
+    // Mark scope exit
+    MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeExit (scopeKind, scopeLabel))) ctx.Accumulator
+
+    // Extract operations between markers
+    let branchOps = MLIRAccumulator.extractScope scopeKind scopeLabel ctx.Accumulator
+
+    // Remove scope from accumulator (markers + contents)
+    MLIRAccumulator.removeScopeEntirely scopeKind scopeLabel ctx.Accumulator
+
+    branchOps
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -49,8 +82,8 @@ let private witnessControlFlowWith (nanopasses: Nanopass list) (ctx: WitnessCont
         match MLIRAccumulator.recallNode condId ctx.Accumulator with
         | None -> WitnessOutput.error "IfThenElse: Condition not yet witnessed"
         | Some (condSSA, _) ->
-            let thenOps = witnessSubgraph thenId ctx subGraphCombinator
-            let elseOps = elseIdOpt |> Option.map (fun elseId -> witnessSubgraph elseId ctx subGraphCombinator)
+            let thenOps = witnessBranchScope IfThenScope thenId ctx subGraphCombinator
+            let elseOps = elseIdOpt |> Option.map (fun elseId -> witnessBranchScope IfElseScope elseId ctx subGraphCombinator)
 
             match tryMatch (pBuildIfThenElse condSSA thenOps elseOps) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
             | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
@@ -59,8 +92,8 @@ let private witnessControlFlowWith (nanopasses: Nanopass list) (ctx: WitnessCont
     | None ->
         match tryMatch pWhileLoop ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
         | Some ((condId, bodyId), _) ->
-            let condOps = witnessSubgraph condId ctx subGraphCombinator
-            let bodyOps = witnessSubgraph bodyId ctx subGraphCombinator
+            let condOps = witnessBranchScope WhileCondScope condId ctx subGraphCombinator
+            let bodyOps = witnessBranchScope WhileBodyScope bodyId ctx subGraphCombinator
 
             match tryMatch (pBuildWhileLoop condOps bodyOps) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
             | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
@@ -71,7 +104,7 @@ let private witnessControlFlowWith (nanopasses: Nanopass list) (ctx: WitnessCont
             | Some ((_, lowerId, upperId, _, bodyId), _) ->
                 match MLIRAccumulator.recallNode lowerId ctx.Accumulator, MLIRAccumulator.recallNode upperId ctx.Accumulator with
                 | Some (lowerSSA, _), Some (upperSSA, _) ->
-                    let bodyOps = witnessSubgraph bodyId ctx subGraphCombinator
+                    let _bodyOps = witnessBranchScope ForBodyScope bodyId ctx subGraphCombinator
                     WitnessOutput.error "ForLoop needs step constant - gap in patterns"
 
                 | _ -> WitnessOutput.error "ForLoop: Loop bounds not yet witnessed"

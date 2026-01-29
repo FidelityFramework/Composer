@@ -55,11 +55,23 @@ let transfer
 
         let accumulator = executeNanopasses config globalRegistry graph coeffects intermediatesDir
 
+        // Debug: Print accumulator stats with recursive counts
+        let totalOps = MLIRAccumulator.totalOperations accumulator
+        let allOpsCount = List.length accumulator.AllOps
+        printfn "[MLIRTransfer] Accumulator: %d total ops in %d stream items, %d errors"
+            totalOps
+            allOpsCount
+            (List.length accumulator.Errors)
+
         // Check for errors accumulated during nanopass execution
         match accumulator.Errors with
         | [] ->
-            // Success - return accumulated MLIR operations
-            Result.Ok (List.rev accumulator.TopLevelOps, [])
+            // Success - strip scope markers and return accumulated MLIR operations
+            let cleanedOps =
+                accumulator.AllOps
+                |> List.filter (fun op -> match op with MLIROp.ScopeMarker _ -> false | _ -> true)
+                |> List.rev
+            Result.Ok (cleanedOps, [])
         | errors ->
             // Errors occurred - format and report them
             let formattedErrors = errors |> List.map Diagnostic.format |> String.concat "\n"

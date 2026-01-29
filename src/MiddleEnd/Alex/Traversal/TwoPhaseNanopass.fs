@@ -9,9 +9,11 @@ open System.IO
 open System.Text.Json
 open IcedTasks
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
+open Alex.Traversal.PSGZipper
 open Alex.Traversal.CoverageValidation
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -32,52 +34,74 @@ open Alex.Traversal.CoverageValidation
 //
 // Rationale: Content lives inside scopes. Scopes must see content before wrapping it.
 
-/// Run multiple nanopasses in parallel via IcedTasks
-/// Results collected AS THEY COMPLETE (order doesn't matter)
-let runNanopassesParallel
+/// Combine multiple witnesses into a single witness that tries each in sequence
+let private combineWitnesses (nanopasses: Nanopass list) : (WitnessContext -> SemanticNode -> WitnessOutput) =
+    fun ctx node ->
+        let rec tryWitnesses remaining =
+            match remaining with
+            | [] -> WitnessOutput.skip
+            | nanopass :: rest ->
+                let result = nanopass.Witness ctx node
+                if result = WitnessOutput.skip then
+                    tryWitnesses rest
+                else
+                    result
+        tryWitnesses nanopasses
+
+/// Run nanopasses with SHARED accumulator via SINGLE combined traversal
+/// This ensures post-order guarantees hold across ALL witnesses, not just within each nanopass
+let runNanopassesSequentialShared
     (nanopasses: Nanopass list)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
-    : MLIRAccumulator list =
+    (sharedAcc: MLIRAccumulator)
+    : (Nanopass * Set<FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NodeId>) list =
 
-    // Fan out: Execute all nanopasses in parallel using IcedTasks coldTask
-    // ColdTask is unit -> Task<'T>, so we create them, then invoke all with Task.WhenAll
-    nanopasses
-    |> List.map (fun nanopass ->
-        coldTask { return runNanopass nanopass graph coeffects })
-    |> List.map (fun ct -> ct())  // Invoke all coldTasks to start them
-    |> fun tasks -> System.Threading.Tasks.Task.WhenAll(tasks).GetAwaiter().GetResult()
-    |> List.ofArray
+    // Create combined witness that tries all nanopasses at each node
+    let combinedWitness = combineWitnesses nanopasses
 
-/// Run multiple nanopasses sequentially (for debugging/validation)
-let runNanopassesSequential
+    // Single traversal with combined witness (NOT separate traversals per nanopass)
+    let visited = ref Set.empty
+
+    // Visit ALL reachable nodes in a SINGLE post-order traversal
+    for kvp in graph.Nodes do
+        let nodeId, node = kvp.Key, kvp.Value
+        if node.IsReachable && not (Set.contains nodeId !visited) then
+            match PSGZipper.create graph nodeId with
+            | None -> ()
+            | Some initialZipper ->
+                let nodeCtx = {
+                    Graph = graph
+                    Coeffects = coeffects
+                    Accumulator = sharedAcc
+                    Zipper = initialZipper
+                }
+                visitAllNodes combinedWitness nodeCtx node sharedAcc visited
+
+    // Return visited set for each nanopass (all nanopasses saw the same nodes)
+    nanopasses |> List.map (fun np -> (np, !visited))
+
+/// Run nanopasses in parallel with SHARED accumulator (future optimization)
+/// Current: Sequential execution (parallel execution requires locking on mutable accumulator)
+let runNanopassesParallelShared
     (nanopasses: Nanopass list)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
-    : MLIRAccumulator list =
+    (sharedAcc: MLIRAccumulator)
+    : (Nanopass * Set<FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NodeId>) list =
 
-    nanopasses
-    |> List.map (fun nanopass -> runNanopass nanopass graph coeffects)
+    // FUTURE: Parallel execution with lock-free data structures
+    // Current: Sequential for correctness
+    runNanopassesSequentialShared nanopasses graph coeffects sharedAcc
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENVELOPE PASS (Reactive Result Collection)
+// REMOVED: Envelope/Merge Functions
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Envelope pass: Reactively collect results AS THEY ARRIVE
-/// Since nanopasses are referentially transparent and merge is associative,
-/// order doesn't matter - merge results as they complete
-let collectEnvelopeReactive (nanopassResults: MLIRAccumulator list) : MLIRAccumulator =
-    match nanopassResults with
-    | [] -> MLIRAccumulator.empty()
-    | [single] -> single
-    | many ->
-        // Overlay all results associatively
-        // Order of arrival doesn't matter (associativity + referential transparency)
-        many
-        |> List.reduce overlayAccumulators
-
-/// Envelope pass (alias for backwards compatibility)
-let collectEnvelope = collectEnvelopeReactive
+/// REMOVED: collectEnvelope and overlayAccumulators
+///
+/// With shared accumulator architecture, ALL nanopasses write to the SAME accumulator.
+/// No merging needed - operations and bindings accumulate directly during traversal.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN ORCHESTRATION
@@ -109,24 +133,24 @@ let defaultConfig = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Serialize a nanopass result to JSON for debugging
-let private serializeNanopassResult (intermediatesDir: string) (nanopass: Nanopass) (accumulator: MLIRAccumulator) : unit =
+let private serializeNanopassResult (intermediatesDir: string) (nanopass: Nanopass) (accumulator: MLIRAccumulator) (visited: Set<NodeId>) : unit =
     let fileName = sprintf "07_%s_witness.json" (nanopass.Name.ToLower())
     let filePath = Path.Combine(intermediatesDir, fileName)
 
     let summary = {|
         NanopassName = nanopass.Name
-        OperationCount = List.length accumulator.TopLevelOps
+        OperationCount = List.length accumulator.AllOps
         ErrorCount = List.length accumulator.Errors
-        VisitedNodes = accumulator.Visited |> Set.toList |> List.map (fun nodeId -> NodeId.value nodeId)
+        VisitedNodes = visited |> Set.toList |> List.map (fun nodeId -> NodeId.value nodeId)
         Errors = accumulator.Errors |> List.map Diagnostic.format
-        Operations = accumulator.TopLevelOps |> List.map (fun op -> sprintf "%A" op)
+        Operations = accumulator.AllOps |> List.map (fun op -> sprintf "%A" op)
     |}
 
     let json = JsonSerializer.Serialize(summary, JsonSerializerOptions(WriteIndented = true))
     File.WriteAllText(filePath, json)
     printfn "[Alex] Wrote nanopass result: %s" fileName
 
-/// Main entry point: Run all nanopasses in two phases and collect results
+/// Main entry point: Run all nanopasses in two phases with SHARED accumulator
 let executeNanopasses
     (config: TwoPhaseConfig)
     (registry: NanopassRegistry)
@@ -136,14 +160,10 @@ let executeNanopasses
     : MLIRAccumulator =
 
     if List.isEmpty registry.Nanopasses then
-        // No nanopasses registered - empty result
         MLIRAccumulator.empty()
     else
-        // FUTURE: Discovery optimization (currently disabled)
-        // if config.EnableDiscovery && graph.Nodes.Count > config.DiscoveryThreshold then
-        //     let presentKinds = discoverPresentNodeTypes graph
-        //     let filteredRegistry = filterRelevantNanopasses registry presentKinds
-        //     registry <- filteredRegistry
+        // Create SINGLE shared accumulator for ALL nanopasses
+        let sharedAcc = MLIRAccumulator.empty()
 
         // ═════════════════════════════════════════════════════════════════════════
         // PHASE 1: Content Witnesses (Literal, Arith, Lazy, Collections)
@@ -153,25 +173,19 @@ let executeNanopasses
             registry.Nanopasses
             |> List.filter (fun np -> np.Phase = ContentPhase)
 
-        let phase1Results =
-            if List.isEmpty contentPasses then
-                []
+        let contentResults =
+            if not (List.isEmpty contentPasses) then
+                runNanopassesSequentialShared contentPasses graph coeffects sharedAcc
             else
-                if config.EnableParallel then
-                    runNanopassesParallel contentPasses graph coeffects
-                else
-                    runNanopassesSequential contentPasses graph coeffects
+                []
 
-        // Serialize Phase 1 results
+        // Serialize Phase 1 results (each nanopass gets snapshot of shared accumulator)
         match intermediatesDir with
         | Some dir ->
-            List.zip contentPasses phase1Results
-            |> List.iter (fun (nanopass, accumulator) ->
-                serializeNanopassResult dir nanopass accumulator)
+            contentResults
+            |> List.iter (fun (nanopass, visited) ->
+                serializeNanopassResult dir nanopass sharedAcc visited)
         | None -> ()
-
-        // Overlay Phase 1 results into intermediate accumulator
-        let phase1Accumulator = collectEnvelope phase1Results
 
         // ═════════════════════════════════════════════════════════════════════════
         // PHASE 2: Structural Witnesses (Lambda, ControlFlow)
@@ -181,41 +195,33 @@ let executeNanopasses
             registry.Nanopasses
             |> List.filter (fun np -> np.Phase = StructuralPhase)
 
-        let phase2Results =
-            if List.isEmpty structuralPasses then
-                []
+        let structuralResults =
+            if not (List.isEmpty structuralPasses) then
+                runNanopassesSequentialShared structuralPasses graph coeffects sharedAcc
             else
-                if config.EnableParallel then
-                    runNanopassesParallel structuralPasses graph coeffects
-                else
-                    runNanopassesSequential structuralPasses graph coeffects
+                []
 
         // Serialize Phase 2 results
         match intermediatesDir with
         | Some dir ->
-            List.zip structuralPasses phase2Results
-            |> List.iter (fun (nanopass, accumulator) ->
-                serializeNanopassResult dir nanopass accumulator)
+            structuralResults
+            |> List.iter (fun (nanopass, visited) ->
+                serializeNanopassResult dir nanopass sharedAcc visited)
         | None -> ()
-
-        // Overlay Phase 2 results
-        let phase2Accumulator = collectEnvelope phase2Results
-
-        // ═════════════════════════════════════════════════════════════════════════
-        // MERGE PHASES: Overlay Phase 1 and Phase 2
-        // ═════════════════════════════════════════════════════════════════════════
-
-        let mergedAccumulator = overlayAccumulators phase1Accumulator phase2Accumulator
 
         // ═════════════════════════════════════════════════════════════════════════
         // COVERAGE VALIDATION: Detect unwitnessed reachable nodes
         // ═════════════════════════════════════════════════════════════════════════
 
-        let coverageErrors = CoverageValidation.validateCoverage graph mergedAccumulator
-        let stats = CoverageValidation.calculateStats graph mergedAccumulator
+        // Merge all visited sets from all nanopasses
+        let allVisited =
+            (contentResults @ structuralResults)
+            |> List.fold (fun acc (_, visited) -> Set.union acc visited) Set.empty
 
-        // Add coverage errors to accumulator (addError mutates in place)
-        coverageErrors |> List.iter (fun diag -> MLIRAccumulator.addError diag mergedAccumulator)
+        let coverageErrors = CoverageValidation.validateCoverage graph allVisited
+        let stats = CoverageValidation.calculateStats graph allVisited
+
+        coverageErrors |> List.iter (fun diag -> MLIRAccumulator.addError diag sharedAcc)
 
         // Serialize coverage report if intermediates enabled
         match intermediatesDir with
@@ -231,7 +237,15 @@ let executeNanopasses
             let json = JsonSerializer.Serialize(coverageReport, JsonSerializerOptions(WriteIndented = true))
             let coveragePath = Path.Combine(dir, "08_coverage.json")
             File.WriteAllText(coveragePath, json)
-            printfn "[Alex] Coverage: %d/%d witnessed (%.1f%%)" stats.WitnessedNodes stats.ReachableNodes stats.CoveragePercentage
+
+            let totalOps = MLIRAccumulator.totalOperations sharedAcc
+            let allOpsCount = List.length sharedAcc.AllOps
+            printfn "[Alex] Coverage: %d/%d witnessed (%.1f%%), %d ops in %d stream items"
+                stats.WitnessedNodes
+                stats.ReachableNodes
+                stats.CoveragePercentage
+                totalOps
+                allOpsCount
         | None -> ()
 
-        mergedAccumulator
+        sharedAcc

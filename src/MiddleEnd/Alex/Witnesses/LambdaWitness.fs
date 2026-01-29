@@ -12,10 +12,12 @@
 module Alex.Witnesses.LambdaWitness
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
+open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 
@@ -59,43 +61,71 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
 
         if isEntryPoint then
             // Entry point Lambda: generate func.func @main wrapper
-            // Witness the body using ONLY ContentPhase witnesses, capturing result
-            // Operations are separated into bodyOps (inside function) and moduleOps (module-level globals)
-            let bodyOps, moduleOps, bodyResult = witnessSubgraphWithResult bodyId ctx subGraphCombinator
+            let scopeLabel = sprintf "func_%d" nodeIdValue
+            let scopeKind = FunctionScope "main"
+
+            // Mark scope entry
+            MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
+
+            // Witness body nodes into shared accumulator
+            match SemanticGraph.tryGetNode bodyId ctx.Graph with
+            | Some bodyNode ->
+                match focusOn bodyId ctx.Zipper with
+                | Some bodyZipper ->
+                    let bodyCtx = { ctx with Zipper = bodyZipper }
+                    let bodyVisited = ref Set.empty  // Fresh visited set for body traversal
+                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator bodyVisited
+                | None -> ()
+            | None -> ()
+
+            // Mark scope exit
+            MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeExit (scopeKind, scopeLabel))) ctx.Accumulator
+
+            // Extract operations between markers
+            let scopeOps = MLIRAccumulator.extractScope scopeKind scopeLabel ctx.Accumulator
+
+            // Separate body ops from module-level ops
+            let bodyOps = scopeOps |> List.filter (fun op -> match op with MLIROp.GlobalString _ -> false | _ -> true)
+            let moduleOps = scopeOps |> List.filter (fun op -> match op with MLIROp.GlobalString _ -> true | _ -> false)
+
+            // Get body result for return value
+            let bodyResult = MLIRAccumulator.recallNode bodyId ctx.Accumulator
 
             // Determine return value and type
             let returnSSA, returnType =
                 match bodyResult with
                 | Some (ssa, ty) -> (Some ssa, ty)
                 | None ->
-                    // Try to extract from last operation
                     match List.tryLast bodyOps with
                     | Some (MLIROp.ArithOp (ArithOp.ConstI (ssa, _, ty))) -> (Some ssa, ty)
-                    | _ -> (Some (SSA.V 0), TInt I32)  // Default: return %v0
+                    | _ -> (Some (SSA.V 0), TInt I32)
 
             let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some returnType))
             let completeBody = bodyOps @ [returnOp]
 
             // Build FuncDef wrapper
-            let funcName = "main"
-            let args = []  // Entry point has no arguments (unit input)
-            let retType = returnType  // Use actual return type
-            let visibility = Public
+            let funcDef = FuncOp.FuncDef("main", [], returnType, completeBody, Public)
 
-            let funcDef = FuncOp.FuncDef (funcName, args, retType, completeBody, visibility)
+            // Replace scope with FuncDef
+            MLIRAccumulator.replaceScope scopeKind scopeLabel (MLIROp.FuncOp funcDef) ctx.Accumulator
 
-            // Return FuncDef as TopLevelOp, moduleOps (GlobalStrings) also as TopLevelOps
-            { InlineOps = []; TopLevelOps = [MLIROp.FuncOp funcDef] @ moduleOps; Result = TRVoid }
+            // Add module-level ops separately
+            MLIRAccumulator.addOps moduleOps ctx.Accumulator
+
+            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
         else
-            // Non-entry-point Lambda: module-level function or closure
-            // Witness the body to ensure all nodes inside are witnessed
-            let bodyOps, moduleOps, bodyResult = witnessSubgraphWithResult bodyId ctx subGraphCombinator
+            // Non-entry-point Lambda
+            match SemanticGraph.tryGetNode bodyId ctx.Graph with
+            | Some bodyNode ->
+                match focusOn bodyId ctx.Zipper with
+                | Some bodyZipper ->
+                    let bodyCtx = { ctx with Zipper = bodyZipper }
+                    let bodyVisited = ref Set.empty  // Fresh visited set for body traversal
+                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator bodyVisited
+                | None -> ()
+            | None -> ()
 
-            // TODO: For true closures (with captures), build closure structure
-            // For now, just witness the body to achieve 100% coverage
-            // The Lambda's parent Binding won't have an SSA to forward, but that's okay
-            // for module-level functions that aren't called
-            { InlineOps = bodyOps; TopLevelOps = moduleOps; Result = TRVoid }
+            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
     | None -> WitnessOutput.skip
 
