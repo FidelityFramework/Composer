@@ -8,27 +8,13 @@ open XParsec
 open XParsec.Parsers     // fail, preturn
 open XParsec.Combinators // parser { }
 open Alex.XParsec.PSGCombinators
+open Alex.XParsec.Extensions // sequence combinator
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.MLIRElements
 open Alex.Elements.MemRefElements
 open Alex.Elements.LLVMElements
 open Alex.Elements.ArithElements
-
-// ═══════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════
-
-/// Sequence a list of parsers into a parser of a list
-let rec private sequence (parsers: PSGParser<'a> list) : PSGParser<'a list> =
-    match parsers with
-    | [] -> preturn []
-    | p :: ps ->
-        parser {
-            let! x = p
-            let! xs = sequence ps
-            return x :: xs
-        }
 
 // ═══════════════════════════════════════════════════════════
 // FIELD EXTRACTION PATTERNS
@@ -217,4 +203,44 @@ let pBuildArray (elements: Val list) (elemType: MLIRType) (ssas: SSA list) : PSG
         let! insertCountOp = pInsertValue resultSSA withPtrSSA countSSA [1] arrayType
 
         return [countOp; allocaOp] @ storeOps @ [undefOp; insertPtrOp; insertCountOp]
+    }
+
+// ═══════════════════════════════════════════════════════════
+// NATIVEPTR OPERATIONS (FNCS Intrinsics)
+// ═══════════════════════════════════════════════════════════
+
+/// Build NativePtr.stackalloc pattern
+/// Allocates memory on the stack and returns a pointer
+///
+/// NativePtr.stackalloc<'T>() : nativeptr<'T>
+let pNativePtrStackAlloc (resultSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Emit memref.alloca operation
+        let! allocaOp = pAlloca resultSSA None
+
+        return ([allocaOp], TRValue { SSA = resultSSA; Type = TPtr })
+    }
+
+/// Build NativePtr.write pattern
+/// Writes a value to a pointer location
+///
+/// NativePtr.write (ptr: nativeptr<'T>) (value: 'T) : unit
+let pNativePtrWrite (valueSSA: SSA) (ptrSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Emit memref.store operation
+        let! storeOp = pStore valueSSA ptrSSA
+
+        return ([storeOp], TRVoid)
+    }
+
+/// Build NativePtr.read pattern
+/// Reads a value from a pointer location
+///
+/// NativePtr.read (ptr: nativeptr<'T>) : 'T
+let pNativePtrRead (resultSSA: SSA) (ptrSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Emit memref.load operation
+        let! loadOp = pLoad resultSSA ptrSSA
+
+        return ([loadOp], TRValue { SSA = resultSSA; Type = TPtr })
     }

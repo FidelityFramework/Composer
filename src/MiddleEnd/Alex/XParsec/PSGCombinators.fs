@@ -250,6 +250,24 @@ let pForLoop : PSGParser<string * NodeId * NodeId * bool * NodeId> =
         | _ -> return! fail (Message "Expected ForLoop")
     }
 
+/// Match a Sequential node
+let pSequential : PSGParser<NodeId list> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.Sequential childIds -> return childIds
+        | _ -> return! fail (Message "Expected Sequential")
+    }
+
+/// Match a PatternBinding node
+let pPatternBinding : PSGParser<string> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.PatternBinding name -> return name
+        | _ -> return! fail (Message "Expected PatternBinding")
+    }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DISCRIMINATED UNION PARSERS (January 2026)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -337,10 +355,16 @@ let onChildren (childIds: NodeId list) (p: PSGParser<'T>) : PSGParser<'T list> =
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INTRINSIC CLASSIFICATION PATTERNS
+// ATOMIC OPERATION CLASSIFICATION PATTERNS
 // ═══════════════════════════════════════════════════════════════════════════
+//
+// TERMINOLOGY NOTE (January 2026):
+// - FNCS calls them: "Intrinsics" (intrinsic to native type universe)
+// - MiddleEnd calls them: "Atomic Operations" (atomic/indivisible at MLIR level)
+// - PSG type name remains `SemanticKind.Intrinsic` (can't change FNCS output)
+// - Comments and function names use "Atomic Operation" terminology
 
-/// Match an intrinsic by module
+/// Match atomic operation by module (SemanticKind.Intrinsic)
 let pIntrinsicModule (expectedModule: IntrinsicModule) : PSGParser<IntrinsicInfo> =
     parser {
         let! info = pIntrinsic
@@ -350,7 +374,7 @@ let pIntrinsicModule (expectedModule: IntrinsicModule) : PSGParser<IntrinsicInfo
             return! fail (Message (sprintf "Expected module %A but got %A" expectedModule info.Module))
     }
 
-/// Match an intrinsic by full name pattern
+/// Match atomic operation by full name pattern (SemanticKind.Intrinsic)
 let pIntrinsicNamed (fullName: string) : PSGParser<IntrinsicInfo> =
     parser {
         let! info = pIntrinsic
@@ -360,21 +384,21 @@ let pIntrinsicNamed (fullName: string) : PSGParser<IntrinsicInfo> =
             return! fail (Message (sprintf "Expected %s but got %s" fullName info.FullName))
     }
 
-/// Classify intrinsic by category for emission dispatch
+/// Classify atomic operation by category for emission dispatch
 type EmissionCategory =
     | BinaryArith of mlirOp: string
     | UnaryArith of mlirOp: string
     | Comparison of mlirOp: string
     | MemoryOp of op: string
     | StringOp of op: string
-    // NOTE: ConsoleOp removed - Console is NOT an intrinsic, it's Layer 3 user code
-    // in Fidelity.Platform that uses Sys.* intrinsics. See fsnative-spec/spec/platform-bindings.md
+    // NOTE: ConsoleOp removed - Console is NOT an atomic operation, it's Layer 3 user code
+    // in Fidelity.Platform that uses Sys.* atomic operations. See fsnative-spec/spec/platform-bindings.md
     | PlatformOp of op: string
     | DateTimeOp of op: string
     | TimeSpanOp of op: string
-    | OtherIntrinsic
+    | OtherAtomicOp
 
-let classifyIntrinsic (info: IntrinsicInfo) : EmissionCategory =
+let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     match info.Module, info.Operation with
     // Arithmetic operators
     | IntrinsicModule.Operators, "op_Addition" -> BinaryArith "addi"
@@ -393,18 +417,18 @@ let classifyIntrinsic (info: IntrinsicInfo) : EmissionCategory =
     | IntrinsicModule.NativePtr, op -> MemoryOp op
     // String
     | IntrinsicModule.String, op -> StringOp op
-    // NOTE: Console is NOT an intrinsic - see fsnative-spec/spec/platform-bindings.md
-    // Platform (Sys.* intrinsics)
+    // NOTE: Console is NOT an atomic operation - see fsnative-spec/spec/platform-bindings.md
+    // Platform (Sys.* atomic operations from FNCS)
     | IntrinsicModule.Sys, op -> PlatformOp op
     // DateTime operations
     | IntrinsicModule.DateTime, op -> DateTimeOp op
     // TimeSpan operations
     | IntrinsicModule.TimeSpan, op -> TimeSpanOp op
-    | _ -> OtherIntrinsic
+    | _ -> OtherAtomicOp
 
-/// Match and classify intrinsic
-let pClassifiedIntrinsic : PSGParser<IntrinsicInfo * EmissionCategory> =
-    pIntrinsic |>> fun info -> (info, classifyIntrinsic info)
+/// Match and classify atomic operation (SemanticKind.Intrinsic)
+let pClassifiedAtomicOp : PSGParser<IntrinsicInfo * EmissionCategory> =
+    pIntrinsic |>> fun info -> (info, classifyAtomicOp info)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LAZY VALUE PARSERS (PRD-14, January 2026)

@@ -925,11 +925,11 @@ let pStringConstruct (ptrTy: MLIRType) (lengthTy: MLIRType) (ptr: SSA) (length: 
 
 /// Binary arithmetic operations (+, -, *, /, %)
 /// Takes: result SSA, LHS SSA, RHS SSA, architecture
-/// Matches intrinsic classification and emits appropriate operation
+/// Matches atomic operation classification and emits appropriate operation
 let pBuildBinaryArith (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Architecture)
                       : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! (info, category) = pClassifiedIntrinsic
+        let! (info, category) = pClassifiedAtomicOp
 
         let! op =
             parser {
@@ -945,7 +945,7 @@ let pBuildBinaryArith (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Archit
                 | BinaryArith "subf" -> return! pSubF resultSSA lhsSSA rhsSSA
                 | BinaryArith "mulf" -> return! pMulF resultSSA lhsSSA rhsSSA
                 | BinaryArith "divf" -> return! pDivF resultSSA lhsSSA rhsSSA
-                | _ -> return! pfail $"Unsupported binary arithmetic intrinsic: {info.FullName}"
+                | _ -> return! pfail $"Unsupported binary arithmetic atomic operation: {info.FullName}"
             }
 
         let! state = getUserState
@@ -960,7 +960,7 @@ let pBuildBinaryArith (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Archit
 let pBuildComparison (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Architecture)
                      : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! (info, category) = pClassifiedIntrinsic
+        let! (info, category) = pClassifiedAtomicOp
 
         let! predicate =
             parser {
@@ -975,7 +975,7 @@ let pBuildComparison (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Archite
                 | Comparison "ule" -> return ICmpPred.Ule
                 | Comparison "ugt" -> return ICmpPred.Ugt
                 | Comparison "uge" -> return ICmpPred.Uge
-                | _ -> return! pfail $"Unsupported comparison intrinsic: {info.FullName}"
+                | _ -> return! pfail $"Unsupported comparison atomic operation: {info.FullName}"
             }
 
         let! ops = pCmpI resultSSA predicate lhsSSA rhsSSA
@@ -987,12 +987,12 @@ let pBuildComparison (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Archite
     }
 
 /// Bitwise operations (&, |, ^, <<, >>)
-/// Note: These are NOT currently in FNCS intrinsics - need to add them
+/// Note: These are NOT currently in FNCS as atomic operations - need to add them
 /// For now, return error indicating FNCS elaboration needed
 let pBuildBitwise (resultSSA: SSA) (lhsSSA: SSA) (rhsSSA: SSA) (arch: Architecture)
                   : PSGParser<MLIROp list * TransferResult> =
     parser {
-        return! pfail "Bitwise operations not yet in FNCS intrinsics - need elaboration (AND, OR, XOR, SHL, SHR)"
+        return! pfail "Bitwise operations not yet in FNCS as atomic operations - need elaboration (AND, OR, XOR, SHL, SHR)"
     }
 
 /// Unary operations (-, not, ~)

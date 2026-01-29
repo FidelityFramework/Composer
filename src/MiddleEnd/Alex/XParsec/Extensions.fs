@@ -7,7 +7,6 @@ module Alex.XParsec.Extensions
 
 open XParsec
 open XParsec.Parsers
-open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════
 // LIST SEQUENCING

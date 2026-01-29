@@ -21,6 +21,7 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 // Priority 1: Simple Witnesses
 module LiteralWitness = Alex.Witnesses.LiteralWitness
 module ArithWitness = Alex.Witnesses.ArithWitness
+module PlatformWitness = Alex.Witnesses.PlatformWitness
 
 // Priority 2: Collection Witnesses
 // module OptionWitness = Alex.Witnesses.OptionWitness
@@ -57,6 +58,7 @@ let initializeRegistry () =
         // Priority 1: Simple Witnesses
         |> NanopassRegistry.register LiteralWitness.nanopass
         |> NanopassRegistry.register ArithWitness.nanopass
+        |> NanopassRegistry.register PlatformWitness.nanopass
 
         // Priority 2: Collection Witnesses
         // |> NanopassRegistry.register OptionWitness.nanopass

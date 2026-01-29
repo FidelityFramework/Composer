@@ -21,7 +21,7 @@ module SSAAssign = PSGElaboration.SSAAssignment
 
 /// Witness arithmetic operations - category-selective (handles only arithmetic/comparison/bitwise nodes)
 let private witnessArithmetic (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    match tryMatch pClassifiedIntrinsic ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+    match tryMatch pClassifiedAtomicOp ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
     | Some ((info, category), _) ->
         match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
         | None -> WitnessOutput.error "Arithmetic: No SSA assigned"

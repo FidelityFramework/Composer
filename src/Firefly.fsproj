@@ -89,6 +89,7 @@
       <Compile Include="MiddleEnd/Alex/Patterns/ElisionPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MemoryPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ClosurePatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
 
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="MiddleEnd/Alex/Witnesses/LiteralWitness.fs" />
@@ -102,6 +103,7 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/OptionWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/LambdaWitness.fs" />
 
       <!-- Alex Traversal - Witness Registry (global registry of all nanopasses) -->
