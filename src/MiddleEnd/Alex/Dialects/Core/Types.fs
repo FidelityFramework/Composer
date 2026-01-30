@@ -162,8 +162,8 @@ type LLVMOp =
     | IntToPtr of SSA * SSA * MLIRType                                  // result, value, ptrType
     | PtrToInt of SSA * SSA * MLIRType                                  // result, ptr, intType
     // Calls
-    | Call of SSA * string * SSA list * MLIRType                        // result, callee, args, retType
-    | IndirectCall of SSA * SSA * SSA list * MLIRType                   // result, funcPtr, args, retType
+    | Call of SSA * string * (SSA * MLIRType) list * MLIRType          // result, callee, args (typed), retType
+    | IndirectCall of SSA * SSA * (SSA * MLIRType) list * MLIRType     // result, funcPtr, args (typed), retType
     | Return of SSA option                                              // value
     // Control flow
     | Branch of string                                                   // label

@@ -180,7 +180,7 @@ let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType
         // Call with captures prepended to args
         let captureVals = List.zip (extractSSAs.[1..]) captureTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
         let allArgs = captureVals @ args
-        let! callOp = pIndirectCall resultSSA codePtrSSA (allArgs |> List.map (fun v -> v.SSA))
+        let! callOp = pIndirectCall resultSSA codePtrSSA (allArgs |> List.map (fun v -> (v.SSA, v.Type)))
 
         return extractCodeOp :: extractCaptureOps @ [callOp]
     }
@@ -278,7 +278,7 @@ let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy
         let! storeOp = pStore lazySSA ptrSSA
 
         // Call thunk with pointer -> result
-        let! callOp = pIndirectCall resultSSA codePtrSSA [ptrSSA]
+        let! callOp = pIndirectCall resultSSA codePtrSSA [(ptrSSA, TPtr)]
 
         return ([extractCodePtrOp; constOneOp; allocaOp; storeOp; callOp], TRValue { SSA = resultSSA; Type = resultTy })
     }
@@ -380,7 +380,11 @@ let pSeqMoveNext (seqSSA: SSA) (seqTy: MLIRType) (captureTypes: MLIRType list)
             |> sequence
 
         // Call code_ptr with state + captures + internal
-        let allArgs = extractSSAs.[0..] |> List.take (2 + captureCount + internalCount)
+        let stateArg = (stateSSA, stateTy)
+        let codePtrArg = (codePtrSSA, codePtrTy)
+        let captureArgs = List.zip (extractSSAs.[2..2+captureCount-1] |> List.ofSeq) captureTypes
+        let internalArgs = List.zip (extractSSAs.[2+captureCount..2+captureCount+internalCount-1] |> List.ofSeq) internalTypes
+        let allArgs = stateArg :: codePtrArg :: (captureArgs @ internalArgs)
         let! callOp = pIndirectCall resultSSA codePtrSSA allArgs
 
         return extractStateOp :: extractCodeOp :: extractCaptureOps
@@ -1011,19 +1015,19 @@ let pBuildUnary (resultSSA: SSA) (operandSSA: SSA) (arch: Architecture)
 
 /// Build function application (indirect call via function pointer)
 /// For known function names, use pDirectCall instead (future optimization)
-let pApplicationCall (resultSSA: SSA) (funcSSA: SSA) (argSSAs: SSA list) (retType: MLIRType)
+let pApplicationCall (resultSSA: SSA) (funcSSA: SSA) (args: (SSA * MLIRType) list) (retType: MLIRType)
                      : PSGParser<MLIROp list * TransferResult> =
     parser {
         // Emit indirect call via function pointer
-        let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (resultSSA, funcSSA, argSSAs, retType))
+        let callOp = MLIROp.LLVMOp (LLVMOp.IndirectCall (resultSSA, funcSSA, args, retType))
         return ([callOp], TRValue { SSA = resultSSA; Type = retType })
     }
 
 /// Build direct function call (for known function names - optimization)
 /// Future: Use this when funcId resolves to a known symbol name
-let pDirectCall (resultSSA: SSA) (funcName: string) (argSSAs: SSA list) (retType: MLIRType)
+let pDirectCall (resultSSA: SSA) (funcName: string) (args: (SSA * MLIRType) list) (retType: MLIRType)
                 : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! callOp = pCall resultSSA funcName argSSAs
+        let! callOp = pCall resultSSA funcName args
         return ([callOp], TRValue { SSA = resultSSA; Type = retType })
     }

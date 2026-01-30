@@ -38,7 +38,7 @@ module ApplicationWitness = Alex.Witnesses.ApplicationWitness
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
 
 // Priority 4: Memory & Lambda (Lambda is special - needs nanopass list for body witnessing)
-// module MemoryWitness = Alex.Witnesses.MemoryWitness
+module MemoryWitness = Alex.Witnesses.MemoryWitness
 module LambdaWitness = Alex.Witnesses.LambdaWitness
 
 // Priority 5: Advanced Features
@@ -77,7 +77,7 @@ let initializeRegistry () =
         // |> NanopassRegistry.register SetWitness.nanopass
 
         // Priority 4: Memory
-        // |> NanopassRegistry.register MemoryWitness.nanopass
+        |> NanopassRegistry.register MemoryWitness.nanopass
 
         // Priority 5: Advanced Features
         |> NanopassRegistry.register LazyWitness.nanopass

@@ -165,6 +165,15 @@ let pVarRef : PSGParser<string * NodeId option> =
         | _ -> return! fail (Message "Expected VarRef")
     }
 
+/// Match a FieldGet node (extracts field from struct/tuple)
+let pFieldGet : PSGParser<NodeId * string> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.FieldGet (structId, fieldName) -> return (structId, fieldName)
+        | _ -> return! fail (Message "Expected FieldGet")
+    }
+
 /// Match an Application node
 let pApplication : PSGParser<NodeId * NodeId list> =
     parser {

@@ -27,8 +27,8 @@ open Alex.Elements.ArithElements
 let pSysWrite (resultSSA: SSA) (fdSSA: SSA) (bufferSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
     parser {
         // Emit llvm.call to write syscall
-        // write(fd, buffer, count) returns bytes written
-        let! writeCall = pCall resultSSA "write" [fdSSA; bufferSSA; countSSA]
+        // write(fd: i64, buffer: ptr, count: i64) -> i64
+        let! writeCall = pCall resultSSA "write" [(fdSSA, TInt I64); (bufferSSA, TPtr); (countSSA, TInt I64)]
 
         return ([writeCall], TRValue { SSA = resultSSA; Type = TInt I64 })
     }
@@ -44,8 +44,8 @@ let pSysWrite (resultSSA: SSA) (fdSSA: SSA) (bufferSSA: SSA) (countSSA: SSA) : P
 let pSysRead (resultSSA: SSA) (fdSSA: SSA) (bufferSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
     parser {
         // Emit llvm.call to read syscall
-        // read(fd, buffer, count) returns bytes read
-        let! readCall = pCall resultSSA "read" [fdSSA; bufferSSA; countSSA]
+        // read(fd: i64, buffer: ptr, count: i64) -> i64
+        let! readCall = pCall resultSSA "read" [(fdSSA, TInt I64); (bufferSSA, TPtr); (countSSA, TInt I64)]
 
         return ([readCall], TRValue { SSA = resultSSA; Type = TInt I64 })
     }

@@ -52,7 +52,11 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
 
                 let allWitnessed = argsResult |> List.forall Option.isSome
                 if not allWitnessed then
-                    WitnessOutput.error $"Application: Intrinsic {info.FullName} arguments not yet witnessed"
+                    let unwitnessedArgs =
+                        List.zip argIds argsResult
+                        |> List.filter (fun (_, result) -> Option.isNone result)
+                        |> List.map fst
+                    WitnessOutput.error $"Application node {node.Id}: Intrinsic {info.FullName} arguments not yet witnessed: {unwitnessedArgs}"
                 else
                     let argSSAs = argsResult |> List.choose id |> List.map fst
 
@@ -99,15 +103,14 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
             | _ -> WitnessOutput.error "Expected Intrinsic SemanticKind"
 
         | Some funcNode when funcNode.Kind.ToString().StartsWith("VarRef") ->
-            // Extract function name from VarRef node
+            // Extract function name from VarRef node (without @ prefix - added during serialization)
             let funcName =
                 match funcNode.Kind.ToString().Split([|'('; ','|]) with
                 | parts when parts.Length > 1 ->
-                    let name = parts.[1].Trim().Trim([|' '; '"'|])
-                    sprintf "@%s" name
-                | _ -> "@unknown_func"
+                    parts.[1].Trim().Trim([|' '; '"'|])
+                | _ -> "unknown_func"
 
-            // Recall argument SSAs
+            // Recall argument SSAs with types
             let argsResult =
                 argIds
                 |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
@@ -117,7 +120,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
             if not allWitnessed then
                 WitnessOutput.error "Application: Some arguments not yet witnessed"
             else
-                let argSSAs = argsResult |> List.choose id |> List.map fst
+                // Keep both SSA and type for each argument
+                let args = argsResult |> List.choose id
 
                 // Get result SSA and return type
                 match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
@@ -127,7 +131,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let retType = mapNativeTypeForArch arch node.Type
 
                     // Emit direct function call by name
-                    match tryMatch (pDirectCall resultSSA funcName argSSAs retType) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                    match tryMatch (pDirectCall resultSSA funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | None -> WitnessOutput.error "Direct function call pattern emission failed"
 
@@ -136,7 +140,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
             match MLIRAccumulator.recallNode funcId ctx.Accumulator with
             | None -> WitnessOutput.error "Application: Function not yet witnessed"
             | Some (funcSSA, funcTy) ->
-                // Recall argument SSAs
+                // Recall argument SSAs with types
                 let argsResult =
                     argIds
                     |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
@@ -146,7 +150,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 if not allWitnessed then
                     WitnessOutput.error "Application: Some arguments not yet witnessed"
                 else
-                    let argSSAs = argsResult |> List.choose id |> List.map fst
+                    // Keep both SSA and type for each argument
+                    let args = argsResult |> List.choose id
 
                     // Get result SSA and return type
                     match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
@@ -156,7 +161,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         let retType = mapNativeTypeForArch arch node.Type
 
                         // Emit indirect call
-                        match tryMatch (pApplicationCall resultSSA funcSSA argSSAs retType) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                        match tryMatch (pApplicationCall resultSSA funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
                         | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | None -> WitnessOutput.error "Application pattern emission failed"
     | None ->

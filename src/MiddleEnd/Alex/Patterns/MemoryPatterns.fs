@@ -21,9 +21,9 @@ open Alex.Elements.ArithElements
 // ═══════════════════════════════════════════════════════════
 
 /// Extract single field from struct
-let pExtractField (structSSA: SSA) (fieldIndex: int) (resultSSA: SSA) (fieldTy: MLIRType) : PSGParser<MLIROp list> =
+let pExtractField (structSSA: SSA) (fieldIndex: int) (resultSSA: SSA) (structTy: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        let! extractOp = pExtractValue resultSSA structSSA [fieldIndex] fieldTy
+        let! extractOp = pExtractValue resultSSA structSSA [fieldIndex] structTy
         return [extractOp]
     }
 
@@ -243,4 +243,26 @@ let pNativePtrRead (resultSSA: SSA) (ptrSSA: SSA) : PSGParser<MLIROp list * Tran
         let! loadOp = pLoad resultSSA ptrSSA
 
         return ([loadOp], TRValue { SSA = resultSSA; Type = TPtr })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// STRUCT FIELD ACCESS PATTERNS
+// ═══════════════════════════════════════════════════════════
+
+/// Extract field from struct (e.g., string.Pointer, string.Length)
+/// Maps field name to index for known struct layouts
+let pStructFieldGet (resultSSA: SSA) (structSSA: SSA) (fieldName: string) (structTy: MLIRType) (fieldTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Map field name to index for known struct types
+        // String fat pointer: [Pointer=0, Length=1]
+        let fieldIndex =
+            match fieldName with
+            | "Pointer" -> 0
+            | "Length" -> 1
+            | _ -> failwith $"Unknown field name: {fieldName}"
+
+        // Extract field value - pass struct type for MLIR type annotation
+        let! ops = pExtractField structSSA fieldIndex resultSSA structTy
+
+        return (ops, TRValue { SSA = resultSSA; Type = fieldTy })
     }

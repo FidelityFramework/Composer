@@ -21,25 +21,42 @@ module SSAAssign = PSGElaboration.SSAAssignment
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
-/// Witness memory operations - category-selective (DU operations only)
+/// Witness memory operations - handles FieldGet and DU operations
 /// Intrinsic applications (NativePtr.*) are handled by ApplicationWitness
 let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     // Skip intrinsic nodes - ApplicationWitness handles intrinsic applications
     match node.Kind with
     | SemanticKind.Intrinsic _ -> WitnessOutput.skip
     | _ ->
-        // Only handle DU operations (not intrinsics)
-        // DU operations: GetTag, Eliminate, Construct
-        match tryMatch pDUGetTag ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-        | Some ((duValueId, _duType), _) ->
-            match MLIRAccumulator.recallNode duValueId ctx.Accumulator, SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
-            | Some (duSSA, duType), Some tagSSA ->
-                match tryMatch (pExtractDUTag duSSA duType tagSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = tagSSA; Type = TInt I8 } }
-                | None -> WitnessOutput.error "DUGetTag pattern emission failed"
-            | _ -> WitnessOutput.error "DUGetTag: DU value or tag SSA not available"
+        // Try FieldGet first (struct field access like s.Pointer, s.Length)
+        match tryMatch pFieldGet ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+        | Some ((structId, fieldName), _) ->
+            // Recall struct SSA
+            match MLIRAccumulator.recallNode structId ctx.Accumulator with
+            | Some (structSSA, structTy) ->
+                // Get result SSA
+                match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
+                | Some resultSSA ->
+                    let arch = ctx.Coeffects.Platform.TargetArch
+                    let fieldTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                    match tryMatch (pStructFieldGet resultSSA structSSA fieldName structTy fieldTy) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | None -> WitnessOutput.error $"FieldGet pattern failed for field '{fieldName}'"
+                | None -> WitnessOutput.error $"FieldGet: No SSA for result (field '{fieldName}')"
+            | None -> WitnessOutput.error $"FieldGet: Struct value not yet witnessed (field '{fieldName}')"
 
         | None ->
+            // Not FieldGet - try DU operations: GetTag, Eliminate, Construct
+            match tryMatch pDUGetTag ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+            | Some ((duValueId, _duType), _) ->
+                match MLIRAccumulator.recallNode duValueId ctx.Accumulator, SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
+                | Some (duSSA, duType), Some tagSSA ->
+                    match tryMatch (pExtractDUTag duSSA duType tagSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                    | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = tagSSA; Type = TInt I8 } }
+                    | None -> WitnessOutput.error "DUGetTag pattern emission failed"
+                | _ -> WitnessOutput.error "DUGetTag: DU value or tag SSA not available"
+
+            | None ->
             match tryMatch pDUEliminate ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
             | Some ((duValueId, caseIndex, _caseName, _payloadType), _) ->
                 match MLIRAccumulator.recallNode duValueId ctx.Accumulator, SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with

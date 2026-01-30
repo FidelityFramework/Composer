@@ -79,7 +79,7 @@ let rec visitAllNodes
             // Shadow context with focused zipper
             let focusedCtx = { visitedCtx with Zipper = focusedZipper }
 
-            // POST-ORDER: Visit children FIRST (before witnessing current node)
+            // POST-ORDER Phase 1: Visit children FIRST (tree edges)
             // This ensures children's SSA bindings are available when parent witnesses
             if not (isScopeBoundary currentNode) then
                 for childId in currentNode.Children do
@@ -87,7 +87,17 @@ let rec visitAllNodes
                     | Some childNode -> visitAllNodes witness focusedCtx childNode accumulator visited
                     | None -> ()
 
-            // THEN witness current node (after children are done)
+            // POST-ORDER Phase 2: Visit VarRef binding targets (reference edges)
+            // VarRef nodes reference Bindings that may not be in child structure - visit those too
+            match currentNode.Kind with
+            | SemanticKind.VarRef (_, Some bindingId) ->
+                if not (Set.contains bindingId !visited) then
+                    match SemanticGraph.tryGetNode bindingId visitedCtx.Graph with
+                    | Some bindingNode -> visitAllNodes witness focusedCtx bindingNode accumulator visited
+                    | None -> ()
+            | _ -> ()
+
+            // THEN witness current node (after ALL dependencies - children AND references)
             let output = witness focusedCtx currentNode
 
             // Add operations to flat accumulator stream

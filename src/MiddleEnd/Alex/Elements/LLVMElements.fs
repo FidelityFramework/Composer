@@ -87,7 +87,7 @@ let pPtrToInt (ssa: SSA) (ptr: SSA) (targetTy: MLIRType) : PSGParser<MLIROp> =
 // ═══════════════════════════════════════════════════════════
 
 /// Emit Call (direct function call)
-let pCall (ssa: SSA) (funcName: string) (args: SSA list) : PSGParser<MLIROp> =
+let pCall (ssa: SSA) (funcName: string) (args: (SSA * MLIRType) list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
         let returnTy = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
@@ -95,7 +95,7 @@ let pCall (ssa: SSA) (funcName: string) (args: SSA list) : PSGParser<MLIROp> =
     }
 
 /// Emit IndirectCall (call via function pointer)
-let pIndirectCall (ssa: SSA) (funcPtr: SSA) (args: SSA list) : PSGParser<MLIROp> =
+let pIndirectCall (ssa: SSA) (funcPtr: SSA) (args: (SSA * MLIRType) list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
         let returnTy = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type

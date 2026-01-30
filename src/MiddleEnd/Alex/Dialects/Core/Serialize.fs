@@ -223,13 +223,15 @@ let llvmOpToString (op: LLVMOp) : string =
         sprintf "%s = llvm.inttoptr %s : !llvm.ptr to !llvm.ptr"
             (ssaToString result) (ssaToString value)
     | Call (result, callee, args, retTy) ->
-        let argsStr = args |> List.map ssaToString |> String.concat ", "
-        sprintf "%s = llvm.call @%s(%s) : %s"
-            (ssaToString result) callee argsStr (typeToString retTy)
+        let argsStr = args |> List.map (fst >> ssaToString) |> String.concat ", "
+        let argTypesStr = args |> List.map (snd >> typeToString) |> String.concat ", "
+        sprintf "%s = llvm.call @%s(%s) : (%s) -> %s"
+            (ssaToString result) callee argsStr argTypesStr (typeToString retTy)
     | IndirectCall (result, funcPtr, args, retTy) ->
-        let argsStr = args |> List.map ssaToString |> String.concat ", "
-        sprintf "%s = llvm.call %s(%s) : %s"
-            (ssaToString result) (ssaToString funcPtr) argsStr (typeToString retTy)
+        let argsStr = args |> List.map (fst >> ssaToString) |> String.concat ", "
+        let argTypesStr = args |> List.map (snd >> typeToString) |> String.concat ", "
+        sprintf "%s = llvm.call %s(%s) : (%s) -> %s"
+            (ssaToString result) (ssaToString funcPtr) argsStr argTypesStr (typeToString retTy)
     | Branch label ->
         sprintf "llvm.br ^%s" label
     | CondBranch (cond, trueLabel, falseLabel) ->
