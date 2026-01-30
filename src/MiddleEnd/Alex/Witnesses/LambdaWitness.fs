@@ -52,10 +52,9 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
     if node.Id = NodeId 536 then
         printfn "[DEBUG] LambdaWitness called for node 536, kind: %A" node.Kind
 
-    // Filter to ONLY ContentPhase witnesses for sub-graph traversal
-    // This prevents StructuralPhase witnesses from recursing and causing double-witnessing
-    let contentWitnesses = nanopasses |> List.filter (fun np -> np.Phase = ContentPhase)
-    let subGraphCombinator = makeSubGraphCombinator contentWitnesses
+    // Single-phase: Use ALL witnesses for sub-graph traversal
+    // No phase filtering needed - all witnesses run together in post-order
+    let subGraphCombinator = makeSubGraphCombinator nanopasses
 
     match tryMatch pLambdaWithCaptures ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
     | Some ((params', bodyId, captureInfos), _) ->
@@ -77,7 +76,7 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
             MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
 
             // Witness body nodes into shared accumulator with FRESH visited set
-            // Use fresh visited set because we WANT to re-visit body nodes (already visited by ContentPhase)
+            // Use fresh visited set because we WANT to re-visit body nodes (already visited by single-phase)
             // to capture their operations within this scope
             let freshVisited = ref Set.empty
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
@@ -147,7 +146,7 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
             MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
 
             // Witness body nodes into shared accumulator with FRESH visited set
-            // Use fresh visited set because we WANT to re-visit body nodes (already visited by ContentPhase)
+            // Use fresh visited set because we WANT to re-visit body nodes (already visited by single-phase)
             // to capture their operations within this scope
             let freshVisited = ref Set.empty
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
@@ -228,13 +227,11 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
 /// This must be called AFTER all other nanopasses are registered
 let createNanopass (nanopasses: Nanopass list) : Nanopass = {
     Name = "Lambda"
-    Phase = StructuralPhase
     Witness = witnessLambdaWith nanopasses
 }
 
 /// Placeholder nanopass export - will be replaced by createNanopass call in registry
 let nanopass : Nanopass = {
     Name = "Lambda"
-    Phase = StructuralPhase
     Witness = fun _ _ -> WitnessOutput.error "Lambda nanopass not properly initialized - use createNanopass"
 }

@@ -81,6 +81,5 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
 /// VarRef nanopass - witnesses variable references
 let nanopass : Nanopass = {
     Name = "VarRef"
-    Phase = ContentPhase
     Witness = witnessVarRef
 }

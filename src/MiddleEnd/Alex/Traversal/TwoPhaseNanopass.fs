@@ -1,9 +1,12 @@
-/// TwoPhaseNanopass - Two-phase execution for content and structural nanopasses
+/// SinglePhaseNanopass - Single-phase post-order execution for all witnesses
 ///
-/// Phase 1: ContentPhase witnesses (Literal, Arith, Collections) run in parallel
-/// Phase 2: StructuralPhase witnesses (Lambda, ControlFlow) wrap content in scope structures
-/// Both phases use IcedTasks for parallel execution within each phase
-module Alex.Traversal.TwoPhaseNanopass
+/// All witnesses run in one post-order traversal (children before parents).
+/// Scope-owning witnesses (Lambda, ControlFlow) use markers to extract/wrap operations.
+/// 
+/// ARCHITECTURAL NOTE: This was previously "TwoPhaseNanopass" with ContentPhase/StructuralPhase.
+/// Two-phase execution caused scope tracking bugs (operations emitted before scope markers existed).
+/// Single-phase restores correct scoping: operations always emitted after their scope markers.
+module Alex.Traversal.SinglePhaseNanopass
 
 open System.IO
 open System.Text.Json
@@ -17,55 +20,34 @@ open Alex.Traversal.PSGZipper
 open Alex.Traversal.CoverageValidation
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TWO-PHASE EXECUTION (ContentPhase → StructuralPhase)
+// SINGLE-PHASE EXECUTION (Post-Order Traversal)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ARCHITECTURE: Two-phase execution prevents double-witnessing in nested scopes
+// ARCHITECTURE: Single-phase post-order traversal (children before parents)
 //
-// Phase 1 (ContentPhase): Literal, Arith, Lazy, Collections witnesses
-//   - Run in parallel via IcedTasks
-//   - Respect scope boundaries (no recursion into Lambda/ControlFlow children)
-//   - Return operations for content nodes
+// All witnesses run in one traversal:
+//   - Post-order ensures children witnessed before parents
+//   - Scope-owning witnesses (Lambda, ControlFlow) insert markers before recursing
+//   - Operations accumulate to flat stream between markers
+//   - Scope witnesses extract operations between markers and wrap in FuncDef/SCFOp
 //
-// Phase 2 (StructuralPhase): Lambda, ControlFlow witnesses
-//   - Run after Phase 1 completes
-//   - Use witnessSubgraph for scope bodies (reuses Phase 1 witnesses)
-//   - Wrap content operations in scope structures (FuncDef, SCFOp)
-//
-// Rationale: Content lives inside scopes. Scopes must see content before wrapping it.
-
-/// Check if node is a scope boundary (Lambda, IfThenElse, etc.)
-/// ContentPhase witnesses should skip these - they're StructuralPhase's job
-let private isScopeBoundary (node: SemanticNode) : bool =
-    match node.Kind with
-    | SemanticKind.Lambda _ -> true
-    | SemanticKind.IfThenElse _ -> true
-    | SemanticKind.WhileLoop _ -> true
-    | SemanticKind.ForLoop _ -> true
-    | SemanticKind.ForEach _ -> true
-    | SemanticKind.Match _ -> true
-    | SemanticKind.TryWith _ -> true
-    | _ -> false
+// CORRECTNESS: Operations always emitted AFTER their scope markers exist.
+// This fixes the two-phase bug where ContentPhase emitted operations before
+// StructuralPhase created scope markers, causing operations to escape to module scope.
 
 /// Combine multiple witnesses into a single witness that tries each in sequence
-/// ContentPhase witnesses skip scope boundaries (those are StructuralPhase's job)
 let private combineWitnesses (nanopasses: Nanopass list) : (WitnessContext -> SemanticNode -> WitnessOutput) =
     fun ctx node ->
-        // ContentPhase witnesses should skip scope boundary nodes
-        let isContentPhase = nanopasses |> List.exists (fun np -> np.Phase = ContentPhase)
-        if isContentPhase && isScopeBoundary node then
-            WitnessOutput.skip
-        else
-            let rec tryWitnesses remaining =
-                match remaining with
-                | [] -> WitnessOutput.skip
-                | nanopass :: rest ->
-                    let result = nanopass.Witness ctx node
-                    if result = WitnessOutput.skip then
-                        tryWitnesses rest
-                    else
-                        result
-            tryWitnesses nanopasses
+        let rec tryWitnesses remaining =
+            match remaining with
+            | [] -> WitnessOutput.skip
+            | nanopass :: rest ->
+                let result = nanopass.Witness ctx node
+                if result = WitnessOutput.skip then
+                    tryWitnesses rest
+                else
+                    result
+        tryWitnesses nanopasses
 
 /// Run nanopasses with SHARED accumulator and GLOBAL visited set via SINGLE combined traversal
 /// This ensures post-order guarantees hold across ALL witnesses and phases
@@ -123,14 +105,15 @@ let runNanopassesParallelShared
 // MAIN ORCHESTRATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Configuration for two-phase execution
-type TwoPhaseConfig = {
-    /// Enable parallel execution within each phase (false for debugging)
+/// Configuration for single-phase execution
+type SinglePhaseConfig = {
+    /// FUTURE: Enable parallel witness execution (requires lock-free accumulator)
+    /// Current: Always false (sequential execution for correctness)
     EnableParallel: bool
 
     /// FUTURE: Enable discovery pass for large projects
     /// Threshold where pre-scanning node types becomes cheaper than empty traversals
-    /// Current: Always false (full-fat parallel execution)
+    /// Current: Always false (full-fat execution)
     EnableDiscovery: bool
 
     /// FUTURE: Node count threshold to trigger discovery
@@ -139,7 +122,7 @@ type TwoPhaseConfig = {
 }
 
 let defaultConfig = {
-    EnableParallel = true
+    EnableParallel = false  // Sequential for now
     EnableDiscovery = false  // Deferred optimization
     DiscoveryThreshold = 10000  // Placeholder for future tuning
 }
@@ -166,9 +149,9 @@ let private serializePhaseResult (intermediatesDir: string) (phaseName: string) 
     File.WriteAllText(filePath, json)
     printfn "[Alex] Wrote nanopass result: %s" fileName
 
-/// Main entry point: Run all nanopasses in two phases with SHARED accumulator
+/// Main entry point: Run all nanopasses in single-phase post-order traversal
 let executeNanopasses
-    (config: TwoPhaseConfig)
+    (config: SinglePhaseConfig)
     (registry: NanopassRegistry)
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
@@ -181,51 +164,22 @@ let executeNanopasses
         // Create SINGLE shared accumulator for ALL nanopasses
         let sharedAcc = MLIRAccumulator.empty()
 
-        // Create SINGLE global visited set for ALL nanopasses (across both phases)
+        // Create SINGLE global visited set for ALL nanopasses
         let globalVisited = ref Set.empty
 
         // ═════════════════════════════════════════════════════════════════════════
-        // PHASE 1: Content Witnesses (Literal, Arith, Lazy, Collections)
+        // SINGLE-PHASE EXECUTION: All witnesses in one post-order traversal
         // ═════════════════════════════════════════════════════════════════════════
 
-        let contentPasses =
-            registry.Nanopasses
-            |> List.filter (fun np -> np.Phase = ContentPhase)
+        printfn "[Alex] Single-phase execution: %d registered nanopasses" (List.length registry.Nanopasses)
 
-        if not (List.isEmpty contentPasses) then
-            runNanopassesSequentialShared contentPasses graph coeffects sharedAcc globalVisited
+        // Run all nanopasses together in single traversal
+        runNanopassesSequentialShared registry.Nanopasses graph coeffects sharedAcc globalVisited
 
-        // Serialize Phase 1 results
+        // Serialize results
         match intermediatesDir with
         | Some dir ->
-            serializePhaseResult dir "content" sharedAcc globalVisited
-        | None -> ()
-
-        // ═════════════════════════════════════════════════════════════════════════
-        // PHASE 2: Structural Witnesses (Lambda, ControlFlow)
-        // ═════════════════════════════════════════════════════════════════════════
-
-        // Clear scope boundary nodes from visited set so StructuralPhase can witness them
-        // ContentPhase should have skipped these, but remove them from visited set to be safe
-        let scopeBoundaryNodes =
-            graph.Nodes
-            |> Seq.filter (fun kvp -> isScopeBoundary kvp.Value)
-            |> Seq.map (fun kvp -> kvp.Key)
-            |> Set.ofSeq
-
-        globalVisited := Set.difference !globalVisited scopeBoundaryNodes
-
-        let structuralPasses =
-            registry.Nanopasses
-            |> List.filter (fun np -> np.Phase = StructuralPhase)
-
-        if not (List.isEmpty structuralPasses) then
-            runNanopassesSequentialShared structuralPasses graph coeffects sharedAcc globalVisited
-
-        // Serialize Phase 2 results
-        match intermediatesDir with
-        | Some dir ->
-            serializePhaseResult dir "lambda" sharedAcc globalVisited
+            serializePhaseResult dir "singlephase" sharedAcc globalVisited
         | None -> ()
 
         // ═════════════════════════════════════════════════════════════════════════

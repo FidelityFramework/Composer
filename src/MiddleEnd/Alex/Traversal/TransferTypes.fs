@@ -196,6 +196,10 @@ type MLIRAccumulator = {
     mutable Errors: Diagnostic list
     mutable NodeAssoc: Map<NodeId, SSA * MLIRType>  // Global SSA bindings (PSG nodes)
     mutable MLIRTempCounter: int                      // For MLIR-level temporary SSAs (NOT PSG nodes)
+
+    // Witnessing Coordination State (Dependent Transparency)
+    mutable EmittedGlobals: Set<string>              // Track emitted global strings (by symbol name)
+    // NOTE: Function declarations now handled by MLIR Declaration Collection Pass (no coordination needed)
 }
 
 module MLIRAccumulator =
@@ -205,6 +209,7 @@ module MLIRAccumulator =
             Errors = []
             NodeAssoc = Map.empty
             MLIRTempCounter = 0
+            EmittedGlobals = Set.empty
         }
 
     /// Add a single operation to the flat stream
@@ -226,6 +231,24 @@ module MLIRAccumulator =
     /// Recall the SSA binding for a PSG node (global lookup)
     let recallNode (nodeId: NodeId) (acc: MLIRAccumulator) =
         Map.tryFind nodeId acc.NodeAssoc
+
+    // ═══════════════════════════════════════════════════════════
+    // WITNESSING COORDINATION (Dependent Transparency Support)
+    // ═══════════════════════════════════════════════════════════
+
+    /// Try to emit a global string (returns Some op if not already emitted, None if duplicate)
+    /// This implements dependent transparency coordination: witnesses check before emitting module-level declarations
+    let tryEmitGlobal (name: string) (content: string) (byteLength: int) (acc: MLIRAccumulator) : MLIROp option =
+        if Set.contains name acc.EmittedGlobals then
+            None  // Already emitted by another witness
+        else
+            acc.EmittedGlobals <- Set.add name acc.EmittedGlobals
+            Some (MLIROp.GlobalString (name, content, byteLength))
+
+    /// NOTE: Function declaration coordination removed - now handled by MLIR Declaration Collection Pass
+    /// This eliminates "first witness wins" race condition and separates concerns:
+    /// - Witnesses emit FuncCall operations (codata)
+    /// - Declaration Collection Pass analyzes calls and emits FuncDecl (structural MLIR transformation)
 
     /// Extract operations between scope markers (for wrapping in FuncDef/SCFOp)
     let extractScope (kind: ScopeKind) (label: string) (acc: MLIRAccumulator) : MLIROp list =

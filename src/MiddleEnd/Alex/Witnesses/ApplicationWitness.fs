@@ -43,7 +43,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
         // Resolve actual function node (unwrap TypeAnnotation if present)
         match resolveFunctionNode funcId ctx.Graph with
         | Some funcNode when funcNode.Kind.ToString().StartsWith("Intrinsic") ->
-            // Intrinsic application - dispatch based on category
+            // Atomic operation marked as Intrinsic in FNCS - dispatch based on module and operation
             match funcNode.Kind with
             | SemanticKind.Intrinsic info ->
                 // Recall argument SSAs
@@ -57,13 +57,13 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         List.zip argIds argsResult
                         |> List.filter (fun (_, result) -> Option.isNone result)
                         |> List.map fst
-                    WitnessOutput.error $"Application node {node.Id}: Intrinsic {info.FullName} arguments not yet witnessed: {unwitnessedArgs}"
+                    WitnessOutput.error $"Application node {node.Id}: Atomic operation {info.FullName} arguments not yet witnessed: {unwitnessedArgs}"
                 else
                     let argSSAs = argsResult |> List.choose id |> List.map fst
 
                     // Get result SSA
                     match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
-                    | None -> WitnessOutput.error $"Application: No SSA for intrinsic {info.FullName}"
+                    | None -> WitnessOutput.error $"Application: No SSA for atomic operation {info.FullName}"
                     | Some resultSSA ->
                         // Dispatch based on intrinsic module and operation
                         match info.Module, info.Operation, argSSAs with
@@ -96,17 +96,24 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             | None -> WitnessOutput.error "NativePtr.read pattern failed"
 
                         | IntrinsicModule.Sys, "write", [fdSSA; bufferSSA; countSSA] ->
-                            // Look up buffer type from accumulator (memref or ptr)
+                            // Witness observes actual buffer type (no declaration coordination)
+                            // Recall buffer argument to get its actual type (memref or ptr)
                             let bufferNodeId = argIds.[1]
                             match MLIRAccumulator.recallNode bufferNodeId ctx.Accumulator with
                             | Some (_, bufferType) ->
-                                // Witness emits call with actual buffer type (memref or ptr)
-                                // ARCHITECTURAL PRINCIPLE: Witnesses observe PSG and emit MLIR.
-                                // MLIR nanopasses transform MLIR. Clean separation of concerns.
-                                match tryMatch (pSysWriteTyped resultSSA fdSSA bufferSSA bufferType countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                                // Allocate conversion SSA if buffer is memref (Pattern will handle conversion)
+                                let conversionSSA =
+                                    match bufferType with
+                                    | TMemRefScalar _ | TMemRef _ -> Some (MLIRAccumulator.freshMLIRTemp ctx.Accumulator)
+                                    | _ -> None
+                                
+                                // Emit call with actual buffer type
+                                // Declaration will be collected and emitted by MLIR Declaration Collection Pass
+                                // Pattern will normalize memref→ptr at FFI boundary if needed
+                                match tryMatch (pSysWriteTyped resultSSA fdSSA bufferSSA bufferType countSSA conversionSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
                                 | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                                 | None -> WitnessOutput.error "Sys.write pattern failed"
-                            | None -> WitnessOutput.error "Sys.write: Buffer argument not yet witnessed"
+                            | None -> WitnessOutput.error "Sys.write: buffer argument not yet witnessed"
 
                         | IntrinsicModule.Sys, "read", [fdSSA; bufferSSA; countSSA] ->
                             match tryMatch (pSysRead resultSSA fdSSA bufferSSA countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
@@ -120,17 +127,39 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                             | None -> WitnessOutput.error $"Binary arithmetic pattern failed for {info.Operation}"
 
-                        | _ -> WitnessOutput.error $"Intrinsic not yet implemented: {info.FullName} with {argSSAs.Length} args"
+                        | _ -> WitnessOutput.error $"Atomic operation not yet implemented: {info.FullName} with {argSSAs.Length} args"
 
-            | _ -> WitnessOutput.error "Expected Intrinsic SemanticKind"
+            | _ -> WitnessOutput.error "Expected SemanticKind.Intrinsic from FNCS"
 
         | Some funcNode when funcNode.Kind.ToString().StartsWith("VarRef") ->
-            // Extract function name from VarRef node (without @ prefix - added during serialization)
+            // Extract qualified function name using PSG resolution (not string parsing!)
+            // VarRef has: (localName, Some definitionNodeId) where definitionNodeId points to the Binding
+            // We follow the resolution to get the fully qualified name (e.g., "Console.write")
             let funcName =
-                match funcNode.Kind.ToString().Split([|'('; ','|]) with
-                | parts when parts.Length > 1 ->
-                    parts.[1].Trim().Trim([|' '; '"'|])
-                | _ -> "unknown_func"
+                match funcNode.Kind with
+                | SemanticKind.VarRef (localName, Some defId) ->
+                    // Follow resolution to binding node
+                    match SemanticGraph.tryGetNode defId ctx.Graph with
+                    | Some bindingNode ->
+                        match bindingNode.Kind with
+                        | SemanticKind.Binding (bindName, _, _, _) ->
+                            // Check if binding has a module parent (ModuleDef)
+                            match bindingNode.Parent with
+                            | Some parentId ->
+                                match SemanticGraph.tryGetNode parentId ctx.Graph with
+                                | Some parentNode ->
+                                    match parentNode.Kind with
+                                    | SemanticKind.ModuleDef (moduleName, _) ->
+                                        // Qualified name: Module.Function
+                                        sprintf "%s.%s" moduleName bindName
+                                    | _ -> bindName  // No module parent, use binding name
+                                | None -> bindName
+                            | None -> bindName
+                        | _ -> localName  // Not a binding, use local name
+                    | None -> localName  // Resolution failed, use local name
+                | SemanticKind.VarRef (localName, None) ->
+                    localName  // Unresolved reference, use local name
+                | _ -> "unknown_func"  // Not a VarRef (shouldn't happen given guard above)
 
             // Recall argument SSAs with types
             let argsResult =
@@ -152,7 +181,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let arch = ctx.Coeffects.Platform.TargetArch
                     let retType = mapNativeTypeForArch arch node.Type
 
-                    // Emit direct function call by name
+                    // Emit direct function call by name (no declaration coordination)
+                    // Declaration will be collected and emitted by MLIR Declaration Collection Pass
                     match tryMatch (pDirectCall resultSSA funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | None -> WitnessOutput.error "Direct function call pattern emission failed"
@@ -196,6 +226,5 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
 /// Application nanopass - witnesses function applications
 let nanopass : Nanopass = {
     Name = "Application"
-    Phase = ContentPhase
     Witness = witnessApplication
 }

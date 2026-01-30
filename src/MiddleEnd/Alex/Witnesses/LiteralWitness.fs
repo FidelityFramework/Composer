@@ -37,9 +37,12 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                 // Use trace-enabled variant to capture full execution path
                 match tryMatchWithTrace (pBuildStringLiteral content ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
                 | Result.Ok (((inlineOps, globalName, strContent, byteLength), result), _, _trace) ->
-                    // Success - emit GlobalString to TopLevelOps
-                    let globalOp = Alex.Dialects.Core.Types.MLIROp.GlobalString (globalName, strContent, byteLength)
-                    { InlineOps = inlineOps; TopLevelOps = [globalOp]; Result = result }
+                    // Success - emit GlobalString via coordination (dependent transparency)
+                    let topLevelOps =
+                        match MLIRAccumulator.tryEmitGlobal globalName strContent byteLength ctx.Accumulator with
+                        | Some globalOp -> [globalOp]
+                        | None -> []  // Already emitted by another witness
+                    { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
                 | Result.Error (err, trace) ->
                     // Failure - serialize trace for debugging
                     // TODO: Serialize trace to intermediates/07_literal_witness_nodeXXX_trace.json
@@ -74,6 +77,5 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
 /// Literal nanopass - witnesses Literal nodes (int, bool, char, float, etc.)
 let nanopass : Nanopass = {
     Name = "Literal"
-    Phase = ContentPhase
     Witness = witnessLiteralNode
 }

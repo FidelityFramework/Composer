@@ -111,6 +111,5 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
 
 let nanopass : Nanopass = {
     Name = "List"
-    Phase = ContentPhase
     Witness = witnessList
 }

@@ -44,6 +44,5 @@ let private witnessSequential (ctx: WitnessContext) (node: SemanticNode) : Witne
 /// Sequential nanopass - witnesses sequential composition
 let nanopass : Nanopass = {
     Name = "Sequential"
-    Phase = ContentPhase
     Witness = witnessSequential
 }

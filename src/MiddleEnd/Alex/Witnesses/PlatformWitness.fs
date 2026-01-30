@@ -34,6 +34,5 @@ let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : Witness
 /// Platform nanopass - witnesses Sys.* syscall operations
 let nanopass : Nanopass = {
     Name = "Platform"
-    Phase = ContentPhase
     Witness = witnessPlatform
 }

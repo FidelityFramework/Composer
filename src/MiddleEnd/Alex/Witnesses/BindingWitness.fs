@@ -64,6 +64,5 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
 /// Binding nanopass - witnesses let bindings
 let nanopass : Nanopass = {
     Name = "Binding"
-    Phase = ContentPhase
     Witness = witnessBinding
 }

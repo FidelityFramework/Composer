@@ -148,6 +148,5 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
 /// Map nanopass - witnesses Map primitive operations
 let nanopass : Nanopass = {
     Name = "Map"
-    Phase = ContentPhase
     Witness = witnessMap
 }

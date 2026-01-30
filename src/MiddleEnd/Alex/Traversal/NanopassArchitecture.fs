@@ -16,20 +16,11 @@ open Alex.Traversal.PSGZipper
 // NANOPASS TYPE
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Nanopass execution phase
-/// ContentPhase: Witnesses run first, respect scope boundaries, don't recurse into scopes
-/// StructuralPhase: Witnesses run second, wrap content in scope structures (FuncDef, SCFOp)
-type NanopassPhase =
-    | ContentPhase      // Literal, Arith, Lazy, Collections - traverse but respect scopes
-    | StructuralPhase   // Lambda, ControlFlow - handle scope boundaries
-
 /// A nanopass is a complete PSG traversal that selectively witnesses nodes
+/// Single-phase post-order traversal: all witnesses run during one traversal
 type Nanopass = {
     /// Nanopass name (e.g., "Literal", "Arithmetic", "ControlFlow")
     Name: string
-
-    /// Execution phase (ContentPhase runs before StructuralPhase)
-    Phase: NanopassPhase
 
     /// The witnessing function for this nanopass
     /// Returns skip for nodes it doesn't handle
@@ -41,8 +32,8 @@ type Nanopass = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Check if this node defines a scope boundary (owns its children)
-/// Scope boundaries prevent child recursion during global traversal.
-/// Instead, scope-owning witnesses use witnessSubgraph to handle their children.
+/// Scope boundaries control recursion: scope-owning witnesses handle their own children
+/// via explicit scope markers (ScopeEnter/ScopeExit) instead of automatic child traversal.
 let private isScopeBoundary (node: SemanticNode) : bool =
     match node.Kind with
     | SemanticKind.Lambda _ -> true

@@ -49,6 +49,5 @@ let private witnessTypeAnnotation (ctx: WitnessContext) (node: SemanticNode) : W
 /// TypeAnnotation nanopass - ContentPhase (runs during body witnessing)
 let nanopass : Nanopass = {
     Name = "TypeAnnotation"
-    Phase = ContentPhase  // Runs during function body witnessing
     Witness = witnessTypeAnnotation
 }

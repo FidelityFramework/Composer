@@ -249,10 +249,28 @@ let structuralFoldingPass (operations: MLIROp list) : MLIROp list =
 
     printfn "[DEBUG] Structural folding: Found %d SSAs in FuncDef bodies" (Set.count funcDefSSAs)
 
-    /// Check if operation defines an SSA that's in a FuncDef body
+    /// Extract all SSAs used by an operation
+    let rec getUsedSSAs (op: MLIROp) : SSA list =
+        match op with
+        | MLIROp.MemRefOp (MemRefOp.Store (valueSSA, memrefSSA, indexSSAs, _)) ->
+            valueSSA :: memrefSSA :: indexSSAs
+        | MLIROp.MemRefOp (MemRefOp.Load (_, memrefSSA, indexSSAs, _)) ->
+            memrefSSA :: indexSSAs
+        | MLIROp.ArithOp (ArithOp.AddI (_, lhs, rhs, _))
+        | MLIROp.ArithOp (ArithOp.SubI (_, lhs, rhs, _))
+        | MLIROp.ArithOp (ArithOp.MulI (_, lhs, rhs, _))
+        | MLIROp.ArithOp (ArithOp.DivSI (_, lhs, rhs, _))
+        | MLIROp.ArithOp (ArithOp.DivUI (_, lhs, rhs, _)) -> [lhs; rhs]
+        // Add more cases as needed
+        | _ -> []
+
+    /// Check if operation defines OR uses SSAs that are only in FuncDef bodies
     let isDuplicate (op: MLIROp) : bool =
         let defined = getDefinedSSAs op
-        defined |> List.exists (fun ssa -> Set.contains ssa funcDefSSAs)
+        let used = getUsedSSAs op
+        let definesInternal = defined |> List.exists (fun ssa -> Set.contains ssa funcDefSSAs)
+        let usesInternal = used |> List.exists (fun ssa -> Set.contains ssa funcDefSSAs)
+        definesInternal || usesInternal
 
     /// Deduplicate GlobalStrings by symbol name
     let deduplicateGlobals (ops: MLIROp list) : MLIROp list =
@@ -264,6 +282,19 @@ let structuralFoldingPass (operations: MLIROp list) : MLIROp list =
                     false  // Skip duplicate
                 else
                     seenGlobals <- Set.add name seenGlobals
+                    true  // Keep first occurrence
+            | _ -> true)
+
+    /// Deduplicate function declarations by function name
+    let deduplicateFuncDecls (ops: MLIROp list) : MLIROp list =
+        let mutable seenFuncs = Set.empty
+        ops |> List.filter (fun op ->
+            match op with
+            | MLIROp.FuncOp (FuncOp.FuncDecl (name, _, _, _)) ->
+                if Set.contains name seenFuncs then
+                    false  // Skip duplicate
+                else
+                    seenFuncs <- Set.add name seenFuncs
                     true  // Keep first occurrence
             | _ -> true)
 
@@ -280,6 +311,89 @@ let structuralFoldingPass (operations: MLIROp list) : MLIROp list =
     let cleaned = filterOps operations |> deduplicateGlobals
     printfn "[DEBUG] Structural folding: %d ops before, %d ops after" (List.length operations) (List.length cleaned)
     cleaned
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECLARATION COLLECTION PASS (Emit FuncDecl from FuncCall analysis)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Declaration Collection Pass
+///
+/// Scans all FuncCall operations and emits unified FuncDecl operations.
+/// This eliminates the "first witness wins" coordination during witnessing.
+///
+/// ARCHITECTURAL RATIONALE:
+/// - Function declarations are MLIR-level structure (not PSG semantics)
+/// - Witnesses emit calls with actual types (no coordination needed)
+/// - This pass analyzes ALL calls before emitting declarations (deterministic)
+/// - Signature unification happens here (one place, not scattered across witnesses)
+///
+/// ALGORITHM:
+/// 1. Recursively collect all FuncCall operations
+/// 2. Group calls by function name
+/// 3. Unify signatures (currently: first signature wins, future: type coercion)
+/// 4. Emit FuncDecl operations
+/// 5. Remove any existing FuncDecl operations from witnesses (duplicates)
+let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
+    
+    /// Recursively collect all function calls from operations
+    let rec collectCalls (op: MLIROp) : (string * MLIRType list * MLIRType) list =
+        match op with
+        | MLIROp.FuncOp (FuncOp.FuncCall (_, name, args, retTy)) ->
+            // Collect this call's signature
+            [(name, args |> List.map (fun v -> v.Type), retTy)]
+        
+        // Recurse into nested operations
+        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
+            body |> List.collect collectCalls
+        
+        | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps)) ->
+            let thenCalls = thenOps |> List.collect collectCalls
+            let elseCalls = elseOps |> Option.map (List.collect collectCalls) |> Option.defaultValue []
+            thenCalls @ elseCalls
+        
+        | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
+            let condCalls = condOps |> List.collect collectCalls
+            let bodyCalls = bodyOps |> List.collect collectCalls
+            condCalls @ bodyCalls
+        
+        | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) ->
+            bodyOps |> List.collect collectCalls
+        
+        | MLIROp.Block (_, blockOps) ->
+            blockOps |> List.collect collectCalls
+        
+        | MLIROp.Region ops ->
+            ops |> List.collect collectCalls
+        
+        | _ -> []
+    
+    /// Collect all function calls from all operations
+    let allCalls = operations |> List.collect collectCalls
+    
+    /// Group calls by function name and pick representative signature
+    /// FUTURE: Could unify signatures more intelligently (e.g., widening types, adding casts)
+    /// CURRENT: First signature wins (deterministic - depends on post-order traversal)
+    let declarations =
+        allCalls
+        |> List.groupBy (fun (name, _, _) -> name)
+        |> List.map (fun (name, signatures) ->
+            // Pick first signature (deterministic due to post-order)
+            let (_, paramTypes, retType) = signatures.Head
+            MLIROp.FuncOp (FuncOp.FuncDecl (name, paramTypes, retType, FuncVisibility.Private)))
+    
+    /// Remove any FuncDecl operations emitted by witnesses (now duplicates)
+    let withoutWitnessDecls =
+        operations
+        |> List.filter (function
+            | MLIROp.FuncOp (FuncOp.FuncDecl _) -> false  // Remove witness-emitted declarations
+            | _ -> true)
+    
+    // Emit collected declarations at the top, followed by cleaned operations
+    if List.isEmpty declarations then
+        withoutWitnessDecls
+    else
+        printfn "[Alex] Declaration collection: Emitted %d function declarations" (List.length declarations)
+        declarations @ withoutWitnessDecls
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS ORCHESTRATION (Apply All Passes)
@@ -315,13 +429,16 @@ let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (
         printfn "[Alex] Wrote nanopass intermediate: 08_after_structural_folding.mlir"
     | None -> ()
 
-    // Phase 2: FFI Boundary Conversion (memref → pointer at syscall boundaries)
-    let ctx = {
-        Operations = afterFolding
-        Platform = platform
-        FreshSSACounter = ref 0
-    }
-    let afterFFI = ffiConversionPass ctx
+    // Phase 2: FFI Boundary Conversion Pass (DISABLED)
+    //
+    // ARCHITECTURAL DECISION: Let mlir-opt handle ALL dialect conversions.
+    // The --finalize-memref-to-llvm pass knows how to convert memref → pointer at FFI boundaries.
+    // Inserting our own conversion casts causes ordering issues (cast references memref,
+    // but then mlir-opt lowers the memref to struct, invalidating the cast).
+    //
+    // LESSON LEARNED: Don't insert conversion casts before dialect lowering.
+    // Let the standard MLIR conversion infrastructure handle type mismatches.
+    let afterFFI = afterFolding  // No custom conversion - mlir-opt handles it
 
     // Serialize Phase 2 intermediate (if -k flag enabled)
     match intermediatesDir with
@@ -332,9 +449,32 @@ let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (
         printfn "[Alex] Wrote nanopass intermediate: 09_after_ffi_conversion.mlir"
     | None -> ()
 
+    // Phase 3: Declaration Collection Pass
+    //
+    // ARCHITECTURAL RATIONALE:
+    // Function declarations are MLIR-level structure, not PSG-level semantics.
+    // During witnessing, ApplicationWitness emits FuncCall operations with actual types.
+    // This pass scans ALL calls, collects unique function signatures, and emits FuncDecl operations.
+    //
+    // BENEFITS:
+    // 1. Deterministic - same calls always produce same declarations (no "first witness wins")
+    // 2. Separates concerns - witnessing (codata) vs declaration emission (structural)
+    // 3. Codata principle - witnesses return calls, post-pass handles declarations
+    // 4. Signature unification - can analyze ALL calls before deciding signature
+    let afterDecls = declarationCollectionPass afterFFI
+
+    // Serialize Phase 3 intermediate (if -k flag enabled)
+    match intermediatesDir with
+    | Some dir ->
+        let mlirText = Alex.Dialects.Core.Serialize.moduleToString "main" afterDecls
+        let filePath = System.IO.Path.Combine(dir, "10_after_declaration_collection.mlir")
+        System.IO.File.WriteAllText(filePath, mlirText)
+        printfn "[Alex] Wrote nanopass intermediate: 10_after_declaration_collection.mlir"
+    | None -> ()
+
     // Future passes will be composed here:
-    // let afterDCont = dcontLoweringPass afterFFI
+    // let afterDCont = dcontLoweringPass afterDecls
     // let afterInet = inetLoweringPass afterDCont
     // let afterBackend = backendTargetingPass afterInet
 
-    afterFFI
+    afterDecls

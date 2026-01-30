@@ -100,6 +100,5 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
 /// Option nanopass - witnesses Option intrinsic nodes
 let nanopass : Nanopass = {
     Name = "Option"
-    Phase = ContentPhase
     Witness = witnessOption
 }

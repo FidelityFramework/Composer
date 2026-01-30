@@ -16,7 +16,7 @@ open Alex.Dialects.Core.Types
 open Alex.Dialects.Core.Serialize
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.WitnessRegistry
-open Alex.Traversal.TwoPhaseNanopass
+open Alex.Traversal.SinglePhaseNanopass
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC API

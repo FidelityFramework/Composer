@@ -15,9 +15,11 @@ open System.IO
 let lowerToLLVM (mlirPath: string) (llvmPath: string) : Result<unit, string> =
     try
         // Step 1: mlir-opt to convert to LLVM dialect
-        // Conversion order: vector -> scf -> cf -> func -> arith -> llvm, then cleanup casts
+        // Conversion order: memref -> vector -> scf -> cf -> func -> arith -> llvm, then cleanup casts
         // Note: --convert-vector-to-llvm enables SIMD code generation
-        let mlirOptArgs = sprintf "%s --convert-vector-to-llvm --convert-scf-to-cf --convert-cf-to-llvm --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts" mlirPath
+        // Note: memref passes MUST come before func/arith lowering (func lowering may reference memref types)
+        // Note: --canonicalize after reconciliation helps clean up remaining artifacts
+        let mlirOptArgs = sprintf "%s --memref-expand --finalize-memref-to-llvm --convert-vector-to-llvm --convert-scf-to-cf --convert-cf-to-llvm --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts --canonicalize" mlirPath
         let mlirOptProcess = new System.Diagnostics.Process()
         mlirOptProcess.StartInfo.FileName <- "mlir-opt"
         mlirOptProcess.StartInfo.Arguments <- mlirOptArgs

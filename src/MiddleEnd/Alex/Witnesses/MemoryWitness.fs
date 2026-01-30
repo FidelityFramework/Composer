@@ -96,6 +96,5 @@ let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
 /// Memory nanopass - witnesses memory-related operations
 let nanopass : Nanopass = {
     Name = "Memory"
-    Phase = ContentPhase
     Witness = witnessMemory
 }

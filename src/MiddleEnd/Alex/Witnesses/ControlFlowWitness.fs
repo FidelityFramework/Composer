@@ -119,13 +119,11 @@ let private witnessControlFlowWith (nanopasses: Nanopass list) (ctx: WitnessCont
 /// This must be called AFTER all other nanopasses are registered
 let createNanopass (nanopasses: Nanopass list) : Nanopass = {
     Name = "ControlFlow"
-    Phase = StructuralPhase
     Witness = witnessControlFlowWith nanopasses
 }
 
 /// Placeholder nanopass export - will be replaced by createNanopass call in registry
 let nanopass : Nanopass = {
     Name = "ControlFlow"
-    Phase = StructuralPhase
     Witness = fun _ _ -> WitnessOutput.error "ControlFlow nanopass not properly initialized - use createNanopass"
 }
