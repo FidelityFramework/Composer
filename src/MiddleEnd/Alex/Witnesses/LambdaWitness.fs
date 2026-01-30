@@ -48,6 +48,10 @@ let private makeSubGraphCombinator (nanopasses: Nanopass list) : (WitnessContext
 /// Witness Lambda operations - category-selective (handles only Lambda nodes)
 /// Takes nanopass list to build sub-graph combinator for body witnessing
 let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    // DEBUG: Check if we're being called for the Lambda node
+    if node.Id = NodeId 536 then
+        printfn "[DEBUG] LambdaWitness called for node 536, kind: %A" node.Kind
+
     // Filter to ONLY ContentPhase witnesses for sub-graph traversal
     // This prevents StructuralPhase witnesses from recursing and causing double-witnessing
     let contentWitnesses = nanopasses |> List.filter (fun np -> np.Phase = ContentPhase)
@@ -59,22 +63,29 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
         let nodeIdValue = NodeId.value node.Id
         let isEntryPoint = Set.contains nodeIdValue ctx.Coeffects.EntryPointLambdaIds
 
+        if node.Id = NodeId 536 then
+            printfn "[DEBUG] Pattern matched! isEntryPoint=%b, bodyId=%d" isEntryPoint (NodeId.value bodyId)
+
         if isEntryPoint then
             // Entry point Lambda: generate func.func @main wrapper
             let scopeLabel = sprintf "func_%d" nodeIdValue
             let scopeKind = FunctionScope "main"
 
+            if node.Id = NodeId 536 then printfn "[DEBUG] Entering entry point path, adding scope markers"
+
             // Mark scope entry
             MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
 
-            // Witness body nodes into shared accumulator with GLOBAL visited set
+            // Witness body nodes into shared accumulator with FRESH visited set
+            // Use fresh visited set because we WANT to re-visit body nodes (already visited by ContentPhase)
+            // to capture their operations within this scope
+            let freshVisited = ref Set.empty
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
                     let bodyCtx = { ctx with Zipper = bodyZipper }
-                    // Use GLOBAL visited set (shared across all nanopasses and function bodies)
-                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator ctx.GlobalVisited
+                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator freshVisited
                 | None -> ()
             | None -> ()
 
@@ -83,6 +94,7 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
 
             // Extract operations between markers
             let scopeOps = MLIRAccumulator.extractScope scopeKind scopeLabel ctx.Accumulator
+            if node.Id = NodeId 536 then printfn "[DEBUG] Entry point: Extracted %d operations from scope" (List.length scopeOps)
 
             // Separate body ops from module-level ops
             let bodyOps = scopeOps |> List.filter (fun op -> match op with MLIROp.GlobalString _ -> false | _ -> true)
@@ -139,14 +151,16 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
             // Mark scope entry
             MLIRAccumulator.addOp (MLIROp.ScopeMarker (ScopeEnter (scopeKind, scopeLabel))) ctx.Accumulator
 
-            // Witness body nodes into shared accumulator with GLOBAL visited set
+            // Witness body nodes into shared accumulator with FRESH visited set
+            // Use fresh visited set because we WANT to re-visit body nodes (already visited by ContentPhase)
+            // to capture their operations within this scope
+            let freshVisited = ref Set.empty
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
                     let bodyCtx = { ctx with Zipper = bodyZipper }
-                    // Use GLOBAL visited set (shared across all nanopasses and function bodies)
-                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator ctx.GlobalVisited
+                    visitAllNodes subGraphCombinator bodyCtx bodyNode ctx.Accumulator freshVisited
                 | None -> ()
             | None -> ()
 

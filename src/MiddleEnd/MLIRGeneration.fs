@@ -11,6 +11,7 @@
 /// Clean signature: PSG + PlatformContext → MLIR text
 module MiddleEnd.MLIRGeneration
 
+open System.IO
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
@@ -85,9 +86,18 @@ let generate
             // This is the integration point for dual witness infrastructure:
             // - PSG witnesses emit portable MLIR (memref, func.call)
             // - MLIR nanopasses transform for backends (FFI conversion, DCont/Inet lowering)
-            let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses topLevelOps platformResolution
+            let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses topLevelOps platformResolution intermediatesDir
 
             // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
             let mlirText = moduleToString "main" transformedOps
+
+            // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
+            match intermediatesDir with
+            | Some dir ->
+                let finalPath = Path.Combine(dir, "10_output.mlir")
+                File.WriteAllText(finalPath, mlirText)
+                printfn "[Alex] Wrote final MLIR: 10_output.mlir"
+            | None -> ()
+
             Result.Ok mlirText
         | Result.Error msg -> Result.Error msg

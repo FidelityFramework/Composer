@@ -34,19 +34,38 @@ open Alex.Traversal.CoverageValidation
 //
 // Rationale: Content lives inside scopes. Scopes must see content before wrapping it.
 
+/// Check if node is a scope boundary (Lambda, IfThenElse, etc.)
+/// ContentPhase witnesses should skip these - they're StructuralPhase's job
+let private isScopeBoundary (node: SemanticNode) : bool =
+    match node.Kind with
+    | SemanticKind.Lambda _ -> true
+    | SemanticKind.IfThenElse _ -> true
+    | SemanticKind.WhileLoop _ -> true
+    | SemanticKind.ForLoop _ -> true
+    | SemanticKind.ForEach _ -> true
+    | SemanticKind.Match _ -> true
+    | SemanticKind.TryWith _ -> true
+    | _ -> false
+
 /// Combine multiple witnesses into a single witness that tries each in sequence
+/// ContentPhase witnesses skip scope boundaries (those are StructuralPhase's job)
 let private combineWitnesses (nanopasses: Nanopass list) : (WitnessContext -> SemanticNode -> WitnessOutput) =
     fun ctx node ->
-        let rec tryWitnesses remaining =
-            match remaining with
-            | [] -> WitnessOutput.skip
-            | nanopass :: rest ->
-                let result = nanopass.Witness ctx node
-                if result = WitnessOutput.skip then
-                    tryWitnesses rest
-                else
-                    result
-        tryWitnesses nanopasses
+        // ContentPhase witnesses should skip scope boundary nodes
+        let isContentPhase = nanopasses |> List.exists (fun np -> np.Phase = ContentPhase)
+        if isContentPhase && isScopeBoundary node then
+            WitnessOutput.skip
+        else
+            let rec tryWitnesses remaining =
+                match remaining with
+                | [] -> WitnessOutput.skip
+                | nanopass :: rest ->
+                    let result = nanopass.Witness ctx node
+                    if result = WitnessOutput.skip then
+                        tryWitnesses rest
+                    else
+                        result
+            tryWitnesses nanopasses
 
 /// Run nanopasses with SHARED accumulator and GLOBAL visited set via SINGLE combined traversal
 /// This ensures post-order guarantees hold across ALL witnesses and phases
@@ -185,6 +204,16 @@ let executeNanopasses
         // ═════════════════════════════════════════════════════════════════════════
         // PHASE 2: Structural Witnesses (Lambda, ControlFlow)
         // ═════════════════════════════════════════════════════════════════════════
+
+        // Clear scope boundary nodes from visited set so StructuralPhase can witness them
+        // ContentPhase should have skipped these, but remove them from visited set to be safe
+        let scopeBoundaryNodes =
+            graph.Nodes
+            |> Seq.filter (fun kvp -> isScopeBoundary kvp.Value)
+            |> Seq.map (fun kvp -> kvp.Key)
+            |> Set.ofSeq
+
+        globalVisited := Set.difference !globalVisited scopeBoundaryNodes
 
         let structuralPasses =
             registry.Nanopasses

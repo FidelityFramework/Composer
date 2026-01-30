@@ -298,6 +298,14 @@ module MLIRAccumulator =
 
         acc.AllOps <- doRemove acc.AllOps false []
 
+    /// Generate fresh SSA for MLIR-level temporary (not associated with PSG node)
+    /// Used for implementation-level operations like FFI marshaling
+    /// Uses high numbers (10000+) to avoid collision with PSG-assigned SSAs
+    let freshMLIRTemp (acc: MLIRAccumulator) : SSA =
+        let n = acc.MLIRTempCounter
+        acc.MLIRTempCounter <- n + 1
+        SSA.V (10000 + n)
+
     /// Backward compatibility aliases
     let addTopLevelOp = addOp
     let addTopLevelOps = addOps

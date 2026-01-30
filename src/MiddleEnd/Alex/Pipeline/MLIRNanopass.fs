@@ -114,18 +114,32 @@ let ffiConversionPass (ctx: MLIRTransformContext) : MLIROp list =
     let rec transformOp (op: MLIROp) : MLIROp list =
         match op with
         // ── FFI BOUNDARY DETECTION ────────────────────────────────────────
-        | MLIROp.FuncOp (FuncOp.FuncCall (resultOpt, funcName, args, retTy))
-            when isFFIBoundary funcName ->
-            // Convert all memref arguments to pointers
-            let convertedArgs, convOps =
-                args
-                |> List.map (fun arg -> convertMemRefArg arg ctx)
-                |> List.unzip
-            let convOps = convOps |> List.choose id
+        | MLIROp.FuncOp (FuncOp.FuncCall (resultOpt, funcName, args, retTy)) ->
+            // DEBUG: Log all FuncCalls
+            printfn "[DEBUG] FuncCall: @%s, isFFI=%b, args=%d" funcName (isFFIBoundary funcName) (List.length args)
 
-            // Emit conversions followed by call with converted args
-            let callOp = MLIROp.FuncOp (FuncOp.FuncCall (resultOpt, funcName, convertedArgs, retTy))
-            convOps @ [callOp]
+            if isFFIBoundary funcName then
+                // DEBUG: Show argument types
+                args |> List.iteri (fun i arg ->
+                    printfn "[DEBUG]   arg[%d]: %A" i arg.Type)
+
+                // Convert all memref arguments to pointers
+                let convertedArgs, convOps =
+                    args
+                    |> List.map (fun arg -> convertMemRefArg arg ctx)
+                    |> List.unzip
+                let convOps = convOps |> List.choose id
+
+                // DEBUG: Log FFI conversion
+                if not (List.isEmpty convOps) then
+                    printfn "[DEBUG] FFI conversion: @%s - inserted %d conversion ops" funcName (List.length convOps)
+
+                // Emit conversions followed by call with converted args
+                let callOp = MLIROp.FuncOp (FuncOp.FuncCall (resultOpt, funcName, convertedArgs, retTy))
+                convOps @ [callOp]
+            else
+                // Non-FFI call - pass through unchanged
+                [op]
 
         // ── RECURSIVE TRANSFORMATION (Nested Operations) ──────────────────
         | MLIROp.FuncOp (FuncOp.FuncDef (name, parameters, retTy, body, vis)) ->
@@ -157,7 +171,102 @@ let ffiConversionPass (ctx: MLIRTransformContext) : MLIROp list =
         // ── PASS-THROUGH (No transformation needed) ───────────────────────
         | _ -> [op]  // Pass through unchanged
 
+    // Transform all operations (including top-level flat operations)
     ctx.Operations |> List.collect transformOp
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRUCTURAL FOLDING NANOPASS (Deduplicate FuncDef bodies from flat stream)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Structural Folding Nanopass - Removes duplicate operations from flat stream
+///
+/// PROBLEM: After witnessing, FuncDef nodes have populated bodies, but those same
+/// operations also appear in the flat stream. This creates duplicate definitions.
+///
+/// INPUT: FuncDef nodes with bodies + flat stream with duplicate operations
+/// OUTPUT: FuncDef nodes + cleaned flat stream (no duplicates)
+///
+/// APPROACH: Collect all SSAs defined in FuncDef bodies, filter flat stream to
+/// remove operations that define those SSAs.
+let structuralFoldingPass (operations: MLIROp list) : MLIROp list =
+
+    /// Extract all SSAs defined by an operation
+    let rec getDefinedSSAs (op: MLIROp) : SSA list =
+        match op with
+        // ArithOp - all operations that define SSAs
+        | MLIROp.ArithOp (ArithOp.ConstI (ssa, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.ConstF (ssa, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.AddI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.SubI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.MulI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.DivSI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.DivUI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.RemSI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.RemUI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.CmpI (ssa, _, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.AddF (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.SubF (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.MulF (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.DivF (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.CmpF (ssa, _, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.AndI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.OrI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.XorI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.ShLI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.ShRSI (ssa, _, _, _)) -> [ssa]
+        | MLIROp.ArithOp (ArithOp.ShRUI (ssa, _, _, _)) -> [ssa]
+
+        // MemRefOp - operations that define SSAs
+        | MLIROp.MemRefOp (MemRefOp.Alloca (ssa, _, _)) -> [ssa]
+        | MLIROp.MemRefOp (MemRefOp.Load (ssa, _, _, _)) -> [ssa]
+        | MLIROp.MemRefOp (MemRefOp.ExtractBasePtr (ssa, _, _)) -> [ssa]
+
+        // LLVMOp - operations that define SSAs
+        | MLIROp.LLVMOp (LLVMOp.ExtractValue (ssa, _, _, _)) -> [ssa]
+        | MLIROp.LLVMOp (LLVMOp.InsertValue (ssa, _, _, _, _)) -> [ssa]
+        | MLIROp.LLVMOp (LLVMOp.Undef (ssa, _)) -> [ssa]
+
+        // Other operations that define SSAs
+        | MLIROp.AddressOf (ssa, _, _) -> [ssa]
+        | MLIROp.FuncOp (FuncOp.FuncCall (Some ssa, _, _, _)) -> [ssa]
+
+        // FuncDef - recursively collect SSAs from body
+        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
+            body |> List.collect getDefinedSSAs
+
+        // All other operations don't define SSAs
+        | _ -> []
+
+    /// Collect all SSAs defined in FuncDef bodies
+    let funcDefSSAs =
+        operations
+        |> List.choose (function
+            | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
+                Some (body |> List.collect getDefinedSSAs)
+            | _ -> None)
+        |> List.concat
+        |> Set.ofList
+
+    printfn "[DEBUG] Structural folding: Found %d SSAs in FuncDef bodies" (Set.count funcDefSSAs)
+
+    /// Check if operation defines an SSA that's in a FuncDef body
+    let isDuplicate (op: MLIROp) : bool =
+        let defined = getDefinedSSAs op
+        defined |> List.exists (fun ssa -> Set.contains ssa funcDefSSAs)
+
+    /// Filter operations: keep FuncDef nodes and non-duplicate operations
+    let rec filterOps ops =
+        ops |> List.filter (fun op ->
+            match op with
+            | MLIROp.FuncOp (FuncOp.FuncDef _) -> true  // Keep FuncDef nodes
+            | MLIROp.ScopeMarker _ -> false  // Remove scope markers
+            | MLIROp.GlobalString _ -> true  // Keep globals
+            | _ -> not (isDuplicate op)  // Keep if not duplicate
+        )
+
+    let cleaned = filterOps operations
+    printfn "[DEBUG] Structural folding: %d ops before, %d ops after" (List.length operations) (List.length cleaned)
+    cleaned
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS ORCHESTRATION (Apply All Passes)
@@ -166,27 +275,53 @@ let ffiConversionPass (ctx: MLIRTransformContext) : MLIROp list =
 /// Apply all MLIR nanopasses in sequence
 ///
 /// CURRENT PASSES:
-/// 1. FFI Boundary Conversion (memref → pointer at syscall boundaries)
+/// 1. Structural Folding (deduplicate FuncDef bodies from flat stream)
+/// 2. FFI Boundary Conversion (memref → pointer at syscall boundaries)
 ///
 /// FUTURE PASSES (aligned with DCont/Inet Duality vision):
-/// 2. DCont Lowering (async {} → dcont dialect, stack-based continuations)
-/// 3. Inet Lowering (query {} → inet dialect, parallel graph reduction)
-/// 4. Hybrid Optimization (mix DCont/Inet based on purity analysis)
-/// 5. Backend Targeting (func/arith/memref → LLVM/SPIR-V/WebAssembly)
+/// 3. DCont Lowering (async {} → dcont dialect, stack-based continuations)
+/// 4. Inet Lowering (query {} → inet dialect, parallel graph reduction)
+/// 5. Hybrid Optimization (mix DCont/Inet based on purity analysis)
+/// 6. Backend Targeting (func/arith/memref → LLVM/SPIR-V/WebAssembly)
 ///
 /// ARCHITECTURAL NOTE:
 /// This is the integration point for eventual TableGen-based transformations.
 /// Future vision: Generate TableGen in MiddleEnd, use it to transform dialects.
-let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) : MLIROp list =
+let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (intermediatesDir: string option) : MLIROp list =
+    // Apply passes in sequence (nanopass pipeline)
+
+    // Phase 1: Structural Folding (deduplicate FuncDef bodies from flat stream)
+    let afterFolding = structuralFoldingPass operations
+
+    // Serialize Phase 1 intermediate (if -k flag enabled)
+    match intermediatesDir with
+    | Some dir ->
+        let mlirText = Alex.Dialects.Core.Serialize.moduleToString "main" afterFolding
+        let filePath = System.IO.Path.Combine(dir, "08_after_structural_folding.mlir")
+        System.IO.File.WriteAllText(filePath, mlirText)
+        printfn "[Alex] Wrote nanopass intermediate: 08_after_structural_folding.mlir"
+    | None -> ()
+
+    // Phase 2: FFI Boundary Conversion (memref → pointer at syscall boundaries)
     let ctx = {
-        Operations = operations
+        Operations = afterFolding
         Platform = platform
         FreshSSACounter = ref 0
     }
+    let afterFFI = ffiConversionPass ctx
 
-    // Apply passes in sequence (future: configurable pass pipeline)
-    ffiConversionPass ctx
+    // Serialize Phase 2 intermediate (if -k flag enabled)
+    match intermediatesDir with
+    | Some dir ->
+        let mlirText = Alex.Dialects.Core.Serialize.moduleToString "main" afterFFI
+        let filePath = System.IO.Path.Combine(dir, "09_after_ffi_conversion.mlir")
+        System.IO.File.WriteAllText(filePath, mlirText)
+        printfn "[Alex] Wrote nanopass intermediate: 09_after_ffi_conversion.mlir"
+    | None -> ()
+
     // Future passes will be composed here:
-    // |> dcontLoweringPass    // DCont dialect lowering
-    // |> inetLoweringPass     // Inet dialect lowering
-    // |> backendTargetingPass // Backend-specific lowering
+    // let afterDCont = dcontLoweringPass afterFFI
+    // let afterInet = inetLoweringPass afterDCont
+    // let afterBackend = backendTargetingPass afterInet
+
+    afterFFI

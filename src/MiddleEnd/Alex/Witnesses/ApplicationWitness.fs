@@ -96,12 +96,17 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             | None -> WitnessOutput.error "NativePtr.read pattern failed"
 
                         | IntrinsicModule.Sys, "write", [fdSSA; bufferSSA; countSSA] ->
-                            // Witness emits call with memref - MLIR nanopass layer will convert if needed
-                            // ARCHITECTURAL PRINCIPLE: Witnesses observe PSG and emit MLIR.
-                            // MLIR nanopasses transform MLIR. Clean separation of concerns.
-                            match tryMatch (pSysWrite resultSSA fdSSA bufferSSA countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-                            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                            | None -> WitnessOutput.error "Sys.write pattern failed"
+                            // Look up buffer type from accumulator (memref or ptr)
+                            let bufferNodeId = argIds.[1]
+                            match MLIRAccumulator.recallNode bufferNodeId ctx.Accumulator with
+                            | Some (_, bufferType) ->
+                                // Witness emits call with actual buffer type (memref or ptr)
+                                // ARCHITECTURAL PRINCIPLE: Witnesses observe PSG and emit MLIR.
+                                // MLIR nanopasses transform MLIR. Clean separation of concerns.
+                                match tryMatch (pSysWriteTyped resultSSA fdSSA bufferSSA bufferType countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                                | None -> WitnessOutput.error "Sys.write pattern failed"
+                            | None -> WitnessOutput.error "Sys.write: Buffer argument not yet witnessed"
 
                         | IntrinsicModule.Sys, "read", [fdSSA; bufferSSA; countSSA] ->
                             match tryMatch (pSysRead resultSSA fdSSA bufferSSA countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
