@@ -2,352 +2,278 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](Commercial.md)
+[![Pipeline](https://img.shields.io/badge/Pipeline-25%20nanopasses-blue)]()
 
 <p align="center">
 🚧 <strong>Under Active Development</strong> 🚧<br>
-<em>This project is in early development and not intended for production use.</em>
+<em>Early development. Not production-ready.</em>
 </p>
 
-Firefly is an ahead-of-time F# compiler that produces native executables without managed runtime dependencies or garbage collection. Right now, we're bootstrapping this as a .NET CLI tool. Firefly leverages a newly forked [F# Native Compiler Services (FNCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, then generates MLIR through the Alex multi-targeting layer, and finally produces native binaries via LLVM.
+Ahead-of-time F# compiler producing native executables without managed runtime or garbage collection. Leverages [F# Native Compiler Services (FNCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
 
-## Design
+## Architecture
 
-Firefly transforms F# from a managed runtime language into a true systems programming language with deterministic memory guarantees. By orchestrating compilation through MLIR, Firefly provides flexible memory management strategies - from zero-allocation stack-based code to arena-managed bulk operations and structured concurrency through actors. This enables developers to write everything from embedded firmware to high-performance services while preserving F#'s elegant syntax and type safety.
+Firefly implements a true nanopass compiler architecture with ~25 distinct passes from F# source to native binary. Each pass performs a single, well-defined transformation on an intermediate representation.
 
-Central to Firefly's approach is the Program Semantic Graph (PSG) - a representation that combines syntactic structure with rich type information and optimization metadata. This enables comprehensive static analysis and allows the compiler to choose optimal memory strategies based on usage patterns.
-
-**Key Innovations:** 
-- **Flexible memory strategies** from zero-allocation to arena-based management
-- **Deterministic resource management** through RAII principles and compile-time tracking
-- **Type-preserving compilation** maintaining F#'s rich type system throughout the pipeline
-- **Progressive lowering** through MLIR dialects with continuous verification
-- **Platform-aware optimization** adapting to target hardware characteristics
-
-## Structure
-
-Firefly is organized into five major layers:
-
-### Pipeline Overview
+### Nanopass Pipeline
 
 ```
-F# Source Code
+F# Source
     ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ FrontEnd: FNCS Integration                                  │
-│ - Type checking & semantic analysis (FNCS)                  │
-│ - Native type universe (NTUKind)                            │
-│ - Intrinsic operations (Sys.*, NativePtr.*, etc.)           │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│ Program Semantic Graph (PSG) - Nanopass Pipeline            │
-│ Phase 1: Structural Construction (SynExpr → PSG nodes)      │
-│ Phase 2: Symbol Correlation (attach FSharpSymbol)           │
-│ Phase 3: Soft-Delete Reachability (mark unreachable)        │
-│ Phase 4: Typed Tree Overlay (type resolution via zipper)    │
+│ FNCS (6 phases)                                             │
+│ Phase 0: FCS parse and type check                           │
+│ Phase 1: Structural construction (SynExpr → PSG)            │
+│ Phase 2: Symbol correlation (attach FSharpSymbol)           │
+│ Phase 3: Soft-delete reachability (mark unreachable)        │
+│ Phase 4: Typed tree overlay (type resolution via zipper)    │
 │ Phase 5+: Enrichment (def-use, operations, saturation)      │
 └─────────────────────────────────────────────────────────────┘
-    ↓
+    ↓ PSG (Program Semantic Graph)
 ┌─────────────────────────────────────────────────────────────┐
-│ MiddleEnd: PSGElaboration + Alex                            │
-│ - PSGElaboration: Coeffect analysis (SSA, Platform, etc.)   │
-│ - Alex/Zipper: Traverse PSG with XParsec patterns           │
-│ - Alex/Elements: Atomic MLIR ops (internal)                 │
-│ - Alex/Patterns: Composable elision templates               │
-│ - Alex/Witnesses: Category-based code generation            │
+│ Alex Witnesses (16 category-selective generators)           │
+│ - ApplicationWitness: function calls                         │
+│ - LambdaWitness: function definitions                        │
+│ - ControlFlowWitness: if/while/for                           │
+│ - MemoryWitness: allocations                                 │
+│ - OptionWitness, SeqWitness, LazyWitness: type constructors  │
+│ - 10 additional witnesses for complete F# coverage          │
+└─────────────────────────────────────────────────────────────┘
+    ↓ Portable MLIR (memref, arith, func, index, scf)
+┌─────────────────────────────────────────────────────────────┐
+│ MLIR Structural Passes (4 passes)                           │
+│ 1. Structural folding (deduplicate function bodies)          │
+│ 2. Declaration collection (external function declarations)   │
+│ 3. Type normalization (insert memref.cast at call sites)     │
+│ 4. FFI conversion (delegated to mlir-opt)                    │
+└─────────────────────────────────────────────────────────────┘
+    ↓ MLIR (portable dialects)
+┌─────────────────────────────────────────────────────────────┐
+│ mlir-opt Dialect Lowering                                    │
+│ - memref → LLVM struct                                       │
+│ - arith → LLVM arithmetic                                    │
+│ - scf → cf → LLVM control flow                               │
+│ - index → platform word size                                 │
+└─────────────────────────────────────────────────────────────┘
+    ↓ LLVM IR
+┌─────────────────────────────────────────────────────────────┐
+│ LLVM + Clang                                                 │
+│ - Optimization passes                                        │
+│ - Code generation                                            │
+│ - Linking                                                    │
 └─────────────────────────────────────────────────────────────┘
     ↓
-MLIR (multiple dialects)
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│ MiddleEnd: MLIR Optimization                                │
-│ - Dialect lowering (scf→cf, arith→llvm, etc.)               │
-│ - MLIR-to-LLVM translation                                  │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-LLVM IR
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│ BackEnd: Native Code Generation                             │
-│ - LLVM compilation to object files                          │
-│ - Linking (freestanding, console, embedded)                 │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-Native Binary (no runtime dependencies)
+Native Binary (zero runtime dependencies)
 ```
 
-### Directory Layout
+## Architectural Principles
 
-- **`CLI/`** - Command-line interface (commands, diagnostics)
-- **`Core/`** - Core types, configuration, timing utilities
-- **`FrontEnd/`** - FNCS integration, platform templates
-- **`MiddleEnd/`**
-  - `PSGElaboration/` - Coeffect analysis (SSA, platform, mutability, etc.)
-  - `Alex/` - Multi-targeting MLIR generation layer
-    - `Dialects/Core/` - MLIR type system
-    - `CodeGeneration/` - Type mapping and sizing
-    - `Traversal/` - PSGZipper and XParsec combinators
-    - `Elements/` - Atomic MLIR operations (internal)
-    - `Patterns/` - Composable elision templates
-    - `Witnesses/` - Category-based code generators
-    - `Pipeline/` - Compilation orchestration
-  - `MLIROpt/` - MLIR dialect lowering
-- **`BackEnd/`** - LLVM code generation and linking
+**1. Nanopass Throughout**
+Unlike traditional compilers with monolithic passes, Firefly uses single-purpose transformations at every tier. Each pass is independently testable and inspectable with `-k` flag.
 
-### Key Principles
+**2. Coeffects Over Runtime**
+Pre-computed analysis (SSA assignment, platform resolution, mutability tracking) guides code generation. No runtime discovery.
 
-1. **True Nanopass Architecture** - PSG construction through distinct phases, each inspectable
-2. **Coeffects Over Runtime** - Pre-computed analysis (SSA, platform, lifetimes) guides generation
-3. **Zipper + XParsec** - Bidirectional PSG traversal with composable pattern matching
-4. **Element/Pattern/Witness** - Three-layer MLIR generation (atomic ops → compositions → observers)
-5. **Type Fidelity** - F# types map precisely to MLIR representations and only erased at the final lowering
+**3. Codata Witnesses**
+Witnesses observe PSG structure and return MLIR operations. They do not build or transform—observation only. This preserves PSG immutability.
+
+**4. Quotations as Semantic Carriers**
+F# quotations (`Expr<'T>`) carry platform constraints and peripheral descriptors through compilation as inspectable data structures. No runtime evaluation.
+
+**5. Zipper + XParsec**
+Bidirectional PSG traversal with composable pattern matching. Enables local reasoning without global context threading.
+
+**6. Portable Until Proven Backend-Specific**
+MiddleEnd emits only portable MLIR dialects (memref, arith, func, index, scf). Target-specific lowering delegated to mlir-opt and LLVM.
 
 ## Native Type System
 
-Firefly uses **F# Native Compiler Services (FNCS)** to provide a native type universe at compile time. Unlike traditional F# where types are .NET runtime types, FNCS types (`NTUKind`) map directly to native representations:
+FNCS provides native type universe (`NTUKind`) at compile time. Types are compiler intrinsics, not runtime constructs:
 
-- **Primitive types** - `i8`, `i16`, `i32`, `i64`, `f32`, `f64` map to MLIR integer/float types
-- **Pointers** - `nativeptr<'T>` becomes opaque LLVM pointers (`!llvm.ptr`)
-- **Structures** - Records and unions become LLVM structs with precise layouts
-- **Functions** - Function types preserve calling conventions
+- Primitives: `i8`, `i16`, `i32`, `i64`, `f32`, `f64` → MLIR integer/float types
+- Pointers: `nativeptr<'T>` → opaque pointers
+- Strings: Fat pointers `{ptr: memref<?xi8>, len: index}` → memref operations
+- Structures: Records/unions → MLIR struct types with precise layout
 
 ### Intrinsic Operations
 
-Platform operations are compiler intrinsics defined in FNCS, not library code:
+Platform operations defined in FNCS as compiler intrinsics:
 
-**System operations (`Sys` module):**
-- `Sys.write` - Direct syscall for file descriptor writes
-- `Sys.read` - Direct syscall for file descriptor reads
-- `Sys.exit` - Process termination
-- Platform-specific bindings (Linux x86_64, ARM64, etc.)
+**System (`Sys` module):**
+- `Sys.write(fd: i64, buf: nativeptr<i8>, count: i64): i64` — syscall
+- `Sys.read(fd: i64, buf: nativeptr<i8>, count: i64): i64` — syscall
+- `Sys.exit(code: i32): unit` — process termination
 
-**Memory operations (`NativePtr` module):**
-- `NativePtr.read` - Load from pointer
-- `NativePtr.write` - Store to pointer
-- `NativePtr.add` - Pointer arithmetic
+**Memory (`NativePtr` module):**
+- `NativePtr.read(ptr: nativeptr<'T>): 'T` — load
+- `NativePtr.write(ptr: nativeptr<'T>, value: 'T): unit` — store
+- `NativePtr.stackalloc(count: i64): nativeptr<'T>` — stack allocation
 
-**String operations (`NativeStr` module):**
-- Native UTF-8 strings (fat pointer: `{ptr: !llvm.ptr, len: i64}`)
-- Zero-copy string operations
+All intrinsics resolve to platform-specific MLIR during Alex traversal.
 
-All intrinsics are resolved at compile time to platform-specific implementations.
-
-## Hello World Example
-
-Firefly compiles idiomatic F# code to native binaries with no runtime dependencies:
+## Minimal Example
 
 ```fsharp
 module HelloWorld
 
-let greet name =
-    Console.writeln $"Hello, {name}!"
-
 [<EntryPoint>]
 let main argv =
-    Console.write "Enter your name: "
-    Console.readln()
-    |> greet
+    Console.write "Hello, World!"
     0
 ```
 
-**This compiles to a native binary** with:
-- No .NET runtime or garbage collector
-- Direct syscalls for I/O operations
-- Stack-based string allocation (zero heap)
-- Optimized via MLIR → LLVM
+Compiles to native binary with:
+- Zero .NET runtime dependencies
+- Direct syscalls for I/O
+- Stack-only allocation (no heap)
+- MLIR → LLVM optimization
 
-Compile and run:
 ```bash
-cd samples/console/FidelityHelloWorld/03_HelloWorldHalfCurried
 firefly compile HelloWorld.fidproj
-./HelloWorld  # Freestanding native binary
+./target/helloworld  # Freestanding native binary
 ```
 
-**The code looks like F#. The binary runs like C.**
+See `/samples/console/FidelityHelloWorld/` for progressive examples demonstrating pipes, currying, pattern matching, closures, sequences.
 
-### Progressive Examples
+## Project Configuration
 
-See `/samples/console/FidelityHelloWorld/` for progressive F# features:
-- `03_HelloWorldHalfCurried` - Pipe operators and string interpolation (shown above)
-- `04_HelloWorldFullCurried` - Currying and partial application
-- `05_AddNumbers` - Pattern matching with discriminated unions
-- `08_Option` - Option<'T> type (Some/None)
-- `11_Closures` - Closure capture with flat closures
-- `14_Lazy` - Lazy<'T> evaluation with memoization
-
-## 🎛️ Project Configuration
-
-Firefly projects use `.fidproj` files (TOML format):
+`.fidproj` files use TOML:
 
 ```toml
 [package]
 name = "HelloWorld"
 
 [compilation]
-memory_model = "stack_only"    # Current: stack-based allocation
-target = "native"               # Native binary output
+memory_model = "stack_only"
+target = "native"
 
 [build]
 sources = ["HelloWorld.fs"]
-output = "HelloWorld"
-output_kind = "console"         # "console" or "freestanding"
+output = "helloworld"
+output_kind = "console"  # or "freestanding"
 ```
 
-### Build Process
-
-1. FNCS type-checks F# source and produces PSG
-2. PSGElaboration computes coeffects (SSA, platform, etc.)
-3. Alex traverses PSG and generates MLIR
-4. MLIR optimizations and dialect lowering
-5. LLVM compilation to object files
-6. Linking to final binary
-
-## 🔬 Development Workflow
+## Build Workflow
 
 ```bash
-# Build the Firefly compiler
-cd src
-dotnet build
+# Build compiler
+cd src && dotnet build
 
-# Compile a project
+# Compile project
 firefly compile MyProject.fidproj
 
-# Keep intermediate files (-k flag) for debugging
+# Keep intermediates for inspection
 firefly compile MyProject.fidproj -k
-
-# Inspect intermediates (in target/intermediates/)
-# 01_psg0.json          - Initial PSG with reachability
-# 02_intrinsic_recipes.json - Intrinsic elaboration
-# 03_psg1.json          - PSG after intrinsic fold-in
-# 04_saturation_recipes.json - Baker saturation
-# 05_psg2.json          - Final PSG to Alex
-# 06_coeffects.json     - Coeffect analysis
-# 07_output.mlir        - Generated MLIR
-# 08_output.ll          - LLVM IR
-
-# Run regression tests
-cd tests/regression
-dotnet fsi Runner.fsx           # Run all samples
-dotnet fsi Runner.fsx -- --parallel  # Parallel execution
-dotnet fsi Runner.fsx -- --sample 01_HelloWorldDirect  # Specific sample
 ```
 
-Run the test suite: `cd tests/regression && dotnet fsi Runner.fsx`
+### Intermediate Artifacts
 
-## 📋 Roadmap
+With `-k` flag, inspect each nanopass output in `target/intermediates/`:
 
-Firefly development follows category-prefixed PRDs (Product Requirement Documents) organized by functional area. See [docs/PRDs/INDEX.md](docs/PRDs/INDEX.md) for complete details.
+| File | Nanopass Output |
+|------|----------------|
+| `01_psg0.json` | Initial PSG with reachability |
+| `02_intrinsic_recipes.json` | Intrinsic elaboration recipes |
+| `03_psg1.json` | PSG after intrinsic fold-in |
+| `04_saturation_recipes.json` | Baker saturation recipes |
+| `05_psg2.json` | Final saturated PSG to Alex |
+| `06_coeffects.json` | SSA, platform, mutability analysis |
+| `07_output.mlir` | Alex-generated portable MLIR |
+| `08_after_structural_folding.mlir` | Deduplicated function bodies |
+| `09_after_ffi_conversion.mlir` | FFI boundary preparation |
+| `10_after_declaration_collection.mlir` | External function declarations |
+| `11_after_type_normalization.mlir` | Call site type casts |
+| `12_output.ll` | LLVM IR after mlir-opt lowering |
 
-### ✅ Completed PRDs
+### Regression Testing
 
-**Foundation (F-xx) - Core Compilation** - Complete
-- F-01 through F-10: Samples 01-10 (HelloWorld, Pipes, Currying, DUs, Option, Result, Records)
-- Basic types, arithmetic, control flow, pattern matching
+```bash
+cd tests/regression
+dotnet fsi Runner.fsx                    # All samples
+dotnet fsi Runner.fsx -- --parallel      # Parallel execution
+dotnet fsi Runner.fsx -- --sample 01_HelloWorldDirect
+```
 
-### 🚧 In Progress
+## Directory Structure
 
-**Computation (C-xx) - Functional Abstractions**
-- ✅ **C-01: Flat Closures** (Sample 11) - MLKit-style closure capture with SSA cost model
-- ✅ **C-02: Higher-Order Functions** (Sample 12) - Function composition, map, filter, fold
-- ✅ **C-03: Recursion** (Sample 13) - Tail-call optimization
-- ✅ **C-04: Core Collections** (Sample 13a) - List, Map, Set with native implementations
-- ✅ **C-05: Lazy Evaluation** (Sample 14) - Lazy<'T> via flat closures + memoization
-- ✅ **C-06: Simple Sequences** (Sample 15) - Seq<'T> state machines with MoveNext protocol
-- ✅ **C-07: Sequence Operations** (Sample 16) - Seq.map, Seq.filter, Seq.fold, etc.
+```
+src/
+├── CLI/                    Command-line interface
+├── Core/                   Configuration, timing, diagnostics
+├── FrontEnd/               FNCS integration
+├── MiddleEnd/
+│   ├── PSGElaboration/     Coeffect analysis (SSA, platform, etc.)
+│   └── Alex/               MLIR generation layer
+│       ├── Dialects/       MLIR type system
+│       ├── CodeGeneration/ Type mapping, sizing
+│       ├── Traversal/      PSGZipper, XParsec combinators
+│       ├── Witnesses/      16 category-selective generators
+│       ├── Patterns/       Composable MLIR templates
+│       └── Pipeline/       Orchestration, MLIR passes
+└── BackEnd/                LLVM compilation, linking
+```
 
-### 📋 Planned PRDs
+## Multi-Stack Targeting
 
-**Async (A-xx) - Asynchronous Programming**
-- A-01: Basic Async (Sample 17) - Delimited continuations
-- A-02: Async/Await (Sample 18) - Async state machines
-- A-03: Async Parallel (Sample 19) - Parallel async execution
-- A-04 through A-06: Region-based memory management
+Portable MLIR enables diverse hardware targets:
 
-**IO (I-xx) - Network & File I/O**
-- I-01: Socket Basics (Sample 23)
-- I-02: WebSocket Echo (Sample 24)
+| Target | Status | Lowering Path |
+|--------|--------|---------------|
+| x86-64 CPU | ✅ Working | memref → LLVM struct |
+| ARM Cortex-M | 🚧 Planned | memref → custom embedded lowering |
+| CUDA GPU | 🚧 Planned | memref → SPIR-V/PTX lowering |
+| AMD ROCm | 🚧 Planned | memref → SPIR-V lowering |
+| Xilinx FPGA | 🚧 Planned | memref → HDL stream buffer |
+| CGRA | 🚧 Planned | memref → dataflow lowering |
+| NPU | 🚧 Planned | memref → tensor descriptor |
+| WebAssembly | 🚧 Planned | memref → WASM linear memory |
 
-**Desktop (D-xx) - Desktop Applications**
-- D-01: GTK Window (Sample 25)
-- D-02: WebView Basic (Sample 26)
+Previously blocked by hard-coded LLVM types. Now possible via target-specific mlir-opt lowering.
 
-**Threading (T-xx) - Concurrency**
-- T-01 through T-05: Threads, Mutex, Actors (Samples 27-31)
+## Documentation
 
-**Reactive (R-xx) - Reactive Extensions**
-- R-01 through R-03: Observable patterns (Samples 32-34)
+| Document | Content |
+|----------|---------|
+| `docs/Architecture_Canonical.md` | FNCS-first architecture, intrinsic modules |
+| `docs/PSG_Nanopass_Architecture.md` | Phase 0-5+ detailed design |
+| `docs/TypedTree_Zipper_Design.md` | Zipper traversal, XParsec integration |
+| `docs/XParsec_PSG_Architecture.md` | Pattern combinators, codata witnesses |
+| `docs/Baker_Architecture.md` | Phase 4 type resolution |
+| `docs/PRDs/INDEX.md` | Product requirement documents by category |
 
-**Embedded (E-xx) - MCU & Unikernel**
-- E-01: USB Device Stack
-- E-02: RTOS Integration
-- E-03: LVGL Basics
+## Roadmap
 
-### Active Feature Areas
+Development organized by category-prefixed PRDs. See [docs/PRDs/INDEX.md](docs/PRDs/INDEX.md).
 
-**WREN Stack (Alpha)**
-- **W**eb Assembly Runtime Environment **N**ative
-- Freestanding WebAssembly compilation target
-- WASM-specific intrinsics and memory model
-- Browser and WASI runtime support
-- Zero JavaScript interop overhead
+**Completed:**
+- F-01 through F-10: Foundation (samples 01-10)
+- C-01 through C-07: Closures, higher-order functions, recursion, sequences
 
-**Micro-Controller Support**
-- ARM Cortex-M targets (M0, M0+, M3, M4, M7)
-- Freestanding embedded execution
-- Bare-metal hardware access
-- Interrupt-driven programming model
-- Target platforms:
-  - STM32F7 and STM32L5 (STMicroelectronics)
-  - Renesas RA6M5 (Renesas)
-  - RP2040 (Raspberry Pi Pico)
+**In Progress:**
+- A-01 through A-06: Async workflows, region-based memory
+- Multi-stack targeting (ARM Cortex-M, GPU, FPGA)
 
-### Future Directions
+**Planned:**
+- I-01, I-02: Socket I/O, WebSocket
+- T-01 through T-05: Threads, actors, parallel execution
+- E-01 through E-03: Embedded MCU support
 
-**Advanced Type System:**
-- Linear types for zero-copy operations
-- Affine types for resource management
-- Region-based memory safety
+## Contributing
 
-**Concurrency & Distribution:**
-- **Olivier**: Actor-based memory isolation with per-actor arenas
-- **Prospero**: Cross-process memory coordination
-- **BAREWire**: Zero-copy serialization for distributed systems
-
-**Platform Expansion:**
-- WebAssembly via WAMI dialect
-- Embedded ARM Cortex-M (STM32, nRF)
-- GPU compute kernels
-- RISC-V support
-
-## 🤝 Contributing
-
-While we're working internally, we will be welcoming contributions after establishing a solid baseline. Areas of particular interest:
-
-- **Memory optimization patterns** - Novel approaches to deterministic memory management
-- **MLIR dialect design** - Abstracting away LLVM calls that we make now in the MiddleEnd
-- **Platform targets** - Backend support for new architectures
-- **First Stages of Verification** - F\* integration and related proof scaffolding of memory safety properties
+Areas of interest:
+- MLIR dialect design for novel hardware targets
+- Memory optimization patterns
+- Nanopass transformations for advanced F# features
+- F* integration for proof-carrying code
 
 ## License
 
-Firefly is dual-licensed under both the Apache License 2.0 and a Commercial License.
+Dual-licensed under Apache License 2.0 and Commercial License. See [Commercial.md](Commercial.md) for commercial use. Patent notice: U.S. Patent Application No. 63/786,247 "System and Method for Zero-Copy Inter-Process Communication Using BARE Protocol". See [PATENTS.md](PATENTS.md).
 
-### Open Source License
+## Acknowledgments
 
-For open source projects, academic use, non-commercial applications, and internal tools, use Firefly under the **Apache License 2.0**.
-
-### Commercial License
-
-A Commercial License is required for incorporating Firefly into commercial products or services. See [Commercial.md](Commercial.md) for details.
-
-### Patent Notice
-
-Firefly is part of the Fidelity Framework, which includes technology covered by U.S. Patent Application No. 63/786,247 "System and Method for Zero-Copy Inter-Process Communication Using BARE Protocol". See [PATENTS.md](PATENTS.md) for licensing details.
-
-## 🙏 Acknowledgments
-
-- **Don Syme and F# Contributors**: For creating an elegant functional language
-- **MLIR Community**: For the multi-level IR infrastructure
-- **LLVM Community**: For robust code generation
-- **Rust Community**: For demonstrating zero-cost abstractions in systems programming
-- **Fable Project**: For showing F# can target alternative environments
+- **Don Syme and F# Contributors**: Quotations, active patterns, computation expressions enable self-hosting
+- **MLIR Community**: Multi-level IR infrastructure
+- **LLVM Project**: Robust code generation
+- **Nanopass Framework**: Compiler architecture principles
+- **Triton-CPU**: MLIR-based compilation patterns
