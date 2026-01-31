@@ -15,6 +15,7 @@ open Alex.Elements.MLIRElements
 open Alex.Elements.MemRefElements
 open Alex.Elements.LLVMElements
 open Alex.Elements.ArithElements
+open Alex.Elements.IndexElements
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.CodeGeneration.TypeMapping
 
@@ -249,11 +250,21 @@ let pNativePtrWrite (valueSSA: SSA) (ptrSSA: SSA) (elemType: MLIRType) : PSGPars
     }
 
 /// Convert memref to pointer for FFI boundaries
-/// Uses builtin.unrealized_conversion_cast for boundary crossing
+/// Extracts pointer as index, then casts to platform word
 let pMemRefToPtr (resultSSA: SSA) (memrefSSA: SSA) (memrefTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! extractOp = pExtractBasePtr resultSSA memrefSSA memrefTy
-        return ([extractOp], TRValue { SSA = resultSSA; Type = TPtr })
+        // Extract pointer as index (portable)
+        let indexSSA = SSA.V 999996  // Temporary SSA for index result
+        let! extractOp = pExtractBasePtr indexSSA memrefSSA memrefTy
+
+        // Get platform word size from XParsec state
+        let! state = getUserState
+        let platformWordTy = state.Platform.PlatformWordType
+
+        // Cast index → platform word (i64 on x64, i32 on ARM32)
+        let! castOp = pIndexCastS resultSSA indexSSA platformWordTy
+
+        return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = platformWordTy })
     }
 
 /// Build NativePtr.read pattern
@@ -274,18 +285,62 @@ let pNativePtrRead (resultSSA: SSA) (ptrSSA: SSA) : PSGParser<MLIROp list * Tran
 
 /// Extract field from struct (e.g., string.Pointer, string.Length)
 /// Maps field name to index for known struct layouts
+/// For memref types (strings), uses memref operations instead of llvm.extractvalue
 let pStructFieldGet (resultSSA: SSA) (structSSA: SSA) (fieldName: string) (structTy: MLIRType) (fieldTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
-        // Map field name to index for known struct types
-        // String fat pointer: [Pointer=0, Length=1]
-        let fieldIndex =
+        // Check if structTy is a memref (strings are now memref<?xi8>)
+        match structTy with
+        | TMemRef _ | TMemRefScalar _ ->
+            // String as memref - use memref operations
             match fieldName with
-            | "Pointer" -> 0
-            | "Length" -> 1
-            | _ -> failwith $"Unknown field name: {fieldName}"
+            | "Pointer" ->
+                // Extract base pointer from memref descriptor as index, then cast to target type
+                // IMPORTANT: Convert TPtr to platform word type for portable MLIR
+                let! state = getUserState
+                let targetTy =
+                    match fieldTy with
+                    | TPtr -> state.Platform.PlatformWordType  // TPtr → i64/i32 (portable!)
+                    | ty -> ty
 
-        // Extract field value - pass struct type for MLIR type annotation
-        let! ops = pExtractField structSSA fieldIndex resultSSA structTy
+                match targetTy with
+                | TIndex ->
+                    // No cast needed - result is index
+                    let! extractOp = pExtractBasePtr resultSSA structSSA structTy
+                    return ([extractOp], TRValue { SSA = resultSSA; Type = targetTy })
+                | _ ->
+                    // Cast index → targetTy (e.g., index → i64 for x86-64, index → i32 for ARM32)
+                    let indexSSA = SSA.V 999995  // Temporary SSA for index result
+                    let! extractOp = pExtractBasePtr indexSSA structSSA structTy
+                    let! castOp = pIndexCastS resultSSA indexSSA targetTy
+                    return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = targetTy })
+            | "Length" ->
+                // Extract length using memref.dim (returns index type)
+                let dimIndexSSA = SSA.V 999998  // Temporary SSA for constant 0
+                let! constOp = pConstI dimIndexSSA 0L TIndex
 
-        return (ops, TRValue { SSA = resultSSA; Type = fieldTy })
+                // Check if we need to cast index → fieldTy (for FFI boundaries)
+                match fieldTy with
+                | TIndex ->
+                    // No cast needed - result is index
+                    let! dimOp = pMemRefDim resultSSA structSSA dimIndexSSA structTy
+                    return ([constOp; dimOp], TRValue { SSA = resultSSA; Type = fieldTy })
+                | _ ->
+                    // Cast index → fieldTy (e.g., index → i64 for x86-64 syscall, index → i32 for ARM32)
+                    let dimResultSSA = SSA.V 999997  // Temporary SSA for dim result
+                    let! dimOp = pMemRefDim dimResultSSA structSSA dimIndexSSA structTy
+                    let! castOp = pIndexCastS resultSSA dimResultSSA fieldTy
+                    return ([constOp; dimOp; castOp], TRValue { SSA = resultSSA; Type = fieldTy })
+            | _ ->
+                return failwith $"Unknown memref field name: {fieldName}"
+        | _ ->
+            // LLVM struct - use extractvalue (for closures, option, etc.)
+            let fieldIndex =
+                match fieldName with
+                | "Pointer" -> 0
+                | "Length" -> 1
+                | _ -> failwith $"Unknown field name: {fieldName}"
+
+            // Extract field value - pass struct type for MLIR type annotation
+            let! ops = pExtractField structSSA fieldIndex resultSSA structTy
+            return (ops, TRValue { SSA = resultSSA; Type = fieldTy })
     }

@@ -95,6 +95,9 @@ let rec visitAllNodes
             // InlineOps go to current scope accumulator (may be nested)
             MLIRAccumulator.addOps output.InlineOps accumulator
             // TopLevelOps go to ROOT accumulator (module-level only)
+            if not (List.isEmpty output.TopLevelOps) then
+                let funcDefCount = output.TopLevelOps |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> true | _ -> false) |> List.length
+                printfn "[DEBUG] Node %d: Adding %d TopLevelOps (%d FuncDefs) to RootAccumulator" (NodeId.value currentNode.Id) (List.length output.TopLevelOps) funcDefCount
             MLIRAccumulator.addOps output.TopLevelOps focusedCtx.RootAccumulator
 
             // Bind result if value (global binding)

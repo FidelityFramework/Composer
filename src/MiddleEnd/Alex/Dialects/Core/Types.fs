@@ -34,6 +34,7 @@ type MLIRType =
     | TArray of int * MLIRType              // Fixed-size array
     | TFunc of MLIRType list * MLIRType     // Function type (args, return)
     | TMemRef of MLIRType                   // MemRef type (dynamic 1D)
+    | TMemRefStatic of int * MLIRType       // Static-sized MemRef type (1D with known size)
     | TMemRefScalar of MLIRType             // Scalar MemRef type (0D)
     | TVector of int * MLIRType             // Vector type (SIMD)
     | TIndex                                // Index type
@@ -149,7 +150,10 @@ type MemRefOp =
     | Store of SSA * SSA * SSA list * MLIRType                         // value, memref, indices, type
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment
     | SubView of SSA * SSA * SSA list * MLIRType                       // result, source, offsets, resultType
-    | ExtractBasePtr of SSA * SSA * MLIRType                           // result, memref, memrefType → !llvm.ptr (for FFI)                       // result, source, offsets, resultType
+    | ExtractBasePtr of SSA * SSA * MLIRType                           // result, memref, memrefType → !llvm.ptr (for FFI)
+    | GetGlobal of SSA * string * MLIRType                             // result, globalName, memrefType
+    | Dim of SSA * SSA * SSA * MLIRType                                // result, memref, dimIndex, memrefType (returns index)
+    | Cast of SSA * SSA * MLIRType * MLIRType                          // result, source, srcType, destType (memref type cast)
 
 /// LLVM dialect operations
 type LLVMOp =
@@ -298,7 +302,6 @@ type MLIROp =
     | Region of MLIROp list                                         // blocks
     // Module-level declarations (backend-agnostic)
     | GlobalString of string * string * int                         // name, content, byteLength
-    | AddressOf of SSA * string * MLIRType                          // result, globalName, ptrType
 
 /// Structured Control Flow (SCF) dialect operations
 and SCFOp =

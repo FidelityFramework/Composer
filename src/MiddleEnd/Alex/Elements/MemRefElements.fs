@@ -61,3 +61,25 @@ let pExtractBasePtr (result: SSA) (memref: SSA) (memrefTy: MLIRType) : PSGParser
     parser {
         return MLIROp.MemRefOp (MemRefOp.ExtractBasePtr (result, memref, memrefTy))
     }
+
+/// Get reference to global memref
+/// Emits: %result = memref.get_global @globalName : memrefType
+let pMemRefGetGlobal (result: SSA) (globalName: string) (memrefType: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.MemRefOp (MemRefOp.GetGlobal (result, globalName, memrefType))
+    }
+
+/// Get memref dimension size (replaces struct length extraction)
+/// Emits: %result = memref.dim %memref, %dimIndex : memref<...>
+/// Used to extract string length from memref descriptor for FFI/syscalls
+let pMemRefDim (result: SSA) (memref: SSA) (dimIndex: SSA) (memrefType: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.MemRefOp (MemRefOp.Dim (result, memref, dimIndex, memrefType))
+    }
+
+/// Cast memref type (e.g., static → dynamic dimensions)
+/// Emits: %result = memref.cast %source : srcType to destType
+let pMemRefCast (result: SSA) (source: SSA) (srcType: MLIRType) (destType: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.MemRefOp (MemRefOp.Cast (result, source, srcType, destType))
+    }

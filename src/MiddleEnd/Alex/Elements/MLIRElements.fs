@@ -50,9 +50,3 @@ let pGlobalString (name: string) (content: string) (byteLength: int) : PSGParser
         return GlobalString (name, content, byteLength)
     }
 
-/// AddressOf - get pointer to global symbol
-let pAddressOf (ssa: SSA) (globalName: string) (ty: MLIRType) : PSGParser<MLIROp> =
-    parser {
-        do! emitTrace "pAddressOf" (sprintf "ssa=%A, globalName=%s, ty=%A" ssa globalName ty)
-        return AddressOf (ssa, globalName, ty)
-    }

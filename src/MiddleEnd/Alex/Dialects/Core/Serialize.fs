@@ -42,6 +42,8 @@ let rec typeToString (ty: MLIRType) : string =
         sprintf "(%s) -> %s" paramStrs (typeToString retType)
     | TMemRef elemTy ->
         sprintf "memref<?x%s>" (typeToString elemTy)
+    | TMemRefStatic (size, elemTy) ->
+        sprintf "memref<%dx%s>" size (typeToString elemTy)
     | TMemRefScalar elemTy ->
         sprintf "memref<%s>" (typeToString elemTy)
     | TVector (count, elemTy) ->
@@ -185,10 +187,23 @@ let memrefOpToString (op: MemRefOp) : string =
         sprintf "%s = memref.subview %s[%s] : %s"
             (ssaToString result) (ssaToString source) offsetsStr (typeToString resultType)
     | MemRefOp.ExtractBasePtr (result, memref, ty) ->
-        // builtin.unrealized_conversion_cast is the standard MLIR way to handle
-        // type conversions at boundaries (FFI, dialect boundaries, etc.)
-        sprintf "%s = builtin.unrealized_conversion_cast %s : %s to !llvm.ptr"
+        // Extract pointer as platform word (index type) - PORTABLE!
+        // This replaces the old LLVM-specific unrealized_conversion_cast
+        // Returns index (platform word size), caller must cast to target type if needed
+        sprintf "%s = memref.extract_aligned_pointer_as_index %s : %s -> index"
             (ssaToString result) (ssaToString memref) (typeToString ty)
+    | MemRefOp.GetGlobal (result, globalName, memrefType) ->
+        // memref.get_global @symbol_name : memref<...>
+        sprintf "%s = memref.get_global %s : %s"
+            (ssaToString result) globalName (typeToString memrefType)
+    | MemRefOp.Dim (result, memref, index, memrefType) ->
+        // memref.dim %memref, %index : memref<...>
+        sprintf "%s = memref.dim %s, %s : %s"
+            (ssaToString result) (ssaToString memref) (ssaToString index) (typeToString memrefType)
+    | MemRefOp.Cast (result, source, srcType, destType) ->
+        // memref.cast %source : srcType to destType
+        sprintf "%s = memref.cast %s : %s to %s"
+            (ssaToString result) (ssaToString source) (typeToString srcType) (typeToString destType)
 
 /// Serialize LLVMOp to MLIR text
 let llvmOpToString (op: LLVMOp) : string =
@@ -275,6 +290,7 @@ let rec opToString (op: MLIROp) : string =
     | MLIROp.FuncOp fop ->
         match fop with
         | FuncDef (name, args, retTy, body, _visibility) ->
+            printfn "[DEBUG] Serializing FuncDef %s with %d body ops" name (List.length body)
             let argsStr = args |> List.map (fun (ssa, ty) -> sprintf "%s: %s" (ssaToString ssa) (typeToString ty)) |> String.concat ", "
             let bodyStr = body |> List.map opToString |> String.concat "\n    "
             sprintf "func.func @%s(%s) -> %s {\n    %s\n}" name argsStr (typeToString retTy) bodyStr
@@ -307,12 +323,21 @@ let rec opToString (op: MLIROp) : string =
         // Escape the string content for MLIR
         let escaped = content.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\t", "\\t")
         // Name already contains @ prefix from deriveGlobalRef
-        sprintf "llvm.mlir.global internal constant %s(\"%s\") : !llvm.array<%d x i8>" name escaped byteLength
-    | MLIROp.AddressOf (result, globalName, ty) ->
-        // Name already contains @ prefix from deriveGlobalRef
-        sprintf "%s = llvm.mlir.addressof %s : %s" (ssaToString result) globalName (typeToString ty)
+        // Emit memref.global (portable MLIR) instead of llvm.mlir.global
+        // Use dense<...> for array literal initialization
+        let bytes = System.Text.Encoding.UTF8.GetBytes(content)
+        let denseStr = bytes |> Array.map (sprintf "%d") |> String.concat ", "
+        sprintf "memref.global \"private\" constant %s : memref<%dxi8> = dense<[%s]>" name byteLength denseStr
+    | MLIROp.IndexOp iop ->
+        match iop with
+        | IndexOp.IndexCastS (result, operand, destTy) ->
+            sprintf "%s = index.casts %s : index to %s" (ssaToString result) (ssaToString operand) (typeToString destTy)
+        | IndexOp.IndexCastU (result, operand, destTy) ->
+            sprintf "%s = index.castu %s : index to %s" (ssaToString result) (ssaToString operand) (typeToString destTy)
+        | _ ->
+            sprintf "// TODO: Serialize IndexOp %A" iop
     | _ ->
-        // For now, return placeholder for unimplemented operations (SCFOp, CFOp, IndexOp, VectorOp, Block, Region)
+        // For now, return placeholder for unimplemented operations (SCFOp, CFOp, VectorOp, Block, Region)
         sprintf "// TODO: Serialize %A" op
 
 /// Serialize a list of operations with proper indentation

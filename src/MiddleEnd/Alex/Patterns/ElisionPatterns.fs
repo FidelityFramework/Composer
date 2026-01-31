@@ -841,10 +841,10 @@ let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (arch: Architecture) : PSGPars
 // STRING PATTERNS
 // ═══════════════════════════════════════════════════════════
 
-/// Build string literal: addressof global + construct fat pointer struct
-/// SSAs: [0] = addressof ptr, [1] = length const, [2] = undef, [3] = insert ptr, [4] = insert length (result)
+/// Build string literal: get reference to global memref (portable MLIR)
+/// SSAs: [0-3] = unused (legacy), [4] = memref.get_global result
 /// Returns: ((ops, globalName, content, byteLength), result)
-/// NOTE: Witness must emit GlobalString to TopLevelOps separately
+/// NOTE: Witness must emit memref.global to TopLevelOps separately
 let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
                          : PSGParser<(MLIROp list * string * string * int) * TransferResult> =
     parser {
@@ -861,61 +861,62 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
 
         do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
 
-        // String type: {ptr: nativeptr<byte>, length: int}
-        let ptrTy = TPtr
-        let lengthTy = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType arch NTUKind.NTUint64
-        let stringTy = TStruct [ptrTy; lengthTy]
+        // String type: memref<Nxi8> where N is byte length (static-sized memref for literals)
+        let stringTy = TMemRefStatic (byteLength, TInt I8)
 
-        do! emitTrace "pBuildStringLiteral.types" (sprintf "ptrTy=%A, lengthTy=%A, stringTy=%A" ptrTy lengthTy stringTy)
+        do! emitTrace "pBuildStringLiteral.types" (sprintf "stringTy=%A" stringTy)
 
-        // InlineOps: Build string struct {ptr, length}
-        let ptrSSA = ssas.[0]
-        let lengthSSA = ssas.[1]
-        let undefSSA = ssas.[2]
-        let withPtrSSA = ssas.[3]
-        let resultSSA = ssas.[4]
+        // InlineOps: Get reference to global memref
+        let resultSSA = ssas.[4]  // Use last SSA for result (others unused for now)
 
-        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "ptr=%A, len=%A, undef=%A, withPtr=%A, result=%A" ptrSSA lengthSSA undefSSA withPtrSSA resultSSA)
+        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "result=%A" resultSSA)
 
-        do! emitTrace "pBuildStringLiteral.calling_pAddressOf" (sprintf "ptrSSA=%A, globalName=%s, ptrTy=%A" ptrSSA globalName ptrTy)
-        let! addressOfOp = pAddressOf ptrSSA globalName ptrTy
-        
-        do! emitTrace "pBuildStringLiteral.calling_pConstI" (sprintf "lengthSSA=%A, byteLength=%d, lengthTy=%A" lengthSSA byteLength lengthTy)
-        let! lengthConstOp = pConstI lengthSSA (int64 byteLength) lengthTy
-        
-        do! emitTrace "pBuildStringLiteral.calling_pUndef" (sprintf "undefSSA=%A, stringTy=%A" undefSSA stringTy)
-        let! undefOp = pUndef undefSSA stringTy
-        
-        do! emitTrace "pBuildStringLiteral.calling_pInsertValue_ptr" (sprintf "withPtrSSA=%A, undefSSA=%A, ptrSSA=%A" withPtrSSA undefSSA ptrSSA)
-        let! insertPtrOp = pInsertValue withPtrSSA undefSSA ptrSSA [0] stringTy
-        
-        do! emitTrace "pBuildStringLiteral.calling_pInsertValue_len" (sprintf "resultSSA=%A, withPtrSSA=%A, lengthSSA=%A" resultSSA withPtrSSA lengthSSA)
-        let! insertLenOp = pInsertValue resultSSA withPtrSSA lengthSSA [1] stringTy
+        // memref.get_global @globalName : memref<?xi8>
+        do! emitTrace "pBuildStringLiteral.calling_pMemRefGetGlobal" (sprintf "resultSSA=%A, globalName=%s, stringTy=%A" resultSSA globalName stringTy)
+        let! getGlobalOp = pMemRefGetGlobal resultSSA globalName stringTy
 
-        do! emitTrace "pBuildStringLiteral.elements_complete" "All Elements succeeded"
+        do! emitTrace "pBuildStringLiteral.elements_complete" "memref.get_global succeeded"
 
-        let inlineOps = [addressOfOp; lengthConstOp; undefOp; insertPtrOp; insertLenOp]
+        let inlineOps = [getGlobalOp]
         let result = TRValue { SSA = resultSSA; Type = stringTy }
 
         do! emitTrace "pBuildStringLiteral.returning" (sprintf "Returning %d ops" (List.length inlineOps))
 
-        // Return ops + (globalName, content, byteLength) for witness to emit GlobalString
+        // Return ops + (globalName, content, byteLength) for witness to emit memref.global
         return ((inlineOps, globalName, content, byteLength), result)
     }
 
-/// String as fat pointer: {ptr: nativeptr<byte>, length: int}
-/// Extract pointer field (index 0)
+/// Extract pointer from memref (for FFI/syscalls like Sys.write)
+/// String is now memref<?xi8>, extract base pointer as index then cast to target type
 let pStringGetPtr (stringSSA: SSA) (ptrSSA: SSA) (ptrTy: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        let! extractPtrOp = pExtractValue ptrSSA stringSSA [0] ptrTy
-        return [extractPtrOp]
+        let memrefTy = TMemRef (TInt I8)
+
+        // Check if we need to cast index → ptrTy
+        match ptrTy with
+        | TIndex ->
+            // No cast needed - result is index
+            let! extractOp = Alex.Elements.MemRefElements.pExtractBasePtr ptrSSA stringSSA memrefTy
+            return [extractOp]
+        | _ ->
+            // Extract as index, then cast to target type (e.g., i64 for x86-64, i32 for ARM32)
+            let indexSSA = SSA.V 999994  // Temporary SSA for index result
+            let! extractOp = Alex.Elements.MemRefElements.pExtractBasePtr indexSSA stringSSA memrefTy
+            let! castOp = Alex.Elements.IndexElements.pIndexCastS ptrSSA indexSSA ptrTy
+            return [extractOp; castOp]
     }
 
-/// Extract length field (index 1)
+/// Extract length from memref descriptor (for FFI/syscalls)
+/// Uses memref.dim to get the dynamic size
 let pStringGetLength (stringSSA: SSA) (lengthSSA: SSA) (lengthTy: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        let! extractLenOp = pExtractValue lengthSSA stringSSA [1] lengthTy
-        return [extractLenOp]
+        // memref.dim %memref, %c0 : memref<?xi8>
+        // Need constant 0 for dimension index (0th dimension = length)
+        let dimIndexSSA = SSA.V 999999  // Temporary SSA for constant
+        let memrefTy = TMemRef (TInt I8)
+        let! constOp = pConstI dimIndexSSA 0L TIndex
+        let! dimOp = Alex.Elements.MemRefElements.pMemRefDim lengthSSA stringSSA dimIndexSSA memrefTy
+        return [constOp; dimOp]
     }
 
 /// Construct string from pointer and length

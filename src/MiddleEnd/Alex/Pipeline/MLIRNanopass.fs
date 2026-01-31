@@ -227,7 +227,6 @@ let structuralFoldingPass (operations: MLIROp list) : MLIROp list =
         | MLIROp.LLVMOp (LLVMOp.Undef (ssa, _)) -> [ssa]
 
         // Other operations that define SSAs
-        | MLIROp.AddressOf (ssa, _, _) -> [ssa]
         | MLIROp.FuncOp (FuncOp.FuncCall (Some ssa, _, _, _)) -> [ssa]
 
         // FuncDef - recursively collect SSAs from body
@@ -333,7 +332,11 @@ let structuralFoldingPass (operations: MLIROp list) : MLIROp list =
 /// 4. Emit FuncDecl operations
 /// 5. Remove any existing FuncDecl operations from witnesses (duplicates)
 let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
-    
+
+    /// NO FFI DECLARATIONS
+    /// External functions (write, Console.write, etc.) are resolved by MLIR and the linker
+    /// MLIR allows calls to undeclared external functions - they'll be linked later
+
     /// Recursively collect all function calls from operations
     let rec collectCalls (op: MLIROp) : (string * MLIRType list * MLIRType) list =
         match op with
@@ -368,10 +371,10 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
     
     /// Collect all function calls from all operations
     let allCalls = operations |> List.collect collectCalls
-    
+
     /// Group calls by function name and pick representative signature
-    /// FUTURE: Could unify signatures more intelligently (e.g., widening types, adding casts)
-    /// CURRENT: First signature wins (deterministic - depends on post-order traversal)
+    /// Generate declarations for ALL called functions based on call site types
+    /// MLIR requires declarations; it will handle external linkage during lowering
     let declarations =
         allCalls
         |> List.groupBy (fun (name, _, _) -> name)
@@ -386,13 +389,87 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
         |> List.filter (function
             | MLIROp.FuncOp (FuncOp.FuncDecl _) -> false  // Remove witness-emitted declarations
             | _ -> true)
-    
-    // Emit collected declarations at the top, followed by cleaned operations
+
+    // Emit only internal function declarations (skip FFI - let MLIR/linker handle)
     if List.isEmpty declarations then
         withoutWitnessDecls
     else
-        printfn "[Alex] Declaration collection: Emitted %d function declarations" (List.length declarations)
+        printfn "[Alex] Declaration collection: Emitted %d internal function declarations" (List.length declarations)
         declarations @ withoutWitnessDecls
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPE NORMALIZATION PASS (Insert casts at call sites)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Insert memref.cast operations at call sites where argument types don't match parameter types
+/// This handles cases like memref<13xi8> → memref<?xi8> (static → dynamic dimension cast)
+let typeNormalizationPass (operations: MLIROp list) : MLIROp list =
+    // Create transform context for fresh SSA generation (platform unused in this pass)
+    let ctx = {
+        Operations = operations
+        Platform = {
+            RuntimeMode = RuntimeMode.Console
+            TargetOS = OSFamily.Linux
+            TargetArch = Architecture.X86_64
+            PlatformWordType = TInt I64
+            Bindings = Map.empty
+            NeedsStartWrapper = false
+        }
+        FreshSSACounter = ref 0
+    }
+
+    // Collect function declarations to get canonical parameter types
+    let declarations =
+        operations
+        |> List.choose (function
+            | MLIROp.FuncOp (FuncOp.FuncDecl (name, paramTypes, _, _)) -> Some (name, paramTypes)
+            | _ -> None)
+        |> Map.ofList
+
+    /// Check if two memref types are compatible but require a cast
+    let needsMemRefCast (argTy: MLIRType) (paramTy: MLIRType) : bool =
+        match argTy, paramTy with
+        // Static → Dynamic memref cast (e.g., memref<13xi8> → memref<?xi8>)
+        | TMemRefStatic (_, elemTy1), TMemRef elemTy2 when elemTy1 = elemTy2 -> true
+        // Zero-sized → Dynamic memref cast (e.g., memref<0xi8> → memref<?xi8>)
+        | TMemRefStatic (0, elemTy1), TMemRef elemTy2 when elemTy1 = elemTy2 -> true
+        | _ -> false
+
+    /// Transform a single operation, inserting casts where needed
+    let rec transformOp (op: MLIROp) : MLIROp list =
+        match op with
+        | MLIROp.FuncOp (FuncOp.FuncCall (resultOpt, funcName, args, retTy)) ->
+            // Check if we have a declaration for this function
+            match Map.tryFind funcName declarations with
+            | Some paramTypes when paramTypes.Length = args.Length ->
+                // Check each argument against parameter type
+                let castsAndArgs =
+                    List.zip args paramTypes
+                    |> List.map (fun (arg, paramTy) ->
+                        if needsMemRefCast arg.Type paramTy then
+                            // Insert cast: fresh SSA = memref.cast arg.SSA : arg.Type to paramTy
+                            let castSSA = MLIRTransformContext.freshSSA ctx
+                            let castOp = MLIROp.MemRefOp (MemRefOp.Cast (castSSA, arg.SSA, arg.Type, paramTy))
+                            Some castOp, { SSA = castSSA; Type = paramTy }
+                        else
+                            None, arg)
+
+                let casts = castsAndArgs |> List.choose fst
+                let newArgs = castsAndArgs |> List.map snd
+                let newCall = MLIROp.FuncOp (FuncOp.FuncCall (resultOpt, funcName, newArgs, retTy))
+                casts @ [newCall]
+            | _ ->
+                // No declaration or argument count mismatch - leave unchanged
+                [op]
+
+        | MLIROp.FuncOp (FuncOp.FuncDef (name, parameters, retTy, body, vis)) ->
+            // Recursively transform body operations
+            let newBody = body |> List.collect transformOp
+            [MLIROp.FuncOp (FuncOp.FuncDef (name, parameters, retTy, newBody, vis))]
+
+        | _ -> [op]
+
+    operations |> List.collect transformOp
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS ORCHESTRATION (Apply All Passes)
@@ -471,9 +548,25 @@ let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (
         printfn "[Alex] Wrote nanopass intermediate: 10_after_declaration_collection.mlir"
     | None -> ()
 
+    // Phase 4: Call Site Type Normalization Pass
+    //
+    // Insert memref.cast operations at call sites where argument types don't exactly match
+    // declared parameter types. This is required for MLIR validity - memref<13xi8> and memref<?xi8>
+    // are incompatible without an explicit cast.
+    let afterTypeNorm = typeNormalizationPass afterDecls
+
+    // Serialize Phase 4 intermediate (if -k flag enabled)
+    match intermediatesDir with
+    | Some dir ->
+        let mlirText = Alex.Dialects.Core.Serialize.moduleToString "main" afterTypeNorm
+        let filePath = System.IO.Path.Combine(dir, "11_after_type_normalization.mlir")
+        System.IO.File.WriteAllText(filePath, mlirText)
+        printfn "[Alex] Wrote nanopass intermediate: 11_after_type_normalization.mlir"
+    | None -> ()
+
     // Future passes will be composed here:
-    // let afterDCont = dcontLoweringPass afterDecls
+    // let afterDCont = dcontLoweringPass afterTypeNorm
     // let afterInet = inetLoweringPass afterDCont
     // let afterBackend = backendTargetingPass afterInet
 
-    afterDecls
+    afterTypeNorm

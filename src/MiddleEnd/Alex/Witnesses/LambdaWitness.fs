@@ -118,9 +118,9 @@ let private witnessLambdaWith (nanopasses: Nanopass list) (ctx: WitnessContext) 
             let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some returnType))
             let completeBody = bodyOps @ [returnOp]
 
-            // Build func.func @main wrapper (portable)
-            // Parameters: argv as !llvm.struct<(!llvm.ptr, i64)> fat pointer
-            let argvType = TStruct [TPtr; TInt I64]
+            // Build func.func @main wrapper (portable MLIR)
+            // Parameters: argv as memref<?xi8> (dynamic-sized buffer)
+            let argvType = TMemRef (TInt I8)
             let funcParams = [(SSA.Arg 0, argvType)]
             let funcDef = FuncOp.FuncDef("main", funcParams, returnType, completeBody, Public)
 

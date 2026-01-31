@@ -17,8 +17,7 @@
 **END of every context window:**
 1. Update checklist (✅/🔄)
 2. Document blockers in "Session Notes"
-3. Commit if compilable
-4. `mcp__serena-local__edit_memory` to persist progress
+3. `mcp__serena-local__edit_memory` to persist progress
 
 ### Assignment Details
 
@@ -37,6 +36,7 @@
 4. Codata principle — witnesses observe and return, never build or compute
 5. Gap emergence — if transform logic needed, return `TRError` and fix in FNCS
 6. Incremental validation — compile + test after EACH witness
+7. **NEVER create git commits** — that is the user's responsibility
 
 ### Alex Architecture
 ```

@@ -83,8 +83,9 @@ let mapNTUKindToMLIRType (arch: Architecture) (kind: NTUKind) : MLIRType =
     | NTUKind.NTUunit -> TInt I32  // Unit represented as i32 0
     // Pointers
     | NTUKind.NTUptr | NTUKind.NTUfnptr -> TPtr
-    // String (fat pointer) - platform-aware length
-    | NTUKind.NTUstring -> TStruct [TPtr; TInt wordWidth]
+    // String as memref (portable MLIR type, not LLVM struct)
+    // memref<?xi8> represents a dynamic-sized buffer with length tracked in descriptor
+    | NTUKind.NTUstring -> TMemRef (TInt I8)
     // Composite/complex types - representation comes from platform tier, not here
     | kind -> failwithf "NTUKind %A requires platform-tier resolution, not scalar mapping" kind
 
@@ -141,8 +142,11 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         | _, Some NTUKind.NTUfloat64 -> TFloat F64
         // Char (Unicode codepoint)
         | _, Some NTUKind.NTUchar -> TInt I32
-        // String (fat pointer) - platform-aware length
-        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TStruct [TPtr; TInt wordWidth]
+        // String as memref (portable MLIR type, not LLVM struct)
+        // At F# level: string has .Pointer/.Length accessors (FNCS synthetic members)
+        // At MLIR level: memref<?xi8> (dynamic buffer)
+        // Descriptor (ptr+size) is MLIR's concern, not explicitly modeled here
+        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TMemRef (TInt I8)
         // SECOND: Name-based fallback for types without proper NTU metadata
         // Note: Arrays have FatPointer layout but no specific NTUKind, handled in fallback
         | _ ->

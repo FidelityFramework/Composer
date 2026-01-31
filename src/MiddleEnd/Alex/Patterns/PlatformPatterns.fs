@@ -12,6 +12,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements
 open Alex.Elements.ArithElements
 open Alex.Elements.MemRefElements
+open Alex.Elements.IndexElements
 
 // ═══════════════════════════════════════════════════════════
 // PLATFORM I/O SYSCALLS
@@ -38,32 +39,39 @@ open Alex.Elements.MemRefElements
 /// - conversionSSA: Optional SSA for memref→ptr conversion (witness allocates if needed)
 let pSysWriteTyped (resultSSA: SSA) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRType) (countSSA: SSA) (conversionSSA: SSA option) : PSGParser<MLIROp list * TransferResult> =
     parser {
-        // FFI BOUNDARY NORMALIZATION
-        // Sys.write is an FFI function that expects pointer types, not memref.
-        // Pattern normalizes memref→ptr at FFI boundary (no coordination needed).
-        
-        // Check if buffer needs conversion from memref to ptr
-        let! (bufferCallSSA, bufferCallType, conversionOps) =
-            match bufferType, conversionSSA with
-            | (TMemRefScalar _ | TMemRef _), Some ptrSSA ->
-                // Buffer is memref AND witness provided conversion SSA - insert conversion
-                parser {
-                    let! convOp = pExtractBasePtr ptrSSA bufferSSA bufferType
-                    return (ptrSSA, TPtr, [convOp])
-                }
-            | _ ->
-                // Buffer is already ptr or no conversion SSA provided - use as-is
-                preturn (bufferSSA, bufferType, [])
-        
-        // Emit call with normalized types (ptr for FFI)
-        let vals = [
-            { SSA = fdSSA; Type = TInt I64 }
-            { SSA = bufferCallSSA; Type = bufferCallType }  // Normalized to ptr if memref
-            { SSA = countSSA; Type = TInt I64 }
-        ]
-        let! writeCall = pFuncCall (Some resultSSA) "write" vals (TInt I64)
+        // Convert memref to pointer for FFI boundary (syscalls expect integer pointer)
+        match bufferType with
+        | TMemRefScalar _ | TMemRef _ ->
+            // Buffer is memref - extract pointer as portable integer
+            match conversionSSA with
+            | Some convSSA ->
+                // Extract pointer as index, then cast to platform word (i64/i32)
+                let! state = getUserState
+                let platformWordTy = state.Platform.PlatformWordType
 
-        return (conversionOps @ [writeCall], TRValue { SSA = resultSSA; Type = TInt I64 })
+                let indexSSA = SSA.V 999993  // Temp for index result
+                let! extractOp = pExtractBasePtr indexSSA bufferSSA bufferType
+                let! castOp = pIndexCastS convSSA indexSSA platformWordTy
+
+                let vals = [
+                    { SSA = fdSSA; Type = TInt I64 }
+                    { SSA = convSSA; Type = platformWordTy }  // Use converted pointer (i64/i32)
+                    { SSA = countSSA; Type = TInt I64 }
+                ]
+                let! writeCall = pFuncCall (Some resultSSA) "write" vals (TInt I64)
+
+                return ([extractOp; castOp; writeCall], TRValue { SSA = resultSSA; Type = TInt I64 })
+            | None ->
+                return failwith "pSysWriteTyped: conversionSSA required for memref buffer"
+        | _ ->
+            // Buffer is already a pointer/integer type - use directly
+            let vals = [
+                { SSA = fdSSA; Type = TInt I64 }
+                { SSA = bufferSSA; Type = bufferType }
+                { SSA = countSSA; Type = TInt I64 }
+            ]
+            let! writeCall = pFuncCall (Some resultSSA) "write" vals (TInt I64)
+            return ([writeCall], TRValue { SSA = resultSSA; Type = TInt I64 })
     }
 
 /// Build Sys.write syscall pattern (portable) - deprecated, use pSysWriteTyped

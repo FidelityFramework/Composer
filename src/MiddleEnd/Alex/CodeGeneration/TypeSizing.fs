@@ -59,6 +59,12 @@ let rec computeSize (mlirType: string) : int64 =
     | s when s.StartsWith("tuple<") && s.EndsWith(">") ->
         parseTupleSize s
 
+    // MemRef types - descriptor size (ptr + offset + size + stride)
+    // On x64: 4 fields * 8 bytes = 32 bytes (approximate)
+    // NOTE: This is backend-dependent; actual size varies by target
+    | s when s.StartsWith("memref<") ->
+        wordSize * 4L  // Descriptor: base_ptr + aligned_ptr + offset + sizes + strides (simplified)
+
     // Unknown type - fail explicitly (no silent fallback)
     | _ ->
         failwithf "TypeSizing.computeSize: Unknown MLIR type '%s'" mlirType

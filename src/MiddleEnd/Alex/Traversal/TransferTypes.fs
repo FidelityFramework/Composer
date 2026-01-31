@@ -218,6 +218,7 @@ module MLIRAccumulator =
 
     /// Add multiple operations to the flat stream
     let addOps (ops: MLIROp list) (acc: MLIRAccumulator) =
+        let funcDefs = ops |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> printfn "[DEBUG] addOps: Adding FuncDef %s" name; true | _ -> false)
         acc.AllOps <- List.rev ops @ acc.AllOps
 
     /// Add an error diagnostic
