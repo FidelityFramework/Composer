@@ -56,24 +56,46 @@ let rec findLastValueNode nodeId graph =
 // MEMORY PATTERNS
 // ═══════════════════════════════════════════════════════════
 
-/// Field access via StructGEP + Load
-let pFieldAccess (structPtr: SSA) (fieldIndex: int) (gepSSA: SSA) (loadSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        let! gepOp = pStructGEP gepSSA structPtr fieldIndex
-        let! loadOp = pLoad loadSSA gepSSA
-        return [gepOp; loadOp]
-    }
-
-/// Field set via StructGEP + Store
-let pFieldSet (structPtr: SSA) (fieldIndex: int) (value: SSA) (gepSSA: SSA) (indexSSA: SSA) : PSGParser<MLIROp list> =
+/// Field access via byte-offset memref operations
+/// structType: The NativeType of the struct (for calculating field offset)
+let pFieldAccess (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (gepSSA: SSA) (loadSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         let! state = getUserState
-        let elemType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let arch = state.Platform.TargetArch
 
-        let! gepOp = pStructGEP gepSSA structPtr fieldIndex
-        let! indexOp = pConstI indexSSA 0L TIndex  // Index 0 for 1-element memref
-        let! storeOp = pStore value gepSSA [indexSSA] elemType
-        return [gepOp; indexOp; storeOp]
+        // Calculate byte offset for the field using FNCS-provided type structure
+        let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
+
+        // Allocate SSA for offset constant
+        let offsetSSA = match gepSSA with | V n -> V (n - 1) | Arg n -> V (n + 1000)
+        let! offsetOp = pConstI offsetSSA (int64 fieldOffset) TIndex
+
+        // Memref.load with byte offset
+        // Note: This assumes structPtr is memref<Nxi8> and we load at byte offset
+        let! loadOp = Alex.Elements.MemRefElements.pLoad loadSSA structPtr [offsetSSA]
+
+        return [offsetOp; loadOp]
+    }
+
+/// Field set via byte-offset memref operations
+/// structType: The NativeType of the struct (for calculating field offset)
+let pFieldSet (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (value: SSA) (_gepSSA: SSA) (_indexSSA: SSA) : PSGParser<MLIROp list> =
+    parser {
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
+        let elemType = mapNativeTypeForArch arch state.Current.Type
+
+        // Calculate byte offset for the field using FNCS-provided type structure
+        let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
+
+        // Allocate SSA for offset constant
+        let offsetSSA = match value with | V n -> V (n + 100) | Arg n -> V (n + 2000)
+        let! offsetOp = pConstI offsetSSA (int64 fieldOffset) TIndex
+
+        // Memref.store with byte offset
+        let! storeOp = pStore value structPtr [offsetSSA] elemType
+
+        return [offsetOp; storeOp]
     }
 
 /// Array element access via GEP + Load

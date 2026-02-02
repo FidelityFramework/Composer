@@ -8,6 +8,7 @@
 module Alex.Witnesses.ListWitness
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -41,12 +42,15 @@ let private witnessHead (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
     | [listNodeId], Some ssas when ssas.Length >= 2 ->
         match MLIRAccumulator.recallNode listNodeId ctx.Accumulator with
         | Some (listSSA, _) ->
-            match tryMatch (pFieldAccess listSSA 0 ssas.[0] ssas.[1]) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-            | Some (ops, _) ->
-                let arch = ctx.Coeffects.Platform.TargetArch
-                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
-                { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[1]; Type = mlirType } }
-            | None -> WitnessOutput.error "List.head: pFieldAccess pattern failed"
+            match SemanticGraph.tryGetNode listNodeId ctx.Graph with
+            | Some listNode ->
+                match tryMatch (pFieldAccess listSSA listNode.Type 0 ssas.[0] ssas.[1]) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                | Some (ops, _) ->
+                    let arch = ctx.Coeffects.Platform.TargetArch
+                    let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                    { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[1]; Type = mlirType } }
+                | None -> WitnessOutput.error "List.head: pFieldAccess pattern failed"
+            | None -> WitnessOutput.error "List.head: List node not found in graph"
         | None -> WitnessOutput.error "List.head: List node not yet witnessed"
     | _ -> WitnessOutput.error "List.head: Invalid children or SSAs"
 
@@ -55,12 +59,15 @@ let private witnessTail (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
     | [listNodeId], Some ssas when ssas.Length >= 2 ->
         match MLIRAccumulator.recallNode listNodeId ctx.Accumulator with
         | Some (listSSA, _) ->
-            match tryMatch (pFieldAccess listSSA 1 ssas.[0] ssas.[1]) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
-            | Some (ops, _) ->
-                let arch = ctx.Coeffects.Platform.TargetArch
-                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
-                { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[1]; Type = mlirType } }
-            | None -> WitnessOutput.error "List.tail: pFieldAccess pattern failed"
+            match SemanticGraph.tryGetNode listNodeId ctx.Graph with
+            | Some listNode ->
+                match tryMatch (pFieldAccess listSSA listNode.Type 1 ssas.[0] ssas.[1]) ctx.Graph node ctx.Zipper ctx.Coeffects.Platform with
+                | Some (ops, _) ->
+                    let arch = ctx.Coeffects.Platform.TargetArch
+                    let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                    { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[1]; Type = mlirType } }
+                | None -> WitnessOutput.error "List.tail: pFieldAccess pattern failed"
+            | None -> WitnessOutput.error "List.tail: List node not found in graph"
         | None -> WitnessOutput.error "List.tail: List node not yet witnessed"
     | _ -> WitnessOutput.error "List.tail: Invalid children or SSAs"
 

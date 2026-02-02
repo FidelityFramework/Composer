@@ -354,6 +354,79 @@ let mapNativeType (ty: NativeType) : MLIRType =
     mapNativeTypeForArch X86_64 ty
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FIELD OFFSET CALCULATION (for byte-level memref field access)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Calculate byte offset for a field within a struct
+/// Uses FNCS-provided type structure and arch-aware size computation
+let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (fieldIndex: int) : int =
+    match nativeType with
+    | NativeType.TTuple(elements, _) ->
+        // Offset = sum of sizes of all fields before fieldIndex
+        elements
+        |> List.take fieldIndex
+        |> List.map (mapNativeTypeForArch arch >> mlirTypeSizeForArch arch)
+        |> List.sum
+
+    | NativeType.TAnon(fields, _) ->
+        // Offset = sum of sizes of all fields before fieldIndex
+        fields
+        |> List.take fieldIndex
+        |> List.map (snd >> mapNativeTypeForArch arch >> mlirTypeSizeForArch arch)
+        |> List.sum
+
+    | NativeType.TLazy elemTy ->
+        // Layout: evaluated (I1) | value (elemTy) | thunk (TPtr)
+        match fieldIndex with
+        | 0 -> 0  // evaluated flag
+        | 1 -> mlirTypeSizeForArch arch (TInt I1)  // value after flag
+        | 2 -> mlirTypeSizeForArch arch (TInt I1) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // thunk after value
+        | _ -> failwith $"Invalid field index {fieldIndex} for TLazy"
+
+    | NativeType.TSeq elemTy ->
+        // Layout: state (I32) | current (elemTy) | moveNext (TPtr)
+        match fieldIndex with
+        | 0 -> 0  // state
+        | 1 -> mlirTypeSizeForArch arch (TInt I32)  // current after state
+        | 2 -> mlirTypeSizeForArch arch (TInt I32) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // moveNext after current
+        | _ -> failwith $"Invalid field index {fieldIndex} for TSeq"
+
+    | NativeType.TSeqEnumerator elemTy ->
+        // Layout: source (TPtr) | index (I32) | current (elemTy) | hasValue (I1)
+        match fieldIndex with
+        | 0 -> 0  // source
+        | 1 -> mlirTypeSizeForArch arch TPtr  // index after source
+        | 2 -> mlirTypeSizeForArch arch TPtr + mlirTypeSizeForArch arch (TInt I32)  // current after index
+        | 3 -> mlirTypeSizeForArch arch TPtr + mlirTypeSizeForArch arch (TInt I32) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // hasValue after current
+        | _ -> failwith $"Invalid field index {fieldIndex} for TSeqEnumerator"
+
+    | NativeType.TUnion (_, cases) ->
+        // Layout: tag | payload (max size of all cases)
+        match fieldIndex with
+        | 0 -> 0  // tag at offset 0
+        | 1 ->
+            // Payload offset = tag size
+            let tagType = if List.length cases <= 256 then TInt I8 else TInt I16
+            mlirTypeSizeForArch arch tagType
+        | _ -> failwith $"Invalid field index {fieldIndex} for TUnion"
+
+    | NativeType.TApp ({ Name = name }, _) when name = "Closure" || name = "FunctionPointer" ->
+        // Layout: codePtr (TPtr) | closure (TPtr)
+        match fieldIndex with
+        | 0 -> 0  // codePtr
+        | 1 -> mlirTypeSizeForArch arch TPtr  // closure after codePtr
+        | _ -> failwith $"Invalid field index {fieldIndex} for {name}"
+
+    | NativeType.TFun _ ->
+        // TFun is closures: {codePtr, envPtr} - same as Closure
+        match fieldIndex with
+        | 0 -> 0  // codePtr
+        | 1 -> mlirTypeSizeForArch arch TPtr  // envPtr after codePtr
+        | _ -> failwith $"Invalid field index {fieldIndex} for TFun"
+
+    | _ -> failwith $"Cannot calculate field offset for type {nativeType} - not a struct type"
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GRAPH-AWARE TYPE MAPPING (for record types)
 // ═══════════════════════════════════════════════════════════════════════════
 
