@@ -30,6 +30,7 @@ module SSAAssign = PSGElaboration.SSAAssignment
 module StringCollect = PSGElaboration.StringCollection
 module PatternAnalysis = PSGElaboration.PatternBindingAnalysis
 module YieldStateIndices = PSGElaboration.YieldStateIndices
+module EscapeAnalysis = PSGElaboration.EscapeAnalysis
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TRANSFER COEFFECTS (Pre-computed, Immutable)
@@ -43,6 +44,7 @@ type TransferCoeffects = {
     PatternBindings: PatternAnalysis.PatternBindingAnalysisResult
     Strings: StringCollect.StringTable
     YieldStates: YieldStateIndices.YieldStateCoeffect
+    EscapeAnalysis: EscapeAnalysis.EscapeAnalysisResult
     EntryPointLambdaIds: Set<int>
 }
 

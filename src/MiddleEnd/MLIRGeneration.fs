@@ -56,6 +56,7 @@ let generate
     let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze graph
     let strings = PSGElaboration.StringCollection.collect graph
     let platformResolution = PSGElaboration.PlatformBindingResolution.analyze graph runtimeMode os arch
+    let escapeAnalysis = PSGElaboration.EscapeAnalysis.analyzeGraph graph
 
     // Serialize coeffects if keeping intermediates
     match intermediatesDir with
@@ -73,6 +74,7 @@ let generate
         PatternBindings = patternBindings
         Strings = strings
         YieldStates = yieldStates
+        EscapeAnalysis = escapeAnalysis
         EntryPointLambdaIds = ssaAssignment.EntryPointLambdas
     }
 

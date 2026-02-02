@@ -49,6 +49,7 @@
       <Compile Include="MiddleEnd/PSGElaboration/SSAAssignment.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/YieldStateIndices.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/MutabilityAnalysis.fs" />
+      <Compile Include="MiddleEnd/PSGElaboration/EscapeAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/StringCollection.fs" />
       <!-- Platform Config (depends on PlatformTypes) -->
       <Compile Include="MiddleEnd/PSGElaboration/PlatformConfig.fs" />
