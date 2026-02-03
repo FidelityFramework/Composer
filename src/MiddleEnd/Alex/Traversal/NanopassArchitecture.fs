@@ -10,6 +10,7 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
+open Alex.Traversal.ScopeContext
 open Alex.Traversal.PSGZipper
 open Alex.Traversal.CoverageValidation
 
@@ -100,14 +101,17 @@ let rec visitAllNodes
             let output = witness focusedCtx currentNode
             printfn "[visitAllNodes] Witness returned %A for node %A" output.Result currentNode.Id
 
-            // Add operations to appropriate accumulators
-            // InlineOps go to current scope accumulator (may be nested)
-            MLIRAccumulator.addOps output.InlineOps focusedCtx.Accumulator
-            // TopLevelOps go to ROOT accumulator (module-level only)
+            // Add operations to appropriate scope contexts (principled accumulation)
+            // InlineOps go to current scope (may be nested function body)
+            let updatedCurrentScope = ScopeContext.addOps output.InlineOps !focusedCtx.ScopeContext
+            focusedCtx.ScopeContext := updatedCurrentScope
+
+            // TopLevelOps go to ROOT scope (module level: GlobalString, nested FuncDef)
             if not (List.isEmpty output.TopLevelOps) then
                 let funcDefCount = output.TopLevelOps |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> true | _ -> false) |> List.length
-                printfn "[DEBUG] Node %d: Adding %d TopLevelOps (%d FuncDefs) to RootAccumulator" (NodeId.value currentNode.Id) (List.length output.TopLevelOps) funcDefCount
-            MLIRAccumulator.addOps output.TopLevelOps focusedCtx.RootAccumulator
+                printfn "[DEBUG] Node %d: Adding %d TopLevelOps (%d FuncDefs) to RootScopeContext" (NodeId.value currentNode.Id) (List.length output.TopLevelOps) funcDefCount
+                let updatedRootScope = ScopeContext.addOps output.TopLevelOps !focusedCtx.RootScopeContext
+                focusedCtx.RootScopeContext := updatedRootScope
 
             // Bind result if value (global binding)
             printfn "[visitAllNodes] About to match on output.Result for node %A - Result is: %A" currentNode.Id output.Result
@@ -141,6 +145,7 @@ let runNanopass
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
     (sharedAcc: MLIRAccumulator)  // SHARED accumulator (ops, bindings, errors)
+    (rootScope: ref<ScopeContext>)  // Shared root scope for operation accumulation
     (globalVisited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across ALL nanopasses)
     : unit =
 
@@ -155,8 +160,10 @@ let runNanopass
                 let nodeCtx = {
                     Graph = graph
                     Coeffects = coeffects
-                    Accumulator = sharedAcc  // SHARED accumulator
+                    Accumulator = sharedAcc  // SHARED accumulator (for SSA bindings)
                     RootAccumulator = sharedAcc  // Root accumulator (same as shared for top-level)
+                    ScopeContext = rootScope  // Shared root scope (mutable)
+                    RootScopeContext = rootScope  // Root scope for TopLevelOps (same as ScopeContext at top-level)
                     Zipper = initialZipper
                     GlobalVisited = globalVisited  // GLOBAL visited set
                 }
@@ -225,6 +232,7 @@ let runAllNanopasses
     (graph: SemanticGraph)
     (coeffects: TransferCoeffects)
     (sharedAcc: MLIRAccumulator)
+    (rootScope: ref<ScopeContext>)
     (globalVisited: ref<Set<NodeId>>)
     : unit =
 
@@ -256,6 +264,8 @@ let runAllNanopasses
                     Coeffects = coeffects
                     Accumulator = sharedAcc
                     RootAccumulator = sharedAcc  // Root same as shared for top-level
+                    ScopeContext = rootScope  // Shared root scope
+                    RootScopeContext = rootScope  // Root scope for TopLevelOps (same as ScopeContext at top-level)
                     Zipper = initialZipper
                     GlobalVisited = globalVisited
                 }
@@ -278,10 +288,13 @@ let executeNanopasses
         // Create SINGLE global visited set for ALL nanopasses
         let globalVisited = ref Set.empty
 
+        // Create root scope for operation accumulation
+        let rootScope = ref (ScopeContext.root())
+
         printfn "[Alex] Single-phase execution: %d registered nanopasses" (List.length registry.Nanopasses)
 
         // Run all nanopasses together in single traversal
-        runAllNanopasses registry.Nanopasses graph coeffects sharedAcc globalVisited
+        runAllNanopasses registry.Nanopasses graph coeffects sharedAcc rootScope globalVisited
 
         // TODO: Serialize results if intermediatesDir provided
 
@@ -291,5 +304,10 @@ let executeNanopasses
             // Add coverage errors to accumulator
             for diag in coverageDiagnostics do
                 MLIRAccumulator.addError diag sharedAcc
+
+        // Extract operations from root scope and add to accumulator (Phase 7)
+        let rootOps = ScopeContext.getOps !rootScope
+        printfn "[DEBUG] Extracted %d operations from rootScope" (List.length rootOps)
+        MLIRAccumulator.addOps rootOps sharedAcc
 
         sharedAcc

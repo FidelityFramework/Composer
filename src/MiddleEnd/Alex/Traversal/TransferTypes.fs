@@ -20,6 +20,7 @@ open Alex.Dialects.Core.Types
 open PSGElaboration.PlatformConfig
 open Alex.CodeGeneration.TypeMapping
 open Alex.Traversal.PSGZipper
+open Alex.Traversal.ScopeContext
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODULE ALIASES (for type definitions)
@@ -345,8 +346,10 @@ module WitnessOutput =
 /// Context passed to witnesses - the elegant single parameter
 type WitnessContext = {
     Coeffects: TransferCoeffects
-    Accumulator: MLIRAccumulator     // Current scope's accumulator (changes for nested scopes)
+    Accumulator: MLIRAccumulator     // Shared for SSA bindings (global)
     RootAccumulator: MLIRAccumulator // Root/module-level accumulator (constant across all scopes)
+    ScopeContext: ref<ScopeContext>  // Current scope for operation accumulation (mutable for traversal)
+    RootScopeContext: ref<ScopeContext>  // Root module-level scope (constant, for TopLevelOps like GlobalString, nested FuncDef)
     Graph: SemanticGraph
     Zipper: PSGZipper                // Navigation state (created ONCE by fold)
     GlobalVisited: ref<Set<NodeId>>  // Global visited set (shared across all nanopasses and function bodies)

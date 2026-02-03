@@ -18,6 +18,7 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.PSGZipper
+open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
@@ -63,36 +64,25 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
         if isEntryPoint then
             // Entry point Lambda: generate func.func @main wrapper
-            // Record operation count BEFORE witnessing body (shared accumulator pattern)
-            let opsBefore = List.length ctx.Accumulator.AllOps
+            // Create child scope for function body (principled accumulation)
+            let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
+            let bodyScopeRef = ref bodyScope
 
-            // THEN: Witness body nodes using SAME accumulator with GLOBAL visited set
-            // This prevents duplicate visitation by top-level traversal
-            // Errors and bindings automatically accumulate in shared ctx.Accumulator
+            // Witness body nodes with child scope context
+            // Errors and bindings accumulate in shared ctx.Accumulator (for SSA resolution)
+            // Operations accumulate in bodyScopeRef (isolated from parent)
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
-                    // Body context: uses SAME accumulator (no nesting!)
-                    let bodyCtx = { ctx with Zipper = bodyZipper }
+                    // Body context: uses child scope ref for operations
+                    let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef }
                     visitAllNodes combinator bodyCtx bodyNode ctx.GlobalVisited
                 | None -> ()
             | None -> ()
 
-            // Extract operations added during body witnessing (list diff pattern)
-            let opsAfter = List.length ctx.Accumulator.AllOps
-            let bodyOpsAllReversed = ctx.Accumulator.AllOps |> List.take (opsAfter - opsBefore)
-
-            // Separate body ops from module-level ops, and REVERSE to get correct order
-            // bodyOpsAllReversed accumulates in reverse (newest first), so reverse to get def-before-use order
-            let bodyOps =
-                bodyOpsAllReversed
-                |> List.filter (fun op -> match op with MLIROp.GlobalString _ | MLIROp.FuncOp (FuncOp.FuncDef _) -> false | _ -> true)
-                |> List.rev
-            let moduleOps =
-                bodyOpsAllReversed
-                |> List.filter (fun op -> match op with MLIROp.GlobalString _ | MLIROp.FuncOp (FuncOp.FuncDef _) -> true | _ -> false)
-                |> List.rev
+            // Extract operations from child scope ref (NOT from parent!)
+            let bodyOps = ScopeContext.getOps !bodyScopeRef
 
             // Get body result for return value
             // Traverse Sequential structure to find actual value-producing node
@@ -133,11 +123,12 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let funcParams = [(SSA.Arg 0, argvType)]
             let funcDef = FuncOp.FuncDef("main", funcParams, returnType, completeBody, Public)
 
-            // Return FuncDef and module-level ops in TopLevelOps
-            // visitAllNodes will add these to RootAccumulator
-            let topLevelOps = MLIROp.FuncOp funcDef :: moduleOps
+            // Add FuncDef to parent scope (ctx.ScopeContext, which is root for entry points)
+            let updatedParentScope = ScopeContext.addOp (MLIROp.FuncOp funcDef) !ctx.ScopeContext
+            ctx.ScopeContext := updatedParentScope
 
-            { InlineOps = []; TopLevelOps = topLevelOps; Result = TRVoid }
+            // Return empty - FuncDef already added to parent scope
+            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
         else
             // Non-entry-point Lambda: Generate FuncDef for module-level function
             // Extract QUALIFIED function name from parent Binding + ModuleDef (if present)
@@ -168,36 +159,25 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     | None -> sprintf "lambda_%d" nodeIdValue
                 | None -> sprintf "lambda_%d" nodeIdValue
 
-            // Record operation count BEFORE witnessing body (shared accumulator pattern)
-            let opsBefore = List.length ctx.Accumulator.AllOps
+            // Create child scope for function body (principled accumulation)
+            let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
+            let bodyScopeRef = ref bodyScope
 
-            // Witness body nodes using SAME accumulator with GLOBAL visited set
-            // This prevents duplicate visitation by top-level traversal
-            // Errors and bindings automatically accumulate in shared ctx.Accumulator
+            // Witness body nodes with child scope context
+            // Errors and bindings accumulate in shared ctx.Accumulator (for SSA resolution)
+            // Operations accumulate in bodyScopeRef (isolated from parent)
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
-                    // Body context: uses SAME accumulator (no nesting!)
-                    let bodyCtx = { ctx with Zipper = bodyZipper }
+                    // Body context: uses child scope ref for operations
+                    let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef }
                     visitAllNodes combinator bodyCtx bodyNode ctx.GlobalVisited
                 | None -> ()
             | None -> ()
 
-            // Extract operations added during body witnessing (list diff pattern)
-            let opsAfter = List.length ctx.Accumulator.AllOps
-            let bodyOpsAllReversed = ctx.Accumulator.AllOps |> List.take (opsAfter - opsBefore)
-
-            // Separate body ops from module-level ops, and REVERSE to get correct order
-            // bodyOpsAllReversed accumulates in reverse (newest first), so reverse to get def-before-use order
-            let bodyOps =
-                bodyOpsAllReversed
-                |> List.filter (fun op -> match op with MLIROp.GlobalString _ | MLIROp.FuncOp (FuncOp.FuncDef _) -> false | _ -> true)
-                |> List.rev
-            let moduleOps =
-                bodyOpsAllReversed
-                |> List.filter (fun op -> match op with MLIROp.GlobalString _ | MLIROp.FuncOp (FuncOp.FuncDef _) -> true | _ -> false)
-                |> List.rev
+            // Extract operations from child scope ref (NOT from parent!)
+            let bodyOps = ScopeContext.getOps !bodyScopeRef
 
             // Get body result for return value
             // Traverse Sequential structure to find actual value-producing node
@@ -250,11 +230,12 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Build FuncDef for module-level function
             let funcDef = FuncOp.FuncDef(funcName, mlirParams, returnType, completeBody, Public)
 
-            // Return FuncDef and module-level ops in TopLevelOps
-            // visitAllNodes will add these to RootAccumulator
-            let topLevelOps = MLIROp.FuncOp funcDef :: moduleOps
+            // Add FuncDef to ROOT scope (module level - all FuncDefs are top-level in MLIR)
+            let updatedRootScope = ScopeContext.addOp (MLIROp.FuncOp funcDef) !ctx.RootScopeContext
+            ctx.RootScopeContext := updatedRootScope
 
-            { InlineOps = []; TopLevelOps = topLevelOps; Result = TRVoid }
+            // Return empty - FuncDef already added to root scope
+            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
     | None -> WitnessOutput.skip
 
