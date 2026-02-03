@@ -54,7 +54,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             match SemanticGraph.tryGetNode paramNodeId ctx.Graph with
             | Some paramNode ->
                 // Visit parameter with sub-graph combinator (will hit StructuralWitness)
-                visitAllNodes combinator ctx paramNode ctx.Accumulator ctx.GlobalVisited
+                visitAllNodes combinator ctx paramNode ctx.GlobalVisited
             | None -> ()
 
         // Check if this is an entry point Lambda
@@ -75,7 +75,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some bodyZipper ->
                     // Body context: nested accumulator, but shared global bindings via ctx.Accumulator.NodeAssoc
                     let bodyCtx = { ctx with Zipper = bodyZipper; Accumulator = bodyAcc }
-                    visitAllNodes combinator bodyCtx bodyNode bodyAcc ctx.GlobalVisited
+                    visitAllNodes combinator bodyCtx bodyNode ctx.GlobalVisited
                     
                     // Copy bindings from body accumulator to parent (for cross-scope lookups)
                     bodyAcc.NodeAssoc |> Map.iter (fun nodeId binding ->
@@ -179,7 +179,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some bodyZipper ->
                     // Body context: nested accumulator, shared global bindings
                     let bodyCtx = { ctx with Zipper = bodyZipper; Accumulator = bodyAcc }
-                    visitAllNodes combinator bodyCtx bodyNode bodyAcc ctx.GlobalVisited
+                    visitAllNodes combinator bodyCtx bodyNode ctx.GlobalVisited
                     
                     // Copy bindings from body accumulator to parent
                     bodyAcc.NodeAssoc |> Map.iter (fun nodeId binding ->

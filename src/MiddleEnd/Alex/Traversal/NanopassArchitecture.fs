@@ -53,7 +53,6 @@ let rec visitAllNodes
     (witness: WitnessContext -> SemanticNode -> WitnessOutput)
     (visitedCtx: WitnessContext)
     (currentNode: SemanticNode)
-    (accumulator: MLIRAccumulator)
     (visited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across all nanopasses)
     : unit =
 
@@ -82,7 +81,7 @@ let rec visitAllNodes
                 for childId in currentNode.Children do
                     printfn "[visitAllNodes] Visiting child %A of parent %A" childId currentNode.Id
                     match SemanticGraph.tryGetNode childId visitedCtx.Graph with
-                    | Some childNode -> visitAllNodes witness focusedCtx childNode accumulator visited
+                    | Some childNode -> visitAllNodes witness focusedCtx childNode visited
                     | None ->
                         printfn "[visitAllNodes] WARNING: Child node %A not found in graph!" childId
 
@@ -92,7 +91,7 @@ let rec visitAllNodes
             | SemanticKind.VarRef (_, Some bindingId) ->
                 if not (Set.contains bindingId !visited) then
                     match SemanticGraph.tryGetNode bindingId visitedCtx.Graph with
-                    | Some bindingNode -> visitAllNodes witness focusedCtx bindingNode accumulator visited
+                    | Some bindingNode -> visitAllNodes witness focusedCtx bindingNode visited
                     | None -> ()
             | _ -> ()
 
@@ -103,7 +102,7 @@ let rec visitAllNodes
 
             // Add operations to appropriate accumulators
             // InlineOps go to current scope accumulator (may be nested)
-            MLIRAccumulator.addOps output.InlineOps accumulator
+            MLIRAccumulator.addOps output.InlineOps focusedCtx.Accumulator
             // TopLevelOps go to ROOT accumulator (module-level only)
             if not (List.isEmpty output.TopLevelOps) then
                 let funcDefCount = output.TopLevelOps |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> true | _ -> false) |> List.length
@@ -113,10 +112,10 @@ let rec visitAllNodes
             // Bind result if value (global binding)
             match output.Result with
             | TRValue v ->
-                MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type accumulator
+                MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type focusedCtx.Accumulator
             | TRVoid -> ()
             | TRError diag ->
-                MLIRAccumulator.addError diag accumulator
+                MLIRAccumulator.addError diag focusedCtx.Accumulator
             | TRSkip -> ()  // Should never reach here (combineWitnesses filters out TRSkip)
 
 /// REMOVED: witnessSubgraph and witnessSubgraphWithResult
@@ -159,7 +158,7 @@ let runNanopass
                     GlobalVisited = globalVisited  // GLOBAL visited set
                 }
                 // Visit this reachable node (post-order) with GLOBAL visited set
-                visitAllNodes nanopass.Witness nodeCtx node sharedAcc globalVisited
+                visitAllNodes nanopass.Witness nodeCtx node globalVisited
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REMOVED: overlayAccumulators
@@ -257,7 +256,7 @@ let runAllNanopasses
                     Zipper = initialZipper
                     GlobalVisited = globalVisited
                 }
-                visitAllNodes combinedWitness nodeCtx node sharedAcc globalVisited
+                visitAllNodes combinedWitness nodeCtx node globalVisited
 
 /// Main entry point: Execute all nanopasses and return accumulator
 let executeNanopasses
