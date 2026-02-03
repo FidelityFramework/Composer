@@ -184,11 +184,17 @@ module NanopassRegistry =
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Combine multiple nanopass witnesses into a single witness that tries each in order
+/// WITH COVERAGE VALIDATION: Reports error if no witness handles a node (prevents silent gaps)
 let private combineWitnesses (nanopasses: Nanopass list) : (WitnessContext -> SemanticNode -> WitnessOutput) =
     fun ctx node ->
         let rec tryWitnesses remaining =
             match remaining with
-            | [] -> WitnessOutput.skip
+            | [] ->
+                // NO WITNESS HANDLED THIS NODE - Report error for coverage validation
+                // This prevents silent gaps where nodes are skipped without any witness
+                // processing them, which leads to empty MLIR output.
+                // Structural nodes (ModuleDef, Sequential) should have transparent witnesses.
+                WitnessOutput.error (sprintf "No witness handled node %A (%A)" node.Id node.Kind)
             | nanopass :: rest ->
                 let result = nanopass.Witness ctx node
                 if result = WitnessOutput.skip then

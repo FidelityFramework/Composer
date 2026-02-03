@@ -31,10 +31,10 @@ module VarRefWitness = Alex.Witnesses.VarRefWitness
 module ApplicationWitness = Alex.Witnesses.ApplicationWitness
 
 // Priority 2: Collection Witnesses
-// module OptionWitness = Alex.Witnesses.OptionWitness
-// module ListWitness = Alex.Witnesses.ListWitness
-// module MapWitness = Alex.Witnesses.MapWitness
-// module SetWitness = Alex.Witnesses.SetWitness
+module OptionWitness = Alex.Witnesses.OptionWitness
+module ListWitness = Alex.Witnesses.ListWitness
+module MapWitness = Alex.Witnesses.MapWitness
+module SetWitness = Alex.Witnesses.SetWitness
 
 // Priority 3: Control Flow (special - needs nanopass list for sub-graph traversal)
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
@@ -45,7 +45,7 @@ module LambdaWitness = Alex.Witnesses.LambdaWitness
 
 // Priority 5: Advanced Features
 module LazyWitness = Alex.Witnesses.LazyWitness
-// module SeqWitness = Alex.Witnesses.SeqWitness
+module SeqWitness = Alex.Witnesses.SeqWitness
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL REGISTRY
@@ -73,10 +73,10 @@ let initializeRegistry () =
         |> NanopassRegistry.register ApplicationWitness.nanopass
 
         // Priority 2: Collection Witnesses
-        // |> NanopassRegistry.register OptionWitness.nanopass
-        // |> NanopassRegistry.register ListWitness.nanopass
-        // |> NanopassRegistry.register MapWitness.nanopass
-        // |> NanopassRegistry.register SetWitness.nanopass
+        |> NanopassRegistry.register OptionWitness.nanopass
+        |> NanopassRegistry.register ListWitness.nanopass
+        |> NanopassRegistry.register MapWitness.nanopass
+        |> NanopassRegistry.register SetWitness.nanopass
 
         // Priority 4: Memory
         |> NanopassRegistry.register MemoryWitness.nanopass
@@ -84,9 +84,8 @@ let initializeRegistry () =
         // Priority 5: Advanced Features
         |> NanopassRegistry.register LazyWitness.nanopass
         
-        // REMOVED: SequentialWitness registration (Sequential is not a witness)
-        // Sequential nodes are structural scaffolding traversed directly by LambdaWitness
-        // |> NanopassRegistry.register SeqWitness.nanopass
+        // Priority 5: Seq Witness
+        |> NanopassRegistry.register SeqWitness.nanopass
 
     // Now create composite witnesses (Lambda, ControlFlow) that need sub-graph traversal
     // These witnesses need access to ALL other witnesses for witnessing sub-graphs
