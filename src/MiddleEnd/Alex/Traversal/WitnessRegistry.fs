@@ -23,11 +23,10 @@ module LiteralWitness = Alex.Witnesses.LiteralWitness
 module TypeAnnotationWitness = Alex.Witnesses.TypeAnnotationWitness
 module PlatformWitness = Alex.Witnesses.PlatformWitness
 
-// Structural Witnesses (January 2026 - parallel fan-out)
+// Structural Witnesses (January 2026 - parallel fan-out, February 2026 - transparent witness pattern)
+module StructuralWitness = Alex.Witnesses.StructuralWitness  // Transparent witness for ModuleDef, Sequential
 module BindingWitness = Alex.Witnesses.BindingWitness
 module VarRefWitness = Alex.Witnesses.VarRefWitness
-// REMOVED: SequentialWitness - Sequential is structural scaffolding, NOT a witness
-// LambdaWitness now traverses Sequential structure directly via findLastValueNode
 module ApplicationWitness = Alex.Witnesses.ApplicationWitness
 
 // Priority 2: Collection Witnesses
@@ -67,7 +66,8 @@ let initializeRegistry () =
         |> NanopassRegistry.register TypeAnnotationWitness.nanopass
         |> NanopassRegistry.register PlatformWitness.nanopass
 
-        // Structural Witnesses (parallel fan-out)
+        // Structural Witnesses (transparent witnesses for container nodes)
+        |> NanopassRegistry.register StructuralWitness.nanopass
         |> NanopassRegistry.register BindingWitness.nanopass
         |> NanopassRegistry.register VarRefWitness.nanopass
         |> NanopassRegistry.register ApplicationWitness.nanopass

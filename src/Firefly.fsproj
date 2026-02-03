@@ -107,6 +107,7 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/StructuralWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/BindingWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/VarRefWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/ApplicationWitness.fs" />

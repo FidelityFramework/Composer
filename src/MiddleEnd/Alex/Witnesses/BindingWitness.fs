@@ -36,8 +36,9 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                 // Check if the child is a Lambda (function binding)
                 match SemanticGraph.tryGetNode valueId ctx.Graph with
                 | Some valueNode when valueNode.Kind.ToString().StartsWith("Lambda") ->
-                    // Function binding - LambdaWitness handles generating FuncDef
-                    WitnessOutput.skip
+                    // Function binding - Lambda child already generated FuncDef (post-order)
+                    // Binding node is structural (name association), return TRVoid per Domain Responsibility Principle
+                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                 | _ ->
                     // Value binding - recall child's SSA
                     match MLIRAccumulator.recallNode valueId ctx.Accumulator with
