@@ -37,23 +37,41 @@ open Alex.Patterns.ControlFlowPatterns
 /// Uses nested accumulator to collect branch operations without markers
 /// Combinator passed through from top-level via Y-combinator fixed point
 let private witnessBranchScope (rootId: NodeId) (ctx: WitnessContext) (combinator: WitnessContext -> SemanticNode -> WitnessOutput) : MLIROp list =
+    printfn "[ControlFlowWitness] witnessBranchScope: Starting visitation of branch root node %A" (NodeId.value rootId)
+
     // Create NESTED accumulator for branch operations
+    // CRITICAL: Inherit parent bindings so VarRefs can resolve to outer scope bindings
     let branchAcc = MLIRAccumulator.empty()
+    printfn "[ControlFlowWitness] witnessBranchScope: Parent accumulator has %d bindings" (Map.count ctx.Accumulator.NodeAssoc)
+    branchAcc.NodeAssoc <- ctx.Accumulator.NodeAssoc  // Inherit parent bindings for lookup
+    printfn "[ControlFlowWitness] witnessBranchScope: Branch accumulator now has %d bindings" (Map.count branchAcc.NodeAssoc)
 
     // Witness branch nodes into nested accumulator
     match SemanticGraph.tryGetNode rootId ctx.Graph with
     | Some branchNode ->
+        printfn "[ControlFlowWitness] witnessBranchScope: Found branch node %A (kind: %s)"
+            (NodeId.value rootId)
+            (branchNode.Kind.ToString().Split('\n').[0])
+
         match focusOn rootId ctx.Zipper with
         | Some branchZipper ->
+            printfn "[ControlFlowWitness] witnessBranchScope: Successfully focused on node %A, calling visitAllNodes" (NodeId.value rootId)
             let branchCtx = { ctx with Zipper = branchZipper; Accumulator = branchAcc }
             // Use GLOBAL visited set to prevent duplicate visitation by top-level traversal
             visitAllNodes combinator branchCtx branchNode ctx.GlobalVisited
 
+            printfn "[ControlFlowWitness] witnessBranchScope: Completed visitation of node %A - collected %d ops, %d bindings"
+                (NodeId.value rootId)
+                (List.length branchAcc.AllOps)
+                (Map.count branchAcc.NodeAssoc)
+
             // Copy bindings from branch accumulator to parent
             branchAcc.NodeAssoc |> Map.iter (fun nodeId binding ->
                 ctx.Accumulator.NodeAssoc <- Map.add nodeId binding ctx.Accumulator.NodeAssoc)
-        | None -> ()
-    | None -> ()
+        | None ->
+            printfn "[ControlFlowWitness] witnessBranchScope: Failed to focus on node %A" (NodeId.value rootId)
+    | None ->
+        printfn "[ControlFlowWitness] witnessBranchScope: Node %A not found in graph" (NodeId.value rootId)
 
     // Return branch operations directly from nested accumulator
     branchAcc.AllOps
@@ -70,20 +88,46 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
 
     match tryMatch pIfThenElse ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((condId, thenId, elseIdOpt), _) ->
+        printfn "[ControlFlowWitness] Handling IfThenElse node %A (cond=%A, then=%A, else=%A)"
+            (NodeId.value node.Id)
+            (NodeId.value condId)
+            (NodeId.value thenId)
+            (elseIdOpt |> Option.map NodeId.value)
+
         // Visit condition as branch scope (like WhileLoop does)
         // Condition may contain complex expressions that need witnessing
+        printfn "[ControlFlowWitness] IfThenElse: Visiting condition branch %A" (NodeId.value condId)
         let _condOps = witnessBranchScope condId ctx combinator
 
         // Now recall the condition result
         match MLIRAccumulator.recallNode condId ctx.Accumulator with
-        | None -> WitnessOutput.error "IfThenElse: Condition witnessed but no result"
+        | None ->
+            printfn "[ControlFlowWitness] IfThenElse: ERROR - Condition %A witnessed but no result" (NodeId.value condId)
+            WitnessOutput.error "IfThenElse: Condition witnessed but no result"
         | Some (condSSA, _) ->
+            printfn "[ControlFlowWitness] IfThenElse: Visiting then branch %A" (NodeId.value thenId)
             let thenOps = witnessBranchScope thenId ctx combinator
-            let elseOps = elseIdOpt |> Option.map (fun elseId -> witnessBranchScope elseId ctx combinator)
+
+            let elseOps =
+                match elseIdOpt with
+                | Some elseId ->
+                    printfn "[ControlFlowWitness] IfThenElse: Visiting else branch %A" (NodeId.value elseId)
+                    Some (witnessBranchScope elseId ctx combinator)
+                | None ->
+                    printfn "[ControlFlowWitness] IfThenElse: No else branch"
+                    None
+
+            printfn "[ControlFlowWitness] IfThenElse: Building MLIR (then has %d ops, else has %d ops)"
+                (List.length thenOps)
+                (elseOps |> Option.map List.length |> Option.defaultValue 0)
 
             match tryMatch (pBuildIfThenElse condSSA thenOps elseOps) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
-            | None -> WitnessOutput.error "IfThenElse pattern emission failed"
+            | Some (ops, _) ->
+                printfn "[ControlFlowWitness] IfThenElse: Successfully built MLIR with %d ops" (List.length ops)
+                { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
+            | None ->
+                printfn "[ControlFlowWitness] IfThenElse: ERROR - Pattern emission failed"
+                WitnessOutput.error "IfThenElse pattern emission failed"
 
     | None ->
         match tryMatch pWhileLoop ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

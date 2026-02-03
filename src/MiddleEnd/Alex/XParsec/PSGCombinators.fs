@@ -486,6 +486,9 @@ let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     | IntrinsicModule.Operators, "op_GreaterThanOrEqual" -> Comparison "sge"
     | IntrinsicModule.Operators, "op_Equality" -> Comparison "eq"
     | IntrinsicModule.Operators, "op_Inequality" -> Comparison "ne"
+    // Boolean logical operators (bitwise on i1)
+    | IntrinsicModule.Operators, "op_BooleanAnd" -> BinaryArith "andi"
+    | IntrinsicModule.Operators, "op_BooleanOr" -> BinaryArith "ori"
     // Memory
     | IntrinsicModule.NativePtr, op -> MemoryOp op
     // String

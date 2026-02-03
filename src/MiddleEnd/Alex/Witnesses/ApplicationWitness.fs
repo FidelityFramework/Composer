@@ -128,39 +128,52 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             let arch = ctx.Coeffects.Platform.TargetArch
                             let resultType = mapNativeTypeForArch arch node.Type
 
-                            // Call ArithElements directly based on info.Operation
+                            // Use classification from PSGCombinators for principled operator dispatch
+                            let category = classifyAtomicOp info
                             let opResult =
-                                match info.Operation with
-                                // Integer arithmetic
-                                | "add" -> tryMatch (pAddI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "sub" -> tryMatch (pSubI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "mul" -> tryMatch (pMulI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "div" -> tryMatch (pDivSI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "divu" -> tryMatch (pDivUI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "rem" -> tryMatch (pRemSI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "remu" -> tryMatch (pRemUI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                match category with
+                                // Binary arithmetic (signed integer)
+                                | BinaryArith "addi" -> tryMatch (pAddI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "subi" -> tryMatch (pSubI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "muli" -> tryMatch (pMulI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "divsi" -> tryMatch (pDivSI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "divui" -> tryMatch (pDivUI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "remsi" -> tryMatch (pRemSI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "remui" -> tryMatch (pRemUI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
                                 // Floating-point arithmetic
-                                | "addf" -> tryMatch (pAddF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "subf" -> tryMatch (pSubF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "mulf" -> tryMatch (pMulF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "divf" -> tryMatch (pDivF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "addf" -> tryMatch (pAddF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "subf" -> tryMatch (pSubF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "mulf" -> tryMatch (pMulF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "divf" -> tryMatch (pDivF resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
                                 // Bitwise operations
-                                | "and" -> tryMatch (pAndI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "or" -> tryMatch (pOrI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "xor" -> tryMatch (pXorI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "shl" -> tryMatch (pShLI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "shru" -> tryMatch (pShRUI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                                | "shrs" -> tryMatch (pShRSI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "andi" -> tryMatch (pAndI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "ori" -> tryMatch (pOrI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "xori" -> tryMatch (pXorI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "shli" -> tryMatch (pShLI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "shrui" -> tryMatch (pShRUI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | BinaryArith "shrsi" -> tryMatch (pShRSI resultSSA lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
-                                | opName -> None
+                                // Comparison operations (NEW: was missing!)
+                                | Comparison "eq" -> tryMatch (pCmpI resultSSA ICmpPred.Eq lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "ne" -> tryMatch (pCmpI resultSSA ICmpPred.Ne lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "slt" -> tryMatch (pCmpI resultSSA ICmpPred.Slt lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "sle" -> tryMatch (pCmpI resultSSA ICmpPred.Sle lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "sgt" -> tryMatch (pCmpI resultSSA ICmpPred.Sgt lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "sge" -> tryMatch (pCmpI resultSSA ICmpPred.Sge lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "ult" -> tryMatch (pCmpI resultSSA ICmpPred.Ult lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "ule" -> tryMatch (pCmpI resultSSA ICmpPred.Ule lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "ugt" -> tryMatch (pCmpI resultSSA ICmpPred.Ugt lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                | Comparison "uge" -> tryMatch (pCmpI resultSSA ICmpPred.Uge lhsSSA rhsSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+
+                                | _ -> None
 
                             match opResult with
                             | Some (op, _) ->
                                 { InlineOps = [op]; TopLevelOps = []; Result = TRValue { SSA = resultSSA; Type = resultType } }
                             | None ->
-                                WitnessOutput.error $"Unknown or unsupported binary operator: {info.Operation}"
+                                WitnessOutput.error $"Unknown or unsupported binary operator: {info.Operation} (category: {category})"
 
                         | _ -> WitnessOutput.error $"Atomic operation not yet implemented: {info.FullName} with {argSSAs.Length} args"
 
