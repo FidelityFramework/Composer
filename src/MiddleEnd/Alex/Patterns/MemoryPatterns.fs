@@ -159,10 +159,8 @@ let pExtractDUPayload (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (paylo
         let extractSSA = ssas.[0]
 
         // Determine slot type from DU struct
-        let slotType =
-            match duType with
-            | TStruct fields when payloadIndex < List.length fields -> fields.[payloadIndex]
-            | _ -> payloadType
+        // Note: With TMemRefStatic, we use payloadType directly
+        let slotType = payloadType
 
         // Extract payload
         let! extractOp = pExtractValue extractSSA duSSA [payloadIndex] slotType
@@ -248,7 +246,8 @@ let pBuildArray (elements: Val list) (elemType: MLIRType) (ssas: SSA list) : PSG
         let undefSSA = ssas.[ssas.Length - 3]
         let withPtrSSA = ssas.[ssas.Length - 2]
         let resultSSA = ssas.[ssas.Length - 1]
-        let arrayType = TStruct [TIndex; TInt I64]
+        let totalBytes = mlirTypeSize TIndex + mlirTypeSize (TInt I64)
+        let arrayType = TMemRefStatic(totalBytes, TInt I8)
 
         let! undefOp = pUndef undefSSA arrayType
         let! insertPtrOp = pInsertValue withPtrSSA undefSSA allocaSSA [0] arrayType
@@ -425,7 +424,9 @@ let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
         do! ensure (ssas.Length = fields.Length + 1) $"pRecordStruct: Expected {fields.Length + 1} SSAs, got {ssas.Length}"
 
         // Compute struct type from field types
-        let structTy = TStruct (fields |> List.map (fun f -> f.Type))
+        let fieldTypes = fields |> List.map (fun f -> f.Type)
+        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let structTy = TMemRefStatic(totalBytes, TInt I8)
         let! undefOp = pUndef ssas.[0] structTy
 
         let! insertOps =

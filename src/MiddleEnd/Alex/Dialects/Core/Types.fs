@@ -29,8 +29,6 @@ type FloatWidth =
 type MLIRType =
     | TInt of IntWidth
     | TFloat of FloatWidth
-    | TStruct of MLIRType list              // Struct type
-    | TArray of int * MLIRType              // Fixed-size array
     | TFunc of MLIRType list * MLIRType     // Function type (args, return)
     | TMemRef of MLIRType                   // MemRef type (dynamic 1D)
     | TMemRefStatic of int * MLIRType       // Static-sized MemRef type (1D with known size)

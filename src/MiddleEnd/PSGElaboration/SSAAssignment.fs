@@ -16,6 +16,7 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.NativeTypedTree.UnionFind
 open Alex.Dialects.Core.Types
+open Alex.CodeGeneration.TypeMapping
 open PSGElaboration.Coeffects
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -112,15 +113,22 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         // Char (Unicode codepoint)
         | _, Some NTUKind.NTUchar -> TInt I32
         // String (fat pointer)
-        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TStruct [TIndex; TInt I64]
+        | TypeLayout.FatPointer, Some NTUKind.NTUstring ->
+            let totalBytes = mlirTypeSize TIndex + mlirTypeSize (TInt I64)
+            TMemRefStatic(totalBytes, TInt I8)
         // SECOND: Name-based fallback for types without proper NTU metadata
         | _ ->
             match tycon.Name with
             | "Ptr" | "nativeptr" | "byref" | "inref" | "outref" -> TIndex
-            | "array" -> TStruct [TIndex; TInt I64]  // Fat pointer
+            | "array" ->
+                let totalBytes = mlirTypeSize TIndex + mlirTypeSize (TInt I64)
+                TMemRefStatic(totalBytes, TInt I8)  // Fat pointer
             | "option" | "voption" ->
                 match args with
-                | [innerTy] -> TStruct [TInt I1; mapCaptureType arch innerTy]
+                | [innerTy] ->
+                    let innerMlir = mapCaptureType arch innerTy
+                    let totalBytes = 1 + mlirTypeSize innerMlir
+                    TMemRefStatic(totalBytes, TInt I8)
                 | _ -> TIndex  // Fallback
             | _ ->
                 // Records, DUs, unknown types - check if has fields or treat as pointer
@@ -128,9 +136,13 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
                     TIndex  // Records are passed by pointer
                 else
                     TIndex  // Fallback for other cases
-    | NativeType.TFun _ -> TStruct [TIndex; TIndex]  // Function = closure struct
+    | NativeType.TFun _ ->
+        let totalBytes = mlirTypeSize TIndex + mlirTypeSize TIndex
+        TMemRefStatic(totalBytes, TInt I8)  // Function = closure struct
     | NativeType.TTuple (elements, _) ->
-        TStruct (elements |> List.map (mapCaptureType arch))
+        let elementTypes = elements |> List.map (mapCaptureType arch)
+        let totalBytes = elementTypes |> List.sumBy mlirTypeSize
+        TMemRefStatic(totalBytes, TInt I8)
     | NativeType.TVar tvar ->
         // Resolve type variable using Union-Find
         match find tvar with
@@ -151,7 +163,8 @@ let private captureSlotType (arch: Architecture) (capture: CaptureInfo) : MLIRTy
 /// Build the environment struct type from captures
 let private buildEnvStructType (arch: Architecture) (captures: CaptureInfo list) : MLIRType =
     let slotTypes = captures |> List.map (captureSlotType arch)
-    TStruct slotTypes
+    let totalBytes = slotTypes |> List.sumBy mlirTypeSize
+    TMemRefStatic(totalBytes, TInt I8)
 
 /// Build complete ClosureLayout from Lambda captures and pre-assigned SSAs
 /// This is computed once during SSAAssignment - witnesses observe the result
@@ -223,7 +236,9 @@ let private buildClosureLayout
     // Captures are inlined directly, not via env_ptr indirection
     // This eliminates lifetime issues - closure is returned by value with all state inline
     let captureTypes = captures |> List.map (captureSlotType arch)
-    let closureStructType = TStruct (TIndex :: captureTypes)
+    let fieldTypes = TIndex :: captureTypes
+    let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+    let closureStructType = TMemRefStatic(totalBytes, TInt I8)
 
     // PRD-14 Option B: For lazy thunks, compute the FULL lazy struct type
     // {computed: i1, value: T, code_ptr: ptr, cap0, cap1, ...}
@@ -236,7 +251,9 @@ let private buildClosureLayout
             | Some bodyNode ->
                 let elementType = mapCaptureType arch bodyNode.Type
                 // Lazy struct: {i1, T, ptr, cap0, cap1, ...}
-                Some (TStruct ([TInt I1; elementType; TIndex] @ captureTypes))
+                let fieldTypes = [TInt I1; elementType; TIndex] @ captureTypes
+                let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+                Some (TMemRefStatic(totalBytes, TInt I8))
             | None ->
                 failwithf "LazyThunk Lambda body node %d not found" (NodeId.value bodyNodeId)
         | _ -> None
@@ -332,8 +349,11 @@ let private buildDULayout
     // Build case-specific struct type: {i8, PayloadType} or {i8} for nullary
     let caseStructType =
         match payloadType with
-        | Some pType -> TStruct [TInt I8; pType]
-        | None -> TStruct [TInt I8]
+        | Some pType ->
+            let totalBytes = 1 + mlirTypeSize pType
+            TMemRefStatic(totalBytes, TInt I8)
+        | None ->
+            TMemRefStatic(1, TInt I8)
 
     {
         DUConstructNodeId = duConstructNodeId
@@ -601,7 +621,7 @@ let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType o
                 | 2 -> TInt I16
                 | 4 -> TInt I32
                 | 8 -> TInt I64
-                | n -> TArray (n, TInt I8)
+                | n -> TMemRefStatic(n, TInt I8)
             Some slotType
         | _ -> None
     | _ -> None
@@ -1457,7 +1477,9 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
                     let captureTypes = captures |> List.map (captureSlotType arch)
 
                     // Build the actual lazy struct type with captures inlined
-                    let actualLazyType = TStruct (TInt I1 :: elemMlir :: TIndex :: captureTypes)
+                    let fieldTypes = TInt I1 :: elemMlir :: TIndex :: captureTypes
+                    let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+                    let actualLazyType = TMemRefStatic(totalBytes, TInt I8)
                     Some actualLazyType
 
                 // PRD-15: Sequence expressions with captures and/or internal state
@@ -1485,7 +1507,9 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
 
                         // Build the actual seq struct type with captures + internal state inlined
                         // Layout: {state: i32, current: T, code_ptr: ptr, cap0..., state0...}
-                        let actualSeqType = TStruct (TInt I32 :: elemMlir :: TIndex :: captureTypes @ internalStateTypes)
+                        let fieldTypes = TInt I32 :: elemMlir :: TIndex :: captureTypes @ internalStateTypes
+                        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+                        let actualSeqType = TMemRefStatic(totalBytes, TInt I8)
                         Some actualSeqType
 
                 | _ -> None

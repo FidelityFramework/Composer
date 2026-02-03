@@ -27,8 +27,6 @@ let rec mlirTypeSize (ty: MLIRType) : int =
     | TInt I64 -> 8
     | TFloat F32 -> 4
     | TFloat F64 -> 8
-    | TStruct fields -> fields |> List.sumBy mlirTypeSize
-    | TArray (count, elemTy) -> count * mlirTypeSize elemTy
     | TFunc _ -> 16  // Function pointer + closure = 2 words
     | TMemRef _ -> 8  // Pointer-sized (dynamic memref)
     | TMemRefStatic _ -> 8  // Pointer-sized (static memref)
@@ -59,8 +57,6 @@ let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
     | TFloat F32 -> 4
     | TFloat F64 -> 8
     | TIndex -> wordBytes            // Platform-sized
-    | TStruct fields -> fields |> List.sumBy (mlirTypeSizeForArch arch)
-    | TArray (count, elemTy) -> count * mlirTypeSizeForArch arch elemTy
     | TFunc _ -> 2 * wordBytes       // Function pointer + closure = 2 words
     | TMemRef _ -> wordBytes         // Pointer-sized (dynamic memref)
     | TMemRefStatic _ -> wordBytes   // Pointer-sized (static memref)
@@ -186,12 +182,18 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 // Option is a DU with 2 cases (None, Some) - tag must be i8, not i1
                 // DU tags are ALWAYS i8 (or i16 for >256 cases), never boolean
                 match args with
-                | [innerTy] -> TStruct [TInt I8; mapNativeTypeForArch arch innerTy]
+                | [innerTy] ->
+                    let innerMlir = mapNativeTypeForArch arch innerTy
+                    let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
+                    TMemRefStatic(totalBytes, TInt I8)
                 | _ -> failwithf "option type requires exactly one type argument: %A" ty
             | "voption" ->
                 // ValueOption is a DU with 2 cases (ValueNone, ValueSome) - tag must be i8
                 match args with
-                | [innerTy] -> TStruct [TInt I8; mapNativeTypeForArch arch innerTy]
+                | [innerTy] ->
+                    let innerMlir = mapNativeTypeForArch arch innerTy
+                    let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
+                    TMemRefStatic(totalBytes, TInt I8)
                 | _ -> failwithf "voption type requires exactly one type argument: %A" ty
             | "result" ->
                 // Result<'T, 'E> is a pointer to arena-allocated case-specific storage
@@ -226,7 +228,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                     | TypeLayout.FatPointer ->
                         // FatPointer types should have been handled earlier by NTUKind or name
                         // Strings: TypeLayout.FatPointer + NTUKind.NTUstring → TMemRef (line 151)
-                        // Arrays: Name match "array"|"Array" → TStruct (line 177-179)
+                        // Arrays: Name match "array"|"Array" → TMemRef (line 207)
                         // If we reach here, check if it's a string by name (defensive)
                         if tycon.Name.ToLowerInvariant().Contains("string") then
                             // String without proper NTUKind - use memref but warn
@@ -253,7 +255,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
     | NativeType.TFun _ ->
         // Closures: {codePtr: ptr, envPtr: ptr} - homogeneous, use memref array
         // Phase 2: Memref-backed pattern - array of 2 indices (portable, platform-sized)
-        // Use TIndex (not TIndex) because !llvm.ptr can't be memref element type
+        // Use TIndex (not TPtr) because index can be memref element type
         TMemRefStatic (2, TIndex)
 
     | NativeType.TTuple(elements, _) ->
@@ -319,7 +321,8 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 | [(_, ty)] -> Some (mapNativeTypeForArch arch ty)  // Single field
                 | fields ->  // Multiple fields = tuple payload
                     let fieldTypes = fields |> List.map (fun (_, ty) -> mapNativeTypeForArch arch ty)
-                    Some (TStruct fieldTypes))
+                    let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+                    Some (TMemRefStatic(totalBytes, TInt I8)))
 
         // Find the "largest" payload type for union storage
         // For now, use the first non-None case's type (proper size comparison would need layout info)
@@ -442,7 +445,9 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
         match SemanticGraph.tryGetRecordFields tycon.Name graph with
         | Some fields ->
             // Map each field type to MLIR RECURSIVELY (nested records also use graph lookup)
-            TStruct (fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy))
+            let fieldTypes = fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy)
+            let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+            TMemRefStatic(totalBytes, TInt I8)
         | None ->
             // Fallback: shouldn't happen if TypeDef nodes are properly created
             failwithf "Record type '%s' not found in TypeDef nodes - FNCS must create TypeDef for records" tycon.Name
@@ -452,20 +457,27 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
         match SemanticGraph.tryGetRecordFields tycon.Name graph with
         | Some fields ->
             // Found record definition - use graph lookup
-            TStruct (fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy))
+            let fieldTypes = fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy)
+            let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+            TMemRefStatic(totalBytes, TInt I8)
         | None ->
             // Not a record - use standard mapping with architecture
             mapNativeTypeForArch arch ty
     | NativeType.TTuple(elements, _) ->
         // Tuples also need recursive mapping for nested records
-        TStruct (elements |> List.map (mapNativeTypeWithGraphForArch arch graph))
+        let elementTypes = elements |> List.map (mapNativeTypeWithGraphForArch arch graph)
+        let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        TMemRefStatic(totalBytes, TInt I8)
     | NativeType.TAnon(fields, _) ->
         // Anonymous records need recursive mapping
-        TStruct (fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy))
+        let fieldTypes = fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy)
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        TMemRefStatic(totalBytes, TInt I8)
     // PRD-14: Lazy<T> - FLAT CLOSURE, need recursive mapping in case T is a record
     | NativeType.TLazy elemTy ->
         let elemMlir = mapNativeTypeWithGraphForArch arch graph elemTy
-        TStruct [TInt I1; elemMlir; TIndex]  // Flat: just code_ptr, captures added at witness
+        let totalBytes = 1 + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
+        TMemRefStatic(totalBytes, TInt I8)  // Flat: just code_ptr, captures added at witness
     | _ ->
         // Non-record types: use standard mapping with architecture
         mapNativeTypeForArch arch ty

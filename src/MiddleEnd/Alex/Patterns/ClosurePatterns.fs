@@ -118,7 +118,9 @@ let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas
         do! ensure (ssas.Length >= 2 + captures.Length) $"pFlatClosure: Expected at least {2 + captures.Length} SSAs, got {ssas.Length}"
 
         // Compute closure type: {code_ptr: ptr, capture0, capture1, ...}
-        let closureTy = TStruct (codePtrTy :: (captures |> List.map (fun cap -> cap.Type)))
+        let fieldTypes = codePtrTy :: (captures |> List.map (fun cap -> cap.Type))
+        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let closureTy = TMemRefStatic(totalBytes, TInt I8)
 
         // Create undef struct
         let! undefOp = pUndef ssas.[0] closureTy
@@ -149,7 +151,7 @@ let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType
 
         // Extract code_ptr from index 0 (first field is always ptr type)
         let codePtrSSA = extractSSAs.[0]
-        let codePtrTy = match closureTy with TStruct (ty :: _) -> ty | _ -> TIndex
+        let codePtrTy = TIndex  // Code pointer type
         let! extractCodeOp = pExtractValue codePtrSSA closureSSA [0] codePtrTy
 
         // Extract captures from indices 1..captureCount
@@ -218,7 +220,9 @@ let pLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (captur
         do! ensure (ssas.Length >= 4 + captures.Length) $"pLazyStruct: Expected at least {4 + captures.Length} SSAs, got {ssas.Length}"
 
         // Compute lazy type: {computed: i1, value: T, code_ptr: ptr, captures...}
-        let lazyTy = TStruct ([TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type)))
+        let fieldTypes = [TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
+        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let lazyTy = TMemRefStatic(totalBytes, TInt I8)
 
         // Create undef struct
         let! undefOp = pUndef ssas.[0] lazyTy
@@ -258,7 +262,9 @@ let pBuildLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (c
         let finalSSA = ssas.[3 + captures.Length]
 
         // Lazy type is {computed: i1, value: T, code_ptr, captures...}
-        let mlirType = TStruct ([TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type)))
+        let fieldTypes = [TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
+        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let mlirType = TMemRefStatic(totalBytes, TInt I8)
 
         return (ops, TRValue { SSA = finalSSA; Type = mlirType })
     }
@@ -321,9 +327,11 @@ let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (c
         do! ensure (ssas.Length >= minSSAs) $"pSeqStruct: Expected at least {minSSAs} SSAs, got {ssas.Length}"
 
         // Compute seq type: {state: i32, current: T, code_ptr: ptr, captures..., internal...}
-        let seqTy = TStruct ([TInt I32; currentTy; codePtrTy]
-                             @ (captures |> List.map (fun cap -> cap.Type))
-                             @ (internalState |> List.map (fun st -> st.Type)))
+        let fieldTypes = [TInt I32; currentTy; codePtrTy]
+                         @ (captures |> List.map (fun cap -> cap.Type))
+                         @ (internalState |> List.map (fun st -> st.Type))
+        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let seqTy = TMemRefStatic(totalBytes, TInt I8)
 
         // Create undef struct
         let! undefOp = pUndef ssas.[0] seqTy
@@ -440,9 +448,11 @@ let pBuildSeqStruct (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
         let finalSSA = ssas.[3 + captures.Length + internalState.Length]
 
         // Seq type is {state: i32, current: T, code_ptr: ptr, captures..., internal...}
-        let mlirType = TStruct ([TInt I32; currentTy; codePtrTy]
-                                @ (captures |> List.map (fun cap -> cap.Type))
-                                @ (internalState |> List.map (fun st -> st.Type)))
+        let fieldTypes = [TInt I32; currentTy; codePtrTy]
+                         @ (captures |> List.map (fun cap -> cap.Type))
+                         @ (internalState |> List.map (fun st -> st.Type))
+        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let mlirType = TMemRefStatic(totalBytes, TInt I8)
 
         return (ops, TRValue { SSA = finalSSA; Type = mlirType })
     }

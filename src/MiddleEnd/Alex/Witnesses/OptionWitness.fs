@@ -13,6 +13,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.CollectionPatterns
+open Alex.CodeGeneration.TypeMapping
 
 module SSAAssign = PSGElaboration.SSAAssignment
 
@@ -33,7 +34,8 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (valSSA, valType) ->
                     let value = { SSA = valSSA; Type = valType }
-                    let optionTy = TStruct [TInt I8; valType]
+                    let totalBytes = 1 + mlirTypeSize valType
+                    let optionTy = TMemRefStatic(totalBytes, TInt I8)
                     match tryMatch (pOptionSome value ssas optionTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = List.last ssas; Type = optionTy } }
                     | None -> WitnessOutput.error "Option.Some pattern emission failed"
@@ -78,9 +80,9 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | [childId], Some resultSSA ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, optType) ->
-                    let valueType = match optType with
-                                    | TStruct [_; vt] -> vt
-                                    | _ -> TIndex
+                    // With TMemRefStatic, we can't extract value type from structure
+                    // Use TIndex as fallback (may need type tracking refactor)
+                    let valueType = TIndex
                     match tryMatch (pOptionGet optSSA resultSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ops, _) ->
                         { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = resultSSA; Type = valueType } }

@@ -166,7 +166,8 @@ let pStringConstruct (ptrTy: MLIRType) (lengthTy: MLIRType) (ptr: SSA) (length: 
         do! ensure (ssas.Length >= 3) $"pStringConstruct: Expected at least 3 SSAs, got {ssas.Length}"
 
         // String type is {ptr: nativeptr<byte>, length: int}
-        let stringTy = TStruct [ptrTy; lengthTy]
+        let totalBytes = mlirTypeSize ptrTy + mlirTypeSize lengthTy
+        let stringTy = TMemRefStatic(totalBytes, TInt I8)
         let! undefOp = pUndef ssas.[0] stringTy
         let! insertPtrOp = pInsertValue ssas.[1] ssas.[0] ptr [0] stringTy
         let! insertLenOp = pInsertValue ssas.[2] ssas.[1] length [1] stringTy

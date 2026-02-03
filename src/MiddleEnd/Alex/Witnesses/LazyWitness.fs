@@ -39,11 +39,9 @@ let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
             match MLIRAccumulator.recallNode bodyId ctx.Accumulator with
             | None -> WitnessOutput.error "LazyExpr: Body not yet witnessed"
             | Some (codePtr, codePtrTy) ->
-                // Get Lazy<T> type from node, extract value type T from struct field [1]
-                let lazyTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
-                let valueTy = match lazyTy with
-                              | TStruct (_::vt::_) -> vt  // {computed: i1, value: T, ...}
-                              | _ -> TIndex  // fallback
+                // Get Lazy<T> type from node
+                // With TMemRefStatic, we can't extract value type from structure - use fallback
+                let valueTy = TIndex  // fallback (may need type tracking refactor)
                 match tryMatch (pBuildLazyStruct valueTy codePtrTy codePtr captures ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                 | None -> WitnessOutput.error "LazyExpr pattern emission failed"

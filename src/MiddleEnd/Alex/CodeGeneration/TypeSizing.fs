@@ -46,14 +46,6 @@ let rec computeSize (mlirType: string) : int64 =
     // Unit/void - zero size
     | "()" -> 0L
 
-    // Struct types - sum of field sizes
-    | s when s.StartsWith("!llvm.struct<(") && s.EndsWith(")>") ->
-        parseStructSize s
-
-    // Array types - count * element size
-    | s when s.StartsWith("!llvm.array<") && s.EndsWith(">") ->
-        parseArraySize s
-
     // Tuple types (from nativeTypeToMLIR)
     | s when s.StartsWith("tuple<") && s.EndsWith(">") ->
         parseTupleSize s
@@ -67,47 +59,6 @@ let rec computeSize (mlirType: string) : int64 =
     // Unknown type - fail explicitly (no silent fallback)
     | _ ->
         failwithf "TypeSizing.computeSize: Unknown MLIR type '%s'" mlirType
-
-/// Parse struct size from "!llvm.struct<(type1, type2, ...)>"
-/// Sums the sizes of all fields
-and parseStructSize (s: string) : int64 =
-    // Extract content between "!llvm.struct<(" and ")>"
-    let prefix = "!llvm.struct<("
-    let suffix = ")>"
-
-    if not (s.StartsWith(prefix) && s.EndsWith(suffix)) then
-        failwithf "TypeSizing.parseStructSize: Invalid struct format '%s'" s
-
-    let content = s.Substring(prefix.Length, s.Length - prefix.Length - suffix.Length)
-
-    if String.IsNullOrWhiteSpace(content) then
-        0L  // Empty struct
-    else
-        // Split by comma, handling nested types
-        let fields = splitTypeList content
-        fields |> List.sumBy computeSize
-
-/// Parse array size from "!llvm.array<N x elementType>"
-and parseArraySize (s: string) : int64 =
-    // Extract content between "!llvm.array<" and ">"
-    let prefix = "!llvm.array<"
-    let suffix = ">"
-
-    if not (s.StartsWith(prefix) && s.EndsWith(suffix)) then
-        failwithf "TypeSizing.parseArraySize: Invalid array format '%s'" s
-
-    let content = s.Substring(prefix.Length, s.Length - prefix.Length - suffix.Length)
-
-    // Format: "N x elementType"
-    let parts = content.Split([|" x "|], StringSplitOptions.None)
-    if parts.Length <> 2 then
-        failwithf "TypeSizing.parseArraySize: Expected 'N x type' format, got '%s'" content
-
-    let count = Int64.Parse(parts.[0].Trim())
-    let elementType = parts.[1].Trim()
-    let elementSize = computeSize elementType
-
-    count * elementSize
 
 /// Parse tuple size from "tuple<type1, type2, ...>"
 and parseTupleSize (s: string) : int64 =
@@ -126,8 +77,8 @@ and parseTupleSize (s: string) : int64 =
         elements |> List.sumBy computeSize
 
 /// Split a comma-separated type list, respecting nested angle brackets
-/// "!llvm.ptr, i64" → ["!llvm.ptr"; "i64"]
-/// "!llvm.struct<(i32, i64)>, i8" → ["!llvm.struct<(i32, i64)>"; "i8"]
+/// "index, i64" → ["index"; "i64"]
+/// "memref<4xi8>, i8" → ["memref<4xi8>"; "i8"]
 and splitTypeList (content: string) : string list =
     let mutable depth = 0
     let mutable current = System.Text.StringBuilder()
@@ -175,8 +126,7 @@ module CommonSizes =
 
     /// Check if type is a fat pointer (string, array)
     let isFatPointer (mlirType: string) : bool =
-        mlirType = "!llvm.struct<(ptr, i64)>" ||
-        mlirType = "!llvm.struct<(!llvm.ptr, i64)>"
+        mlirType.StartsWith("memref<?x")
 
 /// Get size as MLIR i64 constant expression
 let sizeAsConstant (mlirType: string) : string =
