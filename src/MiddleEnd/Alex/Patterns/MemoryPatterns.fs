@@ -23,10 +23,15 @@ open Alex.CodeGeneration.TypeMapping
 // ═══════════════════════════════════════════════════════════
 
 /// Extract single field from struct
-let pExtractField (structSSA: SSA) (fieldIndex: int) (resultSSA: SSA) (structTy: MLIRType) : PSGParser<MLIROp list> =
+/// SSA layout (2 total):
+///   [0] = offsetConstSSA - index constant for memref.load
+///   [1] = resultSSA - result of the load
+let pExtractField (ssas: SSA list) (structSSA: SSA) (fieldIndex: int) (structTy: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        let! extractOp = pExtractValue resultSSA structSSA [fieldIndex] structTy
-        return [extractOp]
+        do! ensure (ssas.Length >= 2) $"pExtractField: Expected 2 SSAs, got {ssas.Length}"
+        let offsetSSA = ssas.[0]
+        let resultSSA = ssas.[1]
+        return! pExtractValue resultSSA structSSA fieldIndex offsetSSA structTy
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -138,45 +143,45 @@ let pConvertType (srcSSA: SSA) (srcType: MLIRType) (dstType: MLIRType) (resultSS
 /// Extract DU tag (handles both inline and pointer-based DUs)
 /// Pointer-based: Load tag byte from offset 0
 /// Inline: ExtractValue at index 0
-/// SSAs: tagSSA for result, indexZeroSSA for memref index
+/// SSAs: tagSSA for result, indexZeroSSA for offset/index constant
 let pExtractDUTag (duSSA: SSA) (duType: MLIRType) (tagSSA: SSA) (indexZeroSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         match duType with
         | TIndex ->
             // Pointer-based DU: load tag byte from offset 0
-            let! indexZeroOp = pConstI indexZeroSSA 0L TIndex  // MLIR memrefs require indices
+            let! indexZeroOp = pConstI indexZeroSSA 0L TIndex
             let! loadOp = pLoad tagSSA duSSA [indexZeroSSA]
             return [indexZeroOp; loadOp]
         | _ ->
-            // Inline struct DU: extract tag from field 0
+            // Inline struct DU: extract tag from field 0 (pExtractValue creates constant internally)
             let tagTy = TInt I8  // DU tags are always i8
-            let! extractOp = pExtractValue tagSSA duSSA [0] tagTy
-            return [extractOp]
+            return! pExtractValue tagSSA duSSA 0 indexZeroSSA tagTy
     }
 
 /// Extract DU payload with optional type conversion
-/// SSAs: [0] = extract, [1] = convert (if needed)
+/// SSAs: [0] = offsetSSA, [1] = extractSSA, [2] = convertSSA (if needed)
 let pExtractDUPayload (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (payloadType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        do! ensure (ssas.Length >= 1) $"pExtractDUPayload: Expected at least 1 SSA, got {ssas.Length}"
+        do! ensure (ssas.Length >= 2) $"pExtractDUPayload: Expected at least 2 SSAs, got {ssas.Length}"
 
-        let extractSSA = ssas.[0]
+        let offsetSSA = ssas.[0]
+        let extractSSA = ssas.[1]
 
         // Determine slot type from DU struct
         // Note: With TMemRefStatic, we use payloadType directly
         let slotType = payloadType
 
-        // Extract payload
-        let! extractOp = pExtractValue extractSSA duSSA [payloadIndex] slotType
+        // Extract payload (pExtractValue creates constant internally)
+        let! extractOps = pExtractValue extractSSA duSSA payloadIndex offsetSSA slotType
 
         // Convert if needed
         if slotType = payloadType then
-            return [extractOp]
+            return extractOps
         else
-            do! ensure (ssas.Length >= 2) $"pExtractDUPayload: Need 2 SSAs for conversion, got {ssas.Length}"
-            let convertSSA = ssas.[1]
+            do! ensure (ssas.Length >= 3) $"pExtractDUPayload: Need 3 SSAs for conversion, got {ssas.Length}"
+            let convertSSA = ssas.[2]
             let! convOps = pConvertType extractSSA slotType payloadType convertSSA
-            return extractOp :: convOps
+            return extractOps @ convOps
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -188,16 +193,21 @@ let pExtractDUPayload (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (paylo
 /// Updates: (fieldIndex, valueSSA) pairs
 let pRecordCopyWith (origSSA: SSA) (recordType: MLIRType) (updates: (int * SSA) list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        do! ensure (ssas.Length = updates.Length) $"pRecordCopyWith: Expected {updates.Length} SSAs, got {ssas.Length}"
+        // Each update needs 2 SSAs: offsetSSA and targetSSA
+        do! ensure (ssas.Length = 2 * updates.Length) $"pRecordCopyWith: Expected {2 * updates.Length} SSAs (2 per update), got {ssas.Length}"
 
         // Fold over updates, threading prevSSA through
         let! result =
-            List.zip ssas updates
-            |> List.fold (fun accParser (targetSSA, (fieldIdx, valueSSA)) ->
+            updates
+            |> List.mapi (fun i (fieldIdx, valueSSA) ->
+                let offsetSSA = ssas.[2*i]
+                let targetSSA = ssas.[2*i + 1]
+                (offsetSSA, targetSSA, fieldIdx, valueSSA))
+            |> List.fold (fun accParser (offsetSSA, targetSSA, fieldIdx, valueSSA) ->
                 parser {
                     let! (prevOps, prevSSA) = accParser
-                    let! insertOp = pInsertValue targetSSA prevSSA valueSSA [fieldIdx] recordType
-                    return (prevOps @ [insertOp], targetSSA)
+                    let! insertOps = pInsertValue targetSSA prevSSA valueSSA fieldIdx offsetSSA recordType
+                    return (prevOps @ insertOps, targetSSA)
                 }
             ) (preturn ([], origSSA))
 
@@ -210,56 +220,6 @@ let pRecordCopyWith (origSSA: SSA) (recordType: MLIRType) (updates: (int * SSA) 
 // ═══════════════════════════════════════════════════════════
 
 /// Build array: allocate, initialize elements, construct fat pointer
-/// SSAs: [0] = count const, [1] = alloca, [2..2+3*N] = (idx, gep, indexZero) triples, [last-2] = undef, [last-1] = withPtr, [last] = result
-let pBuildArray (elements: Val list) (elemType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
-    parser {
-        let count = List.length elements
-        let expectedSSAs = 2 + (3 * count) + 3  // count, alloca, (idx,gep,indexZero)*N, undef, withPtr, result
-
-        do! ensure (ssas.Length >= expectedSSAs) $"pBuildArray: Expected {expectedSSAs} SSAs, got {ssas.Length}"
-
-        let countSSA = ssas.[0]
-        let allocaSSA = ssas.[1]
-
-        // Allocate array
-        let countTy = TInt I64
-        let! countOp = pConstI countSSA (int64 count) countTy
-        let! allocaOp = pAlloca allocaSSA elemType None
-
-        // Store each element
-        let indexTy = TInt I64
-        let! storeOpsList =
-            elements
-            |> List.indexed
-            |> List.map (fun (i, elem) ->
-                parser {
-                    let idxSSA = ssas.[2 + i * 3]
-                    let gepSSA = ssas.[2 + i * 3 + 1]
-                    let indexZeroSSA = ssas.[2 + i * 3 + 2]
-                    let! idxOp = pConstI idxSSA (int64 i) indexTy
-                    let! gepOp = pSubView gepSSA allocaSSA [idxSSA]
-                    let! indexZeroOp = pConstI indexZeroSSA 0L TIndex  // Index 0 for 1-element memref
-                    let! storeOp = pStore elem.SSA gepSSA [indexZeroSSA] elemType
-                    return [idxOp; gepOp; indexZeroOp; storeOp]
-                })
-            |> sequence
-
-        let storeOps = List.concat storeOpsList
-
-        // Build fat pointer {ptr, count}
-        let undefSSA = ssas.[ssas.Length - 3]
-        let withPtrSSA = ssas.[ssas.Length - 2]
-        let resultSSA = ssas.[ssas.Length - 1]
-        let totalBytes = mlirTypeSize TIndex + mlirTypeSize (TInt I64)
-        let arrayType = TMemRefStatic(totalBytes, TInt I8)
-
-        let! undefOp = pUndef undefSSA arrayType
-        let! insertPtrOp = pInsertValue withPtrSSA undefSSA allocaSSA [0] arrayType
-        let! insertCountOp = pInsertValue resultSSA withPtrSSA countSSA [1] arrayType
-
-        return [countOp; allocaOp] @ storeOps @ [undefOp; insertPtrOp; insertCountOp]
-    }
-
 /// Array element access via SubView + Load
 /// SSAs: gepSSA for subview, loadSSA for result, indexZeroSSA for memref index
 let pArrayAccess (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (gepSSA: SSA) (loadSSA: SSA) (indexZeroSSA: SSA) : PSGParser<MLIROp list> =
@@ -424,8 +384,9 @@ let pStructFieldGet (ssas: SSA list) (structSSA: SSA) (fieldName: string) (struc
                 | "Length" | "len" -> 1  // Accept both capitalized (old) and lowercase (FNCS)
                 | _ -> failwith $"Unknown field name: {fieldName}"
 
-            // Extract field value - pass struct type for MLIR type annotation
-            let! ops = pExtractField structSSA fieldIndex resultSSA structTy
+            // Extract field value - pExtractField needs [offsetSSA, resultSSA]
+            let extractFieldSSAs = [ssas.[0]; resultSSA]
+            let! ops = pExtractField extractFieldSSAs structSSA fieldIndex structTy
             return (ops, TRValue { SSA = resultSSA; Type = fieldTy })
     }
 
@@ -434,9 +395,10 @@ let pStructFieldGet (ssas: SSA list) (structSSA: SSA) (fieldName: string) (struc
 // ═══════════════════════════════════════════════════════════
 
 /// Record struct via Undef + InsertValue chain
+/// SSA layout: [0] = undefSSA, then for each field: [2*i+1] = offsetSSA, [2*i+2] = resultSSA
 let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        do! ensure (ssas.Length = fields.Length + 1) $"pRecordStruct: Expected {fields.Length + 1} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length = 1 + 2 * fields.Length) $"pRecordStruct: Expected {1 + 2 * fields.Length} SSAs, got {ssas.Length}"
 
         // Compute struct type from field types
         let fieldTypes = fields |> List.map (fun f -> f.Type)
@@ -444,16 +406,18 @@ let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
         let structTy = TMemRefStatic(totalBytes, TInt I8)
         let! undefOp = pUndef ssas.[0] structTy
 
-        let! insertOps =
+        let! insertOpLists =
             fields
             |> List.mapi (fun i field ->
                 parser {
-                    let targetSSA = ssas.[i+1]
-                    let sourceSSA = if i = 0 then ssas.[0] else ssas.[i]
-                    return! pInsertValue targetSSA sourceSSA field.SSA [i] structTy
+                    let offsetSSA = ssas.[2*i + 1]
+                    let targetSSA = ssas.[2*i + 2]
+                    let sourceSSA = if i = 0 then ssas.[0] else ssas.[2*(i-1) + 2]
+                    return! pInsertValue targetSSA sourceSSA field.SSA i offsetSSA structTy
                 })
             |> sequence
 
+        let insertOps = List.concat insertOpLists
         return undefOp :: insertOps
     }
 
@@ -467,30 +431,34 @@ let pTupleStruct (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> 
 
 /// DU case construction: tag field (index 0) + payload fields
 /// CRITICAL: This is the foundation for all collection patterns (Option, List, Map, Set, Result)
+/// SSA layout: [0] = undefSSA, [1] = tagSSA, [2] = tagOffsetSSA, [3] = tagResultSSA,
+///             then for each payload: [4+2*i] = offsetSSA, [5+2*i] = resultSSA
 let pDUCase (tag: int64) (payload: Val list) (ssas: SSA list) (ty: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        do! ensure (ssas.Length >= 2 + payload.Length) $"pDUCase: Expected at least {2 + payload.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 4 + 2 * payload.Length) $"pDUCase: Expected at least {4 + 2 * payload.Length} SSAs, got {ssas.Length}"
 
         // Create undef struct
         let! undefOp = pUndef ssas.[0] ty
 
-        // Insert tag at index 0
+        // Insert tag at index 0 (pInsertValue creates constant internally)
         let tagTy = TInt I8  // DU tags are always i8
         let! tagConstOp = pConstI ssas.[1] tag tagTy
-        let! insertTagOp = pInsertValue ssas.[2] ssas.[0] ssas.[1] [0] ty
+        let! insertTagOps = pInsertValue ssas.[3] ssas.[0] ssas.[1] 0 ssas.[2] ty
 
         // Insert payload fields starting at index 1
-        let! payloadOps =
+        let! payloadOpLists =
             payload
             |> List.mapi (fun i field ->
                 parser {
-                    let targetSSA = ssas.[3 + i]
-                    let sourceSSA = if i = 0 then ssas.[2] else ssas.[2 + i]
-                    return! pInsertValue targetSSA sourceSSA field.SSA [i + 1] ty
+                    let offsetSSA = ssas.[4 + 2*i]
+                    let targetSSA = ssas.[5 + 2*i]
+                    let sourceSSA = if i = 0 then ssas.[3] else ssas.[3 + 2*i]
+                    return! pInsertValue targetSSA sourceSSA field.SSA (i + 1) offsetSSA ty
                 })
             |> sequence
 
-        return undefOp :: tagConstOp :: insertTagOp :: payloadOps
+        let payloadOps = List.concat payloadOpLists
+        return undefOp :: tagConstOp :: (insertTagOps @ payloadOps)
     }
 
 // ═══════════════════════════════════════════════════════════

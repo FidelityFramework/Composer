@@ -142,24 +142,11 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                                 | None -> WitnessOutput.error "Sys.read pattern failed"
                             | None -> WitnessOutput.error "Sys.read: buffer argument not yet witnessed"
 
-                        | IntrinsicModule.NativeStr, "fromPointer", [ptrSSA; lengthSSA] ->
-                            // NativeStr.fromPointer(ptr, len) constructs a string fat pointer
-                            // String is struct {ptr: nativeptr<byte>, length: int}
-                            let arch = ctx.Coeffects.Platform.TargetArch
-                            let ptrTy = TIndex  // Pointer represented as index
-                            let lengthTy = mapNativeTypeForArch arch Types.intType  // Use platform int
-
-                            // Witness SSAs for struct construction (undef, insertPtr, result)
-                            match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
-                            | Some ssas when ssas.Length >= 3 ->
-                                match tryMatch (pStringConstruct ptrTy lengthTy ptrSSA lengthSSA ssas) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                                | Some (ops, _) ->
-                                    // String is represented as a fat pointer struct (index + i32)
-                                    let stringSize = if arch = Architecture.X86_64 then 16 else 12
-                                    let stringTy = TMemRefStatic(stringSize, TInt I8)
-                                    { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = resultSSA; Type = stringTy } }
-                                | None -> WitnessOutput.error "NativeStr.fromPointer pattern failed"
-                            | _ -> WitnessOutput.error "NativeStr.fromPointer: Need 3 SSAs (undef, insertPtr, result)"
+                        | IntrinsicModule.NativeStr, "fromPointer", [bufferSSA; _lengthSSA] ->
+                            // In MLIR memref semantics, buffer IS already a memref<?xi8>
+                            // No fat pointer construction needed - just return the buffer directly
+                            let stringTy = TMemRef (TInt I8)  // memref<?xi8>
+                            { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = bufferSSA; Type = stringTy } }
 
                         // String operations (IntrinsicModule.String)
                         | IntrinsicModule.String, "concat2", [str1SSA; str2SSA] ->
@@ -167,9 +154,12 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             let str1Type = argTypes.[0]
                             let str2Type = argTypes.[1]
 
-                            match tryMatch (pStringConcat2 resultSSA str1SSA str2SSA str1Type str2Type) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                            | None -> WitnessOutput.error "String.concat2 pattern failed"
+                            match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
+                            | Some ssas ->
+                                match tryMatch (pStringConcat2 ssas str1SSA str2SSA str1Type str2Type) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                                | None -> WitnessOutput.error "String.concat2 pattern failed"
+                            | None -> WitnessOutput.error "String.concat2: No SSAs assigned"
 
                         // Binary arithmetic intrinsics (+, -, *, /, %)
                         | IntrinsicModule.Operators, _, [lhsSSA; rhsSSA] ->

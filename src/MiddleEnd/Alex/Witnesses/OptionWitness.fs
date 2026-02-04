@@ -55,35 +55,37 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
 
         | "isSome" ->
             match node.Children, SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
-            | [childId], Some ssas when ssas.Length >= 3 ->
+            | [childId], Some ssas when ssas.Length >= 4 ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    match tryMatch (pOptionIsSome optSSA ssas.[0] ssas.[1] ssas.[2]) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[2]; Type = TInt I1 } }
+                    match tryMatch (pOptionIsSome optSSA ssas.[0] ssas.[1] ssas.[2] ssas.[3]) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[3]; Type = TInt I1 } }
                     | None -> WitnessOutput.error "Option.isSome pattern emission failed"
                 | None -> WitnessOutput.error "Option.isSome: Option not yet witnessed"
             | _ -> WitnessOutput.error "Option.isSome: Invalid children or SSAs"
 
         | "isNone" ->
             match node.Children, SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
-            | [childId], Some ssas when ssas.Length >= 3 ->
+            | [childId], Some ssas when ssas.Length >= 4 ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    match tryMatch (pOptionIsNone optSSA ssas.[0] ssas.[1] ssas.[2]) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[2]; Type = TInt I1 } }
+                    match tryMatch (pOptionIsNone optSSA ssas.[0] ssas.[1] ssas.[2] ssas.[3]) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = ssas.[3]; Type = TInt I1 } }
                     | None -> WitnessOutput.error "Option.isNone pattern emission failed"
                 | None -> WitnessOutput.error "Option.isNone: Option not yet witnessed"
             | _ -> WitnessOutput.error "Option.isNone: Invalid children or SSAs"
 
         | "get" ->
-            match node.Children, SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
-            | [childId], Some resultSSA ->
+            match node.Children, SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
+            | [childId], Some ssas when ssas.Length >= 2 ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, optType) ->
                     // With TMemRefStatic, we can't extract value type from structure
                     // Use TIndex as fallback (may need type tracking refactor)
                     let valueType = TIndex
-                    match tryMatch (pOptionGet optSSA resultSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    let offsetSSA = ssas.[0]
+                    let resultSSA = ssas.[1]
+                    match tryMatch (pOptionGet optSSA offsetSSA resultSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ops, _) ->
                         { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = resultSSA; Type = valueType } }
                     | None -> WitnessOutput.error "Option.get pattern emission failed"

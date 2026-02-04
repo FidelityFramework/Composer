@@ -44,20 +44,16 @@ let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * S
         let! indexOp = pConstI indexSSA 0L TIndex
 
         // Load current position
-        // TODO BACKFILL: addressOfPosOp placeholder - need proper AddressOf from PSG or coeffects
-        let! addressOfPosOp = failwith "ClosurePatterns.pAllocateInArena: addressOfPosOp placeholder - need AddressOf (removed pLoad placeholder)"
         let! loadPosOp = pLoad heapPosSSA heapPosPtrSSA [indexSSA]
 
         // Compute result pointer: heap_base + pos
-        // TODO BACKFILL: addressOfBaseOp placeholder - need proper AddressOf from PSG or coeffects
-        let! addressOfBaseOp = failwith "ClosurePatterns.pAllocateInArena: addressOfBaseOp placeholder - need AddressOf (removed pLoad placeholder)"
         let! subViewOp = pSubView resultPtrSSA heapBaseSSA [heapPosSSA]
 
         // Update position: pos + size
         let! addOp = pAddI newPosSSA heapPosSSA sizeSSA
         let! storePosOp = pStore newPosSSA heapPosPtrSSA [indexSSA] (TInt I64)
 
-        return ([addressOfPosOp; loadPosOp; addressOfBaseOp; subViewOp; addOp; indexOp; storePosOp], resultPtrSSA)
+        return ([indexOp; loadPosOp; subViewOp; addOp; storePosOp], resultPtrSSA)
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -80,12 +76,11 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (retTy: MLIRTyp
 // ═══════════════════════════════════════════════════════════
 
 /// Extract captures from closure struct at function entry
-/// Arg 0 is env_ptr, load struct, extract captures at baseIndex + slotIndex
-/// SSAs: [0] = index zero, [1] = struct load, [2..N+1] = extracted captures
+/// SSA layout: [0] = indexZero, [1] = structLoad, then for each capture: [2*i+2] = offsetSSA, [2*i+3] = resultSSA
 let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list) (structType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
         let captureCount = captureTypes.Length
-        do! ensure (ssas.Length >= captureCount + 2) $"pExtractCaptures: Expected {captureCount + 2} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 2 + 2 * captureCount) $"pExtractCaptures: Expected {2 + 2 * captureCount} SSAs, got {ssas.Length}"
 
         let indexZeroSSA = ssas.[0]
         let structLoadSSA = ssas.[1]
@@ -96,18 +91,18 @@ let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list) (structType:
         let! loadOp = pLoad structLoadSSA envPtrSSA [indexZeroSSA]
 
         // Extract each capture
-        let! extractOps =
+        let! extractOpLists =
             captureTypes
             |> List.mapi (fun i capTy ->
                 parser {
-                    let extractSSA = ssas.[i + 2]  // +2 because [0]=indexZero, [1]=structLoad
+                    let offsetSSA = ssas.[2 + 2*i]
+                    let extractSSA = ssas.[3 + 2*i]
                     let extractIndex = baseIndex + i
-                    let! extractOp = pExtractValue extractSSA structLoadSSA [extractIndex] capTy
-                    return extractOp
+                    return! pExtractValue extractSSA structLoadSSA extractIndex offsetSSA capTy
                 })
             |> sequence
 
-        return indexZeroOp :: loadOp :: extractOps
+        return [indexZeroOp; loadOp] @ List.concat extractOpLists
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -119,9 +114,10 @@ let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list) (structType:
 // ═══════════════════════════════════════════════════════════
 
 /// Flat closure struct: code_ptr field + capture fields
+/// SSA layout: [0] = undef, [1-2] = insert code_ptr (offset, result), then for each capture: [3+2*i] = offsetSSA, [4+2*i] = resultSSA
 let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        do! ensure (ssas.Length >= 2 + captures.Length) $"pFlatClosure: Expected at least {2 + captures.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 3 + 2 * captures.Length) $"pFlatClosure: Expected at least {3 + 2 * captures.Length} SSAs, got {ssas.Length}"
 
         // Compute closure type: {code_ptr: ptr, capture0, capture1, ...}
         let fieldTypes = codePtrTy :: (captures |> List.map (fun cap -> cap.Type))
@@ -132,52 +128,59 @@ let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas
         let! undefOp = pUndef ssas.[0] closureTy
 
         // Insert code_ptr at index 0
-        let! insertCodeOp = pInsertValue ssas.[1] ssas.[0] codePtr [0] closureTy
+        let codeOffsetSSA = ssas.[1]
+        let codeResultSSA = ssas.[2]
+        let! insertCodeOps = pInsertValue codeResultSSA ssas.[0] codePtr 0 codeOffsetSSA closureTy
 
         // Insert captures starting at index 1
-        let! captureOps =
+        let! captureOpLists =
             captures
             |> List.mapi (fun i cap ->
                 parser {
-                    let targetSSA = ssas.[2 + i]
-                    let sourceSSA = if i = 0 then ssas.[1] else ssas.[1 + i]
-                    return! pInsertValue targetSSA sourceSSA cap.SSA [i + 1] closureTy
+                    let offsetSSA = ssas.[3 + 2*i]
+                    let targetSSA = ssas.[4 + 2*i]
+                    let sourceSSA = if i = 0 then codeResultSSA else ssas.[2 + 2*i]
+                    return! pInsertValue targetSSA sourceSSA cap.SSA (i + 1) offsetSSA closureTy
                 })
             |> sequence
 
-        return undefOp :: insertCodeOp :: captureOps
+        return [undefOp] @ insertCodeOps @ List.concat captureOpLists
     }
 
 /// Closure call: extract code_ptr, extract captures, call
+/// SSA layout: [0-1] = code_ptr extract (offset, result), then for each capture: [2+2*i] = offsetSSA, [3+2*i] = resultSSA
 let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType list)
                  (args: Val list) (extractSSAs: SSA list) (resultSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         let captureCount = captureTypes.Length
-        do! ensure (extractSSAs.Length = captureCount + 1) $"pClosureCall: Expected {captureCount + 1} extract SSAs, got {extractSSAs.Length}"
+        do! ensure (extractSSAs.Length >= 2 + 2 * captureCount) $"pClosureCall: Expected {2 + 2 * captureCount} extract SSAs, got {extractSSAs.Length}"
 
         // Extract code_ptr from index 0 (first field is always ptr type)
-        let codePtrSSA = extractSSAs.[0]
+        let codeOffsetSSA = extractSSAs.[0]
+        let codePtrSSA = extractSSAs.[1]
         let codePtrTy = TIndex  // Code pointer type
-        let! extractCodeOp = pExtractValue codePtrSSA closureSSA [0] codePtrTy
+        let! extractCodeOps = pExtractValue codePtrSSA closureSSA 0 codeOffsetSSA codePtrTy
 
         // Extract captures from indices 1..captureCount
-        let! extractCaptureOps =
+        let! extractCaptureOpLists =
             captureTypes
             |> List.mapi (fun i capTy ->
                 parser {
-                    let capSSA = extractSSAs.[i + 1]
-                    return! pExtractValue capSSA closureSSA [i + 1] capTy
+                    let offsetSSA = extractSSAs.[2 + 2*i]
+                    let capSSA = extractSSAs.[3 + 2*i]
+                    return! pExtractValue capSSA closureSSA (i + 1) offsetSSA capTy
                 })
             |> sequence
 
         // Call with captures prepended to args
-        let captureVals = List.zip (extractSSAs.[1..]) captureTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+        let captureSSAs = List.init captureCount (fun i -> extractSSAs.[3 + 2*i])
+        let captureVals = List.zip captureSSAs captureTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
         let allArgs = captureVals @ args
         let! state = getUserState
         let retType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
         let! callOp = pFuncCallIndirect (Some resultSSA) codePtrSSA allArgs retType
 
-        return extractCodeOp :: extractCaptureOps @ [callOp]
+        return extractCodeOps @ List.concat extractCaptureOpLists @ [callOp]
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -221,9 +224,10 @@ let pBuildClosureLambda (name: string) (params': (SSA * MLIRType) list) (retTy: 
 // ═══════════════════════════════════════════════════════════
 
 /// Lazy struct: {computed: i1, value: T, code_ptr, captures...}
+/// SSA layout: [0] = undef, [1] = falseConst, [2-3] = insert computed (offset, result), [4-5] = insert code_ptr (offset, result), then for each capture: [6+2*i] = offsetSSA, [7+2*i] = resultSSA
 let pLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        do! ensure (ssas.Length >= 4 + captures.Length) $"pLazyStruct: Expected at least {4 + captures.Length} SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 6 + 2 * captures.Length) $"pLazyStruct: Expected at least {6 + 2 * captures.Length} SSAs, got {ssas.Length}"
 
         // Compute lazy type: {computed: i1, value: T, code_ptr: ptr, captures...}
         let fieldTypes = [TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
@@ -236,23 +240,24 @@ let pLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (captur
         // Insert computed = false at index 0
         let computedTy = TInt I1
         let! falseConstOp = pConstI ssas.[1] 0L computedTy
-        let! insertComputedOp = pInsertValue ssas.[2] ssas.[0] ssas.[1] [0] lazyTy
+        let! insertComputedOps = pInsertValue ssas.[3] ssas.[0] ssas.[1] 0 ssas.[2] lazyTy
 
         // Insert code_ptr at index 2
-        let! insertCodeOp = pInsertValue ssas.[3] ssas.[2] codePtr [2] lazyTy
+        let! insertCodeOps = pInsertValue ssas.[5] ssas.[3] codePtr 2 ssas.[4] lazyTy
 
         // Insert captures starting at index 3
-        let! captureOps =
+        let! captureOpLists =
             captures
             |> List.mapi (fun i cap ->
                 parser {
-                    let targetSSA = ssas.[4 + i]
-                    let sourceSSA = ssas.[3 + i]
-                    return! pInsertValue targetSSA sourceSSA cap.SSA [i + 3] lazyTy
+                    let offsetSSA = ssas.[6 + 2*i]
+                    let targetSSA = ssas.[7 + 2*i]
+                    let sourceSSA = if i = 0 then ssas.[5] else ssas.[5 + 2*i]
+                    return! pInsertValue targetSSA sourceSSA cap.SSA (i + 3) offsetSSA lazyTy
                 })
             |> sequence
 
-        return undefOp :: falseConstOp :: insertComputedOp :: insertCodeOp :: captureOps
+        return [undefOp; falseConstOp] @ insertComputedOps @ insertCodeOps @ List.concat captureOpLists
     }
 
 /// Build lazy struct: High-level pattern for witnesses
@@ -264,8 +269,8 @@ let pBuildLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (c
         // Call low-level pattern to build struct
         let! ops = pLazyStruct valueTy codePtrTy codePtr captures ssas
 
-        // Final SSA is the last one (after all insertions)
-        let finalSSA = ssas.[3 + captures.Length]
+        // Final SSA is the last one (after all insertions: undef + falseConst + 2*insertComputed + 2*insertCode + 2*captures)
+        let finalSSA = ssas.[5 + 2 * captures.Length]
 
         // Lazy type is {computed: i1, value: T, code_ptr, captures...}
         let fieldTypes = [TInt I1; valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
@@ -293,17 +298,18 @@ let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy
                     (ssas: SSA list) (arch: Architecture)
                     : PSGParser<MLIROp list * TransferResult> =
     parser {
-        // SSAs: [0] = code_ptr, [1] = const 1, [2] = alloca'd ptr, [3] = index
-        do! ensure (ssas.Length >= 4) $"pBuildLazyForce: Expected at least 4 SSAs, got {ssas.Length}"
+        // SSAs: [0-1] = code_ptr extract (offset, result), [2] = const 1, [3] = alloca'd ptr, [4] = index
+        do! ensure (ssas.Length >= 5) $"pBuildLazyForce: Expected at least 5 SSAs, got {ssas.Length}"
 
-        let codePtrSSA = ssas.[0]
-        let constOneSSA = ssas.[1]
-        let ptrSSA = ssas.[2]
-        let indexSSA = ssas.[3]
+        let codeOffsetSSA = ssas.[0]
+        let codePtrSSA = ssas.[1]
+        let constOneSSA = ssas.[2]
+        let ptrSSA = ssas.[3]
+        let indexSSA = ssas.[4]
 
         // Extract code_ptr from lazy struct [2] - it's always a ptr type
         let codePtrTy = TIndex
-        let! extractCodePtrOp = pExtractValue codePtrSSA lazySSA [2] codePtrTy
+        let! extractCodePtrOps = pExtractValue codePtrSSA lazySSA 2 codeOffsetSSA codePtrTy
 
         // Alloca space for lazy struct
         let constOneTy = TInt I64
@@ -318,7 +324,7 @@ let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy
         let argVals = [{ SSA = ptrSSA; Type = TIndex }]
         let! callOp = pFuncCallIndirect (Some resultSSA) codePtrSSA argVals resultTy
 
-        return ([extractCodePtrOp; constOneOp; allocaOp; indexOp; storeOp; callOp], TRValue { SSA = resultSSA; Type = resultTy })
+        return (extractCodePtrOps @ [constOneOp; allocaOp; indexOp; storeOp; callOp], TRValue { SSA = resultSSA; Type = resultTy })
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -326,10 +332,13 @@ let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy
 // ═══════════════════════════════════════════════════════════
 
 /// Seq struct: {state: i32, current: T, code_ptr, captures..., internal_state...}
+/// SSA layout: [0] = undef, [1] = stateConst, [2-3] = insert state (offset, result), [4-5] = insert code_ptr (offset, result),
+///             then for each capture: [6+2*i] = offsetSSA, [7+2*i] = resultSSA,
+///             then for each internal: [6+2*nCaptures+2*i] = offsetSSA, [7+2*nCaptures+2*i] = resultSSA
 let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
                (captures: Val list) (internalState: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        let minSSAs = 4 + captures.Length + internalState.Length
+        let minSSAs = 6 + 2 * captures.Length + 2 * internalState.Length
         do! ensure (ssas.Length >= minSSAs) $"pSeqStruct: Expected at least {minSSAs} SSAs, got {ssas.Length}"
 
         // Compute seq type: {state: i32, current: T, code_ptr: ptr, captures..., internal...}
@@ -345,93 +354,102 @@ let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (c
         // Insert state = stateInit at index 0
         let stateTy = TInt I32
         let! stateConstOp = pConstI ssas.[1] stateInit stateTy
-        let! insertStateOp = pInsertValue ssas.[2] ssas.[0] ssas.[1] [0] seqTy
+        let! insertStateOps = pInsertValue ssas.[3] ssas.[0] ssas.[1] 0 ssas.[2] seqTy
 
         // Insert code_ptr at index 2
-        let! insertCodeOp = pInsertValue ssas.[3] ssas.[2] codePtr [2] seqTy
+        let! insertCodeOps = pInsertValue ssas.[5] ssas.[3] codePtr 2 ssas.[4] seqTy
 
         // Insert captures starting at index 3
         let captureBaseIdx = 3
-        let! captureOps =
+        let! captureOpLists =
             captures
             |> List.mapi (fun i cap ->
                 parser {
-                    let targetSSA = ssas.[4 + i]
-                    let sourceSSA = ssas.[3 + i]
-                    return! pInsertValue targetSSA sourceSSA cap.SSA [captureBaseIdx + i] seqTy
+                    let offsetSSA = ssas.[6 + 2*i]
+                    let targetSSA = ssas.[7 + 2*i]
+                    let sourceSSA = if i = 0 then ssas.[5] else ssas.[5 + 2*i]
+                    return! pInsertValue targetSSA sourceSSA cap.SSA (captureBaseIdx + i) offsetSSA seqTy
                 })
             |> sequence
 
         // Insert internal state starting after captures
         let internalBaseIdx = captureBaseIdx + captures.Length
-        let! internalOps =
+        let internalStartIdx = 6 + 2 * captures.Length
+        let! internalOpLists =
             internalState
             |> List.mapi (fun i st ->
                 parser {
-                    let targetSSA = ssas.[4 + captures.Length + i]
-                    let sourceSSA = ssas.[3 + captures.Length + i]
-                    return! pInsertValue targetSSA sourceSSA st.SSA [internalBaseIdx + i] seqTy
+                    let offsetSSA = ssas.[internalStartIdx + 2*i]
+                    let targetSSA = ssas.[internalStartIdx + 1 + 2*i]
+                    let sourceSSA = if i = 0 then ssas.[5 + 2 * captures.Length] else ssas.[internalStartIdx - 1 + 2*i]
+                    return! pInsertValue targetSSA sourceSSA st.SSA (internalBaseIdx + i) offsetSSA seqTy
                 })
             |> sequence
 
-        return undefOp :: stateConstOp :: insertStateOp :: insertCodeOp
-               :: (captureOps @ internalOps)
+        return [undefOp; stateConstOp] @ insertStateOps @ insertCodeOps @ List.concat captureOpLists @ List.concat internalOpLists
     }
 
 /// Seq MoveNext: extract state, load captures/internal, call code_ptr, update state/current
+/// SSA layout: [0-1] = state extract (offset, result), [2-3] = code_ptr extract (offset, result),
+///             then for each capture: [4+2*i] = offsetSSA, [5+2*i] = resultSSA,
+///             then for each internal: [4+2*nCaptures+2*i] = offsetSSA, [5+2*nCaptures+2*i] = resultSSA
 let pSeqMoveNext (seqSSA: SSA) (seqTy: MLIRType) (captureTypes: MLIRType list)
                  (internalTypes: MLIRType list) (extractSSAs: SSA list) (resultSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         let captureCount = captureTypes.Length
         let internalCount = internalTypes.Length
-        let expectedExtracts = 2 + captureCount + internalCount  // state, code_ptr, captures, internal
+        let expectedExtracts = 4 + 2 * captureCount + 2 * internalCount
         do! ensure (extractSSAs.Length >= expectedExtracts) $"pSeqMoveNext: Expected at least {expectedExtracts} extract SSAs, got {extractSSAs.Length}"
 
         // Extract state from index 0
-        let stateSSA = extractSSAs.[0]
+        let stateOffsetSSA = extractSSAs.[0]
+        let stateSSA = extractSSAs.[1]
         let stateTy = TInt I32
-        let! extractStateOp = pExtractValue stateSSA seqSSA [0] stateTy
+        let! extractStateOps = pExtractValue stateSSA seqSSA 0 stateOffsetSSA stateTy
 
         // Extract code_ptr from index 2
-        let codePtrSSA = extractSSAs.[1]
+        let codeOffsetSSA = extractSSAs.[2]
+        let codePtrSSA = extractSSAs.[3]
         let codePtrTy = TIndex
-        let! extractCodeOp = pExtractValue codePtrSSA seqSSA [2] codePtrTy
+        let! extractCodeOps = pExtractValue codePtrSSA seqSSA 2 codeOffsetSSA codePtrTy
 
         // Extract captures from indices 3..3+captureCount
         let captureBaseIdx = 3
-        let! extractCaptureOps =
+        let! extractCaptureOpLists =
             captureTypes
             |> List.mapi (fun i capTy ->
                 parser {
-                    let capSSA = extractSSAs.[2 + i]
-                    return! pExtractValue capSSA seqSSA [captureBaseIdx + i] capTy
+                    let offsetSSA = extractSSAs.[4 + 2*i]
+                    let capSSA = extractSSAs.[5 + 2*i]
+                    return! pExtractValue capSSA seqSSA (captureBaseIdx + i) offsetSSA capTy
                 })
             |> sequence
 
         // Extract internal state
         let internalBaseIdx = captureBaseIdx + captureCount
-        let! extractInternalOps =
+        let internalStartIdx = 4 + 2 * captureCount
+        let! extractInternalOpLists =
             internalTypes
             |> List.mapi (fun i intTy ->
                 parser {
-                    let intSSA = extractSSAs.[2 + captureCount + i]
-                    return! pExtractValue intSSA seqSSA [internalBaseIdx + i] intTy
+                    let offsetSSA = extractSSAs.[internalStartIdx + 2*i]
+                    let intSSA = extractSSAs.[internalStartIdx + 1 + 2*i]
+                    return! pExtractValue intSSA seqSSA (internalBaseIdx + i) offsetSSA intTy
                 })
             |> sequence
 
         // Call code_ptr with state + captures + internal
-        let stateArg = (stateSSA, stateTy)
-        let codePtrArg = (codePtrSSA, codePtrTy)
-        let captureArgs = List.zip (extractSSAs.[2..2+captureCount-1] |> List.ofSeq) captureTypes
-        let internalArgs = List.zip (extractSSAs.[2+captureCount..2+captureCount+internalCount-1] |> List.ofSeq) internalTypes
-        let allArgs = stateArg :: codePtrArg :: (captureArgs @ internalArgs)
-        let allArgVals = allArgs |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+        let captureSSAs = List.init captureCount (fun i -> extractSSAs.[5 + 2*i])
+        let internalSSAs = List.init internalCount (fun i -> extractSSAs.[internalStartIdx + 1 + 2*i])
+        let stateArg = { SSA = stateSSA; Type = stateTy }
+        let captureArgs = List.zip captureSSAs captureTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+        let internalArgs = List.zip internalSSAs internalTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+        let allArgVals = stateArg :: (captureArgs @ internalArgs)
         let! state = getUserState
         let retType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
         let! callOp = pFuncCallIndirect (Some resultSSA) codePtrSSA allArgVals retType
 
-        return extractStateOp :: extractCodeOp :: extractCaptureOps
-               @ extractInternalOps @ [callOp]
+        return extractStateOps @ extractCodeOps @ List.concat extractCaptureOpLists @ List.concat extractInternalOpLists @ [callOp]
     }
 
 /// Build seq struct: High-level pattern for SeqExpr witnesses
@@ -450,8 +468,8 @@ let pBuildSeqStruct (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
         // Initial state is 0 (unstarted)
         let! ops = pSeqStruct 0L currentTy codePtrTy codePtr captures internalState ssas
 
-        // Final SSA is the last one (after all insertions)
-        let finalSSA = ssas.[3 + captures.Length + internalState.Length]
+        // Final SSA is the last one (after all insertions: undef + stateConst + 2*insertState + 2*insertCode + 2*captures + 2*internals)
+        let finalSSA = ssas.[5 + 2 * captures.Length + 2 * internalState.Length]
 
         // Seq type is {state: i32, current: T, code_ptr: ptr, captures..., internal...}
         let fieldTypes = [TInt I32; currentTy; codePtrTy]

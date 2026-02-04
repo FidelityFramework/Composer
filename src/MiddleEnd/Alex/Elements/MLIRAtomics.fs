@@ -23,25 +23,24 @@ let private computeStructOffset (indices: int list) : SSA =
 // PORTABLE MLIR STRUCT OPERATIONS (MemRef-based)
 // ═══════════════════════════════════════════════════════════
 
-/// ExtractValue - NOW USES memref.load with witnessed offset
-/// SEMANTIC CHANGE: Struct is now in memory (memref), not SSA register value
-/// offsetSSA: Pre-assigned SSA for the offset constant (from coeffects)
-let pExtractValue (ssa: SSA) (structMemref: SSA) (offsetSSA: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
+/// ExtractValue - memref.load with int field index
+/// Emits constant + load operations
+let pExtractValue (ssa: SSA) (structMemref: SSA) (fieldIndex: int) (offsetSSA: SSA) (ty: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        do! emitTrace "pExtractValue" (sprintf "ssa=%A, memref=%A, offset=%A, ty=%A" ssa structMemref offsetSSA ty)
-        // Load from memref at witnessed offset
-        return MLIROp.MemRefOp (MemRefOp.Load (ssa, structMemref, [offsetSSA], ty))
+        do! emitTrace "pExtractValue" (sprintf "ssa=%A, memref=%A, field=%d, ty=%A" ssa structMemref fieldIndex ty)
+        let offsetOp = ArithOp.ConstI (offsetSSA, int64 fieldIndex, TIndex) |> MLIROp.ArithOp
+        let loadOp = MemRefOp.Load (ssa, structMemref, [offsetSSA], ty) |> MLIROp.MemRefOp
+        return [offsetOp; loadOp]
     }
 
-/// InsertValue - NOW USES memref.store with witnessed offset
-/// SEMANTIC CHANGE: Struct is now in memory (memref), not SSA register value
-/// offsetSSA: Pre-assigned SSA for the offset constant (from coeffects)
-let pInsertValue (resultSSA: SSA) (structMemref: SSA) (value: SSA) (offsetSSA: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
+/// InsertValue - memref.store with int field index
+/// Emits constant + store operations
+let pInsertValue (resultSSA: SSA) (structMemref: SSA) (value: SSA) (fieldIndex: int) (offsetSSA: SSA) (ty: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        do! emitTrace "pInsertValue" (sprintf "result=%A, memref=%A, value=%A, offset=%A, ty=%A" resultSSA structMemref value offsetSSA ty)
-        // Store value into memref at witnessed offset
-        // Note: resultSSA is the memref AFTER store (same as input memref in memref semantics)
-        return MLIROp.MemRefOp (MemRefOp.Store (value, structMemref, [offsetSSA], ty))
+        do! emitTrace "pInsertValue" (sprintf "result=%A, memref=%A, value=%A, field=%d, ty=%A" resultSSA structMemref value fieldIndex ty)
+        let offsetOp = ArithOp.ConstI (offsetSSA, int64 fieldIndex, TIndex) |> MLIROp.ArithOp
+        let storeOp = MemRefOp.Store (value, structMemref, [offsetSSA], ty) |> MLIROp.MemRefOp
+        return [offsetOp; storeOp]
     }
 
 /// Undef - NOW USES memref.alloca (uninitialized allocation)
