@@ -83,7 +83,8 @@ let deriveByteLength (content: string) : int =
     System.Text.Encoding.UTF8.GetByteCount(content)
 
 /// Build string literal: get reference to global memref (portable MLIR)
-/// SSAs: [0-3] = unused (legacy), [4] = memref.get_global result
+/// TypeLayout.Opaque: Single SSA for memref.get_global
+/// SSA layout: [0] = memref.get_global result
 /// Returns: ((ops, globalName, content, byteLength), result)
 /// NOTE: Witness must emit memref.global to TopLevelOps separately
 let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
@@ -92,7 +93,7 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
         do! emitTrace "pBuildStringLiteral.entry" (sprintf "content='%s', ssas=%A, arch=%A" content ssas arch)
 
         // Declarative guard - no imperative if statements
-        do! ensure (ssas.Length >= 5) $"pBuildStringLiteral: Expected 5 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 1) $"pBuildStringLiteral: Expected 1 SSA, got {ssas.Length}"
 
         do! emitTrace "pBuildStringLiteral.ssa_validated" (sprintf "SSA count OK: %d" ssas.Length)
 
@@ -107,8 +108,8 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
 
         do! emitTrace "pBuildStringLiteral.types" (sprintf "stringTy=%A" stringTy)
 
-        // InlineOps: Get reference to global memref
-        let resultSSA = ssas.[4]  // Use last SSA for result (others unused for now)
+        // InlineOps: Get reference to global memref (TypeLayout.Opaque)
+        let resultSSA = ssas.[0]  // Single SSA for memref.get_global
 
         do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "result=%A" resultSSA)
 

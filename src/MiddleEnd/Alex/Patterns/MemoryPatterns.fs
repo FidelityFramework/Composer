@@ -466,8 +466,11 @@ let pDUCase (tag: int64) (payload: Val list) (ssas: SSA list) (ty: MLIRType) : P
 // ═══════════════════════════════════════════════════════════
 
 /// Simple memref.store with no indices (scalar store)
-let pMemRefStore (value: SSA) (memref: SSA) (elemType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+/// Store value to scalar memref (requires index even for 1-element memrefs)
+/// Allocates 1 SSA for the index constant
+let pMemRefStore (indexSSA: SSA) (value: SSA) (memref: SSA) (elemType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! storeOp = pStore value memref [] elemType
-        return ([storeOp], TRVoid)
+        let! indexOp = pConstI indexSSA 0L TIndex  // Index 0 for scalar/1-element memref
+        let! storeOp = pStore value memref [indexSSA] elemType
+        return [indexOp; storeOp], TRVoid
     }

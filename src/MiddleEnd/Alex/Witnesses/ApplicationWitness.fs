@@ -86,9 +86,14 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                                 | NativeType.TNativePtr innerTy ->
                                     let arch = ctx.Coeffects.Platform.TargetArch
                                     let elemType = mapNativeTypeForArch arch innerTy
-                                    match tryMatch (pMemRefStore valueSSA ptrSSA elemType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                                    | None -> WitnessOutput.error "NativePtr.write: memref.store failed"
+                                    // pMemRefStore needs 2 SSAs: indexSSA (for constant 0) + operation result
+                                    match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
+                                    | Some ssas when ssas.Length >= 2 ->
+                                        let indexSSA = ssas.[0]
+                                        match tryMatch (pMemRefStore indexSSA valueSSA ptrSSA elemType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                                        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                                        | None -> WitnessOutput.error "NativePtr.write: memref.store failed"
+                                    | _ -> WitnessOutput.error "NativePtr.write: Not enough SSAs (need 2 for index + result)"
                                 | otherTy ->
                                     WitnessOutput.error (sprintf "NativePtr.write: Expected nativeptr<'T>, got %A" otherTy)
                             | None -> WitnessOutput.error "NativePtr.write: Could not resolve pointer argument node"
@@ -120,26 +125,34 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                                 | None -> WitnessOutput.error "NativePtr.read pattern failed"
                             | _ -> WitnessOutput.error "NativePtr.read: Need 2 SSAs (index, result)"
 
-                        | IntrinsicModule.Sys, "write", [fdSSA; bufferSSA; countSSA] ->
-                            // Witness observes actual buffer type (memref stays as memref)
+                        | IntrinsicModule.Sys, "write", [fdSSA; bufferSSA] ->
+                            // Witness observes buffer type and provides extraction SSAs for FFI boundary
+                            // Length extracted via memref.dim inside pattern (2-param signature)
                             let bufferNodeId = argIds.[1]
                             match MLIRAccumulator.recallNode bufferNodeId ctx.Accumulator with
                             | Some (_, bufferType) ->
-                                // Pass buffer as-is - LLVM handles memref lowering
-                                match tryMatch (pSysWrite resultSSA fdSSA bufferSSA bufferType countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                                | None -> WitnessOutput.error "Sys.write pattern failed"
+                                // Lookup SSAs for FFI pointer + length extraction (6 SSAs)
+                                match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
+                                | Some ssas ->
+                                    match tryMatch (pSysWrite ssas fdSSA bufferSSA bufferType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                                    | None -> WitnessOutput.error "Sys.write pattern failed"
+                                | None -> WitnessOutput.error "Sys.write: No SSAs assigned"
                             | None -> WitnessOutput.error "Sys.write: buffer argument not yet witnessed"
 
-                        | IntrinsicModule.Sys, "read", [fdSSA; bufferSSA; countSSA] ->
-                            // Witness observes actual buffer type (memref stays as memref)
+                        | IntrinsicModule.Sys, "read", [fdSSA; bufferSSA] ->
+                            // Witness observes buffer type and provides extraction SSAs for FFI boundary
+                            // Capacity extracted via memref.dim inside pattern (2-param signature)
                             let bufferNodeId = argIds.[1]
                             match MLIRAccumulator.recallNode bufferNodeId ctx.Accumulator with
                             | Some (_, bufferType) ->
-                                // Pass buffer as-is - LLVM handles memref lowering
-                                match tryMatch (pSysRead resultSSA fdSSA bufferSSA bufferType countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                                | None -> WitnessOutput.error "Sys.read pattern failed"
+                                // Lookup SSAs for FFI pointer + capacity extraction (6 SSAs)
+                                match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
+                                | Some ssas ->
+                                    match tryMatch (pSysRead ssas fdSSA bufferSSA bufferType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                                    | None -> WitnessOutput.error "Sys.read pattern failed"
+                                | None -> WitnessOutput.error "Sys.read: No SSAs assigned"
                             | None -> WitnessOutput.error "Sys.read: buffer argument not yet witnessed"
 
                         | IntrinsicModule.NativeStr, "fromPointer", [bufferSSA; _lengthSSA] ->

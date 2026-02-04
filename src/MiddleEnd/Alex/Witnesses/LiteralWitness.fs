@@ -26,14 +26,14 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
     | Some (lit, _) ->
         let arch = ctx.Coeffects.Platform.TargetArch
 
-        // String literals need special handling (5 SSAs vs 1 SSA for other literals)
+        // String literals: TypeLayout.Opaque uses 1 SSA for memref.get_global
         match lit with
         | NativeLiteral.String content ->
             match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
             | None ->
                 let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "SSA lookup") "String literal: No SSAs assigned"
                 WitnessOutput.errorDiag diag
-            | Some ssas when ssas.Length >= 5 ->
+            | Some ssas when ssas.Length >= 1 ->
                 // Use trace-enabled variant to capture full execution path
                 match tryMatchWithTrace (pBuildStringLiteral content ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Result.Ok (((inlineOps, globalName, strContent, byteLength), result), _, _trace) ->
@@ -52,7 +52,7 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                     WitnessOutput.errorDiag diag
             | Some ssas ->
                 let diag = Diagnostic.errorWithDetails (Some node.Id) (Some "Literal") (Some "SSA validation")
-                                "String literal: Incorrect SSA count" "5 SSAs" $"{ssas.Length} SSAs"
+                                "String literal: Incorrect SSA count" "1 SSA" $"{ssas.Length} SSAs"
                 WitnessOutput.errorDiag diag
 
         | _ ->

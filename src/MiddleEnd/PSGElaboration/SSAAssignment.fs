@@ -32,7 +32,7 @@ open PSGElaboration.Coeffects
 /// Get the number of SSAs needed for a literal value
 let private literalExpansionCost (lit: NativeLiteral) : int =
     match lit with
-    | NativeLiteral.String _ -> 5  // addressof, constI(len), undef, insertvalue(ptr), insertvalue(len)
+    | NativeLiteral.String _ -> 1  // TypeLayout.Opaque: just memref.get_global
     | NativeLiteral.Unit -> 1     // constI
     | NativeLiteral.Bool _ -> 1   // constI
     | NativeLiteral.Int _ -> 1    // All integer types (int8..int64, uint8..uint64, nativeint)
@@ -466,9 +466,10 @@ let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode
                 | IntrinsicModule.Parse, "int" -> 35      // stringToInt
                 | IntrinsicModule.Parse, "float" -> 250   // stringToFloat (complex)
                 | IntrinsicModule.String, "contains" -> 30 // string scanning
-                | IntrinsicModule.String, "concat2" -> 15  // concatenation
-                | IntrinsicModule.String, "length" -> 3    // extract
-                | IntrinsicModule.Sys, _ -> 16             // syscalls (clock_gettime needs 16 for ms computation)
+                | IntrinsicModule.String, "concat2" -> 20  // concatenation (20 SSAs - pure memref, no fat pointer)
+                | IntrinsicModule.Sys, "write" -> 6        // FFI extraction + length (2 ptr + 3 len + 1 result)
+                | IntrinsicModule.Sys, "read" -> 6         // FFI extraction + capacity (2 ptr + 3 cap + 1 result)
+                | IntrinsicModule.Sys, _ -> 16             // other syscalls (clock_gettime needs 16 for ms computation)
                 | IntrinsicModule.DateTime, "now" -> 16    // delegates to clock_gettime
                 | IntrinsicModule.DateTime, "utcNow" -> 16 // delegates to clock_gettime
                 | IntrinsicModule.DateTime, "hour" -> 5    // const + div + rem + trunc
@@ -575,13 +576,15 @@ let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode
 
 /// Compute exact SSA count for TupleExpr based on element count
 let private computeTupleSSACost (childIds: NodeId list) : int =
-    // undef + one insertvalue per element
-    1 + List.length childIds
+    // undef + (offset constant + insertvalue result) per element
+    // Each insertvalue needs 2 SSAs in memref semantics
+    1 + 2 * List.length childIds
 
 /// Compute exact SSA count for RecordExpr based on field count
 let private computeRecordSSACost (fields: (string * NodeId) list) : int =
-    // undef + one insertvalue per field
-    1 + List.length fields
+    // undef + (offset constant + insertvalue result) per field
+    // Each insertvalue needs 2 SSAs in memref semantics
+    1 + 2 * List.length fields
 
 /// Compute exact SSA count for UnionCase based on payload presence
 let private computeUnionCaseSSACost (payloadOpt: NodeId option) : int =
@@ -639,27 +642,20 @@ let private needsDUArenaAllocation (duType: NativeType) : bool =
 
 /// Compute exact SSA count for DUConstruct based on actual types
 ///
-/// For homogeneous DUs (Option): inline struct
-/// - Nullary (no payload): 3 (undef + tagConst + withTag)
-/// - With payload: 4 (undef + tagConst + withTag + result)
+/// DU construction uses pDUCase pattern which needs: 4 + 2 * payload.Length
+/// - 4 base SSAs: undef, tag const, tag offset, tag result (insertvalue for tag)
+/// - 2 SSAs per payload field: offset constant + insertvalue result
 ///
-/// For heterogeneous DUs (Result): arena allocation (flat closure model)
-/// - Struct construction: 3-4 SSAs (undef + tagConst + withTag [+ withPayload])
-/// - Size computation: 1 SSA (compile-time size from layout type)
-/// - Arena allocation: 5 SSAs (posPtrSSA + posSSA + baseSSA + resultPtrSSA + newPosSSA)
-/// - Total: 9-10 SSAs
-let private computeDUConstructSSACost (arch: Architecture) (graph: SemanticGraph) (duType: NativeType) (payloadOpt: NodeId option) : int =
-    if needsDUArenaAllocation duType then
-        // Arena allocation path (flat closure model)
-        // Struct: 3-4, Size: 1, Arena: 5 = 9-10 total
-        match payloadOpt with
-        | None -> 9    // Nullary: 3 struct + 1 size + 5 arena
-        | Some _ -> 10 // With payload: 4 struct + 1 size + 5 arena
-    else
-        // Inline struct path (existing behavior for Option)
-        match payloadOpt with
-        | None -> 3  // Nullary case: undef + tagConst + withTag
-        | Some _ -> 4  // With payload: undef + tagConst + withTag + result
+/// Examples:
+/// - Option None: 4 + 2*0 = 4 SSAs
+/// - Option Some(x): 4 + 2*1 = 6 SSAs
+/// - Result Ok(x): 4 + 2*1 = 6 SSAs
+/// - Result Error(e): 4 + 2*1 = 6 SSAs
+let private computeDUConstructSSACost (_arch: Architecture) (_graph: SemanticGraph) (_duType: NativeType) (payloadOpt: NodeId option) : int =
+    // All DUs use the same pattern: 4 base + 2 per payload
+    // Arena allocation (if needed) is handled by DULayout coeffect, not SSA count
+    let payloadCount = if Option.isSome payloadOpt then 1 else 0
+    4 + 2 * payloadCount
 
 /// Count mutable bindings in a subtree (internal state fields for seq)
 /// PRD-15 THROUGH-LINE: Internal state is unique to Seq - mutable vars declared inside body
@@ -726,7 +722,7 @@ let private nodeExpansionCost (arch: Architecture) (graph: SemanticGraph) (node:
     | SemanticKind.IndexSet _ -> 1
     | SemanticKind.AddressOf _ -> 2
     | SemanticKind.VarRef _ -> 2
-    | SemanticKind.FieldGet _ -> 3  // Max: extract + dim const + cast (for string.Length with cast)
+    | SemanticKind.FieldGet _ -> 3  // Max: extract + optional intermediate + cast (for string fields)
     | SemanticKind.FieldSet _ -> 2  // Offset constant + store
     | SemanticKind.Set _ -> 1  // For module-level mutable address operation
     | SemanticKind.TraitCall _ -> 1

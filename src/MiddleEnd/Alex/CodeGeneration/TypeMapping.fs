@@ -171,6 +171,10 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         // At MLIR level: memref<?xi8> (dynamic buffer)
         // Descriptor (ptr+size) is MLIR's concern, not explicitly modeled here
         | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TMemRef (TInt I8)
+        // String with Opaque layout (memref transition - January 2026)
+        // After FNCS memref transition, strings use TypeLayout.Opaque instead of FatPointer
+        // Both layouts map to the same MLIR type: memref<?xi8>
+        | TypeLayout.Opaque, Some NTUKind.NTUstring -> TMemRef (TInt I8)
         // SECOND: Name-based fallback for types without proper NTU metadata
         // Note: Arrays have FatPointer layout but no specific NTUKind, handled in fallback
         | _ ->

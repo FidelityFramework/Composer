@@ -49,47 +49,47 @@ let pMemCopy (resultSSA: SSA) (destSSA: SSA) (srcSSA: SSA) (lenSSA: SSA) : PSGPa
 // STRING CONCATENATION PATTERN
 // ═══════════════════════════════════════════════════════════
 
-/// String.concat2: concatenate two strings
-/// SSA layout (26 total):
-///   [0-1] = str1 ptr extract (offset, result)
-///   [2-3] = str1 len extract (offset, result)
-///   [4-5] = str2 ptr extract (offset, result)
-///   [6-7] = str2 len extract (offset, result)
-///   [8] = combined length
-///   [9] = result buffer
-///   [10] = result ptr
+/// String.concat2: concatenate two strings using pure memref operations
+/// SSA layout (20 total - pure memref, NO fat pointer extraction):
+///   [0] = dim const for str1 (dimension 0)
+///   [1] = str1 len (memref.dim result, index type)
+///   [2] = str1 len cast to int
+///   [3] = dim const for str2 (dimension 0)
+///   [4] = str2 len (memref.dim result, index type)
+///   [5] = str2 len cast to int
+///   [6] = combined length (int)
+///   [7] = result buffer (memref)
+///   [8] = str1 ptr (memref.extract_aligned_pointer_as_index)
+///   [9] = str2 ptr (memref.extract_aligned_pointer_as_index)
+///   [10] = result ptr (memref.extract_aligned_pointer_as_index)
 ///   [11] = str1 ptr word cast
 ///   [12] = str2 ptr word cast
 ///   [13] = result ptr word cast
-///   [14] = len1 word cast
-///   [15] = len2 word cast
+///   [14] = str1 len word cast
+///   [15] = str2 len word cast
 ///   [16] = memcpy1 result
-///   [17] = offset ptr
+///   [17] = offset ptr (result + len1)
 ///   [18] = offset ptr word cast
 ///   [19] = memcpy2 result
-///   [20] = undef
-///   [21-22] = insert ptr (offset, result)
-///   [23-24] = insert len (offset, result)
-///   [25] = resultSSA (final)
 let pStringConcat2 (ssas: SSA list) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLIRType) (str2Type: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
-        do! ensure (ssas.Length >= 26) $"pStringConcat2: Expected 26 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 20) $"pStringConcat2: Expected 20 SSAs, got {ssas.Length}"
 
         let! state = getUserState
         let arch = state.Platform.TargetArch
         let platformWordTy = state.Platform.PlatformWordType
         let intTy = mapNativeTypeForArch arch Types.intType
 
-        let str1PtrOffsetSSA = ssas.[0]
-        let str1PtrSSA = ssas.[1]
-        let str1LenOffsetSSA = ssas.[2]
-        let str1LenSSA = ssas.[3]
-        let str2PtrOffsetSSA = ssas.[4]
-        let str2PtrSSA = ssas.[5]
-        let str2LenOffsetSSA = ssas.[6]
-        let str2LenSSA = ssas.[7]
-        let combinedLenSSA = ssas.[8]
-        let resultBufferSSA = ssas.[9]
+        let dimConst1SSA = ssas.[0]
+        let str1LenIndexSSA = ssas.[1]
+        let str1LenIntSSA = ssas.[2]
+        let dimConst2SSA = ssas.[3]
+        let str2LenIndexSSA = ssas.[4]
+        let str2LenIntSSA = ssas.[5]
+        let combinedLenSSA = ssas.[6]
+        let resultBufferSSA = ssas.[7]
+        let str1PtrSSA = ssas.[8]
+        let str2PtrSSA = ssas.[9]
         let resultPtrSSA = ssas.[10]
         let str1PtrWord = ssas.[11]
         let str2PtrWord = ssas.[12]
@@ -100,30 +100,28 @@ let pStringConcat2 (ssas: SSA list) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
         let offsetPtrSSA = ssas.[17]
         let offsetPtrWord = ssas.[18]
         let memcpy2ResultSSA = ssas.[19]
-        let undefSSA = ssas.[20]
-        let insertPtrOffsetSSA = ssas.[21]
-        let insertPtrResultSSA = ssas.[22]
-        let insertLenOffsetSSA = ssas.[23]
-        let insertLenResultSSA = ssas.[24]
-        let resultSSA = ssas.[25]
 
-        // 1. Extract components from str1: {ptr[0], length[1]}
-        let! extract1Ptr = pExtractValue str1PtrSSA str1SSA 0 str1PtrOffsetSSA TIndex
-        let! extract1Len = pExtractValue str1LenSSA str1SSA 1 str1LenOffsetSSA intTy
+        // 1. Get str1 length via memref.dim (strings ARE memrefs)
+        let! dimConst1Op = pConstI dimConst1SSA 0L TIndex  // Dimension 0 (strings are 1D)
+        let! dim1Op = pMemRefDim str1LenIndexSSA str1SSA dimConst1SSA str1Type
+        let! cast1LenOp = pIndexCastS str1LenIntSSA str1LenIndexSSA intTy
 
-        // 2. Extract components from str2: {ptr[0], length[1]}
-        let! extract2Ptr = pExtractValue str2PtrSSA str2SSA 0 str2PtrOffsetSSA TIndex
-        let! extract2Len = pExtractValue str2LenSSA str2SSA 1 str2LenOffsetSSA intTy
+        // 2. Get str2 length via memref.dim
+        let! dimConst2Op = pConstI dimConst2SSA 0L TIndex
+        let! dim2Op = pMemRefDim str2LenIndexSSA str2SSA dimConst2SSA str2Type
+        let! cast2LenOp = pIndexCastS str2LenIntSSA str2LenIndexSSA intTy
 
         // 3. Compute combined length: len1 + len2
-        let! addLen = pAddI combinedLenSSA str1LenSSA str2LenSSA
+        let! addLen = pAddI combinedLenSSA str1LenIntSSA str2LenIntSSA
 
         // 4. Allocate result buffer (combined length bytes)
         let resultTy = TMemRef (TInt I8)
         let! allocOp = pAlloca resultBufferSSA (TInt I8) None
 
-        // 5. Extract result buffer pointer for memcpy
-        let! extractResult = pExtractBasePtr resultPtrSSA resultBufferSSA resultTy
+        // 5. Extract pointers from memrefs for memcpy (FFI boundary)
+        let! extractStr1Ptr = pExtractBasePtr str1PtrSSA str1SSA str1Type
+        let! extractStr2Ptr = pExtractBasePtr str2PtrSSA str2SSA str2Type
+        let! extractResultPtr = pExtractBasePtr resultPtrSSA resultBufferSSA resultTy
 
         // 6. Cast pointers to platform words for memcpy
         let! cast1 = pIndexCastS str1PtrWord str1PtrSSA platformWordTy
@@ -131,36 +129,32 @@ let pStringConcat2 (ssas: SSA list) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
         let! cast3 = pIndexCastS resultPtrWord resultPtrSSA platformWordTy
 
         // 7. Cast lengths to platform words for memcpy
-        let! castLen1 = pIndexCastS len1Word str1LenSSA platformWordTy
-        let! castLen2 = pIndexCastS len2Word str2LenSSA platformWordTy
+        let! castLen1 = pIndexCastS len1Word str1LenIntSSA platformWordTy
+        let! castLen2 = pIndexCastS len2Word str2LenIntSSA platformWordTy
 
         // 8. memcpy(result, str1.ptr, len1)
         let! copy1Ops = pMemCopy memcpy1ResultSSA resultPtrWord str1PtrWord len1Word
 
         // 9. Compute offset pointer: result + len1
-        let! addOffset = pIndexAdd offsetPtrSSA resultPtrSSA str1LenSSA
+        let! addOffset = pIndexAdd offsetPtrSSA resultPtrSSA str1LenIndexSSA
         let! castOffset = pIndexCastS offsetPtrWord offsetPtrSSA platformWordTy
 
         // 10. memcpy(result + len1, str2.ptr, len2)
         let! copy2Ops = pMemCopy memcpy2ResultSSA offsetPtrWord str2PtrWord len2Word
 
-        // 11. Build result string fat pointer {result_ptr, combined_length}
-        let totalBytes = mlirTypeSize TIndex + mlirTypeSize intTy
-        let stringTy = TMemRefStatic(totalBytes, TInt I8)
-        let! undefOp = pUndef undefSSA stringTy
-        let! insertPtrOps = pInsertValue insertPtrResultSSA undefSSA resultPtrSSA 0 insertPtrOffsetSSA stringTy
-        let! insertLenOps = pInsertValue resultSSA insertPtrResultSSA combinedLenSSA 1 insertLenOffsetSSA stringTy
+        // 11. Return result buffer as memref (NO fat pointer struct construction)
+        // In MLIR: string IS memref<?xi8> directly
 
         // Collect all operations
         let ops =
-            extract1Ptr @ extract1Len @
-            extract2Ptr @ extract2Len @
-            [addLen; allocOp; extractResult] @
+            [dimConst1Op; dim1Op; cast1LenOp] @
+            [dimConst2Op; dim2Op; cast2LenOp] @
+            [addLen; allocOp] @
+            [extractStr1Ptr; extractStr2Ptr; extractResultPtr] @
             [cast1; cast2; cast3; castLen1; castLen2] @
             copy1Ops @
             [addOffset; castOffset] @
-            copy2Ops @
-            [undefOp] @ insertPtrOps @ insertLenOps
+            copy2Ops
 
-        return (ops, TRValue { SSA = resultSSA; Type = stringTy })
+        return (ops, TRValue { SSA = resultBufferSSA; Type = resultTy })
     }
