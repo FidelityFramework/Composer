@@ -263,6 +263,31 @@ let pSet : PSGParser<NodeId * NodeId> =
         | _ -> return! fail (Message "Expected Set")
     }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ACCUMULATOR EXTRACTORS (monadic access to witnessed node results)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Pull SSA and type from accumulator for a previously witnessed node
+/// This enables patterns to extract child results monadically (PULL model).
+/// Post-order traversal ensures children are witnessed before parents.
+let pRecallNode (nodeId: NodeId) : PSGParser<SSA * MLIRType> =
+    parser {
+        let! state = getUserState
+        match Alex.Traversal.TransferTypes.MLIRAccumulator.recallNode nodeId state.Accumulator with
+        | Some (ssa, ty) -> return (ssa, ty)
+        | None -> return! fail (Message $"Node {NodeId.value nodeId} not yet witnessed")
+    }
+
+/// Pull argument node IDs from Application node
+/// Used by application patterns to extract arguments monadically.
+let pGetApplicationArgs : PSGParser<NodeId list> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.Application (_, argIds) -> return argIds
+        | _ -> return! fail (Message "Not an Application node")
+    }
+
 /// Match a Lambda node (params are name*type*nodeId tuples for SSA assignment)
 let pLambda : PSGParser<(string * FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId> =
     parser {

@@ -16,7 +16,6 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
-open Alex.Patterns.MemRefPatterns  // pLoadMutableVariable
 open Alex.Dialects.Core.Types  // TMemRef
 open Alex.CodeGeneration.TypeMapping
 open XParsec
@@ -29,8 +28,14 @@ open XParsec.Combinators
 
 /// Witness variable reference nodes - forwards binding's SSA
 let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    printfn "[VarRefWitness] Attempting to witness node %A (kind: %s)"
+        (NodeId.value node.Id)
+        (node.Kind.ToString().Split('\n').[0])
     match tryMatch pVarRef ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((name, bindingIdOpt), _) ->
+        printfn "[VarRefWitness] Successfully matched VarRef '%s' with binding %A"
+            name
+            (bindingIdOpt |> Option.map NodeId.value)
         match bindingIdOpt with
         | Some bindingId ->
             // Check if the binding references a function (Lambda node)
@@ -70,20 +75,18 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         // Value binding - post-order: binding already witnessed, recall its SSA
                         match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
                         | Some (ssa, ty) ->
-                            // Check if binding is mutable (TMemRef type)
-                            match ty with
-                            | TMemRef elemType ->
-                                // MUTABLE VARIABLE: Load value from memref
-                                let (NodeId nodeIdInt) = node.Id
-                                match tryMatch (pLoadMutableVariable nodeIdInt ssa elemType)
-                                              ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                                | Some ((ops, result), _) ->
-                                    { InlineOps = ops; TopLevelOps = []; Result = result }
-                                | None ->
-                                    WitnessOutput.error $"VarRef '{name}': Load from mutable variable failed"
-                            | _ ->
-                                // IMMUTABLE VARIABLE: Forward the binding's SSA
-                                { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+                            // ARCHITECTURAL PRINCIPLE (lvalue vs rvalue):
+                            // VarRef ALWAYS forwards the binding's SSA, regardless of mutability.
+                            // - For TMemRef: Returns the memref address (consumers decide whether to load)
+                            // - For other types: Returns the value (already in SSA)
+                            //
+                            // This enables:
+                            // - Set operations to use memref directly (no load needed)
+                            // - Expression contexts to load from memref when needed
+                            // - No context-dependent behavior in VarRef itself
+                            printfn "[VarRefWitness] Forwarding binding %A with type %A"
+                                (NodeId.value bindingId) ty
+                            { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
                         | None ->
                             WitnessOutput.error $"VarRef '{name}': Binding not yet witnessed"
 
@@ -94,6 +97,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
         | None ->
             WitnessOutput.error $"VarRef '{name}': No binding ID (unresolved reference)"
     | None ->
+        printfn "[VarRefWitness] pVarRef FAILED to match node %A (kind: %s)"
+            (NodeId.value node.Id)
+            (node.Kind.ToString().Split('\n').[0])
         WitnessOutput.skip
 
 // ═══════════════════════════════════════════════════════════

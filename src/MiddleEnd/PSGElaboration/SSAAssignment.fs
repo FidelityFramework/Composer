@@ -586,7 +586,11 @@ let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode
                 | IntrinsicModule.Convert, _ -> 3          // type conversions
                 | IntrinsicModule.Math, _ -> 5             // math functions
                 | _ -> 20  // Default for unknown intrinsics
-            | SemanticKind.VarRef _ -> 5  // Function call
+            | SemanticKind.VarRef _ ->
+                // Function call: 1 result + N potential type compatibility casts (static→dynamic memref)
+                // Argument count = Children.Length - 1 (first child is function)
+                let argCount = max 0 (node.Children.Length - 1)
+                1 + argCount  // 1 for result, argCount for potential casts
             | _ -> 10  // Other applications
         | None -> 10
     | [] -> 5

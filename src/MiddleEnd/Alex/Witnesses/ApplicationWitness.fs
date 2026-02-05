@@ -27,6 +27,34 @@ open Alex.CodeGeneration.TypeMapping
 // NOTE: Elements are module internal - witnesses delegate to Patterns, NOT Elements
 
 // ═══════════════════════════════════════════════════════════
+// MUTABLE VARIABLE LOAD HELPER
+// ═══════════════════════════════════════════════════════════
+
+/// Load value from TMemRef argument if needed
+/// Returns (newSSA, valueType, loadOps) where:
+/// - TMemRef: emits memref.load, returns (loadedSSA, elemType, [loadOp])
+/// - Other: returns (originalSSA, originalType, [])
+let private loadIfMemRef (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) (ctx: WitnessContext) : (SSA * MLIRType * MLIROp list) =
+    match ty with
+    | TMemRef elemType ->
+        // Emit memref.load to get the value
+        let (NodeId nodeIdInt) = nodeId
+        match tryMatch (Alex.Patterns.MemRefPatterns.pLoadMutableVariable nodeIdInt ssa elemType)
+                      ctx.Graph (SemanticGraph.tryGetNode nodeId ctx.Graph |> Option.get)
+                      ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Some ((ops, TRValue result), _) ->
+            (result.SSA, result.Type, ops)
+        | Some ((ops, _), _) ->
+            // Shouldn't happen - pLoadMutableVariable always returns TRValue
+            (ssa, ty, ops)
+        | None ->
+            // Load pattern failed - return original (error will propagate)
+            (ssa, ty, [])
+    | _ ->
+        // Not a memref - return as-is
+        (ssa, ty, [])
+
+// ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
@@ -254,40 +282,40 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         let category = classifyAtomicOp info
                         let opResult =
                             match category with
-                            // Binary arithmetic (signed integer) - pass operation name to wrapper pattern
-                            | BinaryArith "addi" -> tryMatch (pBinaryArithOp node.Id "addi" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "subi" -> tryMatch (pBinaryArithOp node.Id "subi" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "muli" -> tryMatch (pBinaryArithOp node.Id "muli" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "divsi" -> tryMatch (pBinaryArithOp node.Id "divsi" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "divui" -> tryMatch (pBinaryArithOp node.Id "divui" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "remsi" -> tryMatch (pBinaryArithOp node.Id "remsi" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "remui" -> tryMatch (pBinaryArithOp node.Id "remui" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            // Binary arithmetic (PULL model) - witness passes minimal selector, pattern pulls args
+                            | BinaryArith "addi" -> tryMatch (pBinaryArithOp node.Id "addi") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "subi" -> tryMatch (pBinaryArithOp node.Id "subi") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "muli" -> tryMatch (pBinaryArithOp node.Id "muli") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "divsi" -> tryMatch (pBinaryArithOp node.Id "divsi") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "divui" -> tryMatch (pBinaryArithOp node.Id "divui") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "remsi" -> tryMatch (pBinaryArithOp node.Id "remsi") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "remui" -> tryMatch (pBinaryArithOp node.Id "remui") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
-                            // Floating-point arithmetic - pass operation name to wrapper pattern
-                            | BinaryArith "addf" -> tryMatch (pBinaryArithOp node.Id "addf" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "subf" -> tryMatch (pBinaryArithOp node.Id "subf" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "mulf" -> tryMatch (pBinaryArithOp node.Id "mulf" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "divf" -> tryMatch (pBinaryArithOp node.Id "divf" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            // Floating-point arithmetic (PULL model)
+                            | BinaryArith "addf" -> tryMatch (pBinaryArithOp node.Id "addf") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "subf" -> tryMatch (pBinaryArithOp node.Id "subf") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "mulf" -> tryMatch (pBinaryArithOp node.Id "mulf") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "divf" -> tryMatch (pBinaryArithOp node.Id "divf") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
-                            // Bitwise operations - pass operation name to wrapper pattern
-                            | BinaryArith "andi" -> tryMatch (pBinaryArithOp node.Id "andi" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "ori" -> tryMatch (pBinaryArithOp node.Id "ori" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "xori" -> tryMatch (pBinaryArithOp node.Id "xori" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "shli" -> tryMatch (pBinaryArithOp node.Id "shli" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "shrui" -> tryMatch (pBinaryArithOp node.Id "shrui" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | BinaryArith "shrsi" -> tryMatch (pBinaryArithOp node.Id "shrsi" lhsSSA rhsSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            // Bitwise operations (PULL model)
+                            | BinaryArith "andi" -> tryMatch (pBinaryArithOp node.Id "andi") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "ori" -> tryMatch (pBinaryArithOp node.Id "ori") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "xori" -> tryMatch (pBinaryArithOp node.Id "xori") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "shli" -> tryMatch (pBinaryArithOp node.Id "shli") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "shrui" -> tryMatch (pBinaryArithOp node.Id "shrui") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | BinaryArith "shrsi" -> tryMatch (pBinaryArithOp node.Id "shrsi") ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
-                            // Comparison operations - use wrapper pattern, pass OPERAND type not result type
-                            | Comparison "eq" -> tryMatch (pComparisonOp node.Id ICmpPred.Eq lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "ne" -> tryMatch (pComparisonOp node.Id ICmpPred.Ne lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "slt" -> tryMatch (pComparisonOp node.Id ICmpPred.Slt lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "sle" -> tryMatch (pComparisonOp node.Id ICmpPred.Sle lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "sgt" -> tryMatch (pComparisonOp node.Id ICmpPred.Sgt lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "sge" -> tryMatch (pComparisonOp node.Id ICmpPred.Sge lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "ult" -> tryMatch (pComparisonOp node.Id ICmpPred.Ult lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "ule" -> tryMatch (pComparisonOp node.Id ICmpPred.Ule lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "ugt" -> tryMatch (pComparisonOp node.Id ICmpPred.Ugt lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
-                            | Comparison "uge" -> tryMatch (pComparisonOp node.Id ICmpPred.Uge lhsSSA rhsSSA operandType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            // Comparison operations (PULL model) - pattern extracts operands and types
+                            | Comparison "eq" -> tryMatch (pComparisonOp node.Id ICmpPred.Eq) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "ne" -> tryMatch (pComparisonOp node.Id ICmpPred.Ne) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "slt" -> tryMatch (pComparisonOp node.Id ICmpPred.Slt) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "sle" -> tryMatch (pComparisonOp node.Id ICmpPred.Sle) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "sgt" -> tryMatch (pComparisonOp node.Id ICmpPred.Sgt) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "sge" -> tryMatch (pComparisonOp node.Id ICmpPred.Sge) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "ult" -> tryMatch (pComparisonOp node.Id ICmpPred.Ult) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "ule" -> tryMatch (pComparisonOp node.Id ICmpPred.Ule) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "ugt" -> tryMatch (pComparisonOp node.Id ICmpPred.Ugt) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                            | Comparison "uge" -> tryMatch (pComparisonOp node.Id ICmpPred.Uge) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
                             | _ -> None
 
@@ -306,11 +334,11 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         let category = classifyAtomicOp info
                         let opResult =
                             match category with
-                            // Unary operations - use wrapper pattern
+                            // Unary operations (PULL model) - witness passes minimal selector
                             | UnaryArith "xori" ->
                                 // Boolean NOT: xori %operand, 1
-                                // Pattern extracts 2 SSAs monadically via node.Id (constant + result)
-                                tryMatch (pUnaryNot node.Id operandSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+                                // Pattern extracts operand monadically and pulls from accumulator
+                                tryMatch (pUnaryNot node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
 
                             | _ -> None
 

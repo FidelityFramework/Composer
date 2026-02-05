@@ -208,12 +208,13 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match tryMatch extractParamSSAs ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Some (paramList, _) -> paramList
                 | None ->
-                    // Fallback: create fresh SSAs (shouldn't happen if coeffects are correct)
-                    params'
-                    |> List.map (fun (_, paramType, paramNodeId) ->
-                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch paramType
-                        let paramSSA = SSA.V (NodeId.value paramNodeId)
-                        (paramSSA, mlirType))
+                    // ARCHITECTURAL VIOLATION REMOVED: Was generating SSAs at runtime
+                    // SSAs MUST come from SSAAssignment coeffects only
+                    // If this fails, SSAAssignment nanopass needs to be fixed
+                    printfn "[ERROR] LambdaWitness: Parameter SSAs not found in coeffects for Lambda node %A" (NodeId.value node.Id)
+                    printfn "[ERROR] This indicates SSAAssignment nanopass failed to pre-allocate parameter SSAs"
+                    printfn "[ERROR] Parameters: %A" params'
+                    []  // Return empty list - will cause compilation to fail with proper error
 
             // Determine return type from Lambda type signature
             let returnType =

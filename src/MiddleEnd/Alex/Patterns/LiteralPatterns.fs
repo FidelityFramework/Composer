@@ -103,7 +103,9 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
 
         do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
 
-        // String type: memref<Nxi8> where N is byte length (static-sized memref for literals)
+        // String type: memref<Nxi8> where N is byte length
+        // MLIR requires memref.get_global to return statically shaped memref
+        // Cast to dynamic memref<?xi8> happens at call sites during witnessing
         let stringTy = TMemRefStatic (byteLength, TInt I8)
 
         do! emitTrace "pBuildStringLiteral.types" (sprintf "stringTy=%A" stringTy)
