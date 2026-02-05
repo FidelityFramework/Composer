@@ -92,14 +92,43 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     | IntrinsicModule.MemRef, "store", [valueSSA; ptrSSA; indexSSA] ->
                         // MemRef.store: 'T -> memref<?x'T> -> nativeint -> unit
                         // Baker has already transformed NativePtr.write → MemRef.store
-                        // Index is nativeint (maps to MLIR index type) - NO CASTING!
+                        // PATTERN: Detect and unwrap MemRef.add(base, offset) to extract base memref and offset
+                        let (memrefSSA, offsetSSA, memrefType) =
+                            let ptrArgNodeId = argIds.[1]  // Second argument (ptr position)
+                            match SemanticGraph.tryGetNode ptrArgNodeId ctx.Graph with
+                            | Some ptrNode ->
+                                match ptrNode.Kind with
+                                | SemanticKind.Application (funcId, addArgIds) ->
+                                    // Check if this is calling MemRef.add
+                                    match SemanticGraph.tryGetNode funcId ctx.Graph with
+                                    | Some funcNode ->
+                                        match funcNode.Kind with
+                                        | SemanticKind.Intrinsic info when info.Module = IntrinsicModule.MemRef && info.Operation = "add" ->
+                                            // Pattern matched: MemRef.add(base, offset)
+                                            // Extract base memref and offset from MemRef.add arguments
+                                            match MLIRAccumulator.recallNode addArgIds.[0] ctx.Accumulator,
+                                                  MLIRAccumulator.recallNode addArgIds.[1] ctx.Accumulator with
+                                            | Some (baseSSA, baseTy), Some (offsetSSA, _) ->
+                                                // Use base as memref, offset from MemRef.add's second arg
+                                                (baseSSA, offsetSSA, baseTy)
+                                            | _ ->
+                                                // Recall failed, fallback to original values
+                                                (ptrSSA, indexSSA, argTypes.[1])
+                                        | _ ->
+                                            // Not MemRef.add, use original values
+                                            (ptrSSA, indexSSA, argTypes.[1])
+                                    | None -> (ptrSSA, indexSSA, argTypes.[1])
+                                | _ ->
+                                    // Not an Application, use original values
+                                    (ptrSSA, indexSSA, argTypes.[1])
+                            | None -> (ptrSSA, indexSSA, argTypes.[1])
+
                         let arch = ctx.Coeffects.Platform.TargetArch
                         let elemType =
-                            match argTypes.[1] with
+                            match memrefType with
                             | TMemRef elemTy -> elemTy
                             | _ -> TError "Expected memref type for MemRef.store"
-                        let memrefType = argTypes.[1]
-                        match tryMatch (pMemRefStoreIndexed ptrSSA valueSSA indexSSA elemType memrefType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        match tryMatch (pMemRefStoreIndexed memrefSSA valueSSA offsetSSA elemType memrefType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | None -> WitnessOutput.error "MemRef.store pattern failed"
 
