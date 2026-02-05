@@ -13,8 +13,9 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.LiteralPatterns
-
-module SSAAssign = PSGElaboration.SSAAssignment
+open XParsec
+open XParsec.Parsers
+open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -29,44 +30,49 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
         // String literals: TypeLayout.Opaque uses 1 SSA for memref.get_global
         match lit with
         | NativeLiteral.String content ->
-            match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
-            | None ->
-                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "SSA lookup") "String literal: No SSAs assigned"
-                WitnessOutput.errorDiag diag
-            | Some ssas when ssas.Length >= 1 ->
-                // Use trace-enabled variant to capture full execution path
-                match tryMatchWithTrace (pBuildStringLiteral content ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Result.Ok (((inlineOps, globalName, strContent, byteLength), result), _, _trace) ->
-                    // Success - emit GlobalString via coordination (dependent transparency)
-                    let topLevelOps =
-                        match MLIRAccumulator.tryEmitGlobal globalName strContent byteLength ctx.Accumulator with
-                        | Some globalOp -> [globalOp]
-                        | None -> []  // Already emitted by another witness
-                    { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
-                | Result.Error (err, trace) ->
-                    // Failure - serialize trace for debugging
-                    // TODO: Serialize trace to intermediates/07_literal_witness_nodeXXX_trace.json
-                    let traceMsg = trace |> List.map ExecutionTrace.format |> String.concat "\n"
-                    let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildStringLiteral") 
-                                    (sprintf "String literal pattern emission failed:\nXParsec Error: %A\nExecution Trace:\n%s" err traceMsg)
-                    WitnessOutput.errorDiag diag
-            | Some ssas ->
-                let diag = Diagnostic.errorWithDetails (Some node.Id) (Some "Literal") (Some "SSA validation")
-                                "String literal: Incorrect SSA count" "1 SSA" $"{ssas.Length} SSAs"
+            // Extract SSAs monadically
+            let stringPattern =
+                parser {
+                    // Extract result SSAs for string literal (monadic)
+                    let! ssas = getNodeSSAs node.Id
+
+                    if ssas.Length < 1 then
+                        return! fail (Message $"String literal: Expected 1 SSA, got {ssas.Length}")
+                    else
+                        return! pBuildStringLiteral content ssas arch
+                }
+
+            // Use trace-enabled variant to capture full execution path
+            match tryMatchWithTrace stringPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok (((inlineOps, globalName, strContent, byteLength), result), _, _trace) ->
+                // Success - emit GlobalString via coordination (dependent transparency)
+                let topLevelOps =
+                    match MLIRAccumulator.tryEmitGlobal globalName strContent byteLength ctx.Accumulator with
+                    | Some globalOp -> [globalOp]
+                    | None -> []  // Already emitted by another witness
+                { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
+            | Result.Error (err, trace) ->
+                // Failure - serialize trace for debugging
+                // TODO: Serialize trace to intermediates/07_literal_witness_nodeXXX_trace.json
+                let traceMsg = trace |> List.map ExecutionTrace.format |> String.concat "\n"
+                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildStringLiteral")
+                                (sprintf "String literal pattern emission failed:\nXParsec Error: %A\nExecution Trace:\n%s" err traceMsg)
                 WitnessOutput.errorDiag diag
 
         | _ ->
             // Other literals (int, bool, float, char, etc.) use single SSA
-            match SSAAssign.lookupSSA node.Id ctx.Coeffects.SSA with
+            // Extract SSA monadically
+            let literalPattern =
+                parser {
+                    let! ssa = getNodeSSA node.Id
+                    return! pBuildLiteral lit ssa arch
+                }
+
+            match tryMatch literalPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
             | None ->
-                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "SSA lookup") "Literal: No SSA assigned"
+                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildLiteral") "Literal pattern emission failed"
                 WitnessOutput.errorDiag diag
-            | Some ssa ->
-                match tryMatch (pBuildLiteral lit ssa arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                | None ->
-                    let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildLiteral") "Literal pattern emission failed"
-                    WitnessOutput.errorDiag diag
 
     | None -> WitnessOutput.skip
 

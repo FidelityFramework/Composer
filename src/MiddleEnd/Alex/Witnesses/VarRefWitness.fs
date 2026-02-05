@@ -16,8 +16,9 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.CodeGeneration.TypeMapping
-
-module SSAAssign = PSGElaboration.SSAAssignment
+open XParsec
+open XParsec.Parsers
+open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -36,13 +37,19 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 match bindingNode.Kind with
                 | SemanticKind.PatternBinding _ ->
                     // Parameter binding - SSA is in coeffects, not accumulator
-                    match SSAAssign.lookupSSA bindingId ctx.Coeffects.SSA with
-                    | Some ssa ->
-                        let arch = ctx.Coeffects.Platform.TargetArch
-                        let ty = mapNativeTypeForArch arch bindingNode.Type
-                        { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
-                    | None ->
-                        WitnessOutput.error $"VarRef '{name}': PatternBinding has no SSA in coeffects"
+                    // Extract SSA monadically
+                    let patternBindingPattern =
+                        parser {
+                            let! ssa = getNodeSSA bindingId
+                            let! state = getUserState
+                            let arch = state.Coeffects.Platform.TargetArch
+                            let ty = mapNativeTypeForArch arch bindingNode.Type
+                            return ([], TRValue { SSA = ssa; Type = ty })
+                        }
+
+                    match tryMatch patternBindingPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | None -> WitnessOutput.error $"VarRef '{name}': PatternBinding has no SSA in coeffects"
 
                 | SemanticKind.Binding _ ->
                     // Check if binding's child is a Lambda (function binding)

@@ -15,8 +15,9 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.Patterns.ControlFlowPatterns
-
-module SSAAssign = PSGElaboration.SSAAssignment
+open XParsec
+open XParsec.Parsers
+open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -26,45 +27,80 @@ module SSAAssign = PSGElaboration.SSAAssignment
 let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     match tryMatch pSeqExpr ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((bodyId, captures), _) ->
-        match SSAAssign.lookupSSAs node.Id ctx.Coeffects.SSA with
-        | None -> WitnessOutput.error "SeqExpr: No SSAs assigned"
-        | Some ssas ->
-            let arch = ctx.Coeffects.Platform.TargetArch
-            let captureVals =
-                captures
-                |> List.choose (fun cap ->
-                    cap.SourceNodeId
-                    |> Option.bind (fun id -> SSAAssign.lookupSSA id ctx.Coeffects.SSA)
-                    |> Option.map (fun ssa ->
-                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch cap.Type
-                        { SSA = ssa; Type = mlirType }))
+        // Extract SSAs monadically using XParsec state threading
+        let seqPattern =
+            parser {
+                let! state = getUserState
+                let arch = state.Coeffects.Platform.TargetArch
 
-            let rec extractMutableBindings nodeId =
-                match SemanticGraph.tryGetNode nodeId ctx.Graph with
-                | None -> []
-                | Some n ->
-                    let thisVal =
-                        match n.Kind with
-                        | SemanticKind.Binding (_, true, _, _) ->
-                            SSAAssign.lookupSSA nodeId ctx.Coeffects.SSA
-                            |> Option.map (fun ssa ->
-                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch n.Type
-                                [{ SSA = ssa; Type = mlirType }])
-                            |> Option.defaultValue []
-                        | _ -> []
-                    thisVal @ (n.Children |> List.collect extractMutableBindings)
+                // Extract result SSAs for SeqExpr (monadic)
+                let! ssas = getNodeSSAs node.Id
 
-            let internalState = extractMutableBindings bodyId
+                // Extract capture SSAs (monadic)
+                let captureNodeIds =
+                    captures
+                    |> List.choose (fun cap ->
+                        cap.SourceNodeId
+                        |> Option.map (fun id -> (id, cap.Type)))
 
-            match MLIRAccumulator.recallNode bodyId ctx.Accumulator with
-            | None -> WitnessOutput.error "SeqExpr: Body not yet witnessed"
-            | Some (codePtr, codePtrTy) ->
-                // Get Seq<T> type from node
-                // With TMemRefStatic, we can't extract current type from structure - use fallback
-                let currentTy = TIndex  // fallback (may need type tracking refactor)
-                match tryMatch (pBuildSeqStruct currentTy codePtrTy codePtr captureVals internalState ssas arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                | None -> WitnessOutput.error "SeqExpr pattern emission failed"
+                let! captureVals =
+                    let rec extractCaptures caps =
+                        parser {
+                            match caps with
+                            | [] -> return []
+                            | (id, capType) :: rest ->
+                                let! ssa = getNodeSSA id
+                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch capType
+                                let! restVals = extractCaptures rest
+                                return { SSA = ssa; Type = mlirType } :: restVals
+                        }
+                    extractCaptures captureNodeIds
+
+                // Extract mutable binding SSAs from body (monadic)
+                let rec extractMutableBindings nodeId =
+                    parser {
+                        match SemanticGraph.tryGetNode nodeId state.Graph with
+                        | None -> return []
+                        | Some n ->
+                            let! thisVal =
+                                match n.Kind with
+                                | SemanticKind.Binding (_, true, _, _) ->
+                                    parser {
+                                        let! ssa = getNodeSSA nodeId
+                                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch n.Type
+                                        return [{ SSA = ssa; Type = mlirType }]
+                                    }
+                                | _ -> preturn []
+
+                            // Recursively extract from children
+                            let rec extractChildren children =
+                                parser {
+                                    match children with
+                                    | [] -> return []
+                                    | child :: rest ->
+                                        let! childVals = extractMutableBindings child
+                                        let! restVals = extractChildren rest
+                                        return childVals @ restVals
+                                }
+                            let! childVals = extractChildren n.Children
+                            return thisVal @ childVals
+                    }
+
+                let! internalState = extractMutableBindings bodyId
+
+                // Get code pointer from accumulator
+                match MLIRAccumulator.recallNode bodyId state.Accumulator with
+                | None -> return! fail (Message "SeqExpr: Body not yet witnessed")
+                | Some (codePtr, codePtrTy) ->
+                    // Get Seq<T> type from node
+                    // With TMemRefStatic, we can't extract current type from structure - use fallback
+                    let currentTy = TIndex  // fallback (may need type tracking refactor)
+                    return! pBuildSeqStruct currentTy codePtrTy codePtr captureVals internalState ssas arch
+            }
+
+        match tryMatch seqPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | None -> WitnessOutput.error "SeqExpr pattern emission failed"
 
     | None ->
         match tryMatch pForEach ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

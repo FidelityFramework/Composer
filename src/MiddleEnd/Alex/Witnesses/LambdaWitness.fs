@@ -22,8 +22,9 @@ open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
-
-module SSAAssign = PSGElaboration.SSAAssignment
+open XParsec
+open XParsec.Parsers
+open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════
 // Y-COMBINATOR PATTERN
@@ -186,15 +187,31 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Map parameters to MLIR types and build parameter list with SSAs
             let arch = ctx.Coeffects.Platform.TargetArch
+
+            // Extract parameter SSAs monadically
+            let extractParamSSAs =
+                parser {
+                    let rec extractParams ps =
+                        parser {
+                            match ps with
+                            | [] -> return []
+                            | (paramName, paramType, paramNodeId) :: rest ->
+                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch paramType
+                                let! paramSSA = getNodeSSA paramNodeId
+                                let! restParams = extractParams rest
+                                return (paramSSA, mlirType) :: restParams
+                        }
+                    return! extractParams params'
+                }
+
             let mlirParams =
-                params'
-                |> List.map (fun (paramName, paramType, paramNodeId) ->
-                    let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch paramType
-                    // Lookup SSA for parameter from coeffects
-                    match SSAAssign.lookupSSA paramNodeId ctx.Coeffects.SSA with
-                    | Some paramSSA -> (paramSSA, mlirType)
-                    | None ->
-                        // Fallback: create fresh SSA (shouldn't happen if coeffects are correct)
+                match tryMatch extractParamSSAs ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Some (paramList, _) -> paramList
+                | None ->
+                    // Fallback: create fresh SSAs (shouldn't happen if coeffects are correct)
+                    params'
+                    |> List.map (fun (_, paramType, paramNodeId) ->
+                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch paramType
                         let paramSSA = SSA.V (NodeId.value paramNodeId)
                         (paramSSA, mlirType))
 
