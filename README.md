@@ -27,7 +27,7 @@ Ahead-of-time F# compiler producing native executables without managed runtime o
 **Known Limitations**:
 - 13 of 16 samples fail compilation (closure capture, higher-order functions, complex control flow)
 - Managed mutability limited to local variables in simple loops
-- No escape analysis (mutables that outlive scope unsupported)
+- Partial escape analysis (closure capture detection works, mutable lifetime integration pending)
 - Generic instantiation and SRTP resolution issues remain
 
 See: `docs/PRDs/README.md` for full feature roadmap and status.
@@ -330,8 +330,8 @@ Development organized by category-prefixed PRDs. See [docs/PRDs/README.md](docs/
 - String operations honoring FNCS contracts (substring extraction)
 
 **What Doesn't Work**:
-- Mutable variables captured in closures (no escape analysis)
-- Mutable variables passed across function boundaries
+- Mutable variables captured in closures (closure detection exists, allocation strategy integration pending)
+- Mutable variables passed across function boundaries (return/byref escape detection needed)
 - Higher-order functions with mutable state
 - Complex control flow with escaping mutables
 
