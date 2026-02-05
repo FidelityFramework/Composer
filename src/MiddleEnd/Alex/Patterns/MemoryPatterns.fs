@@ -540,28 +540,17 @@ let pMemRefStoreIndexed (memref: SSA) (value: SSA) (offsetSSA: SSA) (elemType: M
         return ([storeOp], TRVoid)
     }
 
-/// MemRef copy operation (NativePtr.copy)
-/// Emits a call to memcpy library function
-/// This is used for bulk memory copying between memrefs
-/// Returns unit (no result SSA needed)
+/// MemRef copy - bulk memory copy via memcpy library function
 let pMemCopy (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! state = getUserState
         let platformWordTy = state.Platform.PlatformWordType
-
-        // Call memcpy(dest, src, count) - standard C library function
-        // memcpy signature: void* memcpy(void* dest, const void* src, size_t count)
-        // All arguments are platform word sized (i64/i32 depending on arch)
         let args = [
             { SSA = destSSA; Type = platformWordTy }
             { SSA = srcSSA; Type = platformWordTy }
             { SSA = countSSA; Type = platformWordTy }
         ]
-
-        // memcpy returns void* but we don't use the result (just for side effect)
-        // Pass platformWordTy as return type (void* is a pointer)
         let! memcpyCall = pFuncCall None "memcpy" args platformWordTy
-
         return ([memcpyCall], TRVoid)
     }
 

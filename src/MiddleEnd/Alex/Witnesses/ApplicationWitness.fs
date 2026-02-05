@@ -107,7 +107,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         // MemRef.load: memref<?x'T> -> index -> 'T
                         // Baker has already transformed NativePtr.read → MemRef.load
                         // Uses MLIR memref.load operation (NOT LLVM pointer load)
-                        match tryMatch (pMemRefLoad node.Id memrefSSA [indexSSA]) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        match tryMatch (pMemRefLoad node.Id memrefSSA indexSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | None -> WitnessOutput.error "MemRef.load pattern failed"
 
@@ -115,7 +115,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         // MemRef.copy: memref -> memref -> nativeint -> unit
                         // Baker has already transformed NativePtr.copy → MemRef.copy
                         // Emits call to memcpy library function (no result SSA needed - returns TRVoid)
-                        match tryMatch (pMemCopy node.Id destSSA srcSSA countSSA argTypes.[0] argTypes.[1]) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        match tryMatch (pMemCopy destSSA srcSSA countSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | None -> WitnessOutput.error "MemRef.copy pattern failed"
 

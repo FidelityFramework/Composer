@@ -77,7 +77,7 @@ let pStringLength (nodeId: NodeId) (stringSSA: SSA) (stringType: MLIRType) : PSG
 /// Call external memcpy(dest, src, len) -> void*
 /// External memcpy declaration will be added at module level if needed
 /// resultSSA: The SSA assigned to the memcpy result (from coeffects analysis)
-let pMemCopy (resultSSA: SSA) (destSSA: SSA) (srcSSA: SSA) (lenSSA: SSA) : PSGParser<MLIROp list> =
+let pStringMemCopy (resultSSA: SSA) (destSSA: SSA) (srcSSA: SSA) (lenSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         // Get platform word type (pointers are platform words)
         let! state = getUserState
@@ -177,14 +177,14 @@ let pStringConcat2 (nodeId: NodeId) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
         let! castLen2 = pIndexCastS len2Word str2LenSSA platformWordTy
 
         // 8. memcpy(result, str1.ptr, len1)
-        let! copy1Ops = pMemCopy memcpy1ResultSSA resultPtrWord str1PtrWord len1Word
+        let! copy1Ops = pStringMemCopy memcpy1ResultSSA resultPtrWord str1PtrWord len1Word
 
         // 9. Compute offset pointer: result + len1 (index arithmetic via arith.addi)
         let addOffset = ArithOp (AddI (offsetPtrSSA, resultPtrSSA, str1LenSSA, TIndex))
         let! castOffset = pIndexCastS offsetPtrWord offsetPtrSSA platformWordTy
 
         // 10. memcpy(result + len1, str2.ptr, len2)
-        let! copy2Ops = pMemCopy memcpy2ResultSSA offsetPtrWord str2PtrWord len2Word
+        let! copy2Ops = pStringMemCopy memcpy2ResultSSA offsetPtrWord str2PtrWord len2Word
 
         // 11. Return result buffer as memref (NO fat pointer struct construction)
         // In MLIR: string IS memref<?xi8> directly
