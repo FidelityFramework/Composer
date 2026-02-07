@@ -9,7 +9,6 @@ authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
 [compilation]
-memory_model = "static_pools"
 target = "thumbv8m.main-none-eabihf"
 max_stack_size = 8192
 heap_size = 0

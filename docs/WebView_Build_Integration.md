@@ -97,7 +97,6 @@ inline = true                   # Inline all JS/CSS into HTML
 
 # Firefly compilation settings
 [compilation]
-memory_model = "stack_only"
 target = "native"
 
 # Dependencies

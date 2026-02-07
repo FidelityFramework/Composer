@@ -9,9 +9,6 @@ authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
 [compilation]
-# Stack-only for simple timing operations
-memory_model = "stack_only"
-
 # Target triple (native = host platform)
 target = "native"
 

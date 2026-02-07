@@ -9,7 +9,6 @@ authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
 [compilation]
-memory_model = "stack_only"
 target = "native"
 
 [dependencies]

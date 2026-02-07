@@ -273,7 +273,6 @@ module Transfer =
 name = "QuantumCredentialGenerator"
 
 [compilation]
-memory_model = "stack_only"
 target = "linux-arm64"      # Cross-compile to ARM64
 
 [desktop]
@@ -296,7 +295,6 @@ output_kind = "desktop"      # Uses WebView
 name = "Keystation"
 
 [compilation]
-memory_model = "stack_only"
 target = "linux-x86_64"
 
 [desktop]

@@ -196,7 +196,6 @@ See `/samples/console/FidelityHelloWorld/` for progressive examples (3 of 16 cur
 name = "HelloWorld"
 
 [compilation]
-memory_model = "stack_only"
 target = "native"
 
 [build]

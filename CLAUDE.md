@@ -264,7 +264,6 @@ When debugging, inspect in pipeline order to find WHERE a bug originates.
 [package]
 name = "ProjectName"
 [compilation]
-memory_model = "stack_only"
 target = "native"
 [build]
 sources = ["Main.fs"]

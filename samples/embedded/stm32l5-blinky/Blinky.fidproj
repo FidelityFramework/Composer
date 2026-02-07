@@ -9,9 +9,6 @@ authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
 [compilation]
-# Static pools for embedded - no dynamic allocation
-memory_model = "static_pools"
-
 # ARM Cortex-M33 with hardware FPU
 target = "thumbv8m.main-none-eabihf"
 
