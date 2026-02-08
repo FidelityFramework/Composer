@@ -450,16 +450,27 @@ let private computeMatchSSACost (graph: SemanticGraph) (scrutineeId: NodeId) (ca
     extractionSSAs + ifChainSSAs + 10  // 10 for safety margin
 
 /// Compute exact SSA count for Application based on intrinsic analysis
-let private computeApplicationSSACost (graph: SemanticGraph) (node: SemanticNode) (saturatedCallArgCounts: Map<NodeId, int>) : int =
+/// SSA traversal context — bundles all invariant state for the recursive traversal.
+/// Only `scope` and `nodeId` vary per call; everything else is created once in `assignSSA`.
+type private SSAContext = {
+    Arch: Architecture
+    Graph: SemanticGraph
+    ClosureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>
+    DULayouts: System.Collections.Generic.Dictionary<int, DULayout>
+    InnerScopeAssignments: System.Collections.Generic.Dictionary<int, NodeSSAAllocation>
+    SaturatedCallArgCounts: Map<NodeId, int>
+}
+
+let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : int =
     // Check if this is a saturated call (curry flattening) — use effective arg count
-    match Map.tryFind node.Id saturatedCallArgCounts with
+    match Map.tryFind node.Id ctx.SaturatedCallArgCounts with
     | Some effectiveArgCount ->
         1 + effectiveArgCount  // 1 result + N potential memref casts
     | None ->
     // Look at what we're applying to determine SSA needs
     match node.Children with
     | funcId :: _ ->
-        match Map.tryFind funcId graph.Nodes with
+        match Map.tryFind funcId ctx.Graph.Nodes with
         | Some funcNode ->
             match funcNode.Kind with
             | SemanticKind.Intrinsic info ->
@@ -714,14 +725,14 @@ let private computeSeqExprSSACost (graph: SemanticGraph) (bodyId: NodeId) (captu
 
 /// Get the number of SSAs needed for a node based on its STRUCTURE
 /// This is the key function - it analyzes actual instance structure, not just kind
-let private nodeExpansionCost (arch: Architecture) (graph: SemanticGraph) (node: SemanticNode) (saturatedCallArgCounts: Map<NodeId, int>) : int =
+let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     match node.Kind with
     // Structural analysis - exact counts from instance
     | SemanticKind.Match (scrutineeId, cases) ->
-        computeMatchSSACost graph scrutineeId cases
+        computeMatchSSACost ctx.Graph scrutineeId cases
 
     | SemanticKind.Application _ ->
-        computeApplicationSSACost graph node saturatedCallArgCounts
+        computeApplicationSSACost ctx node
 
     | SemanticKind.TupleExpr childIds ->
         computeTupleSSACost childIds
@@ -770,7 +781,7 @@ let private nodeExpansionCost (arch: Architecture) (graph: SemanticGraph) (node:
     // PRD-15: Sequence expressions
     // SeqExpr: 5 base + captures + (2 * internal state fields)
     // Internal state = let mutable bindings inside seq body (through-line from PRD-11)
-    | SemanticKind.SeqExpr (bodyId, captures) -> computeSeqExprSSACost graph bodyId captures
+    | SemanticKind.SeqExpr (bodyId, captures) -> computeSeqExprSSACost ctx.Graph bodyId captures
     // Yield: 4 (gep current + store value + gep state + store state)
     | SemanticKind.Yield _ -> 4
     // YieldBang: 12 (nested iteration setup)
@@ -792,7 +803,7 @@ let private nodeExpansionCost (arch: Architecture) (graph: SemanticGraph) (node:
     // DUConstruct: SSA count depends on whether payload type matches slot type
     // Computed deterministically from PSG structure
     | SemanticKind.DUConstruct (_, _, payloadOpt, _) ->
-        computeDUConstructSSACost arch graph node.Type payloadOpt
+        computeDUConstructSSACost ctx.Arch ctx.Graph node.Type payloadOpt
     // Standalone Intrinsic nodes (not applied via Application)
     // These appear in entry point elaboration and other structural expansions
     | SemanticKind.Intrinsic info ->
@@ -906,17 +917,12 @@ type SSAAssignment = {
 /// Returns updated scope with assignments
 /// innerScopeAssignments: mutable collection for nested lambda body SSAs (separate MLIR functions)
 let rec private assignFunctionBody
-    (arch: Architecture)
-    (graph: SemanticGraph)
-    (closureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>)
-    (duLayouts: System.Collections.Generic.Dictionary<int, DULayout>)
-    (innerScopeAssignments: System.Collections.Generic.Dictionary<int, NodeSSAAllocation>)
-    (saturatedCallArgCounts: Map<NodeId, int>)
+    (ctx: SSAContext)
     (scope: FunctionScope)
     (nodeId: NodeId)
     : FunctionScope =
 
-    match Map.tryFind nodeId graph.Nodes with
+    match Map.tryFind nodeId ctx.Graph.Nodes with
     | None -> scope
     | Some node ->
         // Architectural fix (January 2026): Filter out SeparateFunction children.
@@ -925,7 +931,7 @@ let rec private assignFunctionBody
         let childrenToProcess =
             node.Children
             |> List.filter (fun childId ->
-                match Map.tryFind childId graph.Nodes with
+                match Map.tryFind childId ctx.Graph.Nodes with
                 | Some child ->
                     match child.EmissionStrategy with
                     | EmissionStrategy.SeparateFunction _ -> false  // Skip, parent handles it
@@ -935,7 +941,7 @@ let rec private assignFunctionBody
 
         // Post-order: process filtered children first
         let scopeAfterChildren =
-            childrenToProcess |> List.fold (fun s childId -> assignFunctionBody arch graph closureLayouts duLayouts innerScopeAssignments saturatedCallArgCounts s childId) scope
+            childrenToProcess |> List.fold (fun s childId -> assignFunctionBody ctx s childId) scope
 
         // Special handling for nested Lambdas - they get their own scope
         // (but we still assign this Lambda node SSAs in parent scope for closure construction)
@@ -947,7 +953,7 @@ let rec private assignFunctionBody
             // SSA layout in inner function: v0..v(N-1) = extraction, vN = struct load, v(N+1)+ = body
             // So body starts at captureCount + 1 (when there are captures) or 0 (no captures).
             let startCounter =
-                match Map.tryFind bodyId graph.Nodes with
+                match Map.tryFind bodyId ctx.Graph.Nodes with
                 | Some bodyNode ->
                     match bodyNode.EmissionStrategy with
                     | EmissionStrategy.SeparateFunction captureCount ->
@@ -964,16 +970,16 @@ let rec private assignFunctionBody
                     FunctionScope.assign paramNodeId (NodeSSAAllocation.single (Arg i)) s
                 ) innerStartScope
 
-            let innerScope = assignFunctionBody arch graph closureLayouts duLayouts innerScopeAssignments saturatedCallArgCounts paramScope bodyId
+            let innerScope = assignFunctionBody ctx paramScope bodyId
 
             // Merge nested lambda's parameter and body SSAs into the shared collection.
             // These are a separate MLIR function's namespace, collected for the global SSA map.
             for kvp in paramScope.Assignments do
-                if not (innerScopeAssignments.ContainsKey(kvp.Key)) then
-                    innerScopeAssignments.Add(kvp.Key, kvp.Value)
+                if not (ctx.InnerScopeAssignments.ContainsKey(kvp.Key)) then
+                    ctx.InnerScopeAssignments.Add(kvp.Key, kvp.Value)
             for kvp in innerScope.Assignments do
-                if not (innerScopeAssignments.ContainsKey(kvp.Key)) then
-                    innerScopeAssignments.Add(kvp.Key, kvp.Value)
+                if not (ctx.InnerScopeAssignments.ContainsKey(kvp.Key)) then
+                    ctx.InnerScopeAssignments.Add(kvp.Key, kvp.Value)
 
             // DISTINCTION: Nested NAMED functions with captures use parameter-passing, NOT closure structs.
             // Anonymous lambdas (fun x -> ...) that escape STILL need closure structs.
@@ -983,7 +989,7 @@ let rec private assignFunctionBody
                 Option.isSome enclosingFuncOpt &&
                 match node.Parent with
                 | Some parentId ->
-                    match Map.tryFind parentId graph.Nodes with
+                    match Map.tryFind parentId ctx.Graph.Nodes with
                     | Some parentNode ->
                         match parentNode.Kind with
                         | SemanticKind.Binding _ -> true  // Named function definition
@@ -1009,9 +1015,9 @@ let rec private assignFunctionBody
                     // Pass the context so witnesses know how to extract captures
                     // PRD-14: Pass graph and bodyId for lazy struct type computation
                     if not (List.isEmpty captures) then
-                        let layout = buildClosureLayout arch graph node.Id bodyId captures ssas context
-                        if not (closureLayouts.ContainsKey(NodeId.value node.Id)) then
-                            closureLayouts.Add(NodeId.value node.Id, layout)
+                        let layout = buildClosureLayout ctx.Arch ctx.Graph node.Id bodyId captures ssas context
+                        if not (ctx.ClosureLayouts.ContainsKey(NodeId.value node.Id)) then
+                            ctx.ClosureLayouts.Add(NodeId.value node.Id, layout)
                     scopeWithAlloc
                 else
                     // Simple lambda (no captures) - no SSAs needed in parent scope
@@ -1022,23 +1028,23 @@ let rec private assignFunctionBody
         // ForLoop needs SSAs for internal operation (ivSSA + stepSSA)
         // even though it doesn't "produce a value" in the semantic sense
         | SemanticKind.ForLoop _ ->
-            let cost = nodeExpansionCost arch graph node saturatedCallArgCounts  // Structural derivation
+            let cost = nodeExpansionCost ctx node  // Structural derivation
             let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
             let alloc = NodeSSAAllocation.multi ssas
             FunctionScope.assign node.Id alloc scopeWithSSAs
 
         // DUConstruct: Build DULayout coeffect for arena-allocated heterogeneous DUs
         | SemanticKind.DUConstruct (caseName, caseIndex, payloadOpt, _guardExpr) ->
-            let cost = nodeExpansionCost arch graph node saturatedCallArgCounts
+            let cost = nodeExpansionCost ctx node
             let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
             let alloc = NodeSSAAllocation.multi ssas
             let scopeWithAlloc = FunctionScope.assign node.Id alloc scopeWithSSAs
 
             // Build DULayout for heterogeneous DUs needing arena allocation
             if needsDUArenaAllocation node.Type then
-                let layout = buildDULayout arch graph node.Id caseName caseIndex payloadOpt ssas
-                if not (duLayouts.ContainsKey(NodeId.value node.Id)) then
-                    duLayouts.Add(NodeId.value node.Id, layout)
+                let layout = buildDULayout ctx.Arch ctx.Graph node.Id caseName caseIndex payloadOpt ssas
+                if not (ctx.DULayouts.ContainsKey(NodeId.value node.Id)) then
+                    ctx.DULayouts.Add(NodeId.value node.Id, layout)
 
             scopeWithAlloc
 
@@ -1060,7 +1066,7 @@ let rec private assignFunctionBody
                 | None ->
                     // Child not in assignments - shouldn't happen with post-order
                     // Fall back to normal allocation
-                    let cost = nodeExpansionCost arch graph node saturatedCallArgCounts
+                    let cost = nodeExpansionCost ctx node
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                     let alloc = NodeSSAAllocation.multi ssas
                     FunctionScope.assign node.Id alloc scopeWithSSAs
@@ -1072,7 +1078,7 @@ let rec private assignFunctionBody
         | _ ->
             // Regular node - assign SSAs based on structural analysis
             if producesValue node.Kind then
-                let cost = nodeExpansionCost arch graph node saturatedCallArgCounts  // Structural derivation
+                let cost = nodeExpansionCost ctx node  // Structural derivation
                 if cost > 0 then
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                     let alloc = NodeSSAAllocation.multi ssas
@@ -1284,6 +1290,15 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
     let mutableDULayouts = System.Collections.Generic.Dictionary<int, DULayout>()
     let mutableInnerScopeAssignments = System.Collections.Generic.Dictionary<int, NodeSSAAllocation>()
 
+    let ctx : SSAContext = {
+        Arch = arch
+        Graph = graph
+        ClosureLayouts = mutableClosureLayouts
+        DULayouts = mutableDULayouts
+        InnerScopeAssignments = mutableInnerScopeAssignments
+        SaturatedCallArgCounts = saturatedCallArgCounts
+    }
+
     // Find the main Lambda
     let mainLambdaIdOpt = findMainLambdaId graph entryPoints
 
@@ -1301,7 +1316,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
     let moduleLevelScope =
         moduleLevelValueBindings
         |> List.fold (fun scope bindingId ->
-            assignFunctionBody arch graph mutableClosureLayouts mutableDULayouts mutableInnerScopeAssignments saturatedCallArgCounts scope bindingId
+            assignFunctionBody ctx scope bindingId
         ) FunctionScope.empty
 
     // Track the counter after module-level bindings
@@ -1348,7 +1363,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
 
                 // Assign SSAs to body nodes
                 // This will also compute ClosureLayouts for any nested lambdas found in the body
-                let bodyScope = assignFunctionBody arch graph mutableClosureLayouts mutableDULayouts mutableInnerScopeAssignments saturatedCallArgCounts paramScope bodyId
+                let bodyScope = assignFunctionBody ctx paramScope bodyId
 
                 // Merge into global assignments (including parameter SSAs)
                 for kvp in paramScope.Assignments do
@@ -1396,7 +1411,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
         | SemanticKind.SeqExpr (bodyId, _captures) ->
             // MoveNext function: %arg0 = seqPtr, body SSAs start at v1
             let initialScope = { FunctionScope.empty with Counter = 1 }
-            let bodyScope = assignFunctionBody arch graph mutableClosureLayouts mutableDULayouts mutableInnerScopeAssignments saturatedCallArgCounts initialScope bodyId
+            let bodyScope = assignFunctionBody ctx initialScope bodyId
 
             // Merge SeqExpr body assignments
             for kvp in bodyScope.Assignments do
