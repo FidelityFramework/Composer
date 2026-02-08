@@ -2,17 +2,12 @@
 // Runner.fsx - Firefly Regression Test Runner
 // Usage: dotnet fsi Runner.fsx [options]
 //
-// Uses IcedTasks throughout for consistent async behavior
-
 #r "/home/hhh/repos/Firefly/src/bin/Debug/net10.0/XParsec.dll"
-#r "/home/hhh/repos/Firefly/src/bin/Debug/net10.0/IcedTasks.dll"
 #r "/home/hhh/repos/Fidelity.Toml/src/bin/Debug/net10.0/Fidelity.Toml.dll"
 
 open System
 open System.IO
 open System.Diagnostics
-open System.Threading
-open IcedTasks
 open Fidelity.Toml
 
 // =============================================================================
@@ -37,7 +32,7 @@ type SampleDef = {
 
 type CompileResult =
     | CompileSuccess of durationMs: int64
-    | CompileFailed of exitCode: int * stderr: string * durationMs: int64
+    | CompileFailed of exitCode: int * stdout: string * stderr: string * durationMs: int64
     | CompileTimeout of timeoutMs: int
     | CompileSkipped of reason: string
 
@@ -52,7 +47,7 @@ type TestResult = { Sample: SampleDef; CompileResult: CompileResult; RunResult: 
 type TestConfig = { SamplesRoot: string; CompilerPath: string; DefaultTimeoutSeconds: int }
 type TestReport = { RunId: string; ManifestPath: string; CompilerPath: string; StartTime: DateTime; EndTime: DateTime; Results: TestResult list }
 
-type CliOptions = { ManifestPath: string; TargetSamples: string list; Verbose: bool; TimeoutOverride: int option; Parallel: bool }
+type CliOptions = { ManifestPath: string; TargetSamples: string list; Verbose: bool; TimeoutOverride: int option }
 
 // =============================================================================
 // Process Runner - Synchronous (simpler, no state machine issues)
@@ -100,9 +95,9 @@ let compileSample compilerPath projectDir projectFile timeoutMs =
     let (result, ms) = runProcess compilerPath $"compile {projectFile} -k" projectDir None timeoutMs
     match result with
     | Completed (0, _, _) -> CompileSuccess ms
-    | Completed (code, _, stderr) -> CompileFailed (code, stderr, ms)
+    | Completed (code, stdout, stderr) -> CompileFailed (code, stdout, stderr, ms)
     | Timeout t -> CompileTimeout t
-    | Failed ex -> CompileFailed (-1, ex.Message, ms)
+    | Failed ex -> CompileFailed (-1, "", ex.Message, ms)
 
 let runBinary binaryPath workDir stdin timeoutMs =
     let (result, ms) = runProcess binaryPath "" workDir stdin timeoutMs
@@ -209,9 +204,11 @@ let generateReport (report: TestReport) verbose =
     for r in report.Results do
         match r.CompileResult with
         | CompileSuccess ms -> printfn "[PASS] %s (%.2fs)" r.Sample.Name (float ms / 1000.0)
-        | CompileFailed (code, stderr, ms) ->
+        | CompileFailed (code, stdout, stderr, ms) ->
             printfn "[FAIL] %s (%.2fs)" r.Sample.Name (float ms / 1000.0)
-            if verbose then printfn "  Exit code: %d\n  Stderr: %s" code (if stderr.Length > 200 then stderr.Substring(0,200) + "..." else stderr)
+            if verbose then
+                let lastStdout = if stdout.Length > 500 then "..." + stdout.Substring(stdout.Length - 500) else stdout
+                printfn "  Exit code: %d\n  Stderr: %s\n  Stdout (tail): %s" code (if stderr.Length > 500 then stderr.Substring(0,500) + "..." else stderr) lastStdout
         | CompileTimeout t -> printfn "[TIMEOUT] %s (%dms)" r.Sample.Name t
         | CompileSkipped reason -> printfn "[SKIP] %s (%s)" r.Sample.Name reason
 
@@ -270,7 +267,7 @@ let runBinaryPhase config (sample, compileResult, binaryPathOpt) =
     match compileResult, binaryPathOpt with
     | CompileSuccess compileMs, Some binaryPath ->
         if not (File.Exists binaryPath) then
-            { Sample = sample; CompileResult = CompileFailed (-1, $"Binary not found: {binaryPath}", compileMs); RunResult = None }
+            { Sample = sample; CompileResult = CompileFailed (-1, "", $"Binary not found: {binaryPath}", compileMs); RunResult = None }
         else
             let sampleDir = Path.Combine(config.SamplesRoot, sample.Name)
             let timeoutMs = sample.TimeoutSeconds * 1000
@@ -292,21 +289,11 @@ let runBinaryPhase config (sample, compileResult, binaryPathOpt) =
         { Sample = sample; CompileResult = compileResult; RunResult = None }
 
 /// Run all tests with strict phase separation:
-/// Phase 1: Compile ALL samples (sequential - compiler may have shared resources)
-/// Phase 2: Run ALL binaries (parallel - binaries are fully independent)
-let runAllTests config samples runParallel : TestResult list =
-    // Phase 1: Compile sequentially (compiler may use shared caches/temp files)
+/// Phase 1: Compile ALL samples sequentially
+/// Phase 2: Run ALL binaries sequentially
+let runAllTests config samples : TestResult list =
     let compileResults = samples |> List.map (fun s -> compileSamplePhase config s)
-
-    if runParallel then
-        // Phase 2: Run all binaries in parallel (they're independent executables)
-        let runTasks = compileResults |> List.map (fun r -> coldTask { return runBinaryPhase config r })
-        let runHot = runTasks |> List.map (fun ct -> ct())
-        let results = System.Threading.Tasks.Task.WhenAll(runHot).Result
-        Array.toList results
-    else
-        // Sequential execution
-        compileResults |> List.map (fun r -> runBinaryPhase config r)
+    compileResults |> List.map (fun r -> runBinaryPhase config r)
 
 let buildCompiler compilerDir =
     let (result, ms) = runProcess "dotnet" "build" compilerDir None 120000
@@ -326,21 +313,19 @@ let buildCompiler compilerDir =
 // CLI and Main
 // =============================================================================
 
-let defaultOptions = { ManifestPath = Path.Combine(__SOURCE_DIRECTORY__, "Manifest.toml"); TargetSamples = []; Verbose = false; TimeoutOverride = None; Parallel = false }
+let defaultOptions = { ManifestPath = Path.Combine(__SOURCE_DIRECTORY__, "Manifest.toml"); TargetSamples = []; Verbose = false; TimeoutOverride = None }
 
 let rec parseArgs args opts =
     match args with
     | [] -> opts
     | "--sample" :: name :: rest -> parseArgs rest { opts with TargetSamples = name :: opts.TargetSamples }
     | "--verbose" :: rest -> parseArgs rest { opts with Verbose = true }
-    | "--parallel" :: rest -> parseArgs rest { opts with Parallel = true }
     | "--timeout" :: sec :: rest -> parseArgs rest { opts with TimeoutOverride = Some (int sec) }
     | "--" :: rest -> parseArgs rest opts
     | "--help" :: _ ->
         printfn "Usage: dotnet fsi Runner.fsx [options]"
         printfn "  --sample NAME    Run specific sample(s)"
         printfn "  --verbose        Show detailed output"
-        printfn "  --parallel       Run samples in parallel"
         printfn "  --timeout SEC    Override timeout for all samples"
         printfn "  --help           Show this help"
         exit 0
@@ -362,7 +347,7 @@ let main argv =
 
         printfn "Manifest: %s" opts.ManifestPath
         printfn "Compiler: %s" config.CompilerPath
-        printfn "Samples: %d%s\n" (List.length samplesToRun) (if opts.Parallel then " (parallel)" else "")
+        printfn "Samples: %d\n" (List.length samplesToRun)
 
         // CompilerPath points to bin/Debug/net10.0/Firefly, we need src/ for build
         let compilerSourceDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(config.CompilerPath), "..", "..", ".."))
@@ -374,7 +359,7 @@ let main argv =
             printfn "Running %d tests...\n" (List.length samplesToRun)
 
             let startTime = DateTime.Now
-            let results = runAllTests config samplesToRun opts.Parallel
+            let results = runAllTests config samplesToRun
             let endTime = DateTime.Now
 
             let report = {
