@@ -44,6 +44,62 @@ let pInsertValue (resultSSA: SSA) (structMemref: SSA) (value: SSA) (fieldIndex: 
         return [offsetOp; storeOp]
     }
 
+// ═══════════════════════════════════════════════════════════
+// TYPED FIELD ACCESS VIA memref.reinterpret_cast
+// Portable across all targets: CPU → GEP, FPGA → typed port, NPU → typed channel
+// Zero data conversion — metadata-only cast creates typed view at byte offset
+// ═══════════════════════════════════════════════════════════
+
+/// Typed field extraction from byte-level memref via memref.reinterpret_cast
+/// Uses 3 SSAs (pulled from coeffects): viewSSA, zeroSSA, resultSSA
+let pTypedExtract (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (viewSSA: SSA) (zeroSSA: SSA) (fieldType: MLIRType) (srcType: MLIRType) : PSGParser<MLIROp list> =
+    parser {
+        do! emitTrace "pTypedExtract" (sprintf "result=%A, memref=%A, offset=%d, fieldTy=%A" resultSSA structMemref byteOffset fieldType)
+        let destType = TMemRefStatic (1, fieldType)
+        let castOp = MemRefOp.ReinterpretCast (viewSSA, structMemref, byteOffset, srcType, destType) |> MLIROp.MemRefOp
+        let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
+        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType) |> MLIROp.MemRefOp
+        return [castOp; zeroOp; loadOp]
+    }
+
+/// Typed field insertion into byte-level memref via memref.reinterpret_cast
+/// Uses 2 SSAs (pulled from coeffects): viewSSA, zeroSSA — store produces no SSA
+let pTypedInsert (structMemref: SSA) (value: SSA) (byteOffset: int) (viewSSA: SSA) (zeroSSA: SSA) (fieldType: MLIRType) (srcType: MLIRType) : PSGParser<MLIROp list> =
+    parser {
+        do! emitTrace "pTypedInsert" (sprintf "memref=%A, value=%A, offset=%d, fieldTy=%A" structMemref value byteOffset fieldType)
+        let destType = TMemRefStatic (1, fieldType)
+        let castOp = MemRefOp.ReinterpretCast (viewSSA, structMemref, byteOffset, srcType, destType) |> MLIROp.MemRefOp
+        let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
+        let storeOp = MemRefOp.Store (value, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
+        return [castOp; zeroOp; storeOp]
+    }
+
+/// Typed field extraction via memref.view — for DIFFERENT element types (e.g., byte buffer → i64)
+/// Uses 4 SSAs: offsetSSA (byte offset const), viewSSA, zeroSSA, resultSSA
+let pTypedExtractView (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (offsetSSA: SSA) (viewSSA: SSA) (zeroSSA: SSA) (fieldType: MLIRType) (srcType: MLIRType) : PSGParser<MLIROp list> =
+    parser {
+        do! emitTrace "pTypedExtractView" (sprintf "result=%A, memref=%A, offset=%d, fieldTy=%A" resultSSA structMemref byteOffset fieldType)
+        let destType = TMemRefStatic (1, fieldType)
+        let offsetOp = ArithOp.ConstI (offsetSSA, int64 byteOffset, TIndex) |> MLIROp.ArithOp
+        let viewOp = MemRefOp.View (viewSSA, structMemref, offsetSSA, srcType, destType) |> MLIROp.MemRefOp
+        let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
+        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType) |> MLIROp.MemRefOp
+        return [offsetOp; viewOp; zeroOp; loadOp]
+    }
+
+/// Typed field insertion via memref.view — for DIFFERENT element types (e.g., byte buffer → i64)
+/// Uses 3 SSAs: offsetSSA (byte offset const), viewSSA, zeroSSA — store produces no SSA
+let pTypedInsertView (structMemref: SSA) (value: SSA) (byteOffset: int) (offsetSSA: SSA) (viewSSA: SSA) (zeroSSA: SSA) (fieldType: MLIRType) (srcType: MLIRType) : PSGParser<MLIROp list> =
+    parser {
+        do! emitTrace "pTypedInsertView" (sprintf "memref=%A, value=%A, offset=%d, fieldTy=%A" structMemref value byteOffset fieldType)
+        let destType = TMemRefStatic (1, fieldType)
+        let offsetOp = ArithOp.ConstI (offsetSSA, int64 byteOffset, TIndex) |> MLIROp.ArithOp
+        let viewOp = MemRefOp.View (viewSSA, structMemref, offsetSSA, srcType, destType) |> MLIROp.MemRefOp
+        let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
+        let storeOp = MemRefOp.Store (value, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
+        return [offsetOp; viewOp; zeroOp; storeOp]
+    }
+
 /// Undef - NOW USES memref.alloca (uninitialized allocation)
 /// SEMANTIC CHANGE: Creates memref in stack memory instead of undef SSA value
 /// Semantically equivalent: uninitialized memory = undef value

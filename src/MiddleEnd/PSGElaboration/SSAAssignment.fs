@@ -32,7 +32,7 @@ open PSGElaboration.Coeffects
 /// Get the number of SSAs needed for a literal value
 let private literalExpansionCost (lit: NativeLiteral) : int =
     match lit with
-    | NativeLiteral.String _ -> 1  // TypeLayout.Opaque: just memref.get_global
+    | NativeLiteral.String _ -> 2  // memref.get_global (static) + memref.cast (static → dynamic)
     | NativeLiteral.Unit -> 1     // constI
     | NativeLiteral.Bool _ -> 1   // constI
     | NativeLiteral.Int _ -> 1    // All integer types (int8..int64, uint8..uint64, nativeint)
@@ -476,9 +476,9 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
             | SemanticKind.Intrinsic info ->
                 // Intrinsics have known SSA costs based on operation
                 match info.Module, info.Operation with
-                | IntrinsicModule.Format, "int" -> 45     // intToString
-                | IntrinsicModule.Format, "int64" -> 45   // intToString (handles i64 directly)
-                | IntrinsicModule.Format, "float" -> 75   // floatToString
+                | IntrinsicModule.Format, "int" -> 2      // func.call + result (platform library function)
+                | IntrinsicModule.Format, "int64" -> 2    // func.call + result (platform library function)
+                | IntrinsicModule.Format, "float" -> 2    // func.call + result (platform library function)
                 | IntrinsicModule.Parse, "int" -> 35      // stringToInt
                 | IntrinsicModule.Parse, "float" -> 250   // stringToFloat (complex)
                 | IntrinsicModule.String, "contains" -> 30 // string scanning
@@ -689,10 +689,12 @@ let private needsDUArenaAllocation (duType: NativeType) : bool =
 /// - Result Ok(x): 4 + 2*1 = 6 SSAs
 /// - Result Error(e): 4 + 2*1 = 6 SSAs
 let private computeDUConstructSSACost (_arch: Architecture) (_graph: SemanticGraph) (_duType: NativeType) (payloadOpt: NodeId option) : int =
-    // All DUs use the same pattern: 4 base + 2 per payload
+    // Tag insert: 2 SSAs (reinterpret_cast + store index) — same element type (i8→i8)
+    // Payload insert: 3 SSAs (offset const + memref.view + store index) — different element type
+    // Base: 4 SSAs (alloca, tag const, + 2 for tag insert via reinterpret_cast)
     // Arena allocation (if needed) is handled by DULayout coeffect, not SSA count
     let payloadCount = if Option.isSome payloadOpt then 1 else 0
-    4 + 2 * payloadCount
+    4 + 3 * payloadCount
 
 /// Count mutable bindings in a subtree (internal state fields for seq)
 /// PRD-15 THROUGH-LINE: Internal state is unique to Seq - mutable vars declared inside body
@@ -788,18 +790,14 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.YieldBang _ -> 12
     // ForEach: 7 (setup: 4 + condition: 1 + body: 2)
     | SemanticKind.ForEach _ -> 7
-    // DU Operations (January 2026)
-    // DUGetTag: For pointer-based DUs, need load + extractvalue (2 SSAs)
-    //           For inline DUs, just extractvalue (1 SSA)
+    // DU Operations (January 2026, updated February 2026 for reinterpret_cast)
+    // DUGetTag: pointer-based = constI + pLoad (2 SSAs)
+    //           inline = reinterpret_cast + constI(0) + typed load (3 SSAs)
     | SemanticKind.DUGetTag (_, duType) ->
-        if needsDUArenaAllocation duType then 2 else 1
-    // DUEliminate: For pointer-based DUs, need load + extractvalue + potential bitcast (2-3 SSAs)
-    //              For inline DUs, extractvalue + potential bitcast (1-2 SSAs)
-    | SemanticKind.DUEliminate (_, _, _, _) ->
-        // Check the DU type from the scrutinee - but we don't have easy access here
-        // For now, use 3 SSAs for all cases (covers both paths with bitcast)
-        // TODO: Could optimize by checking scrutinee's type
-        3
+        if needsDUArenaAllocation duType then 2 else 3
+    // DUEliminate: memref.view path (different element type: i8 → payload type)
+    // constI(offset) + memref.view + constI(0) + typed load = 4 SSAs
+    | SemanticKind.DUEliminate (_, _, _, _) -> 4
     // DUConstruct: SSA count depends on whether payload type matches slot type
     // Computed deterministically from PSG structure
     | SemanticKind.DUConstruct (_, _, payloadOpt, _) ->

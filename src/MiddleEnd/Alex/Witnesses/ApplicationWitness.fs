@@ -466,6 +466,14 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         | _ ->
                             WitnessOutput.error $"Unknown or unsupported unary operator: {info.Operation} (category: {category})"
 
+                    // Type conversions: byte(), int(), float(), nativeint(), etc.
+                    | IntrinsicModule.Convert, _, [_] ->
+                        match tryMatch (pTypeConversion node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Some ((ops, result), _) ->
+                            { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | None ->
+                            WitnessOutput.error $"Type conversion failed: {info.FullName}"
+
                     | _ -> WitnessOutput.error $"Atomic operation not yet implemented: {info.FullName} with {argSSAs.Length} args"
 
             | _ -> WitnessOutput.error "Expected SemanticKind.Intrinsic from FNCS"

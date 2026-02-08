@@ -45,10 +45,19 @@ let pBuildForEachLoop (collectionSSA: SSA) (bodyOps: MLIROp list)
 // STRUCTURED CONTROL FLOW (SCF)
 // ═══════════════════════════════════════════════════════════
 
-/// If/then/else via SCF.If
+/// If/then/else via SCF.If (void — no result value)
 let pBuildIfThenElse (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list option) : PSGParser<MLIROp list> =
     parser {
-        let! ifOp = pSCFIf cond thenOps elseOps
+        let! ifOp = pSCFIf cond thenOps elseOps None
+        return [ifOp]
+    }
+
+/// Expression-valued if/then/else via SCF.If — yields a result from branches
+let pBuildIfThenElseWithResult (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list option)
+                               (resultSSA: SSA) (resultType: MLIRType)
+                               : PSGParser<MLIROp list> =
+    parser {
+        let! ifOp = pSCFIf cond thenOps elseOps (Some (resultSSA, resultType))
         return [ifOp]
     }
 

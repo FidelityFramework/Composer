@@ -283,7 +283,7 @@ module MLIRAccumulator =
             match op with
             | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
                 1 + countOperations body
-            | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps)) ->
+            | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->
                 let elseCount = match elseOps with Some ops -> countOperations ops | None -> 0
                 1 + countOperations thenOps + elseCount
             | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->

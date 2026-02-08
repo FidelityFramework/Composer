@@ -214,6 +214,15 @@ let memrefOpToString (op: MemRefOp) : string =
         // memref.cast %source : srcType to destType
         sprintf "%s = memref.cast %s : %s to %s"
             (ssaToString result) (ssaToString source) (typeToString srcType) (typeToString destType)
+    | MemRefOp.ReinterpretCast (result, source, byteOffset, srcType, destType) ->
+        // memref.reinterpret_cast: layout change at byte offset, SAME element type only
+        sprintf "%s = memref.reinterpret_cast %s to offset: [%d], sizes: [1], strides: [1] : %s to %s"
+            (ssaToString result) (ssaToString source) byteOffset (typeToString srcType) (typeToString destType)
+    | MemRefOp.View (result, source, offsetSSA, srcType, destType) ->
+        // memref.view: typed view of byte buffer (different element type allowed)
+        // Portable across all targets: CPU (→ GEP), FPGA (→ typed memory port), NPU (→ typed channel)
+        sprintf "%s = memref.view %s[%s][] : %s to %s"
+            (ssaToString result) (ssaToString source) (ssaToString offsetSSA) (typeToString srcType) (typeToString destType)
 
 /// Serialize top-level MLIROp to MLIR text
 let rec opToString (op: MLIROp) : string =
@@ -280,21 +289,30 @@ let rec opToString (op: MLIROp) : string =
             let condStr = condOps |> List.map opToString |> String.concat "\n      "
             let bodyStr = bodyOps |> List.map opToString |> String.concat "\n      "
             sprintf "scf.while : () -> () {\n      %s\n    } do {\n      %s\n    }" condStr bodyStr
-        | SCFOp.If (cond, thenOps, elseOpsOpt) ->
+        | SCFOp.If (cond, thenOps, elseOpsOpt, resultOpt) ->
             let thenStr = thenOps |> List.map opToString |> String.concat "\n      "
+            // Result annotation: %result = scf.if %cond -> (type) { ... }
+            let prefix, suffix =
+                match resultOpt with
+                | Some (resultSSA, resultType) ->
+                    sprintf "%s = " (ssaToString resultSSA), sprintf " -> (%s)" (typeToString resultType)
+                | None -> "", ""
             match elseOpsOpt with
             | Some elseOps ->
                 let elseStr = elseOps |> List.map opToString |> String.concat "\n      "
-                sprintf "scf.if %s {\n      %s\n    } else {\n      %s\n    }" (ssaToString cond) thenStr elseStr
+                sprintf "%sscf.if %s%s {\n      %s\n    } else {\n      %s\n    }" prefix (ssaToString cond) suffix thenStr elseStr
             | None ->
-                sprintf "scf.if %s {\n      %s\n    }" (ssaToString cond) thenStr
+                sprintf "%sscf.if %s%s {\n      %s\n    }" prefix (ssaToString cond) suffix thenStr
         | SCFOp.For (lower, upper, step, bodyOps) ->
             let bodyStr = bodyOps |> List.map opToString |> String.concat "\n      "
             sprintf "scf.for %s = %s to %s step %s {\n      %s\n    }" 
                 (ssaToString lower) (ssaToString upper) (ssaToString step) (ssaToString step) bodyStr
-        | SCFOp.Yield ssas ->
-            let ssaStr = ssas |> List.map ssaToString |> String.concat ", "
-            sprintf "scf.yield %s" ssaStr
+        | SCFOp.Yield vals ->
+            match vals with
+            | [] -> "scf.yield"
+            | _ ->
+                let valStr = vals |> List.map (fun (ssa, ty) -> sprintf "%s : %s" (ssaToString ssa) (typeToString ty)) |> String.concat ", "
+                sprintf "scf.yield %s" valStr
         | SCFOp.Condition (cond, args) ->
             let argsStr = args |> List.map ssaToString |> String.concat ", "
             sprintf "scf.condition(%s) %s" (ssaToString cond) argsStr

@@ -14,9 +14,10 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 // All Elements use XParsec state for platform/type context
 
 /// Emit SCF If operation (structured control flow)
-let pSCFIf (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list option) : PSGParser<MLIROp> =
+/// resultOpt: Some (resultSSA, resultType) for expression-valued if, None for void
+let pSCFIf (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list option) (resultOpt: (SSA * MLIRType) option) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps))
+        return MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps, resultOpt))
     }
 
 /// Emit SCF While operation
@@ -32,7 +33,8 @@ let pSCFFor (lower: SSA) (upper: SSA) (step: SSA) (bodyOps: MLIROp list) : PSGPa
     }
 
 /// Emit SCF Yield (return value from SCF region)
-let pSCFYield (values: SSA list) : PSGParser<MLIROp> =
+/// For expression-valued scf.if: pass typed values. For void: pass empty list.
+let pSCFYield (values: (SSA * MLIRType) list) : PSGParser<MLIROp> =
     parser {
         return MLIROp.SCFOp (SCFOp.Yield values)
     }

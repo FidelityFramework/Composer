@@ -152,6 +152,8 @@ type MemRefOp =
     | GetGlobal of SSA * string * MLIRType                             // result, globalName, memrefType
     | Dim of SSA * SSA * SSA * MLIRType                                // result, memref, dimIndex, memrefType (returns index)
     | Cast of SSA * SSA * MLIRType * MLIRType                          // result, source, srcType, destType (memref type cast)
+    | ReinterpretCast of SSA * SSA * int * MLIRType * MLIRType         // result, source, byteOffset, srcType, destType (same element type only)
+    | View of SSA * SSA * SSA * MLIRType * MLIRType                   // result, source, offsetSSA, srcType, destType (different element type: byte buffer → typed view)
 
 /// Arithmetic dialect operations
 type ArithOp =
@@ -268,10 +270,10 @@ type MLIROp =
 
 /// Structured Control Flow (SCF) dialect operations
 and SCFOp =
-    | If of SSA * MLIROp list * MLIROp list option            // cond, thenOps, elseOps
+    | If of SSA * MLIROp list * MLIROp list option * (SSA * MLIRType) option  // cond, thenOps, elseOps, result (None = void)
     | While of MLIROp list * MLIROp list                      // condOps, bodyOps
     | For of SSA * SSA * SSA * MLIROp list                    // lower, upper, step, bodyOps
-    | Yield of SSA list                                       // values
+    | Yield of (SSA * MLIRType) list                          // values with types
     | Condition of SSA * SSA list                             // cond, args
 
 /// Control Flow (CF) dialect operations - unstructured control flow

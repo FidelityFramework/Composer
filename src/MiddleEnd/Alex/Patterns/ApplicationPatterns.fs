@@ -18,6 +18,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements  // pFuncCall, pFuncCallIndirect
 open Alex.Elements.ArithElements // Arithmetic elements for wrapper patterns
 open Alex.Elements.IndexElements // pIndexConst
+open Alex.CodeGeneration.TypeMapping // mapNativeTypeForArch
 
 // ═══════════════════════════════════════════════════════════
 // ARGUMENT LOADING PATTERN (Private Combinator)
@@ -87,29 +88,17 @@ let pDirectCall (nodeId: NodeId) (funcName: string) (args: (SSA * MLIRType) list
         let resultSSA = ssas.[0]
         let castSSAs = ssas |> List.skip 1  // SSAs for potential casts
 
-        // Type compatibility casting: static→dynamic memref at function boundaries
-        // This is principled: maintaining flexibility where generality is required
-        let rec processCasts (remainingArgs: (SSA * MLIRType) list) (castSSAs: SSA list) (accOps: MLIROp list) (accVals: Val list) =
-            match remainingArgs, castSSAs with
-            | [], _ -> (List.rev accOps, List.rev accVals)
-            | (argSSA, argTy) :: restArgs, castSSA :: restCastSSAs ->
-                // Check if cast needed: static memref → dynamic memref
-                match argTy with
-                | TMemRefStatic (_, elemTy) ->
-                    // Emit memref.cast: static → dynamic (type-safe, maintains flexibility)
-                    let targetTy = TMemRef elemTy
-                    let castOp = MLIROp.MemRefOp (MemRefOp.Cast (castSSA, argSSA, argTy, targetTy))
-                    let castVal = { SSA = castSSA; Type = targetTy }
-                    processCasts restArgs restCastSSAs (castOp :: accOps) (castVal :: accVals)
-                | _ ->
-                    // No cast needed - pass argument as-is
-                    let argVal = { SSA = argSSA; Type = argTy }
-                    processCasts restArgs restCastSSAs accOps (argVal :: accVals)
-            | _ :: _, [] ->
-                // Should not happen - SSAAssignment allocated enough SSAs
-                (List.rev accOps, List.rev (args |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })))
+        // Argument preparation: pass arguments directly to function call
+        // NOTE: Prior versions had unconditional static→dynamic memref casts here.
+        // After Bug 1 fix (Feb 2026), string literals already return TMemRef (dynamic)
+        // in pBuildStringLiteral, so the cast is no longer needed at call boundaries.
+        // DU/record/tuple args are TMemRefStatic and should stay static — their
+        // function parameters expect static types.
+        let processCasts (remainingArgs: (SSA * MLIRType) list) (_castSSAs: SSA list) =
+            let vals = remainingArgs |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+            ([], vals)
 
-        let (castOps, finalVals) = processCasts args castSSAs [] []
+        let (castOps, finalVals) = processCasts args castSSAs
 
         let! callOp = pFuncCall (Some resultSSA) funcName finalVals retType
         return (castOps @ [callOp], TRValue { SSA = resultSSA; Type = retType })
@@ -224,4 +213,46 @@ let pUnaryNot (nodeId: NodeId)
         let! xorOp = pXorI resultSSA operandSSA constSSA
 
         return (loadOps @ [constOp; xorOp], TRValue { SSA = resultSSA; Type = operandType })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// TYPE CONVERSION PATTERN (IntrinsicModule.Convert)
+// ═══════════════════════════════════════════════════════════
+
+/// Type conversion for byte(), int(), float(), etc.
+/// PULL model: extracts argument and result type from XParsec state.
+/// Dispatches to appropriate MLIR conversion element (TruncI, ExtSI, FPToSI, SIToFP).
+let pTypeConversion (nodeId: NodeId)
+                    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! argIds = pGetApplicationArgs
+        do! ensure (argIds.Length >= 1) $"pTypeConversion: Expected 1 arg, got {argIds.Length}"
+
+        let! (loadOps, srcSSA, srcType) = pRecallArgWithLoad argIds.[0]
+
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 1) $"pTypeConversion: Expected at least 1 SSA, got {ssas.Length}"
+        let resultSSA = ssas.[0]
+
+        let! state = getUserState
+        let dstType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+
+        if srcType = dstType then
+            return (loadOps, TRValue { SSA = srcSSA; Type = srcType })
+        else
+            let! convOp =
+                match srcType, dstType with
+                | TInt srcW, TInt dstW when srcW < dstW ->
+                    pExtSI resultSSA srcSSA srcType dstType
+                | TInt _, TInt _ ->
+                    pTruncI resultSSA srcSSA srcType dstType
+                | TFloat _, TInt _ ->
+                    pFPToSI resultSSA srcSSA srcType dstType
+                | TInt _, TFloat _ ->
+                    pSIToFP resultSSA srcSSA srcType dstType
+                | TIndex, TInt _ ->
+                    pIndexCastS resultSSA srcSSA dstType
+                | _ ->
+                    fail (Message $"Unsupported type conversion: {srcType} -> {dstType}")
+            return (loadOps @ [convOp], TRValue { SSA = resultSSA; Type = dstType })
     }

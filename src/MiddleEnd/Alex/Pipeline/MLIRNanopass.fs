@@ -65,7 +65,7 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
         | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
             body |> List.collect collectCalls
 
-        | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps)) ->
+        | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->
             let thenCalls = thenOps |> List.collect collectCalls
             let elseCalls = elseOps |> Option.map (List.collect collectCalls) |> Option.defaultValue []
             thenCalls @ elseCalls

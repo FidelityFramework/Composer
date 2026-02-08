@@ -92,8 +92,8 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
     parser {
         do! emitTrace "pBuildStringLiteral.entry" (sprintf "content='%s', ssas=%A, arch=%A" content ssas arch)
 
-        // Declarative guard - no imperative if statements
-        do! ensure (ssas.Length >= 1) $"pBuildStringLiteral: Expected 1 SSA, got {ssas.Length}"
+        // Need 2 SSAs: memref.get_global (static) + memref.cast (static → dynamic)
+        do! ensure (ssas.Length >= 2) $"pBuildStringLiteral: Expected 2 SSAs, got {ssas.Length}"
 
         do! emitTrace "pBuildStringLiteral.ssa_validated" (sprintf "SSA count OK: %d" ssas.Length)
 
@@ -103,26 +103,30 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
 
         do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
 
-        // String type: memref<Nxi8> where N is byte length
-        // MLIR requires memref.get_global to return statically shaped memref
-        // Cast to dynamic memref<?xi8> happens at call sites during witnessing
-        let stringTy = TMemRefStatic (byteLength, TInt I8)
+        // Static type from global: memref<Nxi8> where N is byte length
+        let staticTy = TMemRefStatic (byteLength, TInt I8)
+        // Dynamic type (string): memref<?xi8>
+        let dynamicTy = TMemRef (TInt I8)
 
-        do! emitTrace "pBuildStringLiteral.types" (sprintf "stringTy=%A" stringTy)
+        do! emitTrace "pBuildStringLiteral.types" (sprintf "staticTy=%A, dynamicTy=%A" staticTy dynamicTy)
 
-        // InlineOps: Get reference to global memref (TypeLayout.Opaque)
-        let resultSSA = ssas.[0]  // Single SSA for memref.get_global
+        let getGlobalSSA = ssas.[0]  // SSA for memref.get_global (static)
+        let castSSA = ssas.[1]       // SSA for memref.cast (static → dynamic)
 
-        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "result=%A" resultSSA)
+        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "getGlobal=%A, cast=%A" getGlobalSSA castSSA)
 
-        // memref.get_global @globalName : memref<?xi8>
-        do! emitTrace "pBuildStringLiteral.calling_pMemRefGetGlobal" (sprintf "resultSSA=%A, globalName=%s, stringTy=%A" resultSSA globalName stringTy)
-        let! getGlobalOp = pMemRefGetGlobal resultSSA globalName stringTy
+        // memref.get_global @globalName : memref<Nxi8>
+        do! emitTrace "pBuildStringLiteral.calling_pMemRefGetGlobal" (sprintf "getGlobalSSA=%A, globalName=%s, staticTy=%A" getGlobalSSA globalName staticTy)
+        let! getGlobalOp = pMemRefGetGlobal getGlobalSSA globalName staticTy
 
-        do! emitTrace "pBuildStringLiteral.elements_complete" "memref.get_global succeeded"
+        // memref.cast: memref<Nxi8> → memref<?xi8>
+        // String literals ARE strings (dynamic memref) — cast at point of creation
+        let! castOp = pMemRefCast castSSA getGlobalSSA staticTy dynamicTy
 
-        let inlineOps = [getGlobalOp]
-        let result = TRValue { SSA = resultSSA; Type = stringTy }
+        do! emitTrace "pBuildStringLiteral.elements_complete" "memref.get_global + memref.cast succeeded"
+
+        let inlineOps = [getGlobalOp; castOp]
+        let result = TRValue { SSA = castSSA; Type = dynamicTy }
 
         do! emitTrace "pBuildStringLiteral.returning" (sprintf "Returning %d ops" (List.length inlineOps))
 

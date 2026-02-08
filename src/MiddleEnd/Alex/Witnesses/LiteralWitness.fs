@@ -27,7 +27,7 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
     | Some (lit, _) ->
         let arch = ctx.Coeffects.Platform.TargetArch
 
-        // String literals: TypeLayout.Opaque uses 1 SSA for memref.get_global
+        // String literals: 2 SSAs — memref.get_global (static) + memref.cast (static → dynamic)
         match lit with
         | NativeLiteral.String content ->
             // Extract SSAs monadically
@@ -36,8 +36,8 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                     // Extract result SSAs for string literal (monadic)
                     let! ssas = getNodeSSAs node.Id
 
-                    if ssas.Length < 1 then
-                        return! fail (Message $"String literal: Expected 1 SSA, got {ssas.Length}")
+                    if ssas.Length < 2 then
+                        return! fail (Message $"String literal: Expected 2 SSAs, got {ssas.Length}")
                     else
                         return! pBuildStringLiteral content ssas arch
                 }

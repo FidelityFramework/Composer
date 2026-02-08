@@ -146,48 +146,45 @@ let pConvertType (srcSSA: SSA) (srcType: MLIRType) (dstType: MLIRType) (resultSS
 let pExtractDUTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 2) $"pExtractDUTag: Expected 2 SSAs, got {ssas.Length}"
-        let indexZeroSSA = ssas.[0]
-        let tagSSA = ssas.[1]
         let tagTy = TInt I8  // DU tags are always i8
 
         match duType with
         | TIndex ->
             // Pointer-based DU: load tag byte from offset 0
+            do! ensure (ssas.Length >= 2) $"pExtractDUTag (pointer): Expected 2 SSAs, got {ssas.Length}"
+            let indexZeroSSA = ssas.[0]
+            let tagSSA = ssas.[1]
             let! indexZeroOp = pConstI indexZeroSSA 0L TIndex
             let! loadOp = pLoad tagSSA duSSA [indexZeroSSA]
             return ([indexZeroOp; loadOp], TRValue { SSA = tagSSA; Type = tagTy })
         | _ ->
-            // Inline struct DU: extract tag from field 0 (pExtractValue creates constant internally)
-            let! ops = pExtractValue tagSSA duSSA 0 indexZeroSSA tagTy
+            // Inline struct DU: typed extract via reinterpret_cast at byte offset 0
+            do! ensure (ssas.Length >= 3) $"pExtractDUTag (inline): Expected 3 SSAs, got {ssas.Length}"
+            let castSSA = ssas.[0]
+            let zeroSSA = ssas.[1]
+            let tagSSA = ssas.[2]
+            let! ops = pTypedExtract tagSSA duSSA 0 castSSA zeroSSA tagTy duType
             return (ops, TRValue { SSA = tagSSA; Type = tagTy })
     }
 
-/// Extract DU payload with optional type conversion
-/// SSAs extracted from coeffects via nodeId: [0] = offsetSSA, [1] = extractSSA, [2] = convertSSA (if needed)
-let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (payloadIndex: int) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+/// Extract DU payload via memref.view (different element type: byte buffer → typed payload)
+/// SSAs extracted from coeffects via nodeId: [0] = offsetSSA, [1] = viewSSA, [2] = zeroSSA, [3] = extractSSA
+let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (_caseIndex: int) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 2) $"pExtractDUPayload: Expected at least 2 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 4) $"pExtractDUPayload: Expected 4 SSAs, got {ssas.Length}"
 
         let offsetSSA = ssas.[0]
-        let extractSSA = ssas.[1]
+        let viewSSA = ssas.[1]
+        let zeroSSA = ssas.[2]
+        let extractSSA = ssas.[3]
 
-        // Determine slot type from DU struct
-        // Note: With TMemRefStatic, we use payloadType directly
-        let slotType = payloadType
+        // Payload byte offset = tag size (1 byte for i8 tags)
+        let payloadByteOffset = 1
 
-        // Extract payload (pExtractValue creates constant internally)
-        let! extractOps = pExtractValue extractSSA duSSA payloadIndex offsetSSA slotType
-
-        // Convert if needed
-        if slotType = payloadType then
-            return (extractOps, TRValue { SSA = extractSSA; Type = payloadType })
-        else
-            do! ensure (ssas.Length >= 3) $"pExtractDUPayload: Need 3 SSAs for conversion, got {ssas.Length}"
-            let convertSSA = ssas.[2]
-            let! convOps = pConvertType extractSSA slotType payloadType convertSSA
-            return (extractOps @ convOps, TRValue { SSA = convertSSA; Type = payloadType })
+        // Typed extract via memref.view — payload has different element type than byte buffer
+        let! extractOps = pTypedExtractView extractSSA duSSA payloadByteOffset offsetSSA viewSSA zeroSSA payloadType duType
+        return (extractOps, TRValue { SSA = extractSSA; Type = payloadType })
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -483,35 +480,38 @@ let pTupleStruct (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> 
 /// DU case construction: tag field (index 0) + payload fields
 /// CRITICAL: This is the foundation for all collection patterns (Option, List, Map, Set, Result)
 /// SSA layout: [0] = undefSSA, [1] = tagSSA, [2] = tagOffsetSSA, [3] = tagResultSSA,
-///             then for each payload: [4+2*i] = offsetSSA, [5+2*i] = resultSSA
+///             then for each payload: [4+3*i] = offsetSSA, [5+3*i] = viewSSA, [6+3*i] = zeroSSA
 let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 4 + 2 * payload.Length) $"pDUCase: Expected at least {4 + 2 * payload.Length} SSAs, got {ssas.Length}"
+        let ssaCount = 4 + 3 * payload.Length
+        do! ensure (ssas.Length >= ssaCount) $"pDUCase: Expected at least {ssaCount} SSAs, got {ssas.Length}"
 
-        // Create undef struct
+        // Allocate uninitialized byte-level memref
         let! undefOp = pUndef ssas.[0] ty
 
-        // Insert tag at index 0 (pInsertValue creates constant internally)
+        // Insert tag at byte offset 0 via reinterpret_cast (same element type: i8→i8)
         let tagTy = TInt I8  // DU tags are always i8
         let! tagConstOp = pConstI ssas.[1] tag tagTy
-        let! insertTagOps = pInsertValue ssas.[3] ssas.[0] ssas.[1] 0 ssas.[2] ty
+        let! insertTagOps = pTypedInsert ssas.[0] ssas.[1] 0 ssas.[2] ssas.[3] tagTy ty
 
-        // Insert payload fields starting at index 1
+        // Insert payload fields at byte offset 1 (after i8 tag) via memref.view
+        // (different element type: byte buffer → typed payload)
+        let payloadByteOffset = 1
         let! payloadOpLists =
             payload
             |> List.mapi (fun i field ->
                 parser {
-                    let offsetSSA = ssas.[4 + 2*i]
-                    let targetSSA = ssas.[5 + 2*i]
-                    let sourceSSA = if i = 0 then ssas.[3] else ssas.[3 + 2*i]
-                    return! pInsertValue targetSSA sourceSSA field.SSA (i + 1) offsetSSA ty
+                    let offsetSSA = ssas.[4 + 3*i]
+                    let viewSSA = ssas.[5 + 3*i]
+                    let zeroSSA = ssas.[6 + 3*i]
+                    return! pTypedInsertView ssas.[0] field.SSA payloadByteOffset offsetSSA viewSSA zeroSSA field.Type ty
                 })
             |> sequence
 
         let payloadOps = List.concat payloadOpLists
-        let resultSSA = List.last ssas
-        return (undefOp :: tagConstOp :: (insertTagOps @ payloadOps), TRValue { SSA = resultSSA; Type = ty })
+        // Result is the alloca'd memref (stores are in-place)
+        return (undefOp :: tagConstOp :: (insertTagOps @ payloadOps), TRValue { SSA = ssas.[0]; Type = ty })
     }
 
 // ═══════════════════════════════════════════════════════════

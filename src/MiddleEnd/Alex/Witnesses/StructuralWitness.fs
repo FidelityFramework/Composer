@@ -34,6 +34,11 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
         // VarRef nodes lookup these bindings from coeffects
         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
+    | SemanticKind.TypeDef _ ->
+        // Type definition - structural declaration, no MLIR emission needed
+        // DU/record types are used by DUConstruct/DUEliminate/FieldGet, not emitted directly
+        { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+
     | _ ->
         // Not a structural node - skip for other witnesses
         WitnessOutput.skip
