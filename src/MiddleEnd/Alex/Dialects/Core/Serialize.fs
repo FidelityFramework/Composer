@@ -186,6 +186,15 @@ let memrefOpToString (op: MemRefOp) : string =
         let memrefType = TMemRef elemType
         sprintf "%s = memref.alloc(%s) : %s"
             (ssaToString result) (ssaToString sizeSSA) (typeToString memrefType)
+    | MemRefOp.AllocStatic (result, memrefType, alignmentOpt) ->
+        // Heap allocation with compile-time size: memref.alloc() : memref<NxT>
+        // Like Alloca but heap-allocated — survives function return
+        match alignmentOpt with
+        | Some alignment ->
+            sprintf "%s = memref.alloc() {alignment = %d : i64} : %s"
+                (ssaToString result) alignment (typeToString memrefType)
+        | None ->
+            sprintf "%s = memref.alloc() : %s" (ssaToString result) (typeToString memrefType)
     | MemRefOp.SubView (result, source, offsets, resultType) ->
         let offsetsStr = offsets |> List.map ssaToString |> String.concat ", "
         sprintf "%s = memref.subview %s[%s] : %s"

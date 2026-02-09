@@ -20,6 +20,7 @@ open Alex.Elements.FuncElements
 open Alex.CodeGeneration.TypeMapping
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open PSGElaboration.EscapeAnalysis
 
 // ═══════════════════════════════════════════════════════════
 // FIELD EXTRACTION PATTERNS
@@ -476,6 +477,31 @@ let pTupleStruct (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> 
     pRecordStruct elements ssas  // Same implementation, different semantic context
 
 // ═══════════════════════════════════════════════════════════
+// ESCAPE-AWARE ALLOCATION
+// ═══════════════════════════════════════════════════════════
+
+/// Extract static memref shape from an MLIRType
+let private extractMemRefShape (ty: MLIRType) =
+    match ty with
+    | TMemRefStatic (count, elemType) -> (count, elemType)
+    | _ -> failwith $"pAllocValue: expected TMemRefStatic, got {ty}"
+
+/// Allocate memory for a constructed value — queries escape analysis coeffect
+/// PULL model: pattern pulls allocation decision from pre-computed coeffects
+/// StackScoped → memref.alloca (stack), EscapesViaReturn → memref.alloc (heap)
+let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        let escapeKind = getEscapeKindOrDefault nodeId state.Coeffects.EscapeAnalysis
+        match escapeKind with
+        | StackScoped ->
+            return! pUndef ssa ty
+        | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
+            let count, elemType = extractMemRefShape ty
+            return! pAllocStatic ssa count elemType None
+    }
+
+// ═══════════════════════════════════════════════════════════
 // DU CONSTRUCTION
 // ═══════════════════════════════════════════════════════════
 
@@ -489,8 +515,8 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
         let ssaCount = 4 + 3 * payload.Length
         do! ensure (ssas.Length >= ssaCount) $"pDUCase: Expected at least {ssaCount} SSAs, got {ssas.Length}"
 
-        // Allocate uninitialized byte-level memref
-        let! undefOp = pUndef ssas.[0] ty
+        // Allocate byte-level memref (stack or heap based on escape analysis)
+        let! allocOp = pAllocValue nodeId ssas.[0] ty
 
         // Insert tag at byte offset 0 via reinterpret_cast (same element type: i8→i8)
         let tagTy = TInt I8  // DU tags are always i8
@@ -512,8 +538,8 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
             |> sequence
 
         let payloadOps = List.concat payloadOpLists
-        // Result is the alloca'd memref (stores are in-place)
-        return (undefOp :: tagConstOp :: (insertTagOps @ payloadOps), TRValue { SSA = ssas.[0]; Type = ty })
+        // Result is the allocated memref (stores are in-place)
+        return (allocOp :: tagConstOp :: (insertTagOps @ payloadOps), TRValue { SSA = ssas.[0]; Type = ty })
     }
 
 // ═══════════════════════════════════════════════════════════

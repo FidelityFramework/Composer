@@ -1,15 +1,16 @@
-/// Escape Analysis - String lifetime and allocation strategy determination
+/// Escape Analysis - Value lifetime and allocation strategy determination
 ///
 /// ARCHITECTURAL FOUNDATION:
 /// This module performs ONCE-per-graph analysis before transfer begins.
 /// It computes:
-/// - Which string-returning function calls have results that escape their defining scope
-/// - The appropriate allocation strategy (Stack vs Arena) for each call site
-///
-/// This eliminates the need for multiple Console APIs (readln vs readlnFrom).
-/// The compiler automatically determines allocation strategy based on escape analysis.
+/// - Which nodes produce values that may need heap allocation (DU constructions, string-returning calls)
+/// - Whether those values escape their defining scope (via return, closure, or byref)
+/// - The appropriate EscapeKind for each allocating site
 ///
 /// PHOTOGRAPHER PRINCIPLE: Observe the structure, don't compute during transfer.
+/// PULL MODEL: Patterns pull allocation decisions from pre-computed coeffects.
+///
+/// Design authority: "Managed Mutability" blog post — EscapeKind DU, four components.
 module PSGElaboration.EscapeAnalysis
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
@@ -20,34 +21,50 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 // Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Allocation strategy for string-returning operations
-type AllocationStrategy =
-    /// Stack allocation via inline - string lifetime contained within function scope
-    | Stack
-    /// Arena allocation - string escapes defining scope
-    | Arena
+/// How a value escapes its defining scope (from "Managed Mutability" blog)
+type EscapeKind =
+    /// Value lifetime contained within defining function — safe for stack allocation
+    | StackScoped
+    /// Value captured by a closure targeting another scope
+    | EscapesViaClosure of targetNode: NodeId
+    /// Value returned from its defining function — requires heap allocation
+    | EscapesViaReturn
+    /// Value escapes via byref/address-of — requires pinned or heap allocation
+    | EscapesViaByRef
 
-/// Result of escape analysis for a single call site
-type CallSiteEscapeInfo = {
-    /// The Application node ID
-    CallSiteId: NodeId
-    /// The function being called (e.g., "Console.readln")
-    FunctionName: string
-    /// The result binding ID (where the string is bound)
-    ResultBindingId: NodeId option
-    /// Determined allocation strategy
-    Strategy: AllocationStrategy
-    /// Reason for the decision (for debugging)
+/// What kind of allocating site produced this value
+type AllocSiteKind =
+    | DUConstruction
+    | StringReturningCall
+
+/// Result of escape analysis for a single allocating site
+type AllocSiteEscapeInfo = {
+    /// The node ID of the allocating site
+    NodeId: NodeId
+    /// Human-readable name for debugging (case name or function name)
+    Name: string
+    /// What kind of allocation site this is
+    SiteKind: AllocSiteKind
+    /// Determined escape kind
+    EscapeKind: EscapeKind
+    /// Reason for the decision (for debugging / -k output)
     Reason: string
 }
 
 /// Result of escape analysis for the entire semantic graph
 type EscapeAnalysisResult = {
-    /// Map from call site NodeId to allocation strategy
-    CallSiteStrategies: Map<int, AllocationStrategy>
+    /// Map from node ID (int) to escape kind — the primary query interface
+    NodeStrategies: Map<int, EscapeKind>
     /// Detailed information for debugging (when -k flag is used)
-    Details: CallSiteEscapeInfo list
+    Details: AllocSiteEscapeInfo list
 }
+
+// Backward compatibility aliases
+type AllocationStrategy = EscapeKind
+let Stack = StackScoped
+let Arena = EscapesViaReturn
+
+type CallSiteEscapeInfo = AllocSiteEscapeInfo
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Scope Analysis
@@ -105,8 +122,20 @@ let isReturnedFromFunction (valueId: NodeId) (scopeId: NodeId) (graph: SemanticG
                  | _ -> false
              | None -> false)
 
+/// Check if a value transitively contributes to the function's return value
+/// Traces through IfThenElse branches and Sequential nodes to the function return
+let rec isTransitivelyReturned (valueId: NodeId) (scopeId: NodeId) (graph: SemanticGraph) : bool =
+    isReturnedFromFunction valueId scopeId graph ||
+    // Check if parent node is returned (IfThenElse/Sequential forwarding)
+    match SemanticGraph.tryGetNode valueId graph with
+    | Some node ->
+        node.Parent
+        |> Option.map (fun parentId -> isTransitivelyReturned parentId scopeId graph)
+        |> Option.defaultValue false
+    | None -> false
+
 // ═══════════════════════════════════════════════════════════════════════════
-// String-Returning Call Detection
+// Allocating Site Detection
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Check if a type is a string type
@@ -115,24 +144,26 @@ let isStringType (ty: NativeType) : bool =
     | NativeType.TApp (tycon, _) when tycon.NTUKind = Some NTUKind.NTUstring -> true
     | _ -> false
 
-/// Find all Application nodes that return strings
-let findStringReturningCalls (graph: SemanticGraph) : (NodeId * string) list =
+/// Find all nodes that produce stack-allocatable values
+/// This replaces the narrow `findStringReturningCalls` with a generalized version
+let findAllocatingSites (graph: SemanticGraph) : (NodeId * string * AllocSiteKind) list =
     graph.Nodes
     |> Seq.choose (fun kvp ->
         let nodeId = kvp.Key
-        let ty = kvp.Value.Type
         match kvp.Value.Kind with
-        | SemanticKind.Application (funcId, _) when isStringType ty ->
+        | SemanticKind.DUConstruct (caseName, _, _, _) ->
+            Some (nodeId, caseName, DUConstruction)
+        | SemanticKind.Application (funcId, _) when isStringType kvp.Value.Type ->
             // Try to get function name from the function node
-            match SemanticGraph.tryGetNode funcId graph with
-            | Some funcNode ->
-                match funcNode.Kind with
-                | SemanticKind.VarRef (name, _) ->
-                    Some (nodeId, name)
-                | SemanticKind.FieldGet (_, fieldName) ->
-                    Some (nodeId, fieldName)
-                | _ -> Some (nodeId, "<anonymous>")
-            | None -> Some (nodeId, "<unknown>")
+            let funcName =
+                match SemanticGraph.tryGetNode funcId graph with
+                | Some funcNode ->
+                    match funcNode.Kind with
+                    | SemanticKind.VarRef (name, _) -> name
+                    | SemanticKind.FieldGet (_, fieldName) -> fieldName
+                    | _ -> "<anonymous>"
+                | None -> "<unknown>"
+            Some (nodeId, funcName, StringReturningCall)
         | _ -> None)
     |> Seq.toList
 
@@ -140,88 +171,92 @@ let findStringReturningCalls (graph: SemanticGraph) : (NodeId * string) list =
 // Escape Analysis Algorithm
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Analyze a single call site to determine allocation strategy
-let analyzeCallSite (callSiteId: NodeId) (functionName: string) (graph: SemanticGraph) : CallSiteEscapeInfo =
-    // Find the binding that captures this call's result
-    let resultBinding =
-        graph.Nodes
-        |> Seq.tryPick (fun kvp ->
-            match kvp.Value.Kind with
-            | SemanticKind.Binding (name, _, _, _) ->
-                // Check if the first child (value) is the call site we're analyzing
-                match kvp.Value.Children with
-                | valueId :: _ when valueId = callSiteId ->
-                    Some (kvp.Key, name)
-                | _ -> None
-            | _ -> None)
+/// Analyze a single allocating site to determine its escape kind
+let analyzeAllocSite (siteId: NodeId) (name: string) (siteKind: AllocSiteKind) (graph: SemanticGraph) : AllocSiteEscapeInfo =
+    // For DU constructions, the value IS the node itself (no binding indirection needed)
+    // For string-returning calls, trace through binding to find scope
+    let (valueId, valueName) =
+        match siteKind with
+        | DUConstruction ->
+            // DU construction IS the value — check if THIS node escapes
+            (siteId, name)
+        | StringReturningCall ->
+            // String-returning call — check binding (original behavior)
+            let binding =
+                graph.Nodes
+                |> Seq.tryPick (fun kvp ->
+                    match kvp.Value.Kind with
+                    | SemanticKind.Binding (bname, _, _, _) ->
+                        match kvp.Value.Children with
+                        | valueChildId :: _ when valueChildId = siteId ->
+                            Some (kvp.Key, bname)
+                        | _ -> None
+                    | _ -> None)
+            match binding with
+            | Some (bindingId, bname) -> (bindingId, bname)
+            | None -> (siteId, name)  // Not bound — immediate use, stack OK
 
-    match resultBinding with
+    // Find the enclosing function scope
+    match findEnclosingFunction valueId graph with
     | None ->
-        // Call result not bound to a variable - must be used immediately (stack OK)
-        { CallSiteId = callSiteId
-          FunctionName = functionName
-          ResultBindingId = None
-          Strategy = Stack
-          Reason = "Result not bound to variable - immediate use only" }
+        // Global scope — must use heap
+        { NodeId = siteId
+          Name = name
+          SiteKind = siteKind
+          EscapeKind = EscapesViaReturn
+          Reason = "Global scope - no stack frame to allocate in" }
 
-    | Some (bindingId, bindingName) ->
-        // Find the enclosing function scope
-        match findEnclosingFunction bindingId graph with
-        | None ->
-            // Global scope - strings must use arena
-            { CallSiteId = callSiteId
-              FunctionName = functionName
-              ResultBindingId = Some bindingId
-              Strategy = Arena
-              Reason = "Global scope - no stack frame to allocate in" }
-
-        | Some scopeId ->
-            // Check if the value escapes this scope
-            if escapesScope scopeId bindingId graph then
-                { CallSiteId = callSiteId
-                  FunctionName = functionName
-                  ResultBindingId = Some bindingId
-                  Strategy = Arena
-                  Reason = sprintf "Value '%s' used outside defining function scope" bindingName }
-            elif isReturnedFromFunction bindingId scopeId graph then
-                { CallSiteId = callSiteId
-                  FunctionName = functionName
-                  ResultBindingId = Some bindingId
-                  Strategy = Arena
-                  Reason = sprintf "Value '%s' returned from function" bindingName }
-            else
-                { CallSiteId = callSiteId
-                  FunctionName = functionName
-                  ResultBindingId = Some bindingId
-                  Strategy = Stack
-                  Reason = sprintf "Value '%s' lifetime contained within function scope" bindingName }
+    | Some scopeId ->
+        // Check escape paths in order of specificity
+        if escapesScope scopeId valueId graph then
+            { NodeId = siteId
+              Name = name
+              SiteKind = siteKind
+              EscapeKind = EscapesViaReturn
+              Reason = sprintf "Value '%s' used outside defining function scope" valueName }
+        elif isTransitivelyReturned valueId scopeId graph then
+            { NodeId = siteId
+              Name = name
+              SiteKind = siteKind
+              EscapeKind = EscapesViaReturn
+              Reason = sprintf "Value '%s' returned from function (transitive)" valueName }
+        else
+            { NodeId = siteId
+              Name = name
+              SiteKind = siteKind
+              EscapeKind = StackScoped
+              Reason = sprintf "Value '%s' lifetime contained within function scope" valueName }
 
 /// Perform escape analysis on the entire semantic graph
 let analyzeGraph (graph: SemanticGraph) : EscapeAnalysisResult =
-    let stringCalls = findStringReturningCalls graph
+    let allocSites = findAllocatingSites graph
 
     let details =
-        stringCalls
-        |> List.map (fun (callSiteId, funcName) ->
-            analyzeCallSite callSiteId funcName graph)
+        allocSites
+        |> List.map (fun (siteId, name, siteKind) ->
+            analyzeAllocSite siteId name siteKind graph)
 
     let strategies =
         details
-        |> List.map (fun info -> (NodeId.value info.CallSiteId, info.Strategy))
+        |> List.map (fun info -> (NodeId.value info.NodeId, info.EscapeKind))
         |> Map.ofList
 
-    { CallSiteStrategies = strategies
+    { NodeStrategies = strategies
       Details = details }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Query Interface (for Alex witnesses)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Get the allocation strategy for a specific call site
-let getAllocationStrategy (callSiteId: NodeId) (result: EscapeAnalysisResult) : AllocationStrategy option =
-    Map.tryFind (NodeId.value callSiteId) result.CallSiteStrategies
+/// Get the escape kind for a specific node
+let getEscapeKind (nodeId: NodeId) (result: EscapeAnalysisResult) : EscapeKind option =
+    Map.tryFind (NodeId.value nodeId) result.NodeStrategies
 
-/// Get the allocation strategy with default fallback (Stack)
-let getAllocationStrategyOrDefault (callSiteId: NodeId) (result: EscapeAnalysisResult) : AllocationStrategy =
-    getAllocationStrategy callSiteId result
-    |> Option.defaultValue Stack  // Conservative default: stack allocation
+/// Get the escape kind with default fallback (StackScoped)
+let getEscapeKindOrDefault (nodeId: NodeId) (result: EscapeAnalysisResult) : EscapeKind =
+    getEscapeKind nodeId result
+    |> Option.defaultValue StackScoped  // Conservative default: stack allocation
+
+// Backward compatibility
+let getAllocationStrategy = getEscapeKind
+let getAllocationStrategyOrDefault = getEscapeKindOrDefault

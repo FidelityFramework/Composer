@@ -85,6 +85,17 @@ let pAlloc (ssa: SSA) (sizeSSA: SSA) (elemType: MLIRType) : PSGParser<MLIROp> =
         return MLIROp.MemRefOp (MemRefOp.Alloc (ssa, sizeSSA, elemType))
     }
 
+/// Emit memref.alloc operation (heap allocation with compile-time size)
+/// Like pAlloca but heap-allocated — survives function return
+/// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation
+let pAllocStatic (ssa: SSA) (count: int) (elemType: MLIRType) (alignment: int option) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        let memrefType = TMemRefStatic (count, elemType)
+        MLIRAccumulator.registerSSAType ssa memrefType state.Accumulator
+        return MLIROp.MemRefOp (MemRefOp.AllocStatic (ssa, memrefType, alignment))
+    }
+
 /// Emit memref.subview operation (replaces GEP for arrays)
 let pSubView (ssa: SSA) (source: SSA) (offsets: SSA list) : PSGParser<MLIROp> =
     parser {

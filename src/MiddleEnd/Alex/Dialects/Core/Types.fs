@@ -147,6 +147,7 @@ type MemRefOp =
     | Store of SSA * SSA * SSA list * MLIRType * MLIRType              // value, memref, indices, elemType, memrefType
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment (stack, compile-time size)
     | Alloc of SSA * SSA * MLIRType                                    // result, sizeSSA, elementType (heap, runtime size)
+    | AllocStatic of SSA * MLIRType * int option                        // result, memrefType, alignment (heap, compile-time size)
     | SubView of SSA * SSA * SSA list * MLIRType                       // result, source, offsets, resultType
     | ExtractBasePtr of SSA * SSA * MLIRType                           // result, memref, memrefType → !llvm.ptr (for FFI)
     | GetGlobal of SSA * string * MLIRType                             // result, globalName, memrefType
