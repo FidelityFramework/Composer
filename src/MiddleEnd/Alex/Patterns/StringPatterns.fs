@@ -18,9 +18,12 @@ open Alex.Elements.MemRefElements
 open Alex.Elements.ArithElements
 open Alex.Elements.MLIRAtomics
 open Alex.Elements.IndexElements
+open Alex.Elements.SCFElements
 open Alex.CodeGeneration.TypeMapping
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad, pDetectMemRefAddFusion
 
 // ═══════════════════════════════════════════════════════════
 // MEMORY COPY PATTERN (composed from FuncElements)
@@ -119,11 +122,11 @@ let pStringFromPointerWithLength (nodeId: NodeId) (bufferSSA: SSA) (lengthSSA: S
                 (srcPtrSSA, [])
 
         // 3. Cast pointers to platform words for memcpy FFI
-        let! castSrc = pIndexCastS srcPtrWord effectiveSrcPtrSSA platformWordTy
-        let! castDest = pIndexCastS destPtrWord destPtrSSA platformWordTy
+        let! castSrc = pIndexCastS srcPtrWord effectiveSrcPtrSSA TIndex platformWordTy
+        let! castDest = pIndexCastS destPtrWord destPtrSSA TIndex platformWordTy
 
         // 4. Cast length to platform word for memcpy FFI (index → platform word)
-        let! castLen = pIndexCastS lenWord lengthSSA platformWordTy
+        let! castLen = pIndexCastS lenWord lengthSSA TIndex platformWordTy
 
         // 5. Call memcpy(dest, src, len) - copies 'length' bytes from buffer to new memref
         let! copyOps = pStringMemCopy memcpyResultSSA destPtrWord srcPtrWord lenWord
@@ -162,9 +165,136 @@ let pStringLength (nodeId: NodeId) (stringSSA: SSA) (stringType: MLIRType) : PSG
         let! dimOp = pMemRefDim lenIndexSSA stringSSA dimConstSSA stringType
 
         // Cast index to int
-        let! castOp = pIndexCastS resultSSA lenIndexSSA intTy
+        let! castOp = pIndexCastS resultSSA lenIndexSSA TIndex intTy
 
         return ([dimConstOp; dimOp; castOp], TRValue { SSA = resultSSA; Type = intTy })
+    }
+
+/// Get character at index via memref.load
+/// Strings ARE memrefs (memref<?xi8>), charAt loads byte at offset
+/// SSA extracted from coeffects via nodeId:
+///   [0] = idxIndexSSA: index_cast int→index (for memref indexing)
+///   [1] = loadSSA: memref.load result (i8)
+///   [2] = resultSSA: extui i8→i32 (char)
+let pStringCharAt (nodeId: NodeId) (stringSSA: SSA) (indexSSA: SSA) (indexType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 3) $"pStringCharAt: Expected 3 SSAs, got {ssas.Length}"
+        let idxIndexSSA = ssas.[0]
+        let loadSSA = ssas.[1]
+        let resultSSA = ssas.[2]
+
+        let! state = getUserState
+        let charTy = mapNativeTypeForArch state.Platform.TargetArch Types.charType
+
+        // Cast int index to index type for memref indexing (e.g., i32 → index)
+        let! castIdxOp = pIndexCastS idxIndexSSA indexSSA indexType TIndex
+
+        // Load byte from string at index: memref.load %str[%idx] : memref<?xi8>
+        let! loadOp = pLoadFrom loadSSA stringSSA [idxIndexSSA] (TInt I8)
+
+        // Extend i8 to char type: arith.extui
+        let! extOp = pExtUI resultSSA loadSSA (TInt I8) charTy
+
+        return ([castIdxOp; loadOp; extOp], TRValue { SSA = resultSSA; Type = charTy })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// STRING SCANNING PATTERN
+// ═══════════════════════════════════════════════════════════
+
+/// String.contains: scan string bytes for a target character
+/// Uses scf.while with memref.alloca for mutable loop state (found flag + index counter)
+/// Iteration counter uses TIndex (platform word width) — no concrete integer casts needed
+/// Exact SSA expansion (20 slots, contiguous):
+///   Setup [0..5]:   zeroIdx, strLen, charTrunc, foundBuf, idxBuf, zeroI8
+///   Cond  [6..10]:  cLoadIdx, cCmpLt, cLoadFound, cNotFound, cBoth
+///   Body  [11..17]: bLoadIdx, bLoadByte, bCmpEq, bOneI8, bSelFound, bOneIdx, bNextIdx
+///   Post  [18..19]: pLoadFound, pResultBool
+///   Non-SSA ops: 2 stores (init), scf.condition, 2 stores (body), scf.yield, scf.while
+let pStringContains (nodeId: NodeId) (stringSSA: SSA) (charSSA: SSA) (charType: MLIRType) (stringType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 20) $"pStringContains: Expected 20 SSAs, got {ssas.Length}"
+
+        // Setup region (6 SSAs) [0..5]
+        let zeroIdx    = ssas.[0]   // arith.constant 0 : index (dual: dim subscript + alloca index + initial counter)
+        let strLen     = ssas.[1]   // memref.dim → index
+        let charTrunc  = ssas.[2]   // arith.trunci char → i8
+        let foundBuf   = ssas.[3]   // memref.alloca : memref<1xi8>
+        let idxBuf     = ssas.[4]   // memref.alloca : memref<1xindex>
+        let zeroI8     = ssas.[5]   // arith.constant 0 : i8
+
+        // Condition region (5 SSAs) [6..10]
+        let cLoadIdx   = ssas.[6]   // memref.load idxBuf → index
+        let cCmpLt     = ssas.[7]   // index.cmp slt → i1
+        let cLoadFound = ssas.[8]   // memref.load foundBuf → i8
+        let cNotFound  = ssas.[9]   // arith.cmpi eq → i1
+        let cBoth      = ssas.[10]  // arith.andi → i1
+
+        // Body region (7 SSAs) [11..17]
+        let bLoadIdx   = ssas.[11]  // memref.load idxBuf → index
+        let bLoadByte  = ssas.[12]  // memref.load string[idx] → i8
+        let bCmpEq     = ssas.[13]  // arith.cmpi eq → i1
+        let bOneI8     = ssas.[14]  // arith.constant 1 : i8
+        let bSelFound  = ssas.[15]  // arith.select → i8
+        let bOneIdx    = ssas.[16]  // arith.constant 1 : index
+        let bNextIdx   = ssas.[17]  // index.add → index
+
+        // Post-loop (2 SSAs) [18..19]
+        let pLoadFound = ssas.[18]  // memref.load foundBuf → i8
+        let pResultBool = ssas.[19] // arith.cmpi ne → i1
+
+        let i8Ty  = TInt I8
+        let i1Ty  = TInt I1
+        let foundBufTy = TMemRefStatic (1, i8Ty)
+        let idxBufTy   = TMemRefStatic (1, TIndex)
+
+        // ── Setup: get length, truncate char, alloca mutable state ──
+        let! zeroIdxOp      = pIndexConst zeroIdx 0L
+        let! strLenOp       = pMemRefDim strLen stringSSA zeroIdx stringType
+        let! charTruncOp    = pTruncI charTrunc charSSA charType i8Ty
+        let! foundBufOp     = pAlloca foundBuf 1 i8Ty None
+        let! idxBufOp       = pAlloca idxBuf 1 TIndex None
+        let! zeroI8Op       = pConstI zeroI8 0L i8Ty
+        let! storeFoundInit = pStore zeroI8 foundBuf [zeroIdx] i8Ty foundBufTy
+        let! storeIdxInit   = pStore zeroIdx idxBuf [zeroIdx] TIndex idxBufTy
+
+        // ── Condition region: idx < len AND NOT found ──
+        let! cLoadIdxOp    = pLoadFrom cLoadIdx idxBuf [zeroIdx] TIndex
+        let! cCmpLtOp      = pIndexCmp cCmpLt IndexCmpPred.Slt cLoadIdx strLen
+        let! cLoadFoundOp  = pLoadFrom cLoadFound foundBuf [zeroIdx] i8Ty
+        let! cNotFoundOp   = pCmpI cNotFound ICmpPred.Eq cLoadFound zeroI8 i8Ty
+        let! cBothOp       = pAndI cBoth cCmpLt cNotFound i1Ty
+        let! cCondOp       = pSCFCondition cBoth []
+
+        let condOps = [cLoadIdxOp; cCmpLtOp; cLoadFoundOp; cNotFoundOp; cBothOp; cCondOp]
+
+        // ── Body region: load byte, compare, update found+index ──
+        let! bLoadIdxOp    = pLoadFrom bLoadIdx idxBuf [zeroIdx] TIndex
+        let! bLoadByteOp   = pLoadFrom bLoadByte stringSSA [bLoadIdx] i8Ty
+        let! bCmpEqOp      = pCmpI bCmpEq ICmpPred.Eq bLoadByte charTrunc i8Ty
+        let! bOneI8Op      = pConstI bOneI8 1L i8Ty
+        let! bSelFoundOp   = pSelect bSelFound bCmpEq bOneI8 zeroI8 i8Ty
+        let! bStoreFound   = pStore bSelFound foundBuf [zeroIdx] i8Ty foundBufTy
+        let! bOneIdxOp     = pIndexConst bOneIdx 1L
+        let! bNextIdxOp    = pIndexAdd bNextIdx bLoadIdx bOneIdx
+        let! bStoreIdx     = pStore bNextIdx idxBuf [zeroIdx] TIndex idxBufTy
+        let! bYieldOp      = pSCFYield []
+
+        let bodyOps = [bLoadIdxOp; bLoadByteOp; bCmpEqOp; bOneI8Op; bSelFoundOp; bStoreFound; bOneIdxOp; bNextIdxOp; bStoreIdx; bYieldOp]
+
+        // ── While loop ──
+        let! whileOp = pSCFWhile condOps bodyOps
+
+        // ── Post-loop: load found flag, convert to bool ──
+        let! pLoadFoundOp   = pLoadFrom pLoadFound foundBuf [zeroIdx] i8Ty
+        let! pResultBoolOp  = pCmpI pResultBool ICmpPred.Ne pLoadFound zeroI8 i8Ty
+
+        let setupOps = [zeroIdxOp; strLenOp; charTruncOp; foundBufOp; idxBufOp; zeroI8Op; storeFoundInit; storeIdxInit]
+        let ops = setupOps @ [whileOp] @ [pLoadFoundOp; pResultBoolOp]
+
+        return (ops, TRValue { SSA = pResultBool; Type = i1Ty })
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -239,20 +369,20 @@ let pStringConcat2 (nodeId: NodeId) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
         let! extractResultPtr = pExtractBasePtr resultPtrSSA resultBufferSSA resultTy
 
         // 6. Cast pointers to platform words for memcpy
-        let! cast1 = pIndexCastS str1PtrWord str1PtrSSA platformWordTy
-        let! cast2 = pIndexCastS str2PtrWord str2PtrSSA platformWordTy
-        let! cast3 = pIndexCastS resultPtrWord resultPtrSSA platformWordTy
+        let! cast1 = pIndexCastS str1PtrWord str1PtrSSA TIndex platformWordTy
+        let! cast2 = pIndexCastS str2PtrWord str2PtrSSA TIndex platformWordTy
+        let! cast3 = pIndexCastS resultPtrWord resultPtrSSA TIndex platformWordTy
 
         // 7. Cast lengths to platform words for memcpy (index → platform word)
-        let! castLen1 = pIndexCastS len1Word str1LenSSA platformWordTy
-        let! castLen2 = pIndexCastS len2Word str2LenSSA platformWordTy
+        let! castLen1 = pIndexCastS len1Word str1LenSSA TIndex platformWordTy
+        let! castLen2 = pIndexCastS len2Word str2LenSSA TIndex platformWordTy
 
         // 8. memcpy(result, str1.ptr, len1)
         let! copy1Ops = pStringMemCopy memcpy1ResultSSA resultPtrWord str1PtrWord len1Word
 
         // 9. Compute offset pointer: result + len1 (index arithmetic via arith.addi)
         let addOffset = ArithOp (AddI (offsetPtrSSA, resultPtrSSA, str1LenSSA, TIndex))
-        let! castOffset = pIndexCastS offsetPtrWord offsetPtrSSA platformWordTy
+        let! castOffset = pIndexCastS offsetPtrWord offsetPtrSSA TIndex platformWordTy
 
         // 10. memcpy(result + len1, str2.ptr, len2)
         let! copy2Ops = pStringMemCopy memcpy2ResultSSA offsetPtrWord str2PtrWord len2Word
@@ -272,4 +402,76 @@ let pStringConcat2 (nodeId: NodeId) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
             copy2Ops
 
         return (ops, TRValue { SSA = resultBufferSSA; Type = resultTy })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
+// ═══════════════════════════════════════════════════════════
+
+/// String.length intrinsic — memref.dim to get string dimension
+let pStringLengthIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
+        do! ensure (info.Operation = "length") "Not String.length"
+        do! ensure (argIds.Length >= 1) "String.length: Expected 1 arg"
+        let! node = getCurrentNode
+        let! (_, stringSSA, stringType) = pRecallArgWithLoad argIds.[0]
+        return! pStringLength node.Id stringSSA stringType
+    }
+
+/// String.charAt intrinsic — memref.load at index offset
+let pStringCharAtIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
+        do! ensure (info.Operation = "charAt") "Not String.charAt"
+        do! ensure (argIds.Length >= 2) "String.charAt: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, stringSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
+        return! pStringCharAt node.Id stringSSA indexSSA indexType
+    }
+
+/// String.concat2 intrinsic — pure memref operations with index arithmetic
+let pStringConcat2Intrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
+        do! ensure (info.Operation = "concat2") "Not String.concat2"
+        do! ensure (argIds.Length >= 2) "String.concat2: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, str1SSA, str1Type) = pRecallArgWithLoad argIds.[0]
+        let! (_, str2SSA, str2Type) = pRecallArgWithLoad argIds.[1]
+        return! pStringConcat2 node.Id str1SSA str2SSA str1Type str2Type
+    }
+
+/// String.contains intrinsic — scf.while byte scan loop
+let pStringContainsIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
+        do! ensure (info.Operation = "contains") "Not String.contains"
+        do! ensure (argIds.Length >= 2) "String.contains: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, stringSSA, stringType) = pRecallArgWithLoad argIds.[0]
+        let! (_, charSSA, charType) = pRecallArgWithLoad argIds.[1]
+        return! pStringContains node.Id stringSSA charSSA charType stringType
+    }
+
+/// NativeStr.fromPointer intrinsic — substring via allocate + memcpy
+/// Uses pDetectMemRefAddFusion on buffer arg for NativePtr.add fusion
+/// Uses pRecallArgWithLoad on length arg for TMemRef auto-load
+let pNativeStrFromPointerIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativeStr
+        do! ensure (info.Operation = "fromPointer") "Not NativeStr.fromPointer"
+        do! ensure (argIds.Length >= 2) "NativeStr.fromPointer: Expected 2 args"
+        let! node = getCurrentNode
+
+        // Detect MemRef.add fusion on buffer argument
+        let! (bufferSSA, fusedOffsetOpt, bufferType, fusionOps) = pDetectMemRefAddFusion argIds.[0]
+
+        // Recall length argument with auto-load
+        let! (lengthLoadOps, lengthSSA, _) = pRecallArgWithLoad argIds.[1]
+
+        // Call pattern with resolved buffer, length, and optional source offset
+        let! (ops, result) = pStringFromPointerWithLength node.Id bufferSSA lengthSSA bufferType fusedOffsetOpt
+        return (fusionOps @ lengthLoadOps @ ops, result)
     }

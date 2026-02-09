@@ -33,7 +33,10 @@ module StructuralWitness = Alex.Witnesses.StructuralWitness  // Transparent witn
 module BindingWitness = Alex.Witnesses.BindingWitness
 module VarRefWitness = Alex.Witnesses.VarRefWitness
 module MutableAssignmentWitness = Alex.Witnesses.MutableAssignmentWitness
-module ApplicationWitness = Alex.Witnesses.ApplicationWitness
+module MemoryIntrinsicWitness = Alex.Witnesses.MemoryIntrinsicWitness
+module StringIntrinsicWitness = Alex.Witnesses.StringIntrinsicWitness
+module ArithIntrinsicWitness = Alex.Witnesses.ArithIntrinsicWitness
+module ApplicationWitness = Alex.Witnesses.ApplicationWitness  // Non-intrinsic apps only
 
 // Priority 2: Collection Witnesses
 module OptionWitness = Alex.Witnesses.OptionWitness
@@ -78,6 +81,14 @@ let initializeRegistry () =
         |> NanopassRegistry.register BindingWitness.nanopass
         |> NanopassRegistry.register VarRefWitness.nanopass
         |> NanopassRegistry.register MutableAssignmentWitness.nanopass
+
+        // Domain intrinsic witnesses (register BEFORE ApplicationWitness)
+        |> NanopassRegistry.register MemoryIntrinsicWitness.nanopass
+        |> NanopassRegistry.register StringIntrinsicWitness.nanopass
+        |> NanopassRegistry.register ArithIntrinsicWitness.nanopass
+        // PlatformWitness already registered above (now revived with <|> composition)
+
+        // Application witness (non-intrinsic: curry flattening, VarRef calls, indirect calls)
         |> NanopassRegistry.register ApplicationWitness.nanopass
 
         // Priority 2: Collection Witnesses

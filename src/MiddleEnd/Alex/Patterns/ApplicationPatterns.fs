@@ -17,44 +17,9 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements  // pFuncCall, pFuncCallIndirect
 open Alex.Elements.ArithElements // Arithmetic elements for wrapper patterns
-open Alex.Elements.IndexElements // pIndexConst
+open Alex.Elements.IndexElements // pIndexCastS
 open Alex.CodeGeneration.TypeMapping // mapNativeTypeForArch
-
-// ═══════════════════════════════════════════════════════════
-// ARGUMENT LOADING PATTERN (Private Combinator)
-// ═══════════════════════════════════════════════════════════
-
-/// Recall argument from accumulator, automatically loading from TMemRef if needed
-/// COMPOSING PATTERN: Composes Elements (pRecallNode + pIndexConst + pLoad)
-/// Uses VarRef node's allocated SSAs for load operations
-let private pRecallArgWithLoad (argId: NodeId) : PSGParser<MLIROp list * SSA * MLIRType> =
-    parser {
-        // Recall argument from accumulator (VarRef already witnessed in post-order)
-        let! (ssa, ty) = pRecallNode argId
-
-        match ty with
-        | TMemRef elemType ->
-            // Argument is TMemRef (mutable variable) - emit load using VarRef's SSAs
-            // VarRef node has 2 SSAs allocated: [0] = index constant, [1] = load result
-            let! ssas = getNodeSSAs argId
-            do! ensure (ssas.Length >= 2) $"pRecallArgWithLoad: VarRef node {NodeId.value argId} expected 2 SSAs, got {ssas.Length}"
-            let zeroSSA = ssas.[0]
-            let valueSSA = ssas.[1]
-
-            // Compose Elements: index constant + load
-            // Mutable scalars stored as memref<1xT> (rank-1 single element)
-            let! zeroOp = pIndexConst zeroSSA 0L
-
-            // CRITICAL: Pass elemType (unwrapped), NOT TMemRefStatic (1, elemType)
-            // Serialization code (Serialize.fs:173) reconstructs the memref wrapper
-            // based on indices.Length. Passing already-wrapped type causes double-wrapping.
-            let loadOp = MLIROp.MemRefOp (MemRefOp.Load (valueSSA, ssa, [zeroSSA], elemType))
-
-            return ([zeroOp; loadOp], valueSSA, elemType)
-        | _ ->
-            // Not TMemRef - return as-is (no load needed)
-            return ([], ssa, ty)
-    }
+open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad (monadic TMemRef auto-load)
 
 // ═══════════════════════════════════════════════════════════
 // APPLICATION PATTERNS (Function Calls)
@@ -272,8 +237,46 @@ let pTypeConversion (nodeId: NodeId)
                 | TInt _, TFloat _ ->
                     pSIToFP resultSSA srcSSA srcType dstType
                 | TIndex, TInt _ ->
-                    pIndexCastS resultSSA srcSSA dstType
+                    pIndexCastS resultSSA srcSSA TIndex dstType
                 | _ ->
                     fail (Message $"Unsupported type conversion: {srcType} -> {dstType}")
             return (loadOps @ [convOp], TRValue { SSA = resultSSA; Type = dstType })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
+// ═══════════════════════════════════════════════════════════
+
+/// Binary arithmetic intrinsic — dispatches on classifyAtomicOp within parser CE
+let pBinaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Operators
+        do! ensure (argIds.Length >= 2) "Not binary arith (need 2 args)"
+        let! node = getCurrentNode
+        let category = classifyAtomicOp info
+        match category with
+        | BinaryArith op -> return! pBinaryArithOp node.Id op
+        | Comparison pred -> return! pComparisonOp node.Id pred
+        | _ -> return! fail (Message $"Not binary arith: {info.Operation}")
+    }
+
+/// Unary arithmetic intrinsic — boolean NOT (xori with 1)
+let pUnaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Operators
+        do! ensure (argIds.Length = 1) "Not unary arith (need 1 arg)"
+        let! node = getCurrentNode
+        let category = classifyAtomicOp info
+        match category with
+        | UnaryArith "xori" -> return! pUnaryNot node.Id
+        | _ -> return! fail (Message $"Not unary arith: {info.Operation}")
+    }
+
+/// Type conversion intrinsic — byte(), int(), float(), nativeint()
+let pTypeConversionIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Convert
+        do! ensure (argIds.Length >= 1) "Convert: Expected 1 arg"
+        let! node = getCurrentNode
+        return! pTypeConversion node.Id
     }

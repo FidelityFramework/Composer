@@ -202,6 +202,7 @@ type MLIRAccumulator() =
     member val AllOps: MLIROp list = [] with get, set                      // Flat operation stream with markers
     member val Errors: Diagnostic list = [] with get, set
     member val NodeAssoc: Map<NodeId, SSA * MLIRType> = Map.empty with get, set  // Global SSA bindings (PSG nodes)
+    member val SSATypes: Map<SSA, MLIRType> = Map.empty with get, set            // SSA → type reverse index (for monadic type derivation in Elements)
     member val MLIRTempCounter: int = 0 with get, set                      // For MLIR-level temporary SSAs (NOT PSG nodes)
 
     // Witnessing Coordination State (Dependent Transparency)
@@ -229,12 +230,28 @@ module MLIRAccumulator =
         acc.Errors <- err :: acc.Errors
 
     /// Bind a PSG node to its SSA value (global binding)
+    /// Also populates SSATypes reverse index for monadic type derivation in Elements
     let bindNode (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
         acc.NodeAssoc <- Map.add nodeId (ssa, ty) acc.NodeAssoc
+        // Preserve physical SSA type if already registered by an Element (pAlloca, pAlloc, etc.)
+        // Elements register physical types (TMemRefStatic from alloca); bindNode carries semantic types
+        // (TMemRef for mutable cells). pLoad/pLoadFrom derive memrefType from SSATypes.
+        if not (Map.containsKey ssa acc.SSATypes) then
+            acc.SSATypes <- Map.add ssa ty acc.SSATypes
 
     /// Recall the SSA binding for a PSG node (global lookup)
     let recallNode (nodeId: NodeId) (acc: MLIRAccumulator) =
         Map.tryFind nodeId acc.NodeAssoc
+
+    /// Recall the type of an SSA value (reverse index lookup)
+    /// Used by Elements (e.g. pLoad) to derive memref types monadically from the accumulator
+    let recallSSAType (ssa: SSA) (acc: MLIRAccumulator) =
+        Map.tryFind ssa acc.SSATypes
+
+    /// Register an SSA value's type directly (for intermediate SSAs created by Elements)
+    /// Called by Elements like pAlloca/pAlloc that create new SSAs not bound to PSG nodes
+    let registerSSAType (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
+        acc.SSATypes <- Map.add ssa ty acc.SSATypes
 
     // ═══════════════════════════════════════════════════════════
     // WITNESSING COORDINATION (Dependent Transparency Support)

@@ -479,9 +479,11 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 | IntrinsicModule.Format, "int" -> 2      // func.call + result (platform library function)
                 | IntrinsicModule.Format, "int64" -> 2    // func.call + result (platform library function)
                 | IntrinsicModule.Format, "float" -> 2    // func.call + result (platform library function)
-                | IntrinsicModule.Parse, "int" -> 35      // stringToInt
-                | IntrinsicModule.Parse, "float" -> 250   // stringToFloat (complex)
-                | IntrinsicModule.String, "contains" -> 30 // string scanning
+                | IntrinsicModule.Parse, "int" -> 2      // func.call + result (platform library function)
+                | IntrinsicModule.Parse, "float" -> 2    // func.call + result (platform library function)
+                | IntrinsicModule.String, "charAt" -> 3   // index_cast + memref.load + extui
+                | IntrinsicModule.String, "length" -> 3   // dim_const + memref.dim + index_cast
+                | IntrinsicModule.String, "contains" -> 20 // 6 setup + 5 cond + 7 body + 2 post (scf.while byte scan, TIndex iteration)
                 | IntrinsicModule.String, "concat2" -> 18  // concatenation (18 SSAs - pure index arithmetic, NO i64 round-trip)
                 | IntrinsicModule.Sys, "write" -> 6        // FFI extraction + length (2 ptr + 3 len + 1 result)
                 | IntrinsicModule.Sys, "read" -> 6         // FFI extraction + capacity (2 ptr + 3 cap + 1 result)

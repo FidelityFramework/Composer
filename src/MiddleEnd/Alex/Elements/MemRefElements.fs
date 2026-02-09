@@ -3,8 +3,10 @@
 /// INTERNAL: Witnesses CANNOT import this. Only Patterns can.
 /// Provides memory operations (alloca, load, store) via XParsec state threading.
 ///
-/// NOTE: This replaces LLVM dialect memory operations (llvm.alloca, llvm.load, llvm.store)
-/// with standard MLIR MemRef dialect operations for backend flexibility.
+/// Elements derive memref types monadically from the accumulator's SSA type index.
+/// When a memref SSA was created (by pAlloca, pAlloc, etc.) or bound (by witness traversal),
+/// its type was registered in the accumulator. pLoad uses this to derive the correct memref type
+/// without callers having to push it as a parameter.
 module internal Alex.Elements.MemRefElements
 
 open XParsec
@@ -13,6 +15,7 @@ open XParsec.Combinators // parser { }
 open Alex.XParsec.PSGCombinators
 open Alex.Dialects.Core.Types
 open Alex.CodeGeneration.TypeMapping
+open Alex.Traversal.TransferTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 
 // All Elements use XParsec state for platform/type context
@@ -21,12 +24,31 @@ open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 // MEMORY OPERATIONS
 // ═══════════════════════════════════════════════════════════
 
-/// Emit memref.load operation
+/// Emit memref.load operation (derives types monadically from PSG node + accumulator)
+/// elemType: derived from Current PSG node type (the load result type)
+/// memrefType: derived from accumulator SSA type index (the source memref's type)
 let pLoad (ssa: SSA) (memref: SSA) (indices: SSA list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let ty = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
-        return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, ty))
+        let elemType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        match MLIRAccumulator.recallSSAType memref state.Accumulator with
+        | Some memrefType ->
+            return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
+        | None ->
+            return! fail (Message $"pLoad: memref SSA {memref} has no registered type in accumulator (elemType={elemType})")
+    }
+
+/// Emit memref.load with explicit element type (memref type derived from accumulator)
+/// For cases where the element type differs from the Current PSG node type
+/// (e.g., loading TIndex from an index buffer, loading TInt I8 from a string)
+let pLoadFrom (ssa: SSA) (memref: SSA) (indices: SSA list) (elemType: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        match MLIRAccumulator.recallSSAType memref state.Accumulator with
+        | Some memrefType ->
+            return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
+        | None ->
+            return! fail (Message $"pLoadFrom: memref SSA {memref} has no registered type in accumulator (elemType={elemType})")
     }
 
 /// Emit memref.store operation
@@ -38,20 +60,22 @@ let pStore (value: SSA) (memref: SSA) (indices: SSA list) (elemType: MLIRType) (
     }
 
 /// Emit memref.alloca operation (stack allocation with compile-time size)
-/// count: number of elements to allocate
-/// elemType: explicit element type for the memref (e.g., TInt I8, TInt I32, TMemRefStatic(...))
+/// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation
 let pAlloca (ssa: SSA) (count: int) (elemType: MLIRType) (alignment: int option) : PSGParser<MLIROp> =
     parser {
+        let! state = getUserState
         let memrefType = TMemRefStatic (count, elemType)
+        MLIRAccumulator.registerSSAType ssa memrefType state.Accumulator
         return MLIROp.MemRefOp (MemRefOp.Alloca (ssa, memrefType, alignment))
     }
 
 /// Emit memref.alloc operation (heap allocation with runtime size)
-/// sizeSSA: index-typed SSA value representing the number of elements
-/// elemType: element type for the memref (e.g., TInt I8)
-/// Returns a dynamic memref (memref<?xelemType>)
+/// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation
 let pAlloc (ssa: SSA) (sizeSSA: SSA) (elemType: MLIRType) : PSGParser<MLIROp> =
     parser {
+        let! state = getUserState
+        let memrefType = TMemRef elemType
+        MLIRAccumulator.registerSSAType ssa memrefType state.Accumulator
         return MLIROp.MemRefOp (MemRefOp.Alloc (ssa, sizeSSA, elemType))
     }
 
@@ -73,9 +97,11 @@ let pExtractBasePtr (result: SSA) (memref: SSA) (memrefTy: MLIRType) : PSGParser
     }
 
 /// Get reference to global memref
-/// Emits: %result = memref.get_global @globalName : memrefType
+/// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation
 let pMemRefGetGlobal (result: SSA) (globalName: string) (memrefType: MLIRType) : PSGParser<MLIROp> =
     parser {
+        let! state = getUserState
+        MLIRAccumulator.registerSSAType result memrefType state.Accumulator
         return MLIROp.MemRefOp (MemRefOp.GetGlobal (result, globalName, memrefType))
     }
 

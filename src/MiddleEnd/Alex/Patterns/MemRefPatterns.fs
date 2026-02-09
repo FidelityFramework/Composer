@@ -48,6 +48,8 @@ let pBuildMutableBinding (nodeId: int) (elemType: MLIRType) (initSSA: SSA) : PSG
         let! storeOp = pStore initSSA memrefSSA [zeroSSA] elemType memrefType
 
         let ops = [allocOp; zeroOp; storeOp]
+        // Semantic type: TMemRef (abstract mutable cell) — distinguishes from TMemRefStatic (buffers)
+        // Physical type (TMemRefStatic) preserved in SSATypes by pAlloca for pLoad derivation
         let result = TRValue { SSA = memrefSSA; Type = TMemRef elemType }
         return (ops, result)
     }

@@ -119,6 +119,9 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/BindingWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/VarRefWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MutableAssignmentWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/MemoryIntrinsicWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/StringIntrinsicWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/ArithIntrinsicWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/ApplicationWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/LambdaWitness.fs" />
 

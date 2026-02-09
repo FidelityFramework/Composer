@@ -143,7 +143,7 @@ type FuncVisibility =
 
 /// MemRef dialect operations (standard MLIR memory operations)
 type MemRefOp =
-    | Load of SSA * SSA * SSA list * MLIRType                          // result, memref, indices, type
+    | Load of SSA * SSA * SSA list * MLIRType * MLIRType               // result, memref, indices, elemType, memrefType
     | Store of SSA * SSA * SSA list * MLIRType * MLIRType              // value, memref, indices, elemType, memrefType
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment (stack, compile-time size)
     | Alloc of SSA * SSA * MLIRType                                    // result, sizeSSA, elementType (heap, runtime size)
@@ -216,8 +216,8 @@ type IndexOp =
     | IndexOr of SSA * SSA * SSA                      // result, lhs, rhs
     | IndexXor of SSA * SSA * SSA                     // result, lhs, rhs
     | IndexCmp of SSA * IndexCmpPred * SSA * SSA      // result, predicate, lhs, rhs
-    | IndexCastS of SSA * SSA * MLIRType              // result, operand, destType (signed)
-    | IndexCastU of SSA * SSA * MLIRType              // result, operand, destType (unsigned)
+    | IndexCastS of SSA * SSA * MLIRType * MLIRType    // result, operand, srcType, destType (signed)
+    | IndexCastU of SSA * SSA * MLIRType * MLIRType    // result, operand, srcType, destType (unsigned)
     | IndexSizeOf of SSA * MLIRType                   // result, type
 
 /// Vector dialect operations

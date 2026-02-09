@@ -29,7 +29,7 @@ let pExtractValue (ssa: SSA) (structMemref: SSA) (fieldIndex: int) (offsetSSA: S
     parser {
         do! emitTrace "pExtractValue" (sprintf "ssa=%A, memref=%A, field=%d, ty=%A" ssa structMemref fieldIndex ty)
         let offsetOp = ArithOp.ConstI (offsetSSA, int64 fieldIndex, TIndex) |> MLIROp.ArithOp
-        let loadOp = MemRefOp.Load (ssa, structMemref, [offsetSSA], ty) |> MLIROp.MemRefOp
+        let loadOp = MemRefOp.Load (ssa, structMemref, [offsetSSA], ty, TMemRefStatic (1, ty)) |> MLIROp.MemRefOp
         return [offsetOp; loadOp]
     }
 
@@ -58,7 +58,7 @@ let pTypedExtract (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (viewSS
         let destType = TMemRefStatic (1, fieldType)
         let castOp = MemRefOp.ReinterpretCast (viewSSA, structMemref, byteOffset, srcType, destType) |> MLIROp.MemRefOp
         let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
-        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType) |> MLIROp.MemRefOp
+        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
         return [castOp; zeroOp; loadOp]
     }
 
@@ -83,7 +83,7 @@ let pTypedExtractView (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (of
         let offsetOp = ArithOp.ConstI (offsetSSA, int64 byteOffset, TIndex) |> MLIROp.ArithOp
         let viewOp = MemRefOp.View (viewSSA, structMemref, offsetSSA, srcType, destType) |> MLIROp.MemRefOp
         let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
-        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType) |> MLIROp.MemRefOp
+        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
         return [offsetOp; viewOp; zeroOp; loadOp]
     }
 

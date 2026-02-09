@@ -8,9 +8,12 @@
 module Alex.Patterns.PlatformPatterns
 
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open XParsec
 open XParsec.Parsers     // preturn
+open XParsec.Combinators // parser { }
 open Alex.XParsec.PSGCombinators
+open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements
@@ -73,14 +76,14 @@ let pSysWrite (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTy
         let! extractOp = pExtractBasePtr buf_ptr_index bufferSSA bufferType
 
         // Cast index to i64: index.casts
-        let! castOp = pIndexCastS buf_ptr_i64 buf_ptr_index platformWordTy
+        let! castOp = pIndexCastS buf_ptr_i64 buf_ptr_index TIndex platformWordTy
 
         // Extract length via memref.dim (dimension 0)
         let! dimConstOp = pConstI dim_index_const 0L TIndex
         let! dimOp = pMemRefDim count_index bufferSSA dim_index_const bufferType
 
         // Cast count to platform word for syscall
-        let! countCastOp = pIndexCastS count_i64 count_index platformWordTy
+        let! countCastOp = pIndexCastS count_i64 count_index TIndex platformWordTy
 
         // Syscall with extracted i64 pointer and length
         let vals = [
@@ -134,14 +137,14 @@ let pSysRead (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTyp
         let! extractOp = pExtractBasePtr buf_ptr_index bufferSSA bufferType
 
         // Cast index to i64: index.casts
-        let! castOp = pIndexCastS buf_ptr_i64 buf_ptr_index platformWordTy
+        let! castOp = pIndexCastS buf_ptr_i64 buf_ptr_index TIndex platformWordTy
 
         // Extract buffer capacity via memref.dim (dimension 0)
         let! dimConstOp = pConstI dim_index_const 0L TIndex
         let! dimOp = pMemRefDim capacity_index bufferSSA dim_index_const bufferType
 
         // Cast capacity to platform word for syscall
-        let! capacityCastOp = pIndexCastS capacity_i64 capacity_index platformWordTy
+        let! capacityCastOp = pIndexCastS capacity_i64 capacity_index TIndex platformWordTy
 
         // Syscall with extracted i64 pointer and capacity
         let vals = [
@@ -152,4 +155,32 @@ let pSysRead (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTyp
         let! readCall = pFuncCall (Some resultSSA) "read" vals platformWordTy
 
         return ([extractOp; castOp; dimConstOp; dimOp; capacityCastOp; readCall], TRValue { SSA = resultSSA; Type = platformWordTy })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
+// ═══════════════════════════════════════════════════════════
+
+/// Sys.write intrinsic — write buffer to file descriptor
+let pSysWriteIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Sys
+        do! ensure (info.Operation = "write") "Not Sys.write"
+        do! ensure (argIds.Length >= 2) "Sys.write: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, fdSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, bufferSSA, bufferType) = pRecallArgWithLoad argIds.[1]
+        return! pSysWrite node.Id fdSSA bufferSSA bufferType
+    }
+
+/// Sys.read intrinsic — read from file descriptor into buffer
+let pSysReadIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Sys
+        do! ensure (info.Operation = "read") "Not Sys.read"
+        do! ensure (argIds.Length >= 2) "Sys.read: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, fdSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, bufferSSA, bufferType) = pRecallArgWithLoad argIds.[1]
+        return! pSysRead node.Id fdSSA bufferSSA bufferType
     }

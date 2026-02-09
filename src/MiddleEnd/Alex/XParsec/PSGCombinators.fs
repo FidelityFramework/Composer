@@ -234,6 +234,31 @@ let pIntrinsic : PSGParser<IntrinsicInfo> =
         | _ -> return! fail (Message "Expected Intrinsic")
     }
 
+/// Match Application node where function is an Intrinsic of the given module
+/// Resolves through TypeAnnotation wrapper (absorbs resolveFunctionNode logic)
+/// Returns: (IntrinsicInfo, argNodeIds)
+let pIntrinsicApplication (targetModule: IntrinsicModule) : PSGParser<IntrinsicInfo * NodeId list> =
+    parser {
+        let! (funcId, argIds) = pApplication
+        let! state = getUserState
+        // Resolve function node, unwrapping TypeAnnotation if present
+        let funcNodeOpt =
+            match SemanticGraph.tryGetNode funcId state.Graph with
+            | Some funcNode ->
+                match funcNode.Kind with
+                | SemanticKind.TypeAnnotation (innerFuncId, _) ->
+                    SemanticGraph.tryGetNode innerFuncId state.Graph
+                | _ -> Some funcNode
+            | None -> None
+        match funcNodeOpt with
+        | Some funcNode ->
+            match funcNode.Kind with
+            | SemanticKind.Intrinsic info when info.Module = targetModule ->
+                return (info, argIds)
+            | _ -> return! fail (Message $"Function is not {targetModule} intrinsic")
+        | None -> return! fail (Message "Could not resolve function node")
+    }
+
 /// Match a PlatformBinding node
 let pPlatformBinding : PSGParser<string> =
     parser {

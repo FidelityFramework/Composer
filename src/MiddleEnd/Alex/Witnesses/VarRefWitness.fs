@@ -16,6 +16,7 @@ open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
+open Alex.Patterns.MemRefPatterns  // pLoadMutableVariable
 open Alex.Dialects.Core.Types  // TMemRef
 open Alex.CodeGeneration.TypeMapping
 open XParsec
@@ -74,15 +75,21 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         // Value binding - post-order: binding already witnessed, recall its SSA
                         match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
                         | Some (ssa, ty) ->
-                            // ARCHITECTURAL PRINCIPLE (lvalue vs rvalue):
-                            // VarRef ALWAYS forwards the binding's SSA, regardless of mutability.
-                            // - For TMemRef: Returns the memref address (consumers decide whether to load)
-                            // - For other types: Returns the value (already in SSA)
-                            //
-                            // This enables:
-                            // - Set operations to use memref directly (no load needed)
-                            // - Expression contexts to load from memref when needed
-                            // - No context-dependent behavior in VarRef itself
+                            match ty with
+                            | TMemRef elemType ->
+                                // Mutable cell (semantic type TMemRef from pBuildMutableBinding):
+                                // auto-load value. VarRef has 2 pre-allocated SSAs (zero const + loaded value).
+                                // TMemRefStatic (buffers/stackalloc) are forwarded as-is — type distinction
+                                // flows through the monadic accumulator, not binding flags.
+                                let (NodeId nodeIdInt) = node.Id
+                                match tryMatch (pLoadMutableVariable nodeIdInt ssa elemType)
+                                              ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                                | Some ((ops, result), _) ->
+                                    { InlineOps = ops; TopLevelOps = []; Result = result }
+                                | None ->
+                                    WitnessOutput.error $"VarRef '{name}': Mutable variable load failed"
+                            | _ ->
+                                // Immutable value or buffer: forward directly
                                 { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
                         | None ->
                             WitnessOutput.error $"VarRef '{name}': Binding not yet witnessed"

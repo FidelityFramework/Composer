@@ -8,6 +8,7 @@
 module Alex.Witnesses.MutableAssignmentWitness
 
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core  // SemanticGraph
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -23,11 +24,17 @@ open Alex.Dialects.Core.Types
 let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     match tryMatch pSet ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((targetId, valueId), _) ->
-        // Get memref SSA from target (VarRef to mutable binding)
-        // Get value SSA from value node
-        match MLIRAccumulator.recallNode targetId ctx.Accumulator,
-              MLIRAccumulator.recallNode valueId ctx.Accumulator with
-        | Some (memrefSSA, TMemRef elemType), Some (valueSSA, _) ->
+        // targetId is a VarRef node. VarRef now auto-loads (returns loaded value).
+        // For assignment, we need the MEMREF ADDRESS from the underlying binding.
+        // Navigate: targetId (VarRef) → bindingId (Binding) → recall memref from accumulator.
+        let memrefResult =
+            match SemanticGraph.tryGetNode targetId ctx.Graph with
+            | Some { Kind = SemanticKind.VarRef (_, Some bindingId) } ->
+                MLIRAccumulator.recallNode bindingId ctx.Accumulator
+            | _ -> None
+
+        match memrefResult, MLIRAccumulator.recallNode valueId ctx.Accumulator with
+        | Some (memrefSSA, (TMemRef elemType | TMemRefStatic (_, elemType))), Some (valueSSA, _) ->
             // Emit memref.store to update mutable variable
             let (NodeId nodeIdInt) = node.Id
             match tryMatch (pStoreMutableVariable nodeIdInt memrefSSA valueSSA elemType)
@@ -41,7 +48,7 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
         | Some _, None ->
             WitnessOutput.error "Mutable assignment: Value not yet witnessed"
         | None, _ ->
-            WitnessOutput.error "Mutable assignment: Target variable not yet witnessed"
+            WitnessOutput.error "Mutable assignment: Target variable not yet witnessed (binding not found)"
     | None ->
         WitnessOutput.skip
 

@@ -106,11 +106,11 @@ let pIndexCmp (ssa: SSA) (pred: IndexCmpPred) (lhs: SSA) (rhs: SSA) : PSGParser<
 // CASTS
 // ═══════════════════════════════════════════════════════════
 
-let pIndexCastS (ssa: SSA) (operand: SSA) (toTy: MLIRType) : PSGParser<MLIROp> =
-    parser { return MLIROp.IndexOp (IndexOp.IndexCastS (ssa, operand, toTy)) }
+let pIndexCastS (ssa: SSA) (operand: SSA) (fromTy: MLIRType) (toTy: MLIRType) : PSGParser<MLIROp> =
+    parser { return MLIROp.IndexOp (IndexOp.IndexCastS (ssa, operand, fromTy, toTy)) }
 
-let pIndexCastU (ssa: SSA) (operand: SSA) (toTy: MLIRType) : PSGParser<MLIROp> =
-    parser { return MLIROp.IndexOp (IndexOp.IndexCastU (ssa, operand, toTy)) }
+let pIndexCastU (ssa: SSA) (operand: SSA) (fromTy: MLIRType) (toTy: MLIRType) : PSGParser<MLIROp> =
+    parser { return MLIROp.IndexOp (IndexOp.IndexCastU (ssa, operand, fromTy, toTy)) }
 
 // ═══════════════════════════════════════════════════════════
 // SIZE OF

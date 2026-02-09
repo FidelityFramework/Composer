@@ -162,16 +162,10 @@ let arithOpToString (op: ArithOp) : string =
 /// Serialize MemRefOp to MLIR text
 let memrefOpToString (op: MemRefOp) : string =
     match op with
-    | MemRefOp.Load (result, memref, indices, ty) ->
+    | MemRefOp.Load (result, memref, indices, _elemType, memrefType) ->
         // Build indices string
         let indicesStr = if List.isEmpty indices then "" else sprintf "[%s]" (indices |> List.map ssaToString |> String.concat ", ")
-        // ty is element type - construct proper memref type for serialization
-        // Single index → 1-element static memref (matches pAlloca pattern)
-        // Multiple indices → dynamic memref
-        let memrefType =
-            match indices.Length with
-            | 0 | 1 -> TMemRefStatic (1, ty)
-            | _ -> TMemRef ty
+        // Use the passed memrefType directly (no heuristic reconstruction)
         sprintf "%s = memref.load %s%s : %s"
             (ssaToString result) (ssaToString memref) indicesStr (typeToString memrefType)
     | MemRefOp.Store (value, memref, indices, _elemType, memrefType) ->
@@ -276,10 +270,21 @@ let rec opToString (op: MLIROp) : string =
         | IndexOp.IndexBoolConst (result, value) ->
             let boolVal = if value then 1 else 0
             sprintf "%s = arith.constant %d : i1" (ssaToString result) boolVal
-        | IndexOp.IndexCastS (result, operand, destTy) ->
-            sprintf "%s = index.casts %s : index to %s" (ssaToString result) (ssaToString operand) (typeToString destTy)
-        | IndexOp.IndexCastU (result, operand, destTy) ->
-            sprintf "%s = index.castu %s : index to %s" (ssaToString result) (ssaToString operand) (typeToString destTy)
+        | IndexOp.IndexCastS (result, operand, srcTy, destTy) ->
+            sprintf "%s = index.casts %s : %s to %s" (ssaToString result) (ssaToString operand) (typeToString srcTy) (typeToString destTy)
+        | IndexOp.IndexCastU (result, operand, srcTy, destTy) ->
+            sprintf "%s = index.castu %s : %s to %s" (ssaToString result) (ssaToString operand) (typeToString srcTy) (typeToString destTy)
+        | IndexOp.IndexCmp (result, pred, lhs, rhs) ->
+            let predStr =
+                match pred with
+                | Eq -> "eq" | Ne -> "ne"
+                | Slt -> "slt" | Sle -> "sle"
+                | Sgt -> "sgt" | Sge -> "sge"
+                | Ult -> "ult" | Ule -> "ule"
+                | Ugt -> "ugt" | Uge -> "uge"
+            sprintf "%s = index.cmp %s(%s, %s)" (ssaToString result) predStr (ssaToString lhs) (ssaToString rhs)
+        | IndexOp.IndexAdd (result, lhs, rhs) ->
+            sprintf "%s = index.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
         | _ ->
             sprintf "// TODO: Serialize IndexOp %A" iop
     | MLIROp.SCFOp scfOp ->

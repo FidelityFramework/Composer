@@ -18,6 +18,8 @@ open Alex.Elements.ArithElements
 open Alex.Elements.IndexElements
 open Alex.Elements.FuncElements
 open Alex.CodeGeneration.TypeMapping
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
 
 // ═══════════════════════════════════════════════════════════
 // FIELD EXTRACTION PATTERNS
@@ -403,7 +405,7 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
                     // Cast index → targetTy (e.g., index → i64 for x86-64, index → i32 for ARM32)
                     let indexSSA = ssas.[0]  // Intermediate index from coeffects
                     let! extractOp = pExtractBasePtr indexSSA structSSA structTy
-                    let! castOp = pIndexCastS resultSSA indexSSA targetTy
+                    let! castOp = pIndexCastS resultSSA indexSSA TIndex targetTy
                     return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = targetTy })
             | "Length" | "len" ->  // Accept both capitalized (old) and lowercase (FNCS)
                 // Extract length using memref.dim (returns index type)
@@ -420,7 +422,7 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
                     // Cast index → fieldTy (e.g., index → i64 for x86-64 syscall, index → i32 for ARM32)
                     let dimResultSSA = ssas.[1]  // Dim result from coeffects
                     let! dimOp = pMemRefDim dimResultSSA structSSA dimIndexSSA structTy
-                    let! castOp = pIndexCastS resultSSA dimResultSSA fieldTy
+                    let! castOp = pIndexCastS resultSSA dimResultSSA TIndex fieldTy
                     return ([constOp; dimOp; castOp], TRValue { SSA = resultSSA; Type = fieldTy })
             | _ ->
                 return failwith $"Unknown memref field name: {fieldName}"
@@ -578,4 +580,158 @@ let pMemRefLoad (nodeId: NodeId) (memrefSSA: SSA) (indexSSA: SSA) : PSGParser<ML
         let! loadOp = pLoad resultSSA memrefSSA [indexSSA]
 
         return ([loadOp], TRValue { SSA = resultSSA; Type = resultType })
+    }
+
+// ═══════════════════════════════════════════════════════════
+// MONADIC ARGUMENT RECALL
+// ═══════════════════════════════════════════════════════════
+
+/// Recall argument from accumulator.
+/// VarRefWitness already auto-loads mutable variables (TMemRef) in post-order.
+/// By the time Application recalls its arguments, loading is done.
+/// This combinator provides a uniform (ops, ssa, type) triple interface.
+let pRecallArgWithLoad (argId: NodeId) : PSGParser<MLIROp list * SSA * MLIRType> =
+    parser {
+        let! (ssa, ty) = pRecallNode argId
+        return ([], ssa, ty)
+    }
+
+// ═══════════════════════════════════════════════════════════
+// MEMREF.ADD FUSION COMBINATOR
+// ═══════════════════════════════════════════════════════════
+
+/// Detect MemRef.add(base, offset) fusion on an argument node.
+/// If the argument was produced by MemRef.add, returns base memref + loaded offset.
+/// Uses pRecallArgWithLoad for offset — monadic, no raw MemRefOp.Load.
+let pDetectMemRefAddFusion (argId: NodeId) : PSGParser<SSA * SSA option * MLIRType * MLIROp list> =
+    parser {
+        let! (argSSA, argType) = pRecallNode argId
+        let! state = getUserState
+        match SemanticGraph.tryGetNode argId state.Graph with
+        | Some { Kind = SemanticKind.Application (funcId, addArgIds) } ->
+            match SemanticGraph.tryGetNode funcId state.Graph with
+            | Some { Kind = SemanticKind.Intrinsic info }
+                when info.Module = IntrinsicModule.MemRef && info.Operation = "add" ->
+                let! (_, baseSSA, baseTy) = pRecallArgWithLoad addArgIds.[0]
+                let! (loadOps, offsetSSA, _) = pRecallArgWithLoad addArgIds.[1]
+                return (baseSSA, Some offsetSSA, baseTy, loadOps)
+            | _ -> return (argSSA, None, argType, [])
+        | _ -> return (argSSA, None, argType, [])
+    }
+
+// ═══════════════════════════════════════════════════════════
+// COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
+// ═══════════════════════════════════════════════════════════
+
+/// MemRef.alloca intrinsic — stack allocation with compile-time size
+let pMemRefAllocaIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
+        do! ensure (info.Operation = "alloca") "Not MemRef.alloca"
+        let! state = getUserState
+        let! node = getCurrentNode
+        let countNodeId = argIds.[0]
+        match SemanticGraph.tryGetNode countNodeId state.Graph with
+        | Some countNode ->
+            match countNode.Kind with
+            | SemanticKind.Literal (NativeLiteral.Int (value, _)) ->
+                return! pNativePtrStackAlloc node.Id (int value)
+            | _ -> return! fail (Message $"MemRef.alloca: count must be a literal (node {countNodeId})")
+        | None -> return! fail (Message $"MemRef.alloca: count node not found")
+    }
+
+/// MemRef.store intrinsic — store value to memref with MemRef.add fusion
+let pMemRefStoreIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
+        do! ensure (info.Operation = "store") "Not MemRef.store"
+        do! ensure (argIds.Length >= 3) "MemRef.store: Expected 3 args"
+
+        // Recall value argument
+        let! (_, valueSSA, _) = pRecallArgWithLoad argIds.[0]
+
+        // Detect MemRef.add fusion on pointer argument
+        let! (memrefSSA, fusedOffsetOpt, memrefType, fusionOps) = pDetectMemRefAddFusion argIds.[1]
+
+        // Use fused offset or recall original index argument
+        let! (indexOps, offsetSSA) =
+            match fusedOffsetOpt with
+            | Some offset -> parser { return ([], offset) }
+            | None ->
+                parser {
+                    let! (ops, ssa, _) = pRecallArgWithLoad argIds.[2]
+                    return (ops, ssa)
+                }
+
+        let! state = getUserState
+        let elemType =
+            match memrefType with
+            | TMemRef e | TMemRefStatic (_, e) -> e
+            | _ -> mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+
+        let! (storeOps, result) = pMemRefStoreIndexed memrefSSA valueSSA offsetSSA elemType memrefType
+        return (fusionOps @ indexOps @ storeOps, result)
+    }
+
+/// MemRef.load intrinsic — load from memref at index
+let pMemRefLoadIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
+        do! ensure (info.Operation = "load") "Not MemRef.load"
+        do! ensure (argIds.Length >= 2) "MemRef.load: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, memrefSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, indexSSA, _) = pRecallArgWithLoad argIds.[1]
+        return! pMemRefLoad node.Id memrefSSA indexSSA
+    }
+
+/// MemRef.copy intrinsic — bulk memory copy
+let pMemRefCopyIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
+        do! ensure (info.Operation = "copy") "Not MemRef.copy"
+        do! ensure (argIds.Length >= 3) "MemRef.copy: Expected 3 args"
+        let! (_, destSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, srcSSA, _) = pRecallArgWithLoad argIds.[1]
+        let! (_, countSSA, _) = pRecallArgWithLoad argIds.[2]
+        return! pMemCopy destSSA srcSSA countSSA
+    }
+
+/// MemRef.add intrinsic — marker operation, returns offset only
+let pMemRefAddIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
+        do! ensure (info.Operation = "add") "Not MemRef.add"
+        do! ensure (argIds.Length >= 2) "MemRef.add: Expected 2 args"
+        let! (_, offsetSSA, _) = pRecallArgWithLoad argIds.[1]
+        return ([], TRValue { SSA = offsetSSA; Type = TIndex })
+    }
+
+/// Arena.create intrinsic — stack-allocated byte buffer
+let pArenaCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Arena
+        do! ensure (info.Operation = "create") "Not Arena.create"
+        let! state = getUserState
+        let! node = getCurrentNode
+        let sizeNodeId = argIds.[0]
+        match SemanticGraph.tryGetNode sizeNodeId state.Graph with
+        | Some sizeNode ->
+            match sizeNode.Kind with
+            | SemanticKind.Literal (NativeLiteral.Int (value, _)) ->
+                return! pArenaCreate node.Id (int value)
+            | _ -> return! fail (Message $"Arena.create: size must be a literal int")
+        | None -> return! fail (Message "Arena.create: size node not found")
+    }
+
+/// Arena.alloc intrinsic — allocate from arena
+let pArenaAllocIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Arena
+        do! ensure (info.Operation = "alloc") "Not Arena.alloc"
+        do! ensure (argIds.Length >= 2) "Arena.alloc: Expected 2 args"
+        let! node = getCurrentNode
+        let! (_, arenaSSA, arenaType) = pRecallArgWithLoad argIds.[0]
+        let! (_, sizeSSA, _) = pRecallArgWithLoad argIds.[1]
+        return! pArenaAlloc node.Id arenaSSA sizeSSA arenaType
     }
