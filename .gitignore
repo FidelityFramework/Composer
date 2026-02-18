@@ -64,10 +64,13 @@ src/file_sizes.csv
 .vscode/settings.json
 src/nul
 src/.claude/settings.local.json
-.claude/settings.local.json
-.claude/**
+# Local assistant/IDE metadata
+.claude/
+.gemini/
+.serena/
+.azuredevops/
+.vscode/
 **/build**
 **/target
 **/helpers
-.serena
 docs/QC_Demo/scripts/deliberate_sample.py
