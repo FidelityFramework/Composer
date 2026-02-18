@@ -526,7 +526,7 @@ ALL samples 01-10 must continue to pass after closure implementation:
 for i in 01 02 03 04 05 06 07 08 09 10; do
   cd ~/repos/Composer/samples/console/FidelityHelloWorld/${i}_*/
   ~/repos/Composer/src/bin/Debug/net10.0/Composer compile *.fidproj
-  ./target/* || echo "FAIL: Sample $i"
+  ./targets/* || echo "FAIL: Sample $i"
 done
 ```
 

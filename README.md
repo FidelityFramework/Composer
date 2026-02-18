@@ -181,7 +181,7 @@ Compiles to native binary with:
 
 ```bash
 composer compile HelloWorld.fidproj
-echo "Alice" | ./target/helloworld
+echo "Alice" | ./targets/helloworld
 # Output: "Enter your name: Hello, Alice!"
 ```
 
@@ -219,7 +219,7 @@ composer compile MyProject.fidproj -k
 
 ### Intermediate Artifacts
 
-With `-k` flag, inspect each nanopass output in `target/intermediates/`:
+With `-k` flag, inspect each nanopass output in `targets/intermediates/`:
 
 | File | Nanopass Output |
 |------|----------------|

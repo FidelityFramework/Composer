@@ -87,7 +87,7 @@ let private runLinking (llPath: string) (outputPath: string) (triple: string) (k
 
 let private setupContext (options: CompilationOptions) (project: ProjectCheckResult) : CompilationContext =
     let config = project.Options
-    let buildDir = Path.Combine(config.ProjectDirectory, "target")
+    let buildDir = Path.Combine(config.ProjectDirectory, "targets")
     Directory.CreateDirectory(buildDir) |> ignore
 
     let intermediatesDir =
@@ -137,7 +137,7 @@ let compileProject (options: CompilationOptions) : int =
     let needsIntermediates = options.KeepIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly
     if needsIntermediates then
         let projectDir = Path.GetDirectoryName(options.ProjectPath)
-        let intermediatesDir = Path.Combine(projectDir, "target", "intermediates")
+        let intermediatesDir = Path.Combine(projectDir, "targets", "intermediates")
         Directory.CreateDirectory(intermediatesDir) |> ignore
         enableAllPhases intermediatesDir
 

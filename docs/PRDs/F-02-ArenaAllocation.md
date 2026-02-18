@@ -246,7 +246,7 @@ echo "World" | ./HelloWorld
 # Hello, World!
 ```
 
-Check intermediate: `cat target/intermediates/07_output.mlir`
+Check intermediate: `cat targets/intermediates/07_output.mlir`
 - Should see `memref.alloc(%size)` where `%size` is `index` type
 - Should see `arith.addi` on `index` values for size arithmetic
 - Should NOT see `llvm.*` operations

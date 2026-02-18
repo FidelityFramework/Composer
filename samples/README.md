@@ -57,14 +57,14 @@ Samples 29-31 synthesize all prior capabilities: async (message loop), closures 
 ```bash
 cd samples/console/FidelityHelloWorld/01_HelloWorldDirect
 composer compile HelloWorld.fidproj
-./target/helloworld
+./targets/helloworld
 ```
 
 ### With Intermediate Files
 
 ```bash
 composer compile HelloWorld.fidproj -k
-ls target/intermediates/
+ls targets/intermediates/
 # fncs_phase_*.json, alex_coeffects.json, *.mlir, *.ll
 ```
 
@@ -73,7 +73,7 @@ ls target/intermediates/
 Samples 02-04 and 06 require input. Each has a `.stdin` file:
 
 ```bash
-./target/helloworld < HelloWorld.stdin
+./targets/helloworld < HelloWorld.stdin
 ```
 
 ## Regression Test Suite

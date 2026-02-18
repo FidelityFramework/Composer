@@ -323,7 +323,7 @@ ModuleOrNamespace: RecordTest
 ```bash
 cd samples/console/FidelityHelloWorld/10_Records
 /path/to/Composer compile Records.fidproj
-./target/records
+./targets/records
 ```
 
 **Expected Output**:

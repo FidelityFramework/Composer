@@ -227,7 +227,7 @@ A change is NOT complete until the regression runner passes AND binaries execute
 
 ### Intermediate Artifacts
 
-After any runner run, intermediates are at `samples/console/FidelityHelloWorld/<sample>/target/intermediates/`:
+After any runner run, intermediates are at `samples/console/FidelityHelloWorld/<sample>/targets/intermediates/`:
 
 | Artifact | Stage |
 |----------|-------|

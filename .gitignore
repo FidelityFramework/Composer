@@ -72,7 +72,12 @@ src/.claude/settings.local.json
 .vscode/
 .config/
 .devcontainer/
+# Fidelity/Clef local compiler assets
+# Multi-target projects should use `targets/` (plural) at the project level.
+# Current tooling may still emit `target/` for leaf package builds.
+targets/
+target/
+deps/
 **/build**
-**/target
 **/helpers
 docs/QC_Demo/scripts/deliberate_sample.py

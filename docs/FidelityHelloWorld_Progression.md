@@ -723,7 +723,7 @@ For each sample:
 # Example validation
 cd /home/hhh/repos/Composer/samples/console/FidelityHelloWorld/20_BasicRegion
 /home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer compile BasicRegion.fidproj
-./target/basicregion
+./targets/basicregion
 # Expected: Sum: 999000
 ```
 

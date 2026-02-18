@@ -263,7 +263,7 @@ This is statically linked - the USB stack becomes part of the unikernel binary. 
 
 ```bash
 # Flash via probe-rs
-probe-rs download --chip STM32L552ZETx ./target/quantum_credential.elf
+probe-rs download --chip STM32L552ZETx ./targets/quantum_credential.elf
 
 # Debug output via RTT (Real-Time Transfer)
 probe-rs rtt --chip STM32L552ZETx
@@ -582,7 +582,7 @@ The difference is:
 composer compile QuantumCredential.fidproj --target thumbv8m.main-none-eabi
 
 # Flash
-probe-rs download --chip STM32L552ZETx ./target/quantum_credential.elf
+probe-rs download --chip STM32L552ZETx ./targets/quantum_credential.elf
 
 # Debug output
 probe-rs rtt --chip STM32L552ZETx
@@ -595,7 +595,7 @@ probe-rs rtt --chip STM32L552ZETx
 composer compile Keystation.fidproj --target aarch64-unknown-linux-gnu
 
 # Deploy (copy to SD card or SCP)
-scp ./target/keystation root@keystation.local:/opt/keystation/
+scp ./targets/keystation root@keystation.local:/opt/keystation/
 
 # Run (SSH or auto-start)
 ssh root@keystation.local /opt/keystation/keystation

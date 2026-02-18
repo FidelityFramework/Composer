@@ -395,7 +395,7 @@ Enrichment nanopasses work on fully-typed PSG:
 Each phase outputs intermediate PSG (when `-k` flag set):
 
 ```
-target/intermediates/
+targets/intermediates/
 ├── psg_phase_1_structural.json
 ├── psg_phase_2_symbol_correlated.json
 ├── psg_phase_3_reachability_marked.json

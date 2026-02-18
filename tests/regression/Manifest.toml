@@ -13,7 +13,7 @@ default_timeout_seconds = 30
 [[samples]]
 name = "01_HelloWorldDirect"
 project = "HelloWorld.fidproj"
-binary = "target/helloworld"
+binary = "targets/helloworld"
 expected_output = """
 Hello, World!
 """
@@ -25,7 +25,7 @@ Hello, World!
 [[samples]]
 name = "02_HelloWorldSaturated"
 project = "HelloWorld.fidproj"
-binary = "target/helloworld"
+binary = "targets/helloworld"
 stdin_file = "HelloWorld.stdin"
 expected_output = """
 Enter your name: Hello, Houston!
@@ -38,7 +38,7 @@ Enter your name: Hello, Houston!
 [[samples]]
 name = "03_HelloWorldHalfCurried"
 project = "HelloWorld.fidproj"
-binary = "target/helloworld"
+binary = "targets/helloworld"
 stdin_file = "HelloWorld.stdin"
 expected_output = """
 Enter your name: Hello, Houston!
@@ -51,7 +51,7 @@ Enter your name: Hello, Houston!
 [[samples]]
 name = "04_HelloWorldFullCurried"
 project = "HelloWorld.fidproj"
-binary = "target/helloworld"
+binary = "targets/helloworld"
 stdin_file = "HelloWorld.stdin"
 expected_output = """
 Enter your name: Hello, Houston!
@@ -64,7 +64,7 @@ Enter your name: Hello, Houston!
 [[samples]]
 name = "05_AddNumbers"
 project = "AddNumbers.fidproj"
-binary = "target/addnumbers"
+binary = "targets/addnumbers"
 expected_output = """
 === DU Pattern Match Test ===
 IntVal 42 -> 42
@@ -79,7 +79,7 @@ Done!
 [[samples]]
 name = "06_AddNumbersInteractive"
 project = "AddNumbersInteractive.fidproj"
-binary = "target/addnumbers_interactive"
+binary = "targets/addnumbers_interactive"
 stdin_file = "AddNumbersInteractive.stdin"
 expected_output = """
 === Interactive Number Addition ===
@@ -95,7 +95,7 @@ Enter first number: Enter second number: 42 + 3.14 = 45.14
 [[samples]]
 name = "07_BitsTest"
 project = "BitsTest.fidproj"
-binary = "target/bitstest"
+binary = "targets/bitstest"
 expected_output = """
 Bits intrinsics test passed!
 """
@@ -107,7 +107,7 @@ Bits intrinsics test passed!
 [[samples]]
 name = "08_Option"
 project = "Option.fidproj"
-binary = "target/option"
+binary = "targets/option"
 expected_output = """
 === Option Type Test ===
 Some 42: 42
@@ -121,7 +121,7 @@ Done!
 [[samples]]
 name = "09_Result"
 project = "Result.fidproj"
-binary = "target/result"
+binary = "targets/result"
 expected_output = """
 === Result Type Test ===
 Ok 42: 42
@@ -136,7 +136,7 @@ Done!
 [[samples]]
 name = "10_Records"
 project = "Records.fidproj"
-binary = "target/records"
+binary = "targets/records"
 expected_output = """
 === Records Test ===
 Hello, Alice! You are 30 years old.
@@ -166,7 +166,7 @@ Name only: Diana
 [[samples]]
 name = "11_Closures"
 project = "Closures.fidproj"
-binary = "target/closures"
+binary = "targets/closures"
 expected_output = """
 === Closures Test ===
 --- Counter ---
@@ -203,7 +203,7 @@ counter2: 102
 [[samples]]
 name = "12_HigherOrderFunctions"
 project = "HigherOrderFunctions.fidproj"
-binary = "target/hof"
+binary = "targets/hof"
 expected_output = """
 === Higher-Order Functions Test ===
 increment twice on 5: 7
@@ -228,7 +228,7 @@ increment then timesTwo on 5: 12
 [[samples]]
 name = "13_Recursion"
 project = "Recursion.fidproj"
-binary = "target/recursion"
+binary = "targets/recursion"
 expected_output = """
 === Recursion Test ===
 --- Factorial ---
@@ -271,7 +271,7 @@ isOdd 7: true
 [[samples]]
 name = "14_Lazy"
 project = "Lazy.fidproj"
-binary = "target/Lazy"
+binary = "targets/Lazy"
 expected_output = """
 === Lazy Values Test (PRD-14) ===
 --- No Captures (Simple) ---
@@ -303,7 +303,7 @@ lazyAdd 5 6: Adding captured values...
 [[samples]]
 name = "15_SimpleSeq"
 project = "SimpleSeq.fidproj"
-binary = "target/SimpleSeq"
+binary = "targets/SimpleSeq"
 timeout_seconds = 60
 expected_output = """
 === Sample 15: Simple Sequences ===
@@ -359,7 +359,7 @@ Expected values:
 [[samples]]
 name = "16_SeqOperations"
 project = "SeqOperations.fidproj"
-binary = "target/SeqOperations"
+binary = "targets/SeqOperations"
 timeout_seconds = 60
 expected_output = """
 === Sample 16: Sequence Operations ===

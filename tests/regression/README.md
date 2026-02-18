@@ -34,17 +34,39 @@ dotnet fsi Runner.fsx -- --timeout 60
 | `--timeout SEC` | Override the default timeout for all samples. |
 | `--help` | Show help message. |
 
+## Subsetting Runs
+
+Use `--sample` to run a subset of `Manifest.toml` entries.
+
+```bash
+# Single exact sample name
+dotnet fsi Runner.fsx -- --sample 07_BitsTest
+
+# Multiple explicit samples
+dotnet fsi Runner.fsx -- --sample 07_BitsTest --sample 14_Lazy --sample 16_SeqOperations
+
+# Family/substring match (Runner uses name-contains matching)
+dotnet fsi Runner.fsx -- --sample HelloWorld
+dotnet fsi Runner.fsx -- --sample Recursion
+```
+
+Notes:
+- `--sample` can be repeated.
+- Matching is against the manifest `name` field.
+- Matching is substring-based, not strict exact-match only.
+
 ## How It Works
 
 1. **Single Build**: The harness builds the Composer compiler once at startup (which pulls in fsnative if needed).
 2. **Sample Discovery**: Reads `Manifest.toml` for sample definitions and expected outputs.
 3. **Compilation Phase**: Compiles each sample using the built compiler **with `-k` flag**.
 4. **Execution Phase**: Runs successfully compiled binaries and compares output.
+   - If `stdin_file` is set in `Manifest.toml`, Runner pipes that input to the binary (manifest-driven interactive coverage).
 5. **Reporting**: Generates a summary report with pass/fail status.
 
 **Note**: The `-k` flag is always passed to the compiler, so intermediates are always generated. After a test run, you can immediately inspect:
 ```
-samples/console/FidelityHelloWorld/<sample>/target/intermediates/
+samples/console/FidelityHelloWorld/<sample>/targets/intermediates/
 ```
 
 ## Manifest Format
@@ -60,7 +82,7 @@ default_timeout_seconds = 30
 [[samples]]
 name = "01_HelloWorldDirect"
 project = "HelloWorld.fidproj"
-binary = "target/helloworld"
+binary = "targets/helloworld"
 expected_output = """
 Hello, World!
 """
@@ -68,7 +90,7 @@ Hello, World!
 [[samples]]
 name = "02_HelloWorldSaturated"
 project = "HelloWorld.fidproj"
-binary = "target/helloworld"
+binary = "targets/helloworld"
 stdin_file = "HelloWorld.stdin"    # Optional: provide input
 expected_output = """
 Enter your name: Hello, Houston!
@@ -77,7 +99,7 @@ Enter your name: Hello, Houston!
 [[samples]]
 name = "16_SeqOperations"
 project = "SeqOperations.fidproj"
-binary = "target/SeqOperations"
+binary = "targets/SeqOperations"
 skip = true                        # Skip this sample
 skip_reason = "PRD-16 not yet implemented"
 expected_output = ""
@@ -132,7 +154,7 @@ Status: FAILED
 1. Add the sample to `Manifest.toml` with:
    - `name`: Directory name under samples_root
    - `project`: The .fidproj file name
-   - `binary`: Path to output binary (usually `target/<name>`)
+   - `binary`: Path to output binary (usually `targets/<name>`)
    - `expected_output`: Expected stdout (use `"""` for multiline)
    - Optional: `stdin_file` for samples needing input
    - Optional: `timeout_seconds` for samples needing more time
