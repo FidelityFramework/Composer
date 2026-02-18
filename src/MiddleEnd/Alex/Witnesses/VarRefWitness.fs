@@ -18,7 +18,6 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemRefPatterns  // pLoadMutableVariable
 open Alex.Dialects.Core.Types  // TMemRef
-open Alex.CodeGeneration.TypeMapping
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
@@ -46,7 +45,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                             let! ssa = getNodeSSA bindingId
                             let! state = getUserState
                             let arch = state.Coeffects.Platform.TargetArch
-                            let ty = mapNativeTypeForArch arch bindingNode.Type
+                            let ty = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph bindingNode.Type
                             return ([], TRValue { SSA = ssa; Type = ty })
                         }
 

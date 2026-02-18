@@ -30,7 +30,7 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 let pLoad (ssa: SSA) (memref: SSA) (indices: SSA list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let elemType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
         match MLIRAccumulator.recallSSAType memref state.Accumulator with
         | Some memrefType ->
             return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
@@ -100,7 +100,7 @@ let pAllocStatic (ssa: SSA) (count: int) (elemType: MLIRType) (alignment: int op
 let pSubView (ssa: SSA) (source: SSA) (offsets: SSA list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let ty = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let ty = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
         let memrefType = TMemRef ty
         return MLIROp.MemRefOp (MemRefOp.SubView (ssa, source, offsets, memrefType))
     }

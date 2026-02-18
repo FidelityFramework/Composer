@@ -1,0 +1,24 @@
+#-----------------------------------------------------------
+# Vivado v2025.2 (64-bit)
+# SW Build 6299465 on Fri Nov 14 12:34:56 MST 2025
+# IP Build 6300035 on Fri Nov 14 10:48:45 MST 2025
+# SharedData Build 6298862 on Thu Nov 13 04:50:51 MST 2025
+# Start of session at: Wed Feb 18 15:42:04 2026
+# Process ID         : 210081
+# Current directory  : /home/hhh/repos/Composer
+# Command line       : vivado -mode tcl -source /tmp/vivado_smoke.tcl
+# Log file           : /home/hhh/repos/Composer/vivado.log
+# Journal file       : /home/hhh/repos/Composer/vivado.jou
+# Running On         : Z13
+# Platform           : Arch
+# Operating System   : Arch Linux
+# Processor Detail   : AMD RYZEN AI MAX+ 395 w/ Radeon 8060S
+# CPU Frequency      : 2000.000 MHz
+# CPU Physical cores : 16
+# CPU Logical cores  : 32
+# Host memory        : 62810 MB
+# Swap memory        : 4294 MB
+# Total Virtual      : 67105 MB
+# Available Virtual  : 56901 MB
+#-----------------------------------------------------------
+source /tmp/vivado_smoke.tcl

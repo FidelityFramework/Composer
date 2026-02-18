@@ -14,7 +14,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ApplicationPatterns
-open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -71,8 +70,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 WitnessOutput.error $"Saturated call to {funcName}: some args not witnessed: {unwitnessedArgs}"
             else
                 let args = argsResult |> List.choose id
-                let arch = ctx.Coeffects.Platform.TargetArch
-                let retType = mapNativeTypeForArch arch node.Type
+                let retType = mapType node.Type ctx
 
                 // Retrieve deferred InlineOps for partial app arguments
                 let deferredOps =
@@ -131,8 +129,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     WitnessOutput.error "Application: Some arguments not yet witnessed"
                 else
                     let args = argsResult |> List.choose id
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let retType = mapNativeTypeForArch arch node.Type
+                    let retType = mapType node.Type ctx
 
                     match tryMatch (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -148,8 +145,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     WitnessOutput.error "Application: Some arguments not yet witnessed"
                 else
                     let args = argsResult |> List.choose id
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let retType = mapNativeTypeForArch arch node.Type
+                    let retType = mapType node.Type ctx
                     match tryMatch (pDirectCall node.Id localName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | None -> WitnessOutput.error "Direct function call pattern emission failed"
@@ -168,8 +164,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         WitnessOutput.error "Application: Some arguments not yet witnessed"
                     else
                         let args = argsResult |> List.choose id
-                        let arch = ctx.Coeffects.Platform.TargetArch
-                        let retType = mapNativeTypeForArch arch node.Type
+                        let retType = mapType node.Type ctx
 
                         match tryMatch (pApplicationCall node.Id funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

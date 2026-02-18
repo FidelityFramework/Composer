@@ -18,7 +18,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements  // pFuncCall, pFuncCallIndirect
 open Alex.Elements.ArithElements // Arithmetic elements for wrapper patterns
 open Alex.Elements.IndexElements // pIndexCastS
-open Alex.CodeGeneration.TypeMapping // mapNativeTypeForArch
+open Alex.CodeGeneration.TypeMapping
 open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad (monadic TMemRef auto-load)
 
 // ═══════════════════════════════════════════════════════════
@@ -221,7 +221,7 @@ let pTypeConversion (nodeId: NodeId)
         let resultSSA = ssas.[0]
 
         let! state = getUserState
-        let dstType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let dstType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
 
         if srcType = dstType then
             return (loadOps, TRValue { SSA = srcSSA; Type = srcType })

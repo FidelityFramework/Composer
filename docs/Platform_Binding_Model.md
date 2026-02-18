@@ -1,31 +1,56 @@
-# Sophisticated Platform Binding Model
+# Platform Binding Model
 
 ## Overview
 
-The Fidelity platform binding model has evolved from a simple "one-page binding" to a comprehensive capability system supporting memory management by choice across the full hardware spectrum.
+The Fidelity platform binding model provides substrate-aware type resolution and MLIR generation across the full hardware spectrum. Platform bindings are organized substrate-first, reflecting the reality that CPU, FPGA, GPU, NPU, and MCU targets have fundamentally different memory models, syscall conventions, and numeric formats.
 
 ## Repository Structure
 
 ```
 ~/repos/Fidelity.Platform/
-├── README.md
-├── Linux_x86_64/               # Linux on x86-64
-│   ├── Types.fs                # NTU type definitions with quotations
-│   ├── Platform.fs             # PlatformDescriptor quotation
-│   ├── Capabilities.fs         # Platform predicates
-│   ├── MemoryRegions.fs        # Stack, heap, arena definitions
-│   ├── CacheCharacteristics.fs # Cache info for optimization
-│   ├── Syscalls.fs             # Syscall conventions
-│   └── Fidelity.Platform.Linux_x86_64.fsproj
-├── Linux_ARM64/                # Linux on ARM64 (future)
-├── Windows_x86_64/             # Windows on x86-64 (future)
-├── MacOS_ARM64/                # macOS on Apple Silicon (future)
-└── BareMetal_ARM32/            # Bare-metal ARM Cortex-M (future)
+├── PLATFORM_STRUCTURE.md
+├── Profiles/                       # Multi-substrate system profiles
+│   └── StrixHalo_ArtyLab/          # CPU+FPGA+GPU+NPU profile
+├── CPU/
+│   └── Linux/
+│       └── X86_64/
+│           └── StrixHalo/          # Zen5-specific bindings
+│               ├── Types.fs
+│               ├── Platform.fs
+│               ├── Capabilities.fs
+│               ├── MemoryRegions.fs
+│               ├── CacheCharacteristics.fs
+│               ├── Syscalls.fs
+│               └── Fidelity.Platform.CPU.Linux.X86_64.StrixHalo.fsproj
+├── FPGA/
+│   └── Xilinx/
+│       └── Artix7/
+│           └── ArtyA7_100T/        # Artix-7 100T binding
+│               ├── Types.fs        # NTUposit resolution
+│               ├── Platform.fs
+│               ├── Capabilities.fs
+│               └── ...
+├── GPU/
+│   └── AMD/
+│       └── RDNA3_5/
+│           └── StrixHalo_iGPU/
+├── NPU/
+│   └── AMD/
+│       └── XDNA2/
+│           └── StrixHalo_NPU/
+├── MCU/
+│   └── ST/
+│       └── STM32F7/
+│           └── MeadowF7/
+└── CGRA/
+    └── ...
 ```
+
+The substrate-first layout makes cross-substrate profiling natural: a `Profiles/StrixHalo_ArtyLab` profile composes CPU + FPGA + GPU + NPU bindings for a single physical system.
 
 ## Platform Descriptor
 
-The core platform quotation:
+The core platform quotation (CPU/Linux/X86_64 example):
 
 ```fsharp
 // Platform.fs
@@ -51,35 +76,17 @@ Abstract propositions for conditional compilation:
 ```fsharp
 // Capabilities.fs
 module Capabilities =
-    /// Platform supports 32-bit word operations
-    let fits_u32: Expr<bool> = <@ true @>
-    
-    /// Platform supports 64-bit word operations
     let fits_u64: Expr<bool> = <@ true @>
-    
-    /// 64-bit implies 32-bit
-    let fits_u64_implies_u32: Expr<unit> = <@ () @>
-    
-    /// Platform has AVX-512 vector support
-    let has_avx512: Expr<bool> = <@ false @>  // CPU-dependent
-    
-    /// Platform has AVX2 vector support
     let has_avx2: Expr<bool> = <@ true @>
-    
-    /// Platform has NEON vector support (ARM)
-    let has_neon: Expr<bool> = <@ false @>
-    
-    /// Platform has 64-bit atomic operations
-    let has_atomics_64: Expr<bool> = <@ true @>
-    
-    /// Maximum supported vector width in bits
+    let has_avx512: Expr<bool> = <@ false @>  // CPU-dependent
+    let has_posit_hw: Expr<bool> = <@ false @>  // FPGA only
     let vector_width_max: Expr<int> = <@ 256 @>  // AVX2
 ```
 
 ### Using Predicates for Conditional Compilation
 
 ```fsharp
-// In application code using Fidelity.Platform
+// In Clef application code
 let vectorAdd (a: array<float>) (b: array<float>) =
     if Platform.has_avx512 then
         vectorAdd_avx512 a b
@@ -93,12 +100,11 @@ CCS sees the predicates as abstract. Alex witnesses them to eliminate dead branc
 
 ## Memory Regions
 
-For memory management by choice:
+For DMM (Deterministic Memory Management) integration:
 
 ```fsharp
 // MemoryRegions.fs
 module MemoryRegions =
-    /// Stack characteristics
     let stackRegion: Expr<MemoryRegion> = <@
         { Name = "Stack"
           MaxSize = 8388608      // 8 MB typical
@@ -106,16 +112,7 @@ module MemoryRegions =
           GrowthDirection = Down
           ThreadLocal = true }
     @>
-    
-    /// Heap region
-    let heapRegion: Expr<MemoryRegion> = <@
-        { Name = "Heap"
-          Strategy = ArenaOrMalloc
-          Alignment = 16
-          ThreadLocal = false }
-    @>
-    
-    /// Arena for scratch allocations
+
     let arenaRegion: Expr<MemoryRegion> = <@
         { Name = "Arena"
           Strategy = BumpAllocator
@@ -124,35 +121,27 @@ module MemoryRegions =
     @>
 ```
 
-## Cache Characteristics
+DMM escape classifications (StackScoped, ClosureCapture, ReturnEscape, ByRefEscape) map to these regions via the `NTUMemorySpace` qualifier attached to PSG nodes during coeffect analysis.
 
-For optimization hints:
+## Cache Characteristics
 
 ```fsharp
 // CacheCharacteristics.fs
 module CacheInfo =
-    /// L1 data cache line size
     let l1_line_size: Expr<int> = <@ 64 @>
-    
-    /// L1 data cache size
     let l1_size: Expr<int> = <@ 32768 @>  // 32 KB
-    
-    /// L2 cache size
     let l2_size: Expr<int> = <@ 262144 @>  // 256 KB
-    
-    /// L3 cache size (shared)
     let l3_size: Expr<int> = <@ 8388608 @>  // 8 MB
-    
-    /// Prefetch distance hint
     let prefetch_distance: Expr<int> = <@ 256 @>
 ```
 
-## Syscall Conventions
+Lattice surfaces cache locality estimates for hot loops based on DMM allocation size + these characteristics.
+
+## Syscall Conventions (CPU targets)
 
 ```fsharp
 // Syscalls.fs
 module Syscalls =
-    /// Linux x86-64 syscall convention
     let convention: Expr<SyscallConvention> = <@
         { CallingConvention = SysV_AMD64
           ArgRegisters = [| RDI; RSI; RDX; R10; R8; R9 |]
@@ -160,30 +149,24 @@ module Syscalls =
           ErrorReturn = NegativeErrno
           SyscallInstruction = Syscall }
     @>
-    
-    /// Syscall numbers
-    let sys_read: Expr<int> = <@ 0 @>
+
     let sys_write: Expr<int> = <@ 1 @>
-    let sys_open: Expr<int> = <@ 2 @>
-    let sys_close: Expr<int> = <@ 3 @>
-    let sys_mmap: Expr<int> = <@ 9 @>
-    let sys_munmap: Expr<int> = <@ 11 @>
+    let sys_read: Expr<int> = <@ 0 @>
     let sys_nanosleep: Expr<int> = <@ 35 @>
-    let sys_exit: Expr<int> = <@ 60 @>
     let sys_exit_group: Expr<int> = <@ 231 @>
 ```
 
 ## Integration with fidproj
 
-Projects reference platform bindings:
+Projects reference the substrate-appropriate binding:
 
 ```toml
-# HelloWorld.fidproj
+# HelloWorld.fidproj (CPU/Linux/X86_64)
 [package]
 name = "HelloWorld"
 
 [dependencies]
-platform = { path = "/home/hhh/repos/Fidelity.Platform/Linux_x86_64" }
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/X86_64/StrixHalo" }
 
 [build]
 sources = ["HelloWorld.fs"]
@@ -191,24 +174,32 @@ output = "helloworld"
 output_kind = "freestanding"
 ```
 
+For multi-substrate systems, reference a profile:
+
+```toml
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/Profiles/StrixHalo_ArtyLab" }
+```
+
 ## Pipeline Integration
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Composer CLI                                             │
+│  Composer CLI                                            │
 │  1. Parse fidproj with Fidelity.Toml                    │
-│  2. Load Fidelity.Platform library                      │
+│  2. Load Fidelity.Platform binding(s)                   │
 │  3. Extract quotations (platform, capabilities, etc.)   │
-│  4. Pass to CCS as PlatformContext                     │
+│  4. Pass to CCS as PlatformContext                      │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │  CCS                                                    │
-│  1. Receive PlatformContext as parameter                │
+│  1. Receive PlatformContext                             │
 │  2. Attach platform metadata to PSG nodes               │
-│  3. Validate types (NTUint identity, not width)         │
-│  4. Return SemanticGraph with quotations attached       │
+│  3. Validate NTU type identity (not width)              │
+│  4. Resolve DTS dimensions, DMM escape classifications  │
+│  5. Return PSG with quotations attached                 │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -217,49 +208,45 @@ output_kind = "freestanding"
 │  1. Read platform quotations from PSG                   │
 │  2. Witness NTU types → concrete MLIR types             │
 │  3. Eliminate dead branches via predicates              │
-│  4. Generate platform-optimized code                    │
+│  4. Select numeric format per DTS dimensional domain    │
+│  5. Generate substrate-optimized MLIR                   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## NTU Type Resolution
+## NTU Type Resolution by Substrate
 
-Platform bindings define how NTU types resolve:
+| NTU Type | CPU/Linux/X86_64 | CPU/Linux/ARM32 | FPGA/Xilinx/Artix7 |
+|----------|------------------|-----------------|---------------------|
+| NTUint | i64 | i32 | i32 (softcore) |
+| NTUuint | i64 | i32 | i32 |
+| NTUptr<'T> | ptr (8B) | ptr (4B) | ptr (4B) |
+| NTUsize | u64 | u32 | u32 |
+| NTUfloat64 | f64 | f64 | posit32 (if DTS selects) |
+| NTUposit(32,2) | emulated | emulated | hardened IP |
 
-| NTU Type | Linux_x86_64 | Linux_ARM64 | Linux_ARM32 | BareMetal_ARM32 |
-|----------|--------------|-------------|-------------|-----------------|
-| NTUint | i64 | i64 | i32 | i32 |
-| NTUuint | i64 | i64 | i32 | i32 |
-| NTUptr<'T> | ptr (8B) | ptr (8B) | ptr (4B) | ptr (4B) |
-| NTUsize | u64 | u64 | u32 | u32 |
-| NTUdiff | i64 | i64 | i32 | i32 |
+FPGA bindings may map `NTUfloat64` to `posit32` when the DTS dimensional domain and target capabilities both confirm the substitution is safe. This is the representation selection rule described in `CCS_Architecture.md`.
 
-## Adding New Platforms
+## Adding New Substrates
 
-1. **Create platform directory:**
-   ```bash
-   mkdir ~/repos/Fidelity.Platform/Windows_x86_64
+1. **Create substrate directory following the hierarchy:**
+   ```
+   CPU/Linux/X86_64/NewSoC/
+   FPGA/Xilinx/Artix7/NewBoard/
+   MCU/Nordic/nRF52840/NewModule/
    ```
 
-2. **Create Types.fs** with shared type definitions
+2. **Create the standard module set:** Types.fs, Platform.fs, Capabilities.fs, MemoryRegions.fs
 
-3. **Create Platform.fs** with `Expr<PlatformDescriptor>` quotation
+3. **For CPU targets:** add Syscalls.fs and CacheCharacteristics.fs
 
-4. **Create Capabilities.fs** with platform predicates
+4. **For FPGA targets:** add posit resolution rules to Types.fs
 
-5. **Create MemoryRegions.fs** for memory management
+5. **Create .fsproj and reference in fidproj**
 
-6. **Create Syscalls.fs** (or equivalent for bare-metal)
-
-7. **Create .fsproj** and build
-
-8. **Reference in fidproj:**
-   ```toml
-   [dependencies]
-   platform = { path = "/home/hhh/repos/Fidelity.Platform/Windows_x86_64" }
-   ```
+6. **For multi-substrate systems:** create a Profile that composes the relevant bindings
 
 ## Related Documentation
 
-- `NTU_Architecture.md` - NTU type system design
-- `Architecture_Canonical.md` - Overall Fidelity architecture
-- `CCS_Architecture.md` - CCS native type checking
+- `NTU_Architecture.md` - NTU type system design and DTS integration
+- `CCS_Architecture.md` - DTS/DMM coeffect analysis
+- `Architecture_Canonical.md` - Composer pipeline overview

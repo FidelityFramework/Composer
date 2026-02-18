@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The NTU (Native Type Universe) architecture provides platform-generic types for Fidelity that resolve via quotation-based platform bindings. This follows the F* pattern where type WIDTH is an **erased assumption**, not part of type identity.
+The NTU (Native Type Universe) architecture provides platform-generic types for Fidelity that resolve via quotation-based platform bindings. Type WIDTH is an **erased assumption**, not part of type identity — CCS enforces type identity; Alex resolves widths from platform quotations.
 
 **Core Principle**: Platform awareness flows FROM THE TOP via quotation-based binding libraries, not from CCS type inference.
 
@@ -10,7 +10,7 @@ The NTU (Native Type Universe) architecture provides platform-generic types for 
 
 NTU = **N**ative **T**ype **U**niverse
 
-The "NTU" prefix is used internally by CCS to mark platform-generic types, similar to how CCS used "IL" prefixes extensively.
+The "NTU" prefix marks platform-generic types internally in CCS. Types come in three families: platform-dependent (resolved via quotations), fixed-width (platform-independent), and numeric formats (including posit for FPGA targets).
 
 ## NTU Type System
 
@@ -20,12 +20,13 @@ The "NTU" prefix is used internally by CCS to mark platform-generic types, simil
 |----------|---------|--------|-------|
 | `NTUint` | Platform word (signed) | i64 | i32 |
 | `NTUuint` | Platform word (unsigned) | i64 | i32 |
-| `NTUnint` | Native int (pointer-sized) | i64 | i32 |
+| `NTUnint` | Native int (pointer-sized signed) | i64 | i32 |
+| `NTUunint` | Native uint (pointer-sized unsigned) | u64 | u32 |
 | `NTUptr<'T>` | Native pointer | 8 bytes | 4 bytes |
 | `NTUsize` | Size type (`size_t`) | u64 | u32 |
 | `NTUdiff` | Pointer difference (`ptrdiff_t`) | i64 | i32 |
 
-### Fixed-Width Types (Platform-Independent)
+### Fixed-Width Integer and Float Types (Platform-Independent)
 
 | NTU Type | Meaning | Always |
 |----------|---------|--------|
@@ -37,56 +38,73 @@ The "NTU" prefix is used internally by CCS to mark platform-generic types, simil
 | `NTUuint16` | 16-bit unsigned | u16 |
 | `NTUuint32` | 32-bit unsigned | u32 |
 | `NTUuint64` | 64-bit unsigned | u64 |
-| `NTUfloat32` | 32-bit float | f32 |
-| `NTUfloat64` | 64-bit float | f64 |
+| `NTUfloat32` | 32-bit IEEE 754 float | f32 |
+| `NTUfloat64` | 64-bit IEEE 754 float | f64 |
+
+### Posit Types (Gustafson Type III Unum)
+
+| NTU Type | Meaning | Target |
+|----------|---------|--------|
+| `NTUposit(w, es)` | Posit arithmetic, width `w`, exponent bits `es` | FPGA, specialized hardware |
+
+Convenience aliases: `posit8` = `NTUposit(8, 0)`, `posit16` = `NTUposit(16, 1)`, `posit32` = `NTUposit(32, 2)`, `posit64` = `NTUposit(64, 3)`.
+
+Posit arithmetic is selected automatically by the DTS representation selection logic when the dimensional domain and target capabilities warrant it (e.g., Xilinx FPGA with tapered-precision needs). See `CCS_Architecture.md` for representation selection rules.
+
+### Memory Space Qualifiers
+
+| NTU Qualifier | Meaning | MLIR Mapping |
+|---------------|---------|--------------|
+| `Default` | Implicit (stack or heap per escape) | default address space |
+| `Stack` | Stack-allocated, lexically scoped | `alloca` |
+| `Global` | Global/static lifetime | `global` |
+| `Shared` | GPU shared memory | `gpu.shared` |
+
+`NTUMemorySpace` qualifiers are attached to allocations during DMM coeffect analysis and consumed by Alex during MLIR emission.
 
 ## Layered Type Abstraction
 
-The architecture uses a layered approach:
-
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Application Code                                        │
-│  Level 1: int, uint (standard Clef)                       │
-│  Level 2/3: platformint, platformsize (explicit)        │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  Alloy                                                   │
-│  Semantic aliases: platformint, platformsize, etc.      │
+│  Clef Application Code                                   │
+│  int, uint, nativeint, nativeptr<'T>                    │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │  CCS                                                    │
-│  NTU types: NTUint, NTUuint, NTUsize, etc.              │
+│  NTU types: NTUint, NTUuint, NTUsize, NTUposit, etc.   │
+│  Dimensional metadata: Measure (abelian group)          │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Alex                                                    │
-│  Witnesses quotations → concrete MLIR (i32/i64)         │
+│  Witnesses quotations → concrete MLIR (i32/i64/posit)  │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ### Mapping Table
 
-| Level 1 (Default) | Level 2/3 (Explicit) | CCS Internal |
-|-------------------|----------------------|---------------|
-| `int` | `platformint` | `NTUint` |
-| `uint` | `platformuint` | `NTUuint` |
-| `nativeint` | `nativeint` | `NTUnint` |
-| `nativeptr<'T>` | `nativeptr<'T>` | `NTUptr<'T>` |
+| Clef Surface Type | CCS Internal |
+|-------------------|--------------|
+| `int` | `NTUint` |
+| `uint` | `NTUuint` |
+| `nativeint` | `NTUnint` |
+| `nativeptr<'T>` | `NTUptr<'T>` |
+| `int32` | `NTUint32` |
+| `int64` | `NTUint64` |
+| `float` | `NTUfloat64` |
+| `float32` | `NTUfloat32` |
 
 ## Type Identity vs Type Width
 
-**Key Insight from F***: Type WIDTH is an erased assumption, not part of type identity.
+**Key Insight**: Type WIDTH is an erased assumption, not part of type identity.
 
 ### What CCS Enforces (Type Identity)
-- `NTUint ≠ NTUint64` - These are **different types**
-- `NTUint + NTUint` ✓ - Same type, valid
-- `NTUint + NTUint64` ✗ - Different types, compile error
+- `NTUint ≠ NTUint64` — These are **different types**
+- `NTUint + NTUint` ✓ — Same type, valid
+- `NTUint + NTUint64` ✗ — Different types, compile error
 
 ### What CCS Does NOT Assume (Type Width)
 - Whether `NTUint` is 32 or 64 bits
@@ -97,50 +115,26 @@ The architecture uses a layered approach:
 - Platform quotations provide width information
 - `NTUint` on x86_64 → `i64`
 - `NTUint` on ARM32 → `i32`
+- `NTUposit(32, 2)` on Xilinx → posit32 softcore or hardened IP
 
-## Integration with Memory Management by Choice
+## DTS Integration: Dimensions as Metadata on NTU Types
 
-NTU supports all three memory management levels:
-
-### Level 1 (Default): Invisible Management
-- Developers write standard Clef
-- CCS treats `int` as `NTUint` internally
-- Platform quotations resolve width
-- Compiler manages all memory decisions
-
-### Level 2 (Hints): Memory Pattern Guidance
-- Developers use `[<Struct>]`, capacity hints
-- Platform bindings honor alignment requirements
-- Compiler respects hints while optimizing
-
-### Level 3 (Explicit): Precise Layouts
-- Developers use `[<BAREStruct>]`, memory pools
-- Platform bindings provide region specifications
-- Full control over memory placement
-
-## Platform Predicates (F*-Inspired)
-
-Following F*'s `fits_u32`/`fits_u64` pattern:
+DTS (Dimensional Type System) extends NTU numerics with **dimensional annotations** — metadata drawn from a finitely generated free abelian group. The `Measure` type captures this:
 
 ```fsharp
-module Platform.Predicates =
-    /// Platform supports 32-bit word operations
-    val fits_u32 : Expr<bool>
-
-    /// Platform supports 64-bit word operations
-    val fits_u64 : Expr<bool>
-
-    /// 64-bit implies 32-bit support
-    val fits_u64_implies_u32 : Expr<unit>
-
-    /// Platform has AVX-512 vector support
-    val has_avx512 : Expr<bool>
-
-    /// Platform has NEON vector support
-    val has_neon : Expr<bool>
+type Measure =
+    | MOne           // dimensionless
+    | MVar of string // dimension variable (e.g., 'Length)
+    | MProd of Measure * Measure  // dimension product
+    | MInv of Measure             // dimension inverse
+    | MCon of string              // named dimension (e.g., "kg")
 ```
 
-These predicates enable conditional compilation without runtime checks.
+A `float<newtons>` carries `NTUfloat64` as its NTU kind plus dimensional metadata `MProd(MCon "kg", MProd(MCon "m", MInv(MProd(MCon "s", MCon "s"))))` (kg·m·s⁻²). This metadata is **orthogonal to width** — CCS enforces dimensional correctness during unification; Alex ignores dimensional metadata during code generation.
+
+The DTS extends NTU without complicating it. Width identity (CCS) and dimensional correctness (DTS) are independent axes of type safety.
+
+See `CCS_Architecture.md` for the full DTS treatment.
 
 ## Implementation in CCS
 
@@ -157,11 +151,14 @@ type NTUKind =
     | NTUptr of NativeType  // Pointer to type
     | NTUsize     // size_t equivalent
     | NTUdiff     // ptrdiff_t equivalent
-    
+
     // Fixed width (platform-independent)
     | NTUint8 | NTUint16 | NTUint32 | NTUint64
     | NTUuint8 | NTUuint16 | NTUuint32 | NTUuint64
     | NTUfloat32 | NTUfloat64
+
+    // Posit (Gustafson Type III Unum)
+    | NTUposit of NTUWidth * es: int  // width, exponent bits
 ```
 
 ### NTULayout (Erased Assumptions)
@@ -179,56 +176,60 @@ type NTULayout = {
 ## Pipeline Flow
 
 ```
-Clef Source (int, platformint)
+Clef Source (int, nativeint, float<kg·m·s⁻²>)
     │
     ▼
 ┌──────────────────────────────────────────────┐
-│ CCS: Maps to NTU types (NTUint)             │
-│ - Type identity checking                      │
-│ - SRTP resolution                             │
-│ - Width is NOT resolved                       │
+│ CCS: Maps to NTU types                      │
+│ - Type identity checking                     │
+│ - SRTP resolution                            │
+│ - Dimensional constraint propagation (DTS)   │
+│ - DMM escape classification                  │
+│ - Width is NOT resolved here                 │
 └──────────────────────────────────────────────┘
     │
     ▼
 ┌──────────────────────────────────────────────┐
-│ SemanticGraph: Carries NTU annotations       │
+│ PSG: Carries NTU + dimensional annotations  │
 │ - Platform quotations attached               │
-│ - Type identity preserved                     │
+│ - Escape classifications annotated          │
+│ - Type identity preserved                    │
 └──────────────────────────────────────────────┘
     │
     ▼
 ┌──────────────────────────────────────────────┐
-│ Alex: Witnesses quotations                   │
+│ Alex: Witnesses quotations                  │
 │ - Reads Fidelity.Platform bindings           │
 │ - Resolves NTUint → i64 on x86_64           │
-│ - Generates platform-specific MLIR           │
+│ - Selects posit for FPGA targets where DTS  │
+│   dimensional domain warrants it            │
+│ - Generates platform-specific MLIR          │
 └──────────────────────────────────────────────┘
     │
     ▼
-Native Binary
+Native Binary (IEEE 754, posit, or fixed-point per target)
 ```
 
-## How This Resolves Type Errors
+## Platform Predicates (F*-Inspired)
 
-The 507 type errors in Alloy exist because it uses explicit `int64` where it should use `platformint`:
+Following the `fits_u32`/`fits_u64` pattern:
 
-**Before (507 errors):**
 ```fsharp
-let write (fd: int) (buf: nativeptr<byte>) (count: int) : int64 = ...
-//                                                        ^^^^ explicit 64-bit
+module Platform.Predicates =
+    /// Platform supports 64-bit word operations
+    val fits_u64 : Expr<bool>
+
+    /// Platform has AVX-512 vector support
+    val has_avx512 : Expr<bool>
+
+    /// Platform has posit hardware support
+    val has_posit_hw : Expr<bool>
 ```
 
-**After (NTU architecture):**
-```fsharp
-let write (fd: platformint) (buf: nativeptr<byte>) (count: platformsize) : platformint = ...
-//             ^^^^^^^^^^^ resolved via quotations
-```
-
-CCS sees `platformint` as `NTUint`, validates type identity (not width), and Alex resolves to `i64` on x86_64 via platform quotations.
+These predicates enable conditional compilation without runtime checks. Alex witnesses them to eliminate dead branches at compile time.
 
 ## Related Documentation
 
-- `Platform_Binding_Model.md` - Sophisticated platform binding capabilities
-- `docs/fidelity/NTU_Type_System.md` (clef) - Implementation details
-- `docs/fidelity/Platform_Predicates.md` (clef) - F*-style predicates
-- `spec/ntu-types.md` (clef-spec) - Normative specification
+- `CCS_Architecture.md` - DTS/DMM architecture and NTU type checking
+- `Platform_Binding_Model.md` - Fidelity.Platform binding architecture
+- `Architecture_Canonical.md` - Composer pipeline overview

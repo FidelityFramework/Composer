@@ -50,7 +50,7 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                             | [] -> return []
                             | (id, capType) :: rest ->
                                 let! ssa = getNodeSSA id
-                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch capType
+                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph capType
                                 let! restVals = extractCaptures rest
                                 return { SSA = ssa; Type = mlirType } :: restVals
                         }
@@ -67,7 +67,7 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                                 | SemanticKind.Binding (_, true, _, _) ->
                                     parser {
                                         let! ssa = getNodeSSA nodeId
-                                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch n.Type
+                                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph n.Type
                                         return [{ SSA = ssa; Type = mlirType }]
                                     }
                                 | _ -> preturn []

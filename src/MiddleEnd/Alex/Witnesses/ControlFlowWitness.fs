@@ -26,7 +26,6 @@ open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ControlFlowPatterns
 open Alex.Elements.SCFElements
-open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Y-COMBINATOR PATTERN
@@ -153,8 +152,7 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                         MLIRAccumulator.recallNode elseValueNodeId ctx.Accumulator
                     | None -> None
 
-                let arch = ctx.Coeffects.Platform.TargetArch
-                let resultType = mapNativeTypeForArch arch node.Type
+                let resultType = mapType node.Type ctx
 
                 match thenResult, elseResult with
                 | Some (thenSSA, _), Some (elseSSA, _) ->

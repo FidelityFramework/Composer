@@ -34,8 +34,7 @@ let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             // Recall struct SSA
             match MLIRAccumulator.recallNode structId ctx.Accumulator with
             | Some (structSSA, structTy) ->
-                let arch = ctx.Coeffects.Platform.TargetArch
-                let fieldTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                let fieldTy = mapType node.Type ctx
 
                 match tryMatch (pStructFieldGet node.Id structSSA fieldName structTy fieldTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -58,8 +57,7 @@ let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | Some ((duValueId, caseIndex, _caseName, _payloadType), _) ->
                 match MLIRAccumulator.recallNode duValueId ctx.Accumulator with
                 | Some (duSSA, duType) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let payloadType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                    let payloadType = mapType node.Type ctx
 
                     match tryMatch (pExtractDUPayload node.Id duSSA duType caseIndex payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -78,8 +76,7 @@ let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                             | None -> []
                         | None -> []
 
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let duTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                    let duTy = mapType node.Type ctx
 
                     match tryMatch (pDUCase node.Id tag payload duTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

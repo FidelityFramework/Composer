@@ -16,7 +16,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.CollectionPatterns
-open Alex.CodeGeneration.TypeMapping
+open Alex.CodeGeneration.TypeMapping  // mlirTypeSize
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -45,8 +45,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | _ -> WitnessOutput.error $"Option.Some: Expected 1 child, got {node.Children.Length}"
 
         | "None" ->
-            let arch = ctx.Coeffects.Platform.TargetArch
-            let optionType = mapNativeTypeForArch arch node.Type
+            let optionType = mapType node.Type ctx
 
             match tryMatch (pOptionNone node.Id optionType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

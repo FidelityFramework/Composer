@@ -119,7 +119,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let arch = ctx.Coeffects.Platform.TargetArch
             let innerReturnNativeType = unrollReturnType (List.length params') node.Type
             let expectedReturnType =
-                Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch innerReturnNativeType
+                Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch ctx.Graph innerReturnNativeType
 
             // Handle bodyResult based on return type
             let returnSSA, returnType =
@@ -208,7 +208,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                             match ps with
                             | [] -> return []
                             | (paramName, paramType, paramNodeId) :: rest ->
-                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch paramType
+                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch ctx.Graph paramType
                                 let! paramSSA = getNodeSSA paramNodeId
                                 let! restParams = extractParams rest
                                 return (paramSSA, mlirType) :: restParams
@@ -266,7 +266,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // For flattened Lambdas with N params, unroll N levels of TFun
             let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
             let returnType =
-                Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch innerReturnNativeType2
+                Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch ctx.Graph innerReturnNativeType2
 
             // Handle bodyResult based on return type
             let returnSSA =

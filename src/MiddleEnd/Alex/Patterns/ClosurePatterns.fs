@@ -178,7 +178,7 @@ let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType
         let captureVals = List.zip captureSSAs captureTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
         let allArgs = captureVals @ args
         let! state = getUserState
-        let retType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let retType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
         let! callOp = pFuncCallIndirect (Some resultSSA) codePtrSSA allArgs retType
 
         return extractCodeOps @ List.concat extractCaptureOpLists @ [callOp]
@@ -448,7 +448,7 @@ let pSeqMoveNext (seqSSA: SSA) (seqTy: MLIRType) (captureTypes: MLIRType list)
         let internalArgs = List.zip internalSSAs internalTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
         let allArgVals = stateArg :: (captureArgs @ internalArgs)
         let! state = getUserState
-        let retType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let retType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
         let! callOp = pFuncCallIndirect (Some resultSSA) codePtrSSA allArgVals retType
 
         return extractStateOps @ extractCodeOps @ List.concat extractCaptureOpLists @ List.concat extractInternalOpLists @ [callOp]

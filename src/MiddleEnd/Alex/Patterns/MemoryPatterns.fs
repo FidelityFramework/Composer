@@ -68,7 +68,7 @@ let pFieldSet (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (value
     parser {
         let! state = getUserState
         let arch = state.Platform.TargetArch
-        let elemType = mapNativeTypeForArch arch state.Current.Type
+        let elemType = mapNativeTypeWithGraphForArch arch state.Graph state.Current.Type
 
         // Calculate byte offset for the field using FNCS-provided type structure
         let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
@@ -240,7 +240,7 @@ let pArrayAccess (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (gepSSA: SSA) 
 let pArraySet (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (value: SSA) (gepSSA: SSA) (indexZeroSSA: SSA) : PSGParser<MLIROp list> =
     parser {
         let! state = getUserState
-        let elemType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
 
         let! subViewOp = pSubView gepSSA arrayPtr [index]
         let! indexZeroOp = pConstI indexZeroSSA 0L TIndex  // Index 0 for 1-element memref
@@ -267,21 +267,27 @@ let pNativePtrStackAlloc (nodeId: NodeId) (count: int) : PSGParser<MLIROp list *
         let! state = getUserState
 
         // Extract element type from nativeptr<'T> in state.Current.Type
-        let elemType =
-            match state.Current.Type with
-            | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "nativeptr" ->
-                // Map inner type to concrete MLIR type via platform
-                mapNativeTypeForArch state.Platform.TargetArch innerTy
-            | _ ->
-                // Fallback to byte storage if type extraction fails
-                TInt I8
+        match state.Current.Type with
+        | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "nativeptr" ->
+            let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph innerTy
 
-        // Use the provided count for memref allocation
-        let! allocaOp = pAlloca resultSSA count elemType None
-        let memrefTy = TMemRefStatic (count, elemType)
+            // Use the provided count for memref allocation
+            let! allocaOp = pAlloca resultSSA count elemType None
+            let memrefTy = TMemRefStatic (count, elemType)
 
-        // Return memref type (not TIndex) - conversion to pointer happens at FFI boundary
-        return ([allocaOp], TRValue { SSA = resultSSA; Type = memrefTy })
+            // Return memref type (not TIndex) - conversion to pointer happens at FFI boundary
+            return ([allocaOp], TRValue { SSA = resultSSA; Type = memrefTy })
+        | NativeType.TNativePtr innerTy ->
+            let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph innerTy
+
+            // Use the provided count for memref allocation
+            let! allocaOp = pAlloca resultSSA count elemType None
+            let memrefTy = TMemRefStatic (count, elemType)
+
+            // Return memref type (not TIndex) - conversion to pointer happens at FFI boundary
+            return ([allocaOp], TRValue { SSA = resultSSA; Type = memrefTy })
+        | _ ->
+            return! fail (Message $"NativePtr.stackalloc: expected nativeptr<'T> type, got {state.Current.Type}")
     }
 
 /// Build NativePtr.write pattern
@@ -313,7 +319,7 @@ let pNativePtrRead (nodeId: NodeId) (ptrSSA: SSA) : PSGParser<MLIROp list * Tran
         // Get result type from XParsec state (type of value being loaded)
         let! state = getUserState
         let arch = state.Platform.TargetArch
-        let resultType = mapNativeTypeForArch arch state.Current.Type
+        let resultType = mapNativeTypeWithGraphForArch arch state.Graph state.Current.Type
 
         // Emit index constant for memref.load (always load from index 0 for scalar pointer read)
         let! constOp = pConstI indexZeroSSA 0L TIndex
@@ -600,7 +606,7 @@ let pMemRefLoad (nodeId: NodeId) (memrefSSA: SSA) (indexSSA: SSA) : PSGParser<ML
         do! ensure (ssas.Length >= 1) $"pMemRefLoad: Expected 1 SSA, got {ssas.Length}"
 
         let resultSSA = ssas.[0]
-        let resultType = mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
+        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
 
         // Emit memref.load %memref[%index]
         let! loadOp = pLoad resultSSA memrefSSA [indexSSA]
@@ -689,14 +695,13 @@ let pMemRefStoreIntrinsic : PSGParser<MLIROp list * TransferResult> =
                     return (ops, ssa)
                 }
 
-        let! state = getUserState
-        let elemType =
-            match memrefType with
-            | TMemRef e | TMemRefStatic (_, e) -> e
-            | _ -> mapNativeTypeForArch state.Platform.TargetArch state.Current.Type
-
-        let! (storeOps, result) = pMemRefStoreIndexed memrefSSA valueSSA offsetSSA elemType memrefType
-        return (fusionOps @ indexOps @ storeOps, result)
+        match memrefType with
+        | TMemRef elemType
+        | TMemRefStatic (_, elemType) ->
+            let! (storeOps, result) = pMemRefStoreIndexed memrefSSA valueSSA offsetSSA elemType memrefType
+            return (fusionOps @ indexOps @ storeOps, result)
+        | _ ->
+            return! fail (Message $"MemRef.store: expected memref destination type, got {memrefType}")
     }
 
 /// MemRef.load intrinsic — load from memref at index

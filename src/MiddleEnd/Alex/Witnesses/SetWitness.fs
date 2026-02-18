@@ -16,7 +16,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.CollectionPatterns
-open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -30,8 +29,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
     | Some (info, _) ->
         match info.Operation with
         | "empty" ->
-            let arch = ctx.Coeffects.Platform.TargetArch
-            let setType = mapNativeTypeForArch arch node.Type
+            let setType = mapType node.Type ctx
 
             match tryMatch (pSetEmpty node.Id setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -45,8 +43,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let elemType = mapNativeTypeForArch arch node.Type
+                    let elemType = mapType node.Type ctx
 
                     match tryMatch (pSetValue node.Id setSSA elemType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -59,8 +56,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let subtreeType = mapNativeTypeForArch arch node.Type
+                    let subtreeType = mapType node.Type ctx
 
                     match tryMatch (pSetLeft node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -73,8 +69,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let subtreeType = mapNativeTypeForArch arch node.Type
+                    let subtreeType = mapType node.Type ctx
 
                     match tryMatch (pSetRight node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -87,8 +82,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let heightType = mapNativeTypeForArch arch node.Type
+                    let heightType = mapType node.Type ctx
 
                     match tryMatch (pSetHeight node.Id setSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -107,8 +101,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     let element = { SSA = elementSSA; Type = elementType }
                     let left = { SSA = leftSSA; Type = leftType }
                     let right = { SSA = rightSSA; Type = rightType }
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let setType = mapNativeTypeForArch arch node.Type
+                    let setType = mapType node.Type ctx
 
                     match tryMatch (pSetAdd node.Id element left right setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

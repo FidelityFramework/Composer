@@ -16,7 +16,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.CollectionPatterns
-open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -30,8 +29,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
     | Some (info, _) ->
         match info.Operation with
         | "empty" ->
-            let arch = ctx.Coeffects.Platform.TargetArch
-            let listType = mapNativeTypeForArch arch node.Type
+            let listType = mapType node.Type ctx
 
             match tryMatch (pListEmpty node.Id listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -53,8 +51,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (listSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let elementType = mapNativeTypeForArch arch node.Type
+                    let elementType = mapType node.Type ctx
 
                     match tryMatch (pListHead node.Id listSSA elementType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -67,8 +64,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (listSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let tailType = mapNativeTypeForArch arch node.Type
+                    let tailType = mapType node.Type ctx
 
                     match tryMatch (pListTail node.Id listSSA tailType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -83,8 +79,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                 | Some (headSSA, headType), Some (tailSSA, tailType) ->
                     let head = { SSA = headSSA; Type = headType }
                     let tail = { SSA = tailSSA; Type = tailType }
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let listType = mapNativeTypeForArch arch node.Type
+                    let listType = mapType node.Type ctx
 
                     match tryMatch (pListCons node.Id head tail listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

@@ -16,7 +16,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.CollectionPatterns
-open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -30,10 +29,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
     | Some (info, _) ->
         match info.Operation with
         | "empty" ->
-            let arch = ctx.Coeffects.Platform.TargetArch
-            let mapType = mapNativeTypeForArch arch node.Type
+            let mapTy = mapType node.Type ctx
 
-            match tryMatch (pMapEmpty node.Id mapType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            match tryMatch (pMapEmpty node.Id mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
             | None -> WitnessOutput.error "Map.empty pattern emission failed"
 
@@ -45,8 +43,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let keyType = mapNativeTypeForArch arch node.Type
+                    let keyType = mapType node.Type ctx
 
                     match tryMatch (pMapKey node.Id mapSSA keyType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -59,8 +56,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let valueType = mapNativeTypeForArch arch node.Type
+                    let valueType = mapType node.Type ctx
 
                     match tryMatch (pMapValue node.Id mapSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -73,8 +69,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let subtreeType = mapNativeTypeForArch arch node.Type
+                    let subtreeType = mapType node.Type ctx
 
                     match tryMatch (pMapLeft node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -87,8 +82,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let subtreeType = mapNativeTypeForArch arch node.Type
+                    let subtreeType = mapType node.Type ctx
 
                     match tryMatch (pMapRight node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -101,8 +95,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let heightType = mapNativeTypeForArch arch node.Type
+                    let heightType = mapType node.Type ctx
 
                     match tryMatch (pMapHeight node.Id mapSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -123,10 +116,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     let value = { SSA = valueSSA; Type = valueType }
                     let left = { SSA = leftSSA; Type = leftType }
                     let right = { SSA = rightSSA; Type = rightType }
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let mapType = mapNativeTypeForArch arch node.Type
+                    let mapTy = mapType node.Type ctx
 
-                    match tryMatch (pMapAdd node.Id key value left right mapType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    match tryMatch (pMapAdd node.Id key value left right mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | None -> WitnessOutput.error "Map.node pattern emission failed"
                 | _ -> WitnessOutput.error "Map.node: One or more children not yet witnessed"

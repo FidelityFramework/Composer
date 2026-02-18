@@ -311,8 +311,8 @@ The samples use CCS intrinsics directly. Compilation flow:
 - [WebView_Desktop_Design.md](./WebView_Desktop_Design.md) - Implementation details (callbacks, IPC)
 
 ### QuantumCredential Demo
-- [QC_Demo/](./QC_Demo/) - Demo documentation folder
-- [QC_Demo/01_Demo_Strategy_Integrated.md](./QC_Demo/01_Demo_Strategy_Integrated.md) - Integrated demo strategy (desktop + embedded)
+- [QuantumCredential/](./QuantumCredential/) - Demo documentation folder
+- [QuantumCredential/01_Demo_Strategy_Integrated.md](./QuantumCredential/01_Demo_Strategy_Integrated.md) - Integrated demo strategy (desktop + embedded)
 
 ### Platform Bindings
 - See `~/repos/Farscape/docs/` for native library binding patterns (quotation-based architecture)

@@ -78,7 +78,7 @@ let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                             // LazyForce SSAs: [0]=code_ptr, [1]=const1, [2]=alloca, [3]=result
                             let resultSSA = ssas.[3]
                             let intermediateSsas = [ssas.[0]; ssas.[1]; ssas.[2]]
-                            let resultTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForArch arch node.Type
+                            let resultTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph node.Type
                             return! pBuildLazyForce lazySSA lazyTy resultSSA resultTy intermediateSsas arch
                 }
 
