@@ -1,19 +1,19 @@
-# FNCS Feature Audit: F# Language Features vs Native Compiler Services
+# CCS Feature Audit: Clef Language Features vs Native Compiler Services
 
 **Date**: January 2026
-**Author**: Systematic audit of F# language specification against FNCS capabilities
+**Author**: Systematic audit of Clef language specification against CCS capabilities
 
 ---
 
 ## Executive Summary
 
-This document catalogs every major F# language feature against FNCS (F# Native Compiler Services) support status. FNCS provides the native type universe for Fidelity/Firefly compilation to native binaries without .NET runtime dependencies.
+This document catalogs every major Clef language feature against CCS (Clef Compiler Services) support status. CCS provides the native type universe for Fidelity/Composer compilation to native binaries without .NET runtime dependencies.
 
 ### Legend
 
 | Symbol | Meaning |
 |--------|---------|
-| ✅ | Fully supported in FNCS |
+| ✅ | Fully supported in CCS |
 | 🚧 | Partial support (notes indicate limitations) |
 | ❌ | Not supported (alternative provided if any) |
 | ⚠️ | BCL-dependent (requires .NET runtime) |
@@ -25,9 +25,9 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 1.1 Numeric Types
 
-| F# Type | FNCS Status | NTUKind | Notes |
+| Clef Type | CCS Status | NTUKind | Notes |
 |---------|-------------|---------|-------|
-| `int` | ✅ | `NTUint` | **Platform word** (64-bit on x86_64). Different from F#'s 32-bit `int`! |
+| `int` | ✅ | `NTUint` | **Platform word** (64-bit on x86_64). Different from Clef's 32-bit `int`! |
 | `int32` | ✅ | `NTUint32` | Fixed 32-bit signed integer |
 | `int64` | ✅ | `NTUint64` | Fixed 64-bit signed integer |
 | `int16` | ✅ | `NTUint16` | Fixed 16-bit signed integer |
@@ -44,11 +44,11 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 | `decimal` | ✅ | `NTUdecimal` | 128-bit decimal (16 bytes) |
 | `bigint` | ⚠️ | `NTUother` | Requires `System.Numerics.BigInteger` - BCL dependent |
 
-**Important Semantic Difference**: In FNCS/Fidelity, `int` follows ML/Rust semantics (platform word = 64-bit on x86_64), NOT .NET's 32-bit `System.Int32`. Use `int32` for explicit 32-bit integers.
+**Important Semantic Difference**: In CCS/Fidelity, `int` follows ML/Rust semantics (platform word = 64-bit on x86_64), NOT .NET's 32-bit `System.Int32`. Use `int32` for explicit 32-bit integers.
 
 ### 1.2 Other Primitive Types
 
-| F# Type | FNCS Status | NTUKind | Notes |
+| Clef Type | CCS Status | NTUKind | Notes |
 |---------|-------------|---------|-------|
 | `bool` | ✅ | `NTUbool` | 1 byte |
 | `char` | ✅ | `NTUchar` | UTF-32 code point (4 bytes), not UTF-16 like .NET |
@@ -59,7 +59,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 1.3 Special Numeric Literals
 
-| Literal | FNCS Status | Notes |
+| Literal | CCS Status | Notes |
 |---------|-------------|-------|
 | `3y` (sbyte) | ✅ | |
 | `32uy` (byte) | ✅ | |
@@ -70,7 +70,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 | `1.0f` (float32) | ✅ | |
 | `1.0` (float) | ✅ | |
 | `99999999n` (nativeint) | ✅ | |
-| Custom numeric literals (Q, R, Z, etc.) | ❌ | Requires FSharp.Core runtime |
+| Custom numeric literals (Q, R, Z, etc.) | ❌ | Requires additional core runtime support |
 
 ---
 
@@ -78,32 +78,32 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 2.1 Tuples
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
-| Reference tuples `(a, b)` | ✅ | Struct in FNCS (value semantics) |
+| Reference tuples `(a, b)` | ✅ | Struct in CCS (value semantics) |
 | Struct tuples `struct (a, b)` | ✅ | Explicit struct tuple |
 | Large tuples (>7 elements) | ✅ | Flat struct, no `System.Tuple` nesting |
 | Tuple deconstruction | ✅ | Pattern matching supported |
 | `fst`, `snd` | ✅ | Built-in functions |
 
-**Semantic Difference**: All tuples in FNCS are value types (struct semantics). No `System.Tuple`/`System.ValueTuple` runtime dependency.
+**Semantic Difference**: All tuples in CCS are value types (struct semantics). No `System.Tuple`/`System.ValueTuple` runtime dependency.
 
 ### 2.2 Records
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Record definition | ✅ | Compiled to struct with computed layout |
 | Record construction `{ field = value }` | ✅ | |
 | Record copy-and-update `{ r with field = value }` | ✅ | |
 | Mutable record fields | ✅ | With `mutable` keyword |
 | Anonymous records `{| a = 1 |}` | ✅ | Both struct and reference forms |
-| Struct records `[<Struct>]` | ✅ | All records are struct by default in FNCS |
+| Struct records `[<Struct>]` | ✅ | All records are struct by default in CCS |
 | `[<CLIMutable>]` | ❌ | CLI interop attribute not applicable |
 | Record equality/comparison | ✅ | Structural by default |
 
 ### 2.3 Discriminated Unions
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Union definition | ✅ | |
 | Single-case unions | ✅ | |
@@ -121,7 +121,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 2.4 Arrays
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Single-dimensional `'T[]` | ✅ | Fat pointer `{ptr, length}` |
 | Array creation `[| 1; 2; 3 |]` | ✅ | |
@@ -134,7 +134,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 2.5 Lists
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | List type `'T list` | ✅ | Immutable singly-linked (arena-allocated) |
 | List construction `[1; 2; 3]` | ✅ | |
@@ -150,7 +150,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 2.6 Sequences
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `seq { }` computation expression | ✅ | PRD-15: State machine struct |
 | `yield` | ✅ | |
@@ -166,7 +166,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 2.7 Maps and Sets
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `Map<'K, 'V>` | ✅ | Immutable AVL tree (PRD-13a) |
 | `Set<'T>` | ✅ | Immutable AVL tree (PRD-13a) |
@@ -180,7 +180,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 2.8 Other Collection Types
 
-| Type | FNCS Status | Notes |
+| Type | CCS Status | Notes |
 |------|-------------|-------|
 | `ResizeArray<'T>` (List<T>) | ❌ | Use `Array.create` + manual resize or arena-based growable |
 | `Dictionary<'K, 'V>` | ❌ | Use `Map` or implement with arrays |
@@ -195,7 +195,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 3.1 Pointers
 
-| Type | FNCS Status | NTUKind | Notes |
+| Type | CCS Status | NTUKind | Notes |
 |------|-------------|---------|-------|
 | `nativeptr<'T>` | ✅ | `NTUptr` | Raw native pointer |
 | `voidptr` | ✅ | `NTUptr` | Void pointer |
@@ -206,7 +206,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 3.2 Pointer Operations
 
-| Operation | FNCS Status | Notes |
+| Operation | CCS Status | Notes |
 |-----------|-------------|-------|
 | `NativePtr.stackalloc<'T> n` | ✅ | Stack allocation |
 | `NativePtr.get`, `NativePtr.set` | ✅ | Index-based access |
@@ -225,7 +225,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 4.1 Function Definitions
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `let f x = ...` | ✅ | |
 | `let f x y = ...` (curried) | ✅ | |
@@ -239,7 +239,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 4.2 Lambda Expressions
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `fun x -> ...` | ✅ | PRD-11: Flat closure model |
 | `fun x y -> ...` (curried) | ✅ | |
@@ -250,7 +250,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 4.3 Function Application
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Function application `f x` | ✅ | |
 | Partial application | ✅ | Creates closure |
@@ -266,7 +266,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 5.1 Pattern Forms
 
-| Pattern | FNCS Status | Notes |
+| Pattern | CCS Status | Notes |
 |---------|-------------|-------|
 | Constant patterns | ✅ | |
 | Variable patterns | ✅ | |
@@ -287,7 +287,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 5.2 Match Expressions
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `match expr with ...` | ✅ | |
 | `function \| pat -> ...` | ✅ | |
@@ -300,7 +300,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 6.1 Conditionals
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `if expr then expr` | ✅ | |
 | `if expr then expr else expr` | ✅ | |
@@ -308,7 +308,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 6.2 Loops
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `while expr do expr` | ✅ | |
 | `for i = start to end do expr` | ✅ | |
@@ -319,7 +319,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 6.3 Sequential Execution
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `expr; expr` | ✅ | |
 | `do expr` | ✅ | |
@@ -328,7 +328,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ## 7. Exceptions
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `exception` definition | 🚧 | Native exception type |
 | `raise expr` | ✅ | |
@@ -348,7 +348,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 8.1 Type Parameters and Generics
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Generic types `'T` | ✅ | Monomorphized |
 | Generic functions | ✅ | |
@@ -360,7 +360,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 8.2 Statically Resolved Type Parameters (SRTP)
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `^T` type parameters | ✅ | |
 | Member constraints | ✅ | Resolved at compile time |
@@ -370,7 +370,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 8.3 Type Constraints
 
-| Constraint | FNCS Status | Notes |
+| Constraint | CCS Status | Notes |
 |------------|-------------|-------|
 | `:> type` (subtype) | ✅ | |
 | `: null` (nullness) | ❌ | No null in native type universe |
@@ -386,7 +386,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 8.4 Type Abbreviations
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `type Alias = ExistingType` | ✅ | |
 | Generic abbreviations | ✅ | |
@@ -396,7 +396,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ## 9. Units of Measure
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `[<Measure>] type m` | ✅ | Native measure definitions |
 | Measure-annotated values `1.0<m>` | ✅ | |
@@ -405,9 +405,9 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 | Measure inference | ✅ | |
 | Measure generics `'U` | ✅ | |
 | Dimensionless `<1>` | ✅ | |
-| **Measures on non-numeric types** | ✅ | Extended from F# - memory regions, access modes |
+| **Measures on non-numeric types** | ✅ | Extended from Clef - memory regions, access modes |
 
-**FNCS Extension**: Unlike F# which restricts measures to numerics, FNCS supports measures on ANY type. This enables memory region tracking (`stack`, `arena`, `peripheral`) and access control (`ro`, `wo`, `rw`).
+**CCS Extension**: Unlike Clef which restricts measures to numerics, CCS supports measures on ANY type. This enables memory region tracking (`stack`, `arena`, `peripheral`) and access control (`ro`, `wo`, `rw`).
 
 ---
 
@@ -415,7 +415,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 10.1 Classes
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Class definitions | 🚧 | Limited - prefer records/DUs |
 | Primary constructors | 🚧 | |
@@ -431,7 +431,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 10.2 Interfaces
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Interface definitions | 🚧 | Limited support |
 | Interface implementation | 🚧 | |
@@ -441,7 +441,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 10.3 Structs
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `[<Struct>]` attribute | ✅ | All value types |
 | Struct members | ✅ | |
@@ -450,7 +450,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 10.4 Inheritance and Polymorphism
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Class inheritance | ❌ | Use composition + SRTP |
 | `base` keyword | ❌ | |
@@ -465,7 +465,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ## 11. Modules and Namespaces
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `module Name` | ✅ | |
 | `namespace Name` | ✅ | |
@@ -481,7 +481,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ## 12. Computation Expressions
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `seq { }` | ✅ | PRD-15 |
 | `async { }` | 🔮 | PRD-17: LLVM coroutines planned |
@@ -506,7 +506,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ## 13. Lazy Values
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `lazy expr` | ✅ | PRD-14: Extended flat closure |
 | `Lazy<'T>` type | ✅ | Struct with memoization state |
@@ -519,7 +519,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ## 14. Quotations
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `<@ expr @>` typed quotations | ✅ | Used for platform bindings |
 | `<@@ expr @@>` untyped | 🚧 | |
@@ -534,7 +534,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 15.1 Supported Attributes
 
-| Attribute | FNCS Status | Notes |
+| Attribute | CCS Status | Notes |
 |-----------|-------------|-------|
 | `[<Struct>]` | ✅ | |
 | `[<Measure>]` | ✅ | |
@@ -555,7 +555,7 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 | Attribute | Status | Alternative |
 |-----------|--------|-------------|
 | `[<Serializable>]` | ❌ | Use BAREWire |
-| `[<DllImport>]` | 🚧 | Use FNCS extern declarations |
+| `[<DllImport>]` | 🚧 | Use CCS extern declarations |
 | `[<MarshalAs>]` | ❌ | Native type layouts |
 | `[<StructLayout>]` | 🚧 | `[<BAREStruct>]` for explicit |
 | `[<FieldOffset>]` | 🚧 | BAREWire field attributes |
@@ -567,15 +567,15 @@ This document catalogs every major F# language feature against FNCS (F# Native C
 
 ### 16.1 P/Invoke
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
-| `[<DllImport>]` | ❌ | Use FNCS extern intrinsics |
-| External function declarations | ✅ | Via FNCS Sys.* intrinsics |
+| `[<DllImport>]` | ❌ | Use CCS extern intrinsics |
+| External function declarations | ✅ | Via CCS Sys.* intrinsics |
 | Platform syscalls | ✅ | Via platform bindings |
 
 ### 16.2 COM Interop
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | COM interfaces | ❌ | |
 | COM objects | ❌ | |
@@ -589,14 +589,14 @@ These features inherently require the .NET Base Class Library and cannot be supp
 
 | Feature | Status | Alternative |
 |---------|--------|-------------|
-| `System.String` methods | ❌ | FNCS String.* intrinsics |
-| `System.DateTime` | ✅ | FNCS DateTime intrinsic (64-bit ticks) |
-| `System.TimeSpan` | ✅ | FNCS TimeSpan intrinsic |
-| `System.Guid` | ✅ | FNCS Uuid intrinsic |
-| `System.Console` | ✅ | FNCS Console.* (Layer 3 in Fidelity.Platform) |
+| `System.String` methods | ❌ | CCS String.* intrinsics |
+| `System.DateTime` | ✅ | CCS DateTime intrinsic (64-bit ticks) |
+| `System.TimeSpan` | ✅ | CCS TimeSpan intrinsic |
+| `System.Guid` | ✅ | CCS Uuid intrinsic |
+| `System.Console` | ✅ | CCS Console.* (Layer 3 in Fidelity.Platform) |
 | `System.IO.*` | ❌ | Platform-specific file operations |
 | `System.Net.*` | ❌ | Future: Farscape networking |
-| `System.Collections.Generic.*` | ❌ | FNCS collections (List, Map, Set) |
+| `System.Collections.Generic.*` | ❌ | CCS collections (List, Map, Set) |
 | `System.Linq.*` | ❌ | Use Seq operations |
 | `System.Threading.*` | ❌ | Future: Olivier actors |
 | `System.Reflection.*` | ❌ | No runtime reflection |
@@ -608,7 +608,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 
 ## 18. Runtime Features
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | Garbage collection | ❌ | Deterministic memory (arenas) |
 | Runtime type checking | ❌ | Types erased at runtime |
@@ -624,7 +624,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 
 ## 19. String Features
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | String literals `"hello"` | ✅ | UTF-8 encoded |
 | Verbatim strings `@"path"` | ✅ | |
@@ -639,13 +639,13 @@ These features inherently require the .NET Base Class Library and cannot be supp
 | Regular expressions | ❌ | No System.Text.RegularExpressions |
 | `String.Split`, `String.Join` | 🚧 | Basic support |
 
-**String Representation**: FNCS strings are UTF-8 fat pointers `{ptr: nativeptr<byte>, length: int}`, NOT `System.String`. This is more memory-efficient and compatible with native APIs.
+**String Representation**: CCS strings are UTF-8 fat pointers `{ptr: nativeptr<byte>, length: int}`, NOT `System.String`. This is more memory-efficient and compatible with native APIs.
 
 ---
 
 ## 20. Async/Concurrent Features
 
-| Feature | FNCS Status | Notes |
+| Feature | CCS Status | Notes |
 |---------|-------------|-------|
 | `async { }` | 🔮 | PRD-17: LLVM coroutines |
 | `Async.RunSynchronously` | 🔮 | |
@@ -663,7 +663,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 
 ## 21. Special Identifiers and Operators
 
-| Identifier/Operator | FNCS Status | Notes |
+| Identifier/Operator | CCS Status | Notes |
 |---------------------|-------------|-------|
 | `ignore` | ✅ | |
 | `id` | ✅ | Identity function |
@@ -682,7 +682,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 
 ## 22. Numeric Conversions
 
-| Conversion | FNCS Status | Notes |
+| Conversion | CCS Status | Notes |
 |------------|-------------|-------|
 | `int`, `int32`, `int64`, etc. | ✅ | SRTP-based |
 | `float`, `float32` | ✅ | |
@@ -697,7 +697,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 
 ## 23. Math Functions
 
-| Function | FNCS Status | Notes |
+| Function | CCS Status | Notes |
 |----------|-------------|-------|
 | `abs` | ✅ | SRTP polymorphic |
 | `sign` | ✅ | |
@@ -739,7 +739,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 | `async`/`task` | Future: LLVM coroutines (PRD-17) |
 | GC | Arena-based memory management |
 | String interpolation | Limited support (simple cases) |
-| `System.*` types | FNCS intrinsic types |
+| `System.*` types | CCS intrinsic types |
 
 ---
 

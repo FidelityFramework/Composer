@@ -1,5 +1,5 @@
 /// FNCS Integration Layer
-/// Thin interface between Firefly and F# Native Compiler Services.
+/// Thin interface between Composer and F# Native Compiler Services.
 ///
 /// FNCS provides:
 /// - Native type checking with types attached during construction
@@ -8,12 +8,12 @@
 /// - No BCL types, no IL imports, no obj
 /// - Baker enrichment (module classification metadata)
 ///
-/// Firefly receives SemanticGraph and applies:
+/// Composer receives SemanticGraph and applies:
 /// - Lowering nanopasses (FlattenApplications, LowerStrings, etc.)
 /// - Alex emission (Zipper + XParsec + Bindings → MLIR)
 module Core.FNCS.Integration
 
-// Re-export FNCS types for use throughout Firefly
+// Re-export FNCS types for use throughout Composer
 open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
 open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
@@ -190,7 +190,7 @@ let interpolatedStringParts (node: FNCSNode) : InterpolatedPart list option =
     | SemanticKind.InterpolatedString parts -> Some parts
     | _ -> None
 
-/// Re-export InterpolatedPart type for use in Firefly
+/// Re-export InterpolatedPart type for use in Composer
 type FNCSInterpolatedPart = InterpolatedPart
 
 // ═══════════════════════════════════════════════════════════════════════════

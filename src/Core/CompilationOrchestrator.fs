@@ -129,7 +129,7 @@ let compileProject (options: CompilationOptions) : int =
                   |> Option.map (fun a -> a.InformationalVersion)
                   |> Option.defaultValue "dev"
 
-    printfn "Firefly Compiler v%s" version
+    printfn "Composer Compiler v%s" version
     printfn "======================"
     printfn ""
 

@@ -1,16 +1,16 @@
 # Farscape Assessment: Maturation Path for January Demo
 
-> **Document Purpose**: This assessment captures the current state of Farscape, identifies gaps blocking the January demo (CMSIS HAL binding generation for STM32L5 unikernel), and provides a prioritized maturation roadmap informed by Firefly's architectural learnings.
+> **Document Purpose**: This assessment captures the current state of Farscape, identifies gaps blocking the January demo (CMSIS HAL binding generation for STM32L5 unikernel), and provides a prioritized maturation roadmap informed by Composer's architectural learnings.
 
 ## Executive Summary
 
-Farscape is a C/C++ binding generator that aims to produce F# interop code from native headers. The architecture is sound: it uses [CppSharp](https://github.com/mono/CppSharp) (built on libclang) for parsing and has a reasonable pipeline from AST to code generation. However, **the core parsing functionality is currently non-functional**: all headers except a hardcoded cJSON.h example return empty declaration lists.
+Farscape is a C/C++ binding generator that aims to produce Clef interop code from native headers. The architecture is sound: it uses [CppSharp](https://github.com/mono/CppSharp) (built on libclang) for parsing and has a reasonable pipeline from AST to code generation. However, **the core parsing functionality is currently non-functional**: all headers except a hardcoded cJSON.h example return empty declaration lists.
 
-For the January demo goal of compiling F# code that interfaces with CMSIS HAL on STM32L5, four gaps must be addressed:
+For the January demo goal of compiling Clef code that interfaces with CMSIS HAL on STM32L5, four gaps must be addressed:
 
 1. **Parser is broken** (BLOCKING): CppSharp integration exists but is bypassed
 2. **No macro support**: CMSIS HAL depends heavily on `#define` constants
-3. **Wrong output format**: Generates P/Invoke for .NET runtime, not FNCS-style intrinsics
+3. **Wrong output format**: Generates P/Invoke for .NET runtime, not CCS-style intrinsics
 4. **No ARM bindings in Alex**: Need bare-metal register access, not syscalls
 
 ---
@@ -19,12 +19,12 @@ For the January demo goal of compiling F# code that interfaces with CMSIS HAL on
 
 ### 1.1 Design Intent
 
-Farscape's purpose is to automate the tedious and error-prone task of writing F# bindings for native C/C++ libraries. Rather than manually declaring each extern function, struct, and constant, Farscape:
+Farscape's purpose is to automate the tedious and error-prone task of writing Clef bindings for native C/C++ libraries. Rather than manually declaring each extern function, struct, and constant, Farscape:
 
 1. **Parses** C/C++ header files using CppSharp/libclang
-2. **Maps** C types to F# equivalents
-3. **Generates** F# source files with proper interop attributes
-4. **Creates** a complete F# project structure
+2. **Maps** C types to Clef equivalents
+3. **Generates** Clef source files with proper interop attributes
+4. **Creates** a complete Clef project structure
 
 This follows the same philosophy as [CppSharp's own goal](https://github.com/mono/CppSharp): "Tools and libraries to glue C/C++ APIs to high-level languages."
 
@@ -36,7 +36,7 @@ This follows the same philosophy as [CppSharp's own goal](https://github.com/mon
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  C/C++ Header    ──►  CppParser.fs   ──►  TypeMapper.fs                │
-│  (e.g., gpio.h)       (CppSharp)          (C → F# types)               │
+│  (e.g., gpio.h)       (CppSharp)          (C → Clef types)               │
 │                            │                    │                       │
 │                            ▼                    ▼                       │
 │                    Declaration list      TypeMapping list               │
@@ -51,7 +51,7 @@ This follows the same philosophy as [CppSharp's own goal](https://github.com/mon
 │                          (Project orchestration)                        │
 │                                   │                                     │
 │                                   ▼                                     │
-│                           F# Project Output                             │
+│                           Clef Project Output                             │
 │                           - NativeBindings.fs                           │
 │                           - Wrappers.fs                                 │
 │                           - StructWrappers.fs                           │
@@ -64,7 +64,7 @@ This follows the same philosophy as [CppSharp's own goal](https://github.com/mon
 | File | Purpose | Status |
 |------|---------|--------|
 | `CppParser.fs` | Parse C/C++ headers via CppSharp | **BROKEN** - Returns empty lists |
-| `TypeMapper.fs` | Map C types to F# equivalents | Working |
+| `TypeMapper.fs` | Map C types to Clef equivalents | Working |
 | `CodeGenerator.fs` | Generate P/Invoke declarations | Working (wrong format) |
 | `BindingGenerator.fs` | Orchestrate full pipeline | Working |
 | `Project.fs` | Generate .fsproj and solution | Working |
@@ -122,7 +122,7 @@ The `extern "C"` wrapper ensures C linkage even when included from C++, but the 
 
 Looking at `CppParser.fs`, the `DeclarationVisitor` class properly handles:
 
-| C/C++ Construct | Handler Method | F# Declaration Type |
+| C/C++ Construct | Handler Method | Clef Declaration Type |
 |-----------------|----------------|---------------------|
 | Functions | `VisitFunctionDecl` | `Function of FunctionDecl` |
 | Structs/Classes | `VisitClassDecl` | `Struct of StructDecl` or `Class of ClassDecl` |
@@ -300,7 +300,7 @@ type Declaration =
 
 ### 4.3 Gap 3: Wrong Output Format
 
-**Impact**: High. Generated code won't work with Firefly.
+**Impact**: High. Generated code won't work with Composer.
 
 **Current Output** (P/Invoke for .NET runtime - INCOMPATIBLE with Fidelity):
 ```fsharp
@@ -451,7 +451,7 @@ typedef struct {
 } GPIO_TypeDef;
 ```
 
-Firefly must preserve volatile semantics in generated MLIR.
+Composer must preserve volatile semantics in generated MLIR.
 
 **Pointer-to-Peripheral**: HAL functions take `GPIO_TypeDef*` which is actually a memory-mapped address:
 ```c
@@ -459,15 +459,15 @@ Firefly must preserve volatile semantics in generated MLIR.
 #define GPIOA_BASE  (PERIPH_BASE + 0x00020000UL)
 ```
 
-The F# binding doesn't need to resolve these; they're passed at runtime.
+The Clef binding doesn't need to resolve these; they're passed at runtime.
 
 ---
 
-## 6. Comparison with Firefly's Binding Pattern
+## 6. Comparison with Composer's Binding Pattern
 
-### 6.1 How FNCS/Alex Bindings Work
+### 6.1 How CCS/Alex Bindings Work
 
-Firefly's current binding system (for console I/O, time, etc.) follows the **Platform.Bindings pattern** (BCL-free):
+Composer's current binding system (for console I/O, time, etc.) follows the **Platform.Bindings pattern** (BCL-free):
 
 **Step 1: Fidelity.Platform declares bindings** (no DllImport!)
 ```fsharp
@@ -583,7 +583,7 @@ macros |> List.exists (fun m -> m.Name = "GPIO_PIN_0") |> should be true
 
 ### 7.3 Phase 3: Fidelity Output Mode (Week 2-3)
 
-**Priority**: HIGH - Required for Firefly integration
+**Priority**: HIGH - Required for Composer integration
 
 **Options**:
 - **A) Separate generator**: `FidelityCodeGenerator.fs` alongside `CodeGenerator.fs`
@@ -632,15 +632,15 @@ macros |> List.exists (fun m -> m.Name = "GPIO_PIN_0") |> should be true
 
 ### 9.2 Reference Code
 
-- **Firefly bindings pattern**: `src/Alex/Bindings/Console/ConsoleBindings.fs`
-- **FNCS primitives**: Core type operations
+- **Composer bindings pattern**: `src/Alex/Bindings/Console/ConsoleBindings.fs`
+- **CCS primitives**: Core type operations
 - **CMSIS headers**: `helpers/cmsis/STM32L5xx_HAL_Driver/Inc/`
 - **Full STM32CubeL5**: `~/repos/STM32CubeL5/`
 
 ### 9.3 Tools Available
 
 - **C LSP (clangd)**: Configured in Serena for CMSIS header inspection
-- **F# LSP**: Available for Farscape code navigation
+- **Clef LSP**: Available for Farscape code navigation
 - **MLIR LSP**: Available for generated IR inspection
 
 ---
@@ -650,7 +650,7 @@ macros |> List.exists (fun m -> m.Name = "GPIO_PIN_0") |> should be true
 ### Minimum Viable Demo
 
 ```fsharp
-// F# source file: Blink.fs
+// Clef source file: Blink.fs
 open CMSIS.STM32L5.GPIO
 
 [<EntryPoint>]
@@ -673,7 +673,7 @@ let main () =
 
 **Compilation succeeds**:
 ```bash
-Firefly compile Blink.fidproj --target thumbv8m.main-none-eabihf -o blink.elf
+Composer compile Blink.fidproj --target thumbv8m.main-none-eabihf -o blink.elf
 ```
 
 **Output runs on STM32L5** (or QEMU):
@@ -693,7 +693,7 @@ helpers/Farscape/
 │       ├── ProjectOptions.fs        # Configuration types
 │       ├── Types.fs                 # OperationStatus enum
 │       ├── CppParser.fs             # BROKEN - needs fix
-│       ├── TypeMapper.fs            # C→F# type mapping (working)
+│       ├── TypeMapper.fs            # C→Clef type mapping (working)
 │       ├── MemoryManager.fs         # Memory utilities
 │       ├── DelegatePointer.fs       # Function pointer handling
 │       ├── CodeGenerator.fs         # P/Invoke generation (wrong format)

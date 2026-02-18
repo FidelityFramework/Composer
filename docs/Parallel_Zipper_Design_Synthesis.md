@@ -365,7 +365,7 @@ let mergeAccumulators (acc1: MLIRAccumulator) (acc2: MLIRAccumulator) : MLIRAccu
 **Granularity**: Each function is a compilation unit
 
 **Pros**:
-- Natural boundary in F# programs
+- Natural boundary in Clef programs
 - SSA dependencies mostly intra-function
 - MLIR function definitions are order-independent
 - Easy to implement (clear unit boundaries)
@@ -382,7 +382,7 @@ let units = graph.Functions |> List.map (fun f -> { RootNode = f.Id; ... })
 
 ### Option 2: Module-Level Parallelism
 
-**Granularity**: Each F# module is a compilation unit
+**Granularity**: Each Clef module is a compilation unit
 
 **Pros**:
 - Coarsest granularity (simplest)
@@ -744,5 +744,5 @@ let z = x + y
 - Nanopass Framework research (agent a8689dd)
 - Triton-CPU research (agent a211d88)
 - Chez Scheme research (agent af2a827)
-- `/home/hhh/repos/Firefly/docs/Parallel_Zipper_Architecture.md`
-- `/home/hhh/repos/Firefly/docs/Next_Context_Handoff_Parallel_Zippers.md`
+- `/home/hhh/repos/Composer/docs/Parallel_Zipper_Architecture.md`
+- `/home/hhh/repos/Composer/docs/Next_Context_Handoff_Parallel_Zippers.md`

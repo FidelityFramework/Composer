@@ -4,7 +4,7 @@
 
 ## Overview
 
-Samples 01-10 form the **Foundation Series** - the bootstrapping phase of the Firefly compiler. These samples were developed with ephemeral documentation (conversations, working sessions, iterative refinement) rather than formal PRDs. This document provides a retrospective synopsis of what was accomplished, both at the surface feature level and in the deeper compiler infrastructure.
+Samples 01-10 form the **Foundation Series** - the bootstrapping phase of the Composer compiler. These samples were developed with ephemeral documentation (conversations, working sessions, iterative refinement) rather than formal PRDs. This document provides a retrospective synopsis of what was accomplished, both at the surface feature level and in the deeper compiler infrastructure.
 
 **Key Insight**: Each sample appears simple on the surface ("hello world", "add two numbers"), but beneath the surface lies significant PSG enrichment, coeffect infrastructure, and MLIR emission patterns that compose upward into the Computation features (C-01+).
 
@@ -36,7 +36,7 @@ The Foundation Series demanded:
 - **Basic MLIR emission**: Entry point generation, function scaffolding, return value handling
 - **Static data**: String literals in `.rodata` section with proper null termination
 
-**Architectural Contribution**: Established that even "simple" output requires the full FNCS→PSG→Alex→MLIR pipeline. No shortcuts.
+**Architectural Contribution**: Established that even "simple" output requires the full CCS→PSG→Alex→MLIR pipeline. No shortcuts.
 
 ---
 
@@ -45,7 +45,7 @@ The Foundation Series demanded:
 **Surface**: Read user input, display personalized greeting.
 
 **Deeper Infrastructure**:
-- **Arena allocation**: `Arena<'lifetime>` as FNCS intrinsic with deterministic bump allocation
+- **Arena allocation**: `Arena<'lifetime>` as CCS intrinsic with deterministic bump allocation
 - **byref parameters**: `byref<Arena<'lifetime>>` for in-place arena modification
 - **Console.readlnFrom**: Arena-backed string allocation that survives function returns
 - **String interpolation**: Lowered to concatenation intrinsics (no runtime formatting)
@@ -57,7 +57,7 @@ The Foundation Series demanded:
 
 ### Sample 03: HelloWorldHalfCurried
 
-**Surface**: Use F# pipe operator (`|>`) for data flow.
+**Surface**: Use Clef pipe operator (`|>`) for data flow.
 
 **Deeper Infrastructure**:
 - **Pipe operator reduction**: `ReducePipeOperators` nanopass transforms `x |> f` to `f x` in PSG
@@ -65,7 +65,7 @@ The Foundation Series demanded:
 - **Inline expansion**: Stack allocation movement for inlined functions
 - **Control flow normalization**: Pipes become direct calls before MLIR emission
 
-**Architectural Contribution**: Established that F# syntactic sugar is resolved in PSG transformations, not in code generation. Alex sees normalized structure.
+**Architectural Contribution**: Established that Clef syntactic sugar is resolved in PSG transformations, not in code generation. Alex sees normalized structure.
 
 ---
 
@@ -260,7 +260,7 @@ Every architectural decision in Samples 01-10 has downstream consequences. The p
 ### What We'd Do Differently
 
 1. **Earlier coeffect documentation** - The coeffect pattern emerged organically; documenting it earlier would have accelerated C-01+
-2. **Formalize representation rules** - The homogeneous/heterogeneous distinction should be in fsnative-spec
+2. **Formalize representation rules** - The homogeneous/heterogeneous distinction should be in clef-spec
 3. **More intermediate sample steps** - Some jumps (05→06, 09→10) were larger than ideal
 
 ---
@@ -279,4 +279,4 @@ Every architectural decision in Samples 01-10 has downstream consequences. The p
 
 The Foundation Series was built through intensive iterative development with ephemeral documentation - design discussions, debugging sessions, and incremental refinement. This synopsis captures the technical substance; the journey was collaborative and emergent.
 
-> "These samples look simple. They are not. Each one taught us something about what it means to compile F# to native code with fidelity."
+> "These samples look simple. They are not. Each one taught us something about what it means to compile Clef to native code with fidelity."

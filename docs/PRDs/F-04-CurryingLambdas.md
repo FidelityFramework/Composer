@@ -52,7 +52,7 @@ type SemanticKind =
 
 ### 3.2 Curried Functions
 
-F# curried functions are desugared to nested lambdas:
+Clef curried functions are desugared to nested lambdas:
 
 ```fsharp
 let greet salutation name = ...
@@ -197,7 +197,7 @@ func.func @main() -> i32 {
 
 ```bash
 cd samples/console/FidelityHelloWorld/04_HelloWorldFullCurried
-/path/to/Firefly compile HelloWorld.fidproj
+/path/to/Composer compile HelloWorld.fidproj
 echo "Lambda" | ./HelloWorld
 # Output: Hello, Lambda!
 ```

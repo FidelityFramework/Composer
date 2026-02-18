@@ -71,7 +71,7 @@ This would meet the <500ms human-imperceptible target.
 
 1. **Bare-metal targeting**: Fidelity can generate freestanding binaries with direct hardware access
 2. **Zero runtime overhead**: No GC, no interpreter, no dynamic dispatch
-3. **Type-safe register access**: F# types can model hardware registers safely
+3. **Type-safe register access**: Clef types can model hardware registers safely
 4. **Platform bindings**: Alex can generate optimal ARM64 code for BCM2837 peripherals
 
 ## Files on YoshiPi
@@ -91,7 +91,7 @@ Location: `hhh@192.168.68.60:~/bin/`
 
 ## Next Steps
 
-1. Design F# module for direct SPI register access on BCM2837
+1. Design Clef module for direct SPI register access on BCM2837
 2. Implement as Platform.Bindings for ARM64 Linux
 3. Create entropy generator using Fidelity compilation
 4. Validate sub-500ms performance target

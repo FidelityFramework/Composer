@@ -5,7 +5,7 @@
 After proving single-channel entropy generation works (but is Python-bottlenecked at 1117ms for 4096 bytes), we're pivoting to:
 
 1. **4 parallel avalanche circuits** using Chris Tacke's simpler design
-2. **Native code generation** via fsnative/Fidelity for direct hardware access
+2. **Native code generation** via clef/Fidelity for direct hardware access
 3. **MLIR scf.parallel** for concurrent 4-channel ADC sampling
 
 ## Expected Performance Gains
@@ -63,11 +63,11 @@ for channel in range(4):
 - Mean centered (400-600 for 10-bit ADC)
 - LSB bits 0-2 balanced within 0.47-0.53
 
-## Phase 3: fsnative Development
+## Phase 3: clef Development
 
 ### Target: ARM Native Types for BCM2837
 
-Key types needed in fsnative:
+Key types needed in clef:
 
 ```fsharp
 // SPI register access
@@ -164,15 +164,15 @@ With DMA burst reads:
 
 | Component | Repository | Path |
 |-----------|------------|------|
-| fsnative types | ~/repos/fsnative | TBD - ARM native types |
+| clef types | ~/repos/clef | TBD - ARM native types |
 | Platform.Bindings.SPI | Fidelity.Platform | src/Platform.fs |
-| scf.parallel codegen | Firefly | src/Alex/Bindings/ |
-| Entropy sample | Firefly | samples/embedded/EntropyGenerator/ |
+| scf.parallel codegen | Composer | src/Alex/Bindings/ |
+| Entropy sample | Composer | samples/embedded/EntropyGenerator/ |
 
 ## Success Criteria
 
 1. **Hardware**: All 4 channels produce quality entropy
-2. **fsnative**: ARM register types compile through Fidelity pipeline
+2. **clef**: ARM register types compile through Fidelity pipeline
 3. **MLIR**: scf.parallel generates correct ARM64 code
 4. **Performance**: 4096 bytes in <500ms (stretch: <100ms)
 5. **Integration**: Entropy feeds into QuantumCredential key derivation

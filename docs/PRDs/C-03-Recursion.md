@@ -21,7 +21,7 @@ let rec factorial n =
 
 The VarRef to `factorial` inside the body needs a `defId` pointing to the Binding node. But at the time we check the body, the Binding node doesn't exist yet.
 
-## 3. FNCS Implementation
+## 3. CCS Implementation
 
 ### 3.1 Current State (Incomplete)
 
@@ -93,9 +93,9 @@ For recursive bindings:
 |------|--------|
 | `Expressions/Bindings.fs` | Restructure `checkLetOrUse` for recursive bindings |
 
-**No other FNCS files need changes.** The SemanticKind.Binding already has an `isRec` flag. VarRef already supports `defId: NodeId option`.
+**No other CCS files need changes.** The SemanticKind.Binding already has an `isRec` flag. VarRef already supports `defId: NodeId option`.
 
-## 4. Firefly Implementation
+## 4. Composer Implementation
 
 ### 4.1 SSAAssignment: Nested Function Naming
 
@@ -134,7 +134,7 @@ match findEnclosingFunctionName lambdaId with
 With proper PSG (VarRefs have defIds), the existing witness code handles recursive calls correctly:
 - VarRef has defId → lookup in lambdaNames → emit call
 
-## 5. FNCS: Nested Function Captures (Issue Found Jan 2026)
+## 5. CCS: Nested Function Captures (Issue Found Jan 2026)
 
 ### 5.1 The Problem
 
@@ -238,26 +238,26 @@ sumTo 10: 55        // After capture fix
 
 ## 7. Implementation Checklist
 
-### Phase 1: FNCS - Recursive Binding NodeIds
+### Phase 1: CCS - Recursive Binding NodeIds
 - [x] Restructure `checkLetOrUse` to pre-create Binding nodes for `let rec`
 - [x] Add NodeIds to environment before checking bodies
 - [x] Verify: VarRef to self has `defId = Some nodeId`
-- [x] FNCS builds
+- [x] CCS builds
 
-### Phase 2: Firefly - Nested Function Naming (Parent Links)
+### Phase 2: Composer - Nested Function Naming (Parent Links)
 - [x] Bindings.fs: `buildSequential` sets parent on all children
 - [x] Bindings.fs: Lambda creation sets parent on params and body
 - [x] TypeOperations.fs: TypeAnnotation sets parent on inner node
 - [x] SSAAssignment uses Parent chain for qualified names
 - [x] Verify: `@factorialTail_loop` not `@loop`
-- [x] Firefly builds
+- [x] Composer builds
 
-### Phase 3: FNCS - Nested Function Captures (NEW)
+### Phase 3: CCS - Nested Function Captures (NEW)
 - [ ] Import `computeCaptures` into Bindings.fs (or move to shared module)
 - [ ] Call `computeCaptures` when `env.EnclosingFunction.IsSome`
 - [ ] Exclude function's own name and parameters from capture set
 - [ ] Verify: sumTo's loop Lambda has `captures = [{Name="n"; ...}]`
-- [ ] FNCS builds
+- [ ] CCS builds
 
 ### Phase 4: Alex - Handle Nested Function Captures
 - [ ] LambdaWitness: pass captures as additional parameters for non-escaping nested functions

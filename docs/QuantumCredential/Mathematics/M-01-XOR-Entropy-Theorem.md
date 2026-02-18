@@ -119,7 +119,7 @@ A managed runtime like .NET or Python can certainly compute XOR. The limitation 
 3. **No memory guarantees**: Data copies proliferate
 4. **No parallelism expression**: The logical independence of channels can't be communicated to the compiler
 
-Native compilation through Firefly preserves the mathematical properties from source to machine code. The XOR operation that appears in F# becomes a single `eor` instruction in ARM64: no layers, no abstraction, no trust required.
+Native compilation through Composer preserves the mathematical properties from source to machine code. The XOR operation that appears in Clef becomes a single `eor` instruction in ARM64: no layers, no abstraction, no trust required.
 
 ---
 

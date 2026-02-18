@@ -2,8 +2,8 @@
 /// Provides phase-level timing for identifying bottlenecks in the compilation pipeline.
 ///
 /// Usage:
-///   Firefly compile project.fidproj --timing
-///   Firefly compile project.fidproj -T
+///   Composer compile project.fidproj --timing
+///   Composer compile project.fidproj -T
 ///
 /// Each phase is timed and reported with millisecond precision.
 module Core.Timing

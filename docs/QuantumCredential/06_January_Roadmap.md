@@ -4,13 +4,13 @@ This document provides a comprehensive assessment of the Fidelity ecosystem and 
 
 ## Current State Assessment
 
-### Firefly Compiler (Core)
+### Composer Compiler (Core)
 
 **Status: Functional for basic programs**
 
 | Component | State | Notes |
 |-----------|-------|-------|
-| FCS Integration | ✅ Working | Type checking, symbol resolution functional |
+| CCS Integration | ✅ Working | Type checking, symbol resolution functional |
 | PSG Builder | ✅ Working | 11K+ nodes, 15K+ edges for HelloWorld |
 | Nanopasses | ✅ Working | DefUse, ClassifyOps, ParameterAnnotation |
 | Reachability | ✅ Working | 97%+ dead code elimination |
@@ -30,7 +30,7 @@ This document provides a comprehensive assessment of the Fidelity ecosystem and 
 - **Parameter binding for inlined functions** - When functions are inlined, parameters need to be bound to argument values
 - **While loop control flow** - Need cf.cond_br and basic blocks
 - **NativePtr operations** - stackalloc, set, get not yet implemented
-- **FSharp.Core operators** - `not`, comparison operators have no SymbolUse edges to resolve
+- **Core operators** - `not`, comparison operators have no SymbolUse edges to resolve
 - Symbol correlation warnings for operators (op_Addition, etc.)
 - Member property correlation issues (this.Year, etc.)
 - TimeLoop sample fails due to module-level expressions
@@ -47,7 +47,7 @@ This document provides a comprehensive assessment of the Fidelity ecosystem and 
 
 ---
 
-### FNCS Intrinsics
+### CCS Intrinsics
 
 **Status: Core primitives working, expanding**
 
@@ -96,7 +96,7 @@ This document provides a comprehensive assessment of the Fidelity ecosystem and 
 **Current Capabilities:**
 - Parse C headers via CppSharp
 - Generate Layer 1 extern declarations
-- Map basic C types to F# equivalents
+- Map basic C types to Clef equivalents
 - Proof-of-concept with cJSON library
 
 **Required for Demo Day:**
@@ -125,9 +125,9 @@ This document provides a comprehensive assessment of the Fidelity ecosystem and 
 
 **Assessment:**
 BAREWire is designed as a .NET library with dependencies on System.Runtime.InteropServices and other BCL types. Porting to Fidelity would require:
-- Replacing BCL memory types with FNCS NativeTypes
+- Replacing BCL memory types with CCS NativeTypes
 - Replacing Span<T> with NativeSpan
-- Removing FSharp.UMX dependency or porting it
+- Removing Clef.UMX dependency or porting it
 
 **For Demo Day:**
 - BAREWire integration is likely **out of scope** for 6 weeks
@@ -149,7 +149,7 @@ Based on the Hardware Showcase Roadmap and current state:
 | Task | Complexity | Dependencies |
 |------|------------|--------------|
 | ARM Cortex-M33 LLVM target | Medium | LLVM toolchain setup |
-| GPIO/ADC primitives in FNCS | Medium | Hardware docs |
+| GPIO/ADC primitives in CCS | Medium | Hardware docs |
 | ADC sampling for zener entropy | Medium | Analog circuit |
 | PQC library bindings (manual) | High | pq-crystals or pqm4 |
 | Entropy validation | Medium | NIST SP 800-90B |
@@ -177,7 +177,7 @@ Based on the Hardware Showcase Roadmap and current state:
 
 ### Fallback Demo: Desktop Console Applications
 
-**Goal:** Demonstrate Firefly compilation pipeline working
+**Goal:** Demonstrate Composer compilation pipeline working
 
 **Already Working:**
 - HelloWorld compiles and runs
@@ -198,7 +198,7 @@ Based on the Hardware Showcase Roadmap and current state:
 
 ### Week 1: Stabilization & ARM Target Setup
 
-**Firefly:**
+**Composer:**
 - [ ] Fix TimeLoop sample (module-level expression handling)
 - [ ] Test samples 03 and 04
 - [ ] Document current limitations
@@ -208,13 +208,13 @@ Based on the Hardware Showcase Roadmap and current state:
 - [ ] Create `thumbv8m.main-none-eabi` target configuration
 - [ ] Test minimal ARM binary generation
 
-**FNCS:**
+**CCS:**
 - [ ] Review and test Time.fs primitives
 - [ ] Ensure all current primitives have Alex bindings
 
 ### Week 2: ARM Platform Primitives
 
-**FNCS:**
+**CCS:**
 - [ ] Add GPIO read/write primitives
 - [ ] Add ADC sampling primitive
 - [ ] Add basic timer primitives
@@ -294,7 +294,7 @@ The **minimum viable demo** requires:
 
 If any of these fail, fall back to:
 - Desktop demo showing compilation pipeline
-- Console app demonstrating Firefly capabilities
+- Console app demonstrating Composer capabilities
 - Documentation of hardware architecture (designs without working code)
 
 ---
@@ -346,7 +346,7 @@ If any of these fail, fall back to:
 - Full bidirectional credential exchange
 
 **Demo Day Narrative:**
-"We have built an F# ahead-of-time compiler that produces native binaries without runtime dependencies. Today we demonstrate it compiling F# code to run on an ARM microcontroller, sampling true random noise from a quantum mechanical source, and using post-quantum cryptographic algorithms to generate certificates that will remain secure even against future quantum computers."
+"We have built a Clef ahead-of-time compiler that produces native binaries without runtime dependencies. Today we demonstrate it compiling Clef code to run on an ARM microcontroller, sampling true random noise from a quantum mechanical source, and using post-quantum cryptographic algorithms to generate certificates that will remain secure even against future quantum computers."
 
 Even a partial demo hitting these points would be compelling.
 

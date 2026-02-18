@@ -99,7 +99,7 @@ let private zeroBssSection() =
 
 /// Initialize the C runtime (call static constructors if any)
 let private initRuntime() =
-    // Firefly doesn't use static constructors, but this is where
+    // Composer doesn't use static constructors, but this is where
     // they would be called if needed
     ()
 

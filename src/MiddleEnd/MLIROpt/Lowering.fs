@@ -5,7 +5,7 @@
 /// - MLIR validation passes
 /// - mlir-translate to LLVM IR
 ///
-/// When Firefly becomes self-hosted, this module gets replaced with
+/// When Composer becomes self-hosted, this module gets replaced with
 /// native MLIR dialect lowering.
 module MiddleEnd.MLIROpt.Lowering
 

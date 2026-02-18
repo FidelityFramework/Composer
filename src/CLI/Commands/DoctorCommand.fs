@@ -25,7 +25,7 @@ let doctor (args: ParseResults<DoctorArgs>) =
     let quick = args.Contains Quick
     let showHints = args.Contains Fix_Hints || not quick
     
-    printfn "Firefly Doctor - Checking System Health"
+    printfn "Composer Doctor - Checking System Health"
     printfn "======================================"
     printfn ""
     
@@ -52,12 +52,12 @@ let doctor (args: ParseResults<DoctorArgs>) =
     match ToolchainVerification.verifyToolchain verbose with
     | Success () ->
         printfn ""
-        printfn "✓ All checks passed! Firefly is ready to compile."
+        printfn "✓ All checks passed! Composer is ready to compile."
         
         if verbose then
             printfn ""
             printfn "You can compile F# programs with:"
-            printfn "  firefly compile --input Program.fs --output Program.exe"
+            printfn "  composer compile --input Program.fs --output Program.exe"
         
         0 // Success exit code
     
@@ -95,7 +95,7 @@ let doctor (args: ParseResults<DoctorArgs>) =
                 printfn "for building native Windows executables. Please use MINGW64 instead:"
                 printfn "  1. Close this terminal"
                 printfn "  2. Open 'MSYS2 MINGW64' from the Start Menu"
-                printfn "  3. Run 'firefly doctor' again"
+                printfn "  3. Run 'composer doctor' again"
             | _ -> ()
         
         1 // Error exit code
@@ -106,5 +106,5 @@ let quickCheck() : bool =
     | true -> true
     | false ->
         printfn ""
-        printfn "Toolchain issues detected. Run 'firefly doctor' for details."
+        printfn "Toolchain issues detected. Run 'composer doctor' for details."
         false

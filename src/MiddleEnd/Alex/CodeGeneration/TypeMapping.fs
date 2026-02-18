@@ -79,28 +79,28 @@ let mapNTUKindToMLIRType (arch: Architecture) (kind: NTUKind) : MLIRType =
     let wordWidth = platformWordWidth arch
     match kind with
     // Fixed-width signed integers
-    | NTUKind.NTUint8 -> TInt I8
-    | NTUKind.NTUint16 -> TInt I16
-    | NTUKind.NTUint32 -> TInt I32
-    | NTUKind.NTUint64 -> TInt I64
+    | NTUKind.NTUint (NTUWidth.Fixed 8) -> TInt I8
+    | NTUKind.NTUint (NTUWidth.Fixed 16) -> TInt I16
+    | NTUKind.NTUint (NTUWidth.Fixed 32) -> TInt I32
+    | NTUKind.NTUint (NTUWidth.Fixed 64) -> TInt I64
     // Fixed-width unsigned integers (same MLIR type, signedness is in ops)
-    | NTUKind.NTUuint8 -> TInt I8
-    | NTUKind.NTUuint16 -> TInt I16
-    | NTUKind.NTUuint32 -> TInt I32
-    | NTUKind.NTUuint64 -> TInt I64
+    | NTUKind.NTUuint (NTUWidth.Fixed 8) -> TInt I8
+    | NTUKind.NTUuint (NTUWidth.Fixed 16) -> TInt I16
+    | NTUKind.NTUuint (NTUWidth.Fixed 32) -> TInt I32
+    | NTUKind.NTUuint (NTUWidth.Fixed 64) -> TInt I64
     // Platform-word integers - size depends on architecture
-    | NTUKind.NTUint      // F# int (platform word)
-    | NTUKind.NTUuint     // F# uint (platform word)
+    | NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register)      // int (platform word)
+    | NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register)     // uint (platform word)
         -> TInt wordWidth
     // Native pointer-sized types - map to MLIR index for memref operations
-    | NTUKind.NTUnint     // nativeint - used for buffer sizes/offsets
-    | NTUKind.NTUunint    // unativeint
+    | NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Pointer)  // nativeint
+    | NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Pointer) // unativeint
     | NTUKind.NTUsize     // size_t
     | NTUKind.NTUdiff     // ptrdiff_t
         -> TIndex
     // Floating point
-    | NTUKind.NTUfloat32 -> TFloat F32
-    | NTUKind.NTUfloat64 -> TFloat F64
+    | NTUKind.NTUfloat (NTUWidth.Fixed 32) -> TFloat F32
+    | NTUKind.NTUfloat (NTUWidth.Fixed 64) -> TFloat F64
     // Boolean
     | NTUKind.NTUbool -> TInt I1
     // Character (Unicode codepoint = i32)
@@ -131,32 +131,38 @@ let mapNTUKindToMLIRType (arch: Architecture) (kind: NTUKind) : MLIRType =
 ///
 /// The architecture is passed explicitly to ensure correct codegen for all targets.
 let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
+    let rec stripQualifiedLayout (layout: TypeLayout) : TypeLayout =
+        match layout with
+        | TypeLayout.Qualified (inner, _) -> stripQualifiedLayout inner
+        | other -> other
+
     let wordWidth = platformWordWidth arch
     match ty with
     | NativeType.TApp(tycon, args) ->
+        let tyconLayout = stripQualifiedLayout tycon.Layout
         // FIRST: Check NTU layout for types that have it - this is the authoritative source
         // for platform-dependent types like int (PlatformWord)
-        match tycon.Layout, tycon.NTUKind with
+        match tyconLayout, tycon.NTUKind with
         // Zero-size unit type
         | TypeLayout.Inline (0, 1), Some NTUKind.NTUunit -> TInt I32
         // Boolean: 1-bit
         | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt I1
         // Fixed-width integers by NTUKind
-        | _, Some NTUKind.NTUint8 -> TInt I8
-        | _, Some NTUKind.NTUuint8 -> TInt I8
-        | _, Some NTUKind.NTUint16 -> TInt I16
-        | _, Some NTUKind.NTUuint16 -> TInt I16
-        | _, Some NTUKind.NTUint32 -> TInt I32
-        | _, Some NTUKind.NTUuint32 -> TInt I32
-        | _, Some NTUKind.NTUint64 -> TInt I64
-        | _, Some NTUKind.NTUuint64 -> TInt I64
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 8)) -> TInt I8
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 8)) -> TInt I8
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 16)) -> TInt I16
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 16)) -> TInt I16
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 32)) -> TInt I32
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 32)) -> TInt I32
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 64)) -> TInt I64
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 64)) -> TInt I64
         // Platform-word integers (int, uint) - size depends on architecture
-        | TypeLayout.PlatformWord, Some NTUKind.NTUint
-        | TypeLayout.PlatformWord, Some NTUKind.NTUuint
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register))
         | TypeLayout.PlatformWord, None -> TInt wordWidth  // Platform word resolved per architecture
         // Native pointer-sized types (nativeint, size_t, etc.) - map to index for memref
-        | TypeLayout.PlatformWord, Some NTUKind.NTUnint
-        | TypeLayout.PlatformWord, Some NTUKind.NTUunint
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Pointer))
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Pointer))
         | TypeLayout.PlatformWord, Some NTUKind.NTUsize
         | TypeLayout.PlatformWord, Some NTUKind.NTUdiff
             -> TIndex
@@ -165,8 +171,8 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         | TypeLayout.PlatformWord, Some NTUKind.NTUfnptr -> TIndex
         | _, Some NTUKind.NTUptr -> TIndex
         // Floats
-        | _, Some NTUKind.NTUfloat32 -> TFloat F32
-        | _, Some NTUKind.NTUfloat64 -> TFloat F64
+        | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 32)) -> TFloat F32
+        | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 64)) -> TFloat F64
         // Char (Unicode codepoint)
         | _, Some NTUKind.NTUchar -> TInt I32
         // String as memref (portable MLIR type, not LLVM struct)
@@ -224,7 +230,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                     failwithf "Record type '%s' (fields=%d, layout=%A) lacks proper TypeDef metadata - use mapNativeTypeWithGraphForArch or fix FNCS"
                         tycon.Name tycon.FieldCount tycon.Layout
                 else
-                    match tycon.Layout with
+                    match tyconLayout with
                     | TypeLayout.Inline (size, align) when size > 8 ->
                         // DU layout: FNCS provides size & align - type uses size, allocation uses align
                         // Heterogeneous struct → TMemRefStatic (size, TInt I8)
@@ -256,6 +262,8 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                         // Phase 2: Use memref array for multiple pointer fields (homogeneous)
                         if n = 1 then TIndex
                         else TMemRefStatic (n, TIndex)  // Array of N indices (portable)
+                    | TypeLayout.Qualified _ ->
+                        failwithf "Qualified layout should have been normalized before mapping: %s" tycon.Name
                     | TypeLayout.Inline _ ->
                         failwithf "Unknown inline type '%s' with no fields" tycon.Name
 

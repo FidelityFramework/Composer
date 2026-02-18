@@ -46,7 +46,7 @@ The compiler tracks Region bindings and inserts `Region.release` at all scope ex
 
 Regions are NOT IDisposable. There's no `use` keyword. The compiler manages lifetime automatically based on lexical scope.
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Region Type
 
@@ -80,7 +80,7 @@ Regions are NOT IDisposable. There's no `use` keyword. The compiler manages life
 
 ### 3.3 Linear Resource Tracking
 
-FNCS marks Region bindings as linear resources:
+CCS marks Region bindings as linear resources:
 
 ```fsharp
 type BindingKind =
@@ -103,7 +103,7 @@ type ScopeExitCoeffect = {
 }
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Region Struct
 
@@ -303,7 +303,7 @@ Sum of squares 0-99: 328350
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -312,7 +312,7 @@ Sum of squares 0-99: 328350
 | `SemanticGraph.fs` | MODIFY | Add LinearResource binding kind |
 | `ScopeAnalysis.fs` | CREATE | Track linear resources and exit points |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -321,7 +321,7 @@ Sum of squares 0-99: 328350
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Foundation
+### Phase 1: CCS Foundation
 - [ ] Add TRegion to NativeTypes
 - [ ] Add Region.create/alloc/release intrinsics
 - [ ] Implement linear resource tracking

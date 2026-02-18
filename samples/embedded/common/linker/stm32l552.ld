@@ -29,7 +29,7 @@ MEMORY
 
 /* Stack and heap sizes */
 __stack_size = 8K;
-__heap_size = 0;  /* Firefly uses stack-only allocation by default */
+__heap_size = 0;  /* Composer uses stack-only allocation by default */
 
 /* Calculate stack top */
 __stack_top = ORIGIN(SRAM1) + LENGTH(SRAM1);

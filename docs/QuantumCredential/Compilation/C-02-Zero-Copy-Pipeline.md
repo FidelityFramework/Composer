@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains why managed runtimes (Python, .NET, Java) are fundamentally unsuitable for security-critical entropy generation, and how Firefly's native compilation eliminates the security liabilities that managed memory creates.
+This document explains why managed runtimes (Python, .NET, Java) are fundamentally unsuitable for security-critical entropy generation, and how Composer's native compilation eliminates the security liabilities that managed memory creates.
 
 **Key Principle**: Every memory copy creates another location where sensitive data resides. Managed runtimes copy implicitly; native compilation copies only when explicitly specified.
 
@@ -126,9 +126,9 @@ Multiple copies increase timing attack surface:
 
 ---
 
-## Firefly's Zero-Copy Architecture
+## Composer's Zero-Copy Architecture
 
-Firefly compiles F# to native code without a managed runtime. There is:
+Composer compiles Clef to native code without a managed runtime. There is:
 - No garbage collector
 - No managed heap
 - No implicit copying
@@ -137,7 +137,7 @@ Firefly compiles F# to native code without a managed runtime. There is:
 ### Direct Hardware Access
 
 ```fsharp
-// F# with Firefly - compiles to direct register access
+// Clef with Composer - compiles to direct register access
 let readChannel (ch: int) : uint16 =
     Platform.Bindings.ADC.readChannel ch
 ```
@@ -263,7 +263,7 @@ Memory behavior:
 - SPI driver uses kernel buffers (copies at driver boundary)
 - 2-4 copies per byte before it reaches the array
 
-### Firefly Implementation
+### Composer Implementation
 
 ```fsharp
 let entropy = Arena.allocate arena 4096
@@ -312,7 +312,7 @@ Memory behavior:
 
 ## Summary
 
-Managed runtimes create implicit copies that expand the attack surface for cryptographic material. Firefly's native compilation eliminates this entire class of vulnerability:
+Managed runtimes create implicit copies that expand the attack surface for cryptographic material. Composer's native compilation eliminates this entire class of vulnerability:
 
 | Aspect | Managed Runtime | Native Compilation |
 |--------|-----------------|-------------------|

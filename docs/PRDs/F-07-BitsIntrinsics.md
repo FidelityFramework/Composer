@@ -68,7 +68,7 @@ Console.writeln $"Restored: {restored}"
 %restored = arith.bitcast %bits : i64 to f64
 ```
 
-### 3.3 FNCS Intrinsic Definitions
+### 3.3 CCS Intrinsic Definitions
 
 ```fsharp
 // In CheckExpressions.fs
@@ -176,7 +176,7 @@ No new coeffects - Bits operations are pure computations.
 
 ```bash
 cd samples/console/FidelityHelloWorld/07_BitsTest
-/path/to/Firefly compile BitsTest.fidproj
+/path/to/Composer compile BitsTest.fidproj
 ./BitsTest
 # Output:
 # Original: 3.14
@@ -208,4 +208,4 @@ This sample's infrastructure enables:
 
 - [F-05-DiscriminatedUnions](F-05-DiscriminatedUnions.md) - Uses bits for payload storage
 - [I-01-SocketBasics](I-01-SocketBasics.md) - Network byte order usage
-- [FNCS_Architecture.md](../FNCS_Architecture.md) - Intrinsic design
+- [CCS_Architecture.md](../CCS_Architecture.md) - Intrinsic design

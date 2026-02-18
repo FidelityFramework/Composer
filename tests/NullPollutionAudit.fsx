@@ -128,7 +128,7 @@ else
     findings
     |> List.groupBy (fun (file, _, _) -> file)
     |> List.iter (fun (file, items) ->
-        let shortPath = file.Replace("/home/hhh/repos/Firefly/", "")
+        let shortPath = file.Replace("/home/hhh/repos/Composer/", "")
         printfn "   %s:" shortPath
         items
         |> List.sortBy (fun (_, line, _) -> line)

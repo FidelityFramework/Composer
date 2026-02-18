@@ -48,7 +48,7 @@ let thread = Thread.create compute
 let result = Thread.join thread  // Returns 42
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Thread Type
 
@@ -81,9 +81,9 @@ let result = Thread.join thread  // Returns 42
 
 ### 3.3 Thread State Tracking
 
-FNCS may track thread creation for escape analysis - data passed to threads must remain valid.
+CCS may track thread creation for escape analysis - data passed to threads must remain valid.
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Thread Handle Structure
 
@@ -277,14 +277,14 @@ All threads completed
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `NativeTypes.fs` | MODIFY | Add TThread type |
 | `CheckExpressions.fs` | MODIFY | Add Thread intrinsics |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -294,7 +294,7 @@ All threads completed
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Foundation
+### Phase 1: CCS Foundation
 - [ ] Add TThread type
 - [ ] Add Thread.create/join/detach intrinsics
 

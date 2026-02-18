@@ -51,7 +51,7 @@ Coeffect analysis computes information about existing structure:
 
 This is the essence of the "Fidelity" in Fidelity framework.
 
-F# source code expresses computations declaratively (dataflow style):
+Clef source code expresses computations declaratively (dataflow style):
 ```fsharp
 let result = items |> List.map transform |> List.filter predicate
 ```
@@ -171,9 +171,9 @@ type StringEntry = {
 ## Pipeline Placement
 
 ```
-Source Code → FCS → PSG Construction
+Source Code → CCS → PSG Construction
                           ↓
-                    FNCS Resolution
+                    CCS Resolution
                           ↓
 ┌─────────────────────────────────────┐
 │          PSG SATURATION             │  ← Enrichment happens here
@@ -293,7 +293,7 @@ With this metadata, Alex can choose:
 
 The Fidelity framework preserves semantic correctness while enabling optimal lowering:
 
-1. **F# semantics preserved** - The user's code means exactly what F# says it means
+1. **Clef semantics preserved** - The user's code means exactly what Clef says it means
 2. **Native efficiency achieved** - Lowering exploits platform capabilities
 3. **Pivot informed by coeffects** - Analysis provides data for correct decisions
 

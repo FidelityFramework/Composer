@@ -2,7 +2,7 @@
 
 ## Overview
 
-The FidelityHelloWorld samples in `/samples/console/FidelityHelloWorld/` form a progressive test suite for Firefly compiler capabilities. Each sample builds on previous ones, proving specific F# features compile correctly to native code.
+The FidelityHelloWorld samples in `/samples/console/FidelityHelloWorld/` form a progressive test suite for Composer compiler capabilities. Each sample builds on previous ones, proving specific Clef features compile correctly to native code.
 
 **Implementation Philosophy**: Each feature follows the Photographer Principle - nanopasses build the scene (enrich the PSG with coeffects), the Zipper moves attention through the graph, Active Patterns focus the semantic lens, and Transfer snaps the picture (emits MLIR via Templates). If you find yourself computing metadata during code generation, stop - that belongs in a nanopass.
 
@@ -96,7 +96,7 @@ for n in numbers do
     Console.writeln (Format.int n)
 ```
 
-**Implementation**: FNCS recognizes the Seq builder. A nanopass tags each `yield` with its state index (coeffect). Alex folds over the seq body - at each `YieldPoint` node, the `SeqStateMachine` template emits the state transition. The iterator struct holds `{ State: int; Current: 'T }`. For-in desugars to while + MoveNext.
+**Implementation**: CCS recognizes the Seq builder. A nanopass tags each `yield` with its state index (coeffect). Alex folds over the seq body - at each `YieldPoint` node, the `SeqStateMachine` template emits the state transition. The iterator struct holds `{ State: int; Current: 'T }`. For-in desugars to while + MoveNext.
 
 #### B.2: Sample 15 - SeqOperations
 
@@ -112,7 +112,7 @@ let evens = Seq.filter (fun x -> x % 2 = 0) numbers
 let first5 = Seq.take 5 numbers
 ```
 
-**Implementation**: Seq module operations are FNCS intrinsics. Each combinator wraps an upstream iterator. The `(|SeqCombinator|_|)` Active Pattern matches map/filter/take nodes. Alex witnesses the combinator and emits a composed iterator struct that delegates MoveNext to the upstream.
+**Implementation**: Seq module operations are CCS intrinsics. Each combinator wraps an upstream iterator. The `(|SeqCombinator|_|)` Active Pattern matches map/filter/take nodes. Alex witnesses the combinator and emits a composed iterator struct that delegates MoveNext to the upstream.
 
 ---
 
@@ -140,13 +140,13 @@ let value1 = Lazy.force expensive  // Prints "Computing..."
 let value2 = Lazy.force expensive  // No print, cached
 ```
 
-**Implementation**: FNCS recognizes the Lazy builder. The lazy body becomes a thunk closure (coeffect-tagged with captures). Alex witnesses `LazyExpr` nodes and emits `{ Computed: bool; Value: 'T; Thunk: unit -> 'T }`. The `LazyForce` template emits: check flag, branch, call thunk, store result, set flag. Thread-safe version deferred.
+**Implementation**: CCS recognizes the Lazy builder. The lazy body becomes a thunk closure (coeffect-tagged with captures). Alex witnesses `LazyExpr` nodes and emits `{ Computed: bool; Value: 'T; Thunk: unit -> 'T }`. The `LazyForce` template emits: check flag, branch, call thunk, store result, set flag. Thread-safe version deferred.
 
 ---
 
 ### Phase D: Async (LLVM Coroutines)
 
-Implement F# async using LLVM coroutine intrinsics - no runtime library.
+Implement Clef async using LLVM coroutine intrinsics - no runtime library.
 
 Async is codata with suspension points. The coroutine frame is the "frozen computation" that resumes on demand. LLVM's `coro.*` intrinsics compile to state machines at compile time - zero runtime overhead.
 
@@ -168,7 +168,7 @@ let result = Async.RunSynchronously simple
 Console.writeln (Format.int result)
 ```
 
-**Implementation**: FNCS recognizes the Async builder. A trivial async (no suspension) compiles to an immediate return. The `(|AsyncReturn|_|)` Active Pattern matches the simple case. Alex witnesses and emits direct value return - no coroutine frame needed.
+**Implementation**: CCS recognizes the Async builder. A trivial async (no suspension) compiles to an immediate return. The `(|AsyncReturn|_|)` Active Pattern matches the simple case. Alex witnesses and emits direct value return - no coroutine frame needed.
 
 #### D.2: Sample 18 - AsyncAwait
 
@@ -207,7 +207,7 @@ let results = Async.Parallel [task1; task2; task3]
               |> Async.RunSynchronously
 ```
 
-**Implementation**: `Async.Parallel` is an FNCS intrinsic. In single-threaded mode, it executes sequentially (parallel semantics, sequential execution). The `(|AsyncParallel|_|)` lens matches the combinator. Alex witnesses and emits a loop that runs each async to completion, collecting results.
+**Implementation**: `Async.Parallel` is a CCS intrinsic. In single-threaded mode, it executes sequentially (parallel semantics, sequential execution). The `(|AsyncParallel|_|)` lens matches the combinator. Alex witnesses and emits a loop that runs each async to completion, collecting results.
 
 ---
 
@@ -255,7 +255,7 @@ let main () =
 Sum: 999000
 ```
 
-**Implementation**: `Region` is an FNCS intrinsic type with coeffect `NeedsCleanup`. A nanopass performs scope analysis and tags each Region binding's exit points. Alex witnesses `RegionCreate` and emits via the `PageAlloc` Binding template (platform-aware: mmap on Linux, VirtualAlloc on Windows). At scope exits, the `PageFree` template emits deallocation. No `IDisposable`, no `use` - the compiler knows.
+**Implementation**: `Region` is a CCS intrinsic type with coeffect `NeedsCleanup`. A nanopass performs scope analysis and tags each Region binding's exit points. Alex witnesses `RegionCreate` and emits via the `PageAlloc` Binding template (platform-aware: mmap on Linux, VirtualAlloc on Windows). At scope exits, the `PageFree` template emits deallocation. No `IDisposable`, no `use` - the compiler knows.
 
 #### E.2: Sample 21 - RegionPassing
 
@@ -351,7 +351,7 @@ let server () =
     Sys.close sock
 ```
 
-**Implementation**: Socket operations are FNCS Sys module intrinsics. The `(|SysCall|_|)` Active Pattern matches syscall nodes. Alex witnesses and emits via platform Bindings - each syscall number is data in the Binding, not routing logic. The buffer comes from a Region, giving proper I/O workspace.
+**Implementation**: Socket operations are CCS Sys module intrinsics. The `(|SysCall|_|)` Active Pattern matches syscall nodes. Alex witnesses and emits via platform Bindings - each syscall number is data in the Binding, not routing logic. The buffer comes from a Region, giving proper I/O workspace.
 
 #### F.2: Sample 24 - WebSocketEcho
 
@@ -428,7 +428,7 @@ let main () =
 
 Implement OS threading for true parallelism.
 
-Threading primitives are FNCS intrinsics that map to platform syscalls. The Thread coeffect marks functions that spawn threads - affecting what can be captured and how resources are managed.
+Threading primitives are CCS intrinsics that map to platform syscalls. The Thread coeffect marks functions that spawn threads - affecting what can be captured and how resources are managed.
 
 #### H.1: Sample 27 - BasicThread
 
@@ -462,7 +462,7 @@ Worker thread done
 All done
 ```
 
-**Implementation**: `Thread.create` is an FNCS intrinsic. The closure passed becomes the thread entry point - its capture set is coeffect-tagged. Alex witnesses `ThreadCreate` and emits via platform Bindings: `pthread_create` on POSIX, `CreateThread` on Windows. The closure's environment struct is passed as the thread argument.
+**Implementation**: `Thread.create` is a CCS intrinsic. The closure passed becomes the thread entry point - its capture set is coeffect-tagged. Alex witnesses `ThreadCreate` and emits via platform Bindings: `pthread_create` on POSIX, `CreateThread` on Windows. The closure's environment struct is passed as the thread argument.
 
 #### H.2: Sample 28 - MutexSync
 
@@ -492,7 +492,7 @@ let main () =
     Console.writeln (Format.int counter)  // Should be 2000
 ```
 
-**Implementation**: Mutex operations are FNCS intrinsics with `SyncPrimitive` coeffect. Alex witnesses mutex nodes and emits platform-specific syscalls via Bindings. The mutable variable capture is coeffect-tagged as `SharedMutable` - the compiler knows it crosses thread boundaries.
+**Implementation**: Mutex operations are CCS intrinsics with `SyncPrimitive` coeffect. Alex witnesses mutex nodes and emits platform-specific syscalls via Bindings. The mutable variable capture is coeffect-tagged as `SharedMutable` - the compiler knows it crosses thread boundaries.
 
 ---
 
@@ -505,7 +505,7 @@ let main () =
 - **Scoped Regions (for dynamic memory in worker threads)**
 - Records/DUs (for message type definitions)
 
-This proves the compiler can handle F#'s actor model primitive with full native compilation.
+This proves the compiler can handle Clef's actor model primitive with full native compilation.
 
 **Foundational Implementation**: OS thread per actor + mutex-protected queue + LLVM coroutine for async loop. No DCont, no Olivier/Prospero supervision - just the core actor semantics. This foundation works for desktop AND embedded/MCU/unikernel targets.
 
@@ -552,7 +552,7 @@ Hello, Bob!
 Shutting down
 ```
 
-**Implementation**: `MailboxProcessor.Start` is an FNCS intrinsic that synthesizes: Thread (for actor thread), Async (for message loop), Closure (for behavior), Queue (mutex + condvar + buffer). The `(|ActorStart|_|)` Active Pattern matches the Start call. Alex witnesses and emits via composition of existing templates - `ThreadCreate` for the actor thread, `CoroFrame` for the async loop, `MutexQueue` for the message buffer. The actor struct: `{ Thread; Queue; Behavior }`.
+**Implementation**: `MailboxProcessor.Start` is a CCS intrinsic that synthesizes: Thread (for actor thread), Async (for message loop), Closure (for behavior), Queue (mutex + condvar + buffer). The `(|ActorStart|_|)` Active Pattern matches the Start call. Alex witnesses and emits via composition of existing templates - `ThreadCreate` for the actor thread, `CoroFrame` for the async loop, `MutexQueue` for the message buffer. The actor struct: `{ Thread; Queue; Behavior }`.
 
 #### I.2: Sample 30 - ActorReply
 
@@ -713,23 +713,23 @@ samples/console/FidelityHelloWorld/
 
 For each sample:
 
-1. **Build compiler**: `cd /home/hhh/repos/Firefly/src && dotnet build`
-2. **Compile sample**: `Firefly compile <Sample>.fidproj`
+1. **Build compiler**: `cd /home/hhh/repos/Composer/src && dotnet build`
+2. **Compile sample**: `Composer compile <Sample>.fidproj`
 3. **Execute binary**: `./<output_binary>`
 4. **Verify output**: Compare with expected output
 5. **Keep intermediates**: Use `-k` flag for debugging if needed
 
 ```bash
 # Example validation
-cd /home/hhh/repos/Firefly/samples/console/FidelityHelloWorld/20_BasicRegion
-/home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly compile BasicRegion.fidproj
+cd /home/hhh/repos/Composer/samples/console/FidelityHelloWorld/20_BasicRegion
+/home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer compile BasicRegion.fidproj
 ./target/basicregion
 # Expected: Sum: 999000
 ```
 
 ## Dependencies by Phase
 
-| Phase | FNCS Additions | Nanopass Enrichment | Alex Templates |
+| Phase | CCS Additions | Nanopass Enrichment | Alex Templates |
 |-------|----------------|---------------------|----------------|
 | A | None | Pattern binding coeffects | RecordFieldAccess |
 | B | Seq module intrinsics | Yield state indices | SeqStateMachine |
@@ -766,7 +766,7 @@ Phase I (MailboxProcessor) - CAPSTONE
 
 - [WRENStack_Roadmap.md](./WRENStack_Roadmap.md) - Overall architecture
 - [Async_LLVM_Coroutines.md](./Async_LLVM_Coroutines.md) - Async implementation
-- [FNCS_Architecture.md](./FNCS_Architecture.md) - Adding new intrinsics
+- [CCS_Architecture.md](./CCS_Architecture.md) - Adding new intrinsics
 - [Architecture_Canonical.md](./Architecture_Canonical.md) - Compiler pipeline
 
 **Serena Memories** (architectural guidance):

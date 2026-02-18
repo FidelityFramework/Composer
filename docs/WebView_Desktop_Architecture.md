@@ -16,7 +16,7 @@ This document describes a desktop application framework built on the Fidelity ec
 
 - **Single native executable** with embedded web UI
 - **Partas.Solid** component model compiled to JavaScript via Fable
-- **Firefly** orchestrates the entire build pipeline
+- **Composer** orchestrates the entire build pipeline
 - **Platform-agnostic Fidelity.Platform bindings**, platform-specific Alex implementations
 - **System webview** (WebKitGTK/WebView2/WKWebView) renders the UI
 
@@ -50,7 +50,7 @@ The UI layer uses [SolidJS](https://www.solidjs.com/), a reactive JavaScript fra
 
 SolidJS is faster because it doesn't diff - it knows exactly what changed and updates only that.
 
-### Partas.Solid: F# Syntax for SolidJS
+### Partas.Solid: Clef Syntax for SolidJS
 
 Instead of writing JSX in JavaScript:
 
@@ -63,10 +63,10 @@ function Button(props) {
 }
 ```
 
-You write the equivalent in F# using Partas.Solid:
+You write the equivalent in Clef using Partas.Solid:
 
 ```fsharp
-// F#/Partas.Solid
+// Clef/Partas.Solid
 [<SolidTypeComponent>]
 type Button() =
     inherit button()
@@ -80,14 +80,14 @@ type Button() =
         }
 ```
 
-Fable compiles this F# code to the JavaScript you'd write by hand. The output is idiomatic SolidJS.
+Fable compiles this Clef code to the JavaScript you'd write by hand. The output is idiomatic SolidJS.
 
 ### The "Backend" Is Native Code
 
 In a traditional web app, your frontend talks to a server over HTTP. In this architecture:
 
 - There is no server
-- The "backend" is compiled native code (via Firefly)
+- The "backend" is compiled native code (via Composer)
 - Frontend and backend run in the **same process**
 - Communication uses direct function binding, not HTTP
 
@@ -101,9 +101,9 @@ This Architecture:
 
 ---
 
-## For .NET Developers: F# Deep Features Explained
+## For .NET Developers: Clef Deep Features Explained
 
-If you're a C# or VB.NET developer encountering F# for the first time, some features may seem unfamiliar. This section explains the three key language features that power the Fidelity architecture.
+If you're a C# or VB.NET developer encountering Clef for the first time, some features may seem unfamiliar. This section explains the three key language features that power the Fidelity architecture.
 
 ### Quotations: Code as Data
 
@@ -115,10 +115,10 @@ Expression<Func<int, bool>> isEven = x => x % 2 == 0;
 // The lambda is captured as a data structure, not compiled to IL
 ```
 
-F# quotations are similar but more powerful:
+Clef quotations are similar but more powerful:
 
 ```fsharp
-// F# - Quotations
+// Clef - Quotations
 let isEven = <@ fun x -> x % 2 = 0 @>
 // Captured as Expr<int -> bool> - inspectable at compile time
 ```
@@ -135,7 +135,7 @@ let gpioDescriptor: Expr<PeripheralDescriptor> = <@
 @>
 ```
 
-The Firefly compiler inspects this quotation during PSG construction, extracting the memory region classification. This information flows through the pipeline, informing Alex that volatile loads are required for peripheral access.
+The Composer compiler inspects this quotation during PSG construction, extracting the memory region classification. This information flows through the pipeline, informing Alex that volatile loads are required for peripheral access.
 
 Unlike runtime reflection, quotations are **compile-time artifacts**. They require no runtime support, impose no overhead, and introduce no BCL dependencies.
 
@@ -153,10 +153,10 @@ var result = shape switch
 };
 ```
 
-F# has similar `match` expressions, but active patterns add a crucial capability: **compositional matching**.
+Clef has similar `match` expressions, but active patterns add a crucial capability: **compositional matching**.
 
 ```fsharp
-// F# - Active pattern definition
+// Clef - Active pattern definition
 let (|PeripheralAccess|_|) (node: PSGNode) =
     match node with
     | CallToExtern name args when isPeripheralBinding name ->
@@ -193,10 +193,10 @@ async Task<int> ProcessAsync()
 }
 ```
 
-F# has computation expressions, which are more general:
+Clef has computation expressions, which are more general:
 
 ```fsharp
-// F# - async computation expression
+// Clef - async computation expression
 let processAsync = async {
     let! data = fetchDataAsync()
     let! result = computeAsync data
@@ -245,7 +245,7 @@ The compiler's internal structure mirrors the patterns it compiles.
 
 ## For SolidJS Developers: Partas.Solid Patterns
 
-If you're familiar with SolidJS, Partas.Solid provides the same reactive primitives with F# syntax.
+If you're familiar with SolidJS, Partas.Solid provides the same reactive primitives with Clef syntax.
 
 ### Component Definitions
 
@@ -305,13 +305,13 @@ The Fable compilation produces JavaScript files. You can inspect them to verify 
 
 ## The Stack Model
 
-This architecture follows the same conceptual model as other F# full-stack solutions:
+This architecture follows the same conceptual model as other Clef full-stack solutions:
 
 | Stack | Frontend | Backend | Transport |
 |-------|----------|---------|-----------|
 | **SAFE** | Fable/React | Saturn/.NET | HTTP |
 | **SPEC** | Partas.Solid | CloudflareFS | HTTP/Workers |
-| **This Stack** | Partas.Solid | Firefly/Native | webview_bind |
+| **This Stack** | Partas.Solid | Composer/Native | webview_bind |
 
 The key difference: this stack targets **native desktop** with the frontend and backend in the **same process**.
 
@@ -403,7 +403,7 @@ This separation enables:
 │  ┌────────────────────────┐       │  ┌────────────────────────┐ │
 │  │                        │       │  │                        │ │
 │  │  Partas.Solid          │       │  │  Application Logic     │ │
-│  │  (F# → Fable → JS)     │       │  │  (F# → Firefly → MLIR) │ │
+│  │  (Clef → Fable → JS)     │       │  │  (Clef → Composer → MLIR) │ │
 │  │                        │       │  │                        │ │
 │  │  SolidJS Reactivity    │◄─────►│  │  Platform.Bindings     │ │
 │  │  (fine-grained DOM)    │  IPC  │  │  (webview conduits)    │ │
@@ -426,7 +426,7 @@ This separation enables:
 
 ### Data Flow
 
-1. **Build time**: Firefly orchestrates Fable → Vite → native compilation
+1. **Build time**: Composer orchestrates Fable → Vite → native compilation
 2. **Embedding**: Bundled HTML/JS/CSS becomes a string constant in the binary
 3. **Runtime**: Native code creates webview, loads embedded HTML via `setHtml()`
 4. **Interaction**: JS calls native functions via `webview_bind`, native responds via `webview_return`
@@ -435,15 +435,15 @@ This separation enables:
 
 ## Build Pipeline
 
-Firefly acts as the unified build orchestrator, similar to how `dotnet` coordinates builds in the SAFE Stack:
+Composer acts as the unified build orchestrator, similar to how `dotnet` coordinates builds in the SAFE Stack:
 
 ```
-firefly build MyApp.fidproj
+composer build MyApp.fidproj
     │
     ├─► Phase 1: Frontend Compilation
     │   │
     │   ├─► dotnet fable src/Frontend -o build/fable
-    │   │   (Partas.Solid F# → SolidJS JavaScript)
+    │   │   (Partas.Solid Clef → SolidJS JavaScript)
     │   │
     │   └─► npm run build (Vite)
     │       (Bundle → build/dist/index.html with inlined JS/CSS)
@@ -451,12 +451,12 @@ firefly build MyApp.fidproj
     ├─► Phase 2: Asset Embedding
     │   │
     │   └─► Generate EmbeddedAssets.fs
-    │       (HTML file → F# string constant)
+    │       (HTML file → Clef string constant)
     │
     ├─► Phase 3: Native Compilation
     │   │
-    │   └─► Firefly compile src/Backend + EmbeddedAssets.fs
-    │       (F# → PSG → Alex → MLIR → LLVM → native)
+    │   └─► Composer compile src/Backend + EmbeddedAssets.fs
+    │       (Clef → PSG → Alex → MLIR → LLVM → native)
     │
     └─► Output: MyApp (single executable)
 ```
@@ -465,12 +465,12 @@ firefly build MyApp.fidproj
 
 ```bash
 # Build for current platform
-firefly build
+composer build
 
 # Cross-compile
-firefly build --target linux-x64
-firefly build --target windows-x64
-firefly build --target macos-arm64
+composer build --target linux-x64
+composer build --target windows-x64
+composer build --target macos-arm64
 ```
 
 Each target produces a native executable for that platform, with platform-specific webview bindings compiled in.
@@ -554,7 +554,7 @@ This provides:
 This webview-based approach is a **pragmatic interim solution** for desktop applications. The long-term vision described in [Demo_UI_Stretch_Goal.md](./Demo_UI_Stretch_Goal.md) includes:
 
 - **FidelityUI**: Native widget toolkit using LVGL (embedded) and GTK4/Skia (desktop)
-- **Compile-time widget transformation**: F# UI definitions compiled directly to native rendering
+- **Compile-time widget transformation**: Clef UI definitions compiled directly to native rendering
 - **Zero runtime overhead**: No JavaScript, no browser engine
 
 The webview approach provides:
@@ -565,7 +565,7 @@ The webview approach provides:
 Both approaches share the architectural principles:
 - Platform-agnostic definitions in Fidelity.Platform
 - Platform-specific implementations in Alex
-- Firefly as the unified build orchestrator
+- Composer as the unified build orchestrator
 
 ---
 
@@ -581,15 +581,15 @@ Both approaches share the architectural principles:
 
 | Term | Definition |
 |------|------------|
-| **Fidelity.Platform** | Native F# standard library - platform-agnostic bindings |
-| **Alex** | Firefly's multi-dimensional targeting layer - generates platform-specific MLIR |
+| **Fidelity.Platform** | Native Clef standard library - platform-agnostic bindings |
+| **Alex** | Composer's multi-dimensional targeting layer - generates platform-specific MLIR |
 | **Conduit** | A Platform.Bindings function where Alex provides the implementation |
 | **DCont** | Delimited continuations MLIR dialect |
-| **Fable** | F# to JavaScript compiler |
-| **Partas.Solid** | F# DSL for SolidJS components |
+| **Fable** | Clef to JavaScript compiler |
+| **Partas.Solid** | Clef DSL for SolidJS components |
 | **Platform.Bindings** | Module convention for platform-provided functions |
-| **PSG** | Program Semantic Graph - Firefly's intermediate representation |
-| **Quotation** | F# feature: `<@ code @>` captures code as inspectable data |
+| **PSG** | Program Semantic Graph - Composer's intermediate representation |
+| **Quotation** | Clef feature: `<@ code @>` captures code as inspectable data |
 | **SolidJS** | Reactive JavaScript UI framework (alternative to React) |
 | **WebView** | System browser component embedded in native applications |
 | **XParsec** | Parser combinator library for PSG pattern matching |

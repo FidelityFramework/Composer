@@ -43,7 +43,7 @@ let strAsync = async { return "hello" }
 let unitAsync = async { Console.writeln "done" }
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Async Type
 
@@ -88,7 +88,7 @@ The `return` keyword in async context.
     NativeType.TFun(aVar, NativeType.TAsync(aVar))
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 LLVM Coroutine Intrinsics
 
@@ -256,7 +256,7 @@ Result: 42
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -265,17 +265,17 @@ Result: 42
 | `CheckExpressions.fs` | MODIFY | Add Async.RunSynchronously intrinsic |
 | `Expressions/Computations.fs` | MODIFY | Handle async { } expressions |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `src/Alex/Witnesses/AsyncWitness.fs` | CREATE | Emit async frame and basic coroutine |
 | `src/Alex/Preprocessing/SuspensionIndices.fs` | CREATE | Number suspension points |
-| `src/Alex/Traversal/FNCSTransfer.fs` | MODIFY | Handle AsyncExpr, AsyncReturn |
+| `src/Alex/Traversal/CCSTransfer.fs` | MODIFY | Handle AsyncExpr, AsyncReturn |
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Foundation
+### Phase 1: CCS Foundation
 - [ ] Add TAsync to NativeTypes
 - [ ] Add AsyncExpr, AsyncReturn to SemanticKind
 - [ ] Implement async { } checking

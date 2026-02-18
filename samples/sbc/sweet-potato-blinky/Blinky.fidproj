@@ -1,4 +1,4 @@
-# Sweet Potato Blinky - Firefly ARM64 SBC Sample
+# Sweet Potato Blinky - Composer ARM64 SBC Sample
 # Bare-metal LED blink demo for Allwinner H6-based board
 
 [package]

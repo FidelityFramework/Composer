@@ -215,7 +215,7 @@ let readChannel ch =
     uint16 ADC1.DR
 ```
 
-The same F# code compiles to either implementation based on target platform.
+The same Clef code compiles to either implementation based on target platform.
 
 ---
 
@@ -281,7 +281,7 @@ let readWithFallback () =
 
 ### Native Performance Target
 
-With Firefly native compilation and direct SPI:
+With Composer native compilation and direct SPI:
 
 | Operation | Time | Notes |
 |-----------|------|-------|

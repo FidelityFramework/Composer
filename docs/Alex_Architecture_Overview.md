@@ -4,7 +4,7 @@
 
 ## The "Library of Alexandria" Model
 
-Alex is Firefly's **multi-dimensional hardware targeting layer**. It consumes the PSG (Program Semantic Graph) and generates platform-optimized MLIR.
+Alex is Composer's **multi-dimensional hardware targeting layer**. It consumes the PSG (Program Semantic Graph) and generates platform-optimized MLIR.
 
 ## Core Responsibility: The Non-Dispatch Model
 
@@ -177,12 +177,12 @@ let witnessIfThenElse ctx node =
 
 **Why parallel-safe**: Shared Pattern, no witness-to-witness calls.
 
-#### Option 3: FNCS Elaboration (Moves Logic Upstream)
+#### Option 3: CCS Elaboration (Moves Logic Upstream)
 
-Have FNCS elaborate `Lazy.force` into explicit control flow nodes in the PSG:
+Have CCS elaborate `Lazy.force` into explicit control flow nodes in the PSG:
 
 ```fsharp
-// FNCS elaborates:
+// CCS elaborates:
 Lazy.force x
 
 // Into PSG nodes:
@@ -196,7 +196,7 @@ IfThenElse(
 // LazyWitness only handles LazyExpr construction
 ```
 
-**Why parallel-safe**: No LazyForce witness needed. ControlFlowWitness handles the PSG structure that FNCS created.
+**Why parallel-safe**: No LazyForce witness needed. ControlFlowWitness handles the PSG structure that CCS created.
 
 ### Enforcement Mechanisms
 

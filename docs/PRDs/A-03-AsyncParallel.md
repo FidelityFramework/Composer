@@ -38,7 +38,7 @@ Async.Parallel : Async<'T>[] -> Async<'T[]>
 Async.Sequential : Async<'T>[] -> Async<'T[]>
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Async.Parallel Intrinsic
 
@@ -63,7 +63,7 @@ Async.Sequential : Async<'T>[] -> Async<'T[]>
 
 Async.Parallel is recognized as an intrinsic call - no special PSG node needed. The witness handles it based on the intrinsic tag.
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Sequential Implementation (Single-Threaded)
 
@@ -224,13 +224,13 @@ Note: In single-threaded mode, "Computing N" appears in order. With true threadi
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `CheckExpressions.fs` | MODIFY | Add Async.Parallel, Async.Sequential intrinsics |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -239,7 +239,7 @@ Note: In single-threaded mode, "Computing N" appears in order. With true threadi
 ## 8. Implementation Checklist
 
 ### Phase 1: Sequential Implementation
-- [ ] Add Async.Parallel intrinsic to FNCS
+- [ ] Add Async.Parallel intrinsic to CCS
 - [ ] Implement sequential execution witness
 - [ ] Test with array of asyncs
 

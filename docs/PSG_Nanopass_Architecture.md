@@ -1,15 +1,15 @@
 # PSG Nanopass Architecture v2: True Nanopass Pipeline
 
-> **ARCHITECTURE UPDATE (January 2026)**: PSG construction has been moved to FNCS (F# Native Compiler Services).
-> FNCS now builds the PSG with native types attached and SRTP resolved during type checking.
-> Firefly consumes the PSG as "correct by construction" and focuses on lowering passes and code generation.
-> This document describes the nanopass principles that FNCS uses for PSG construction.
+> **ARCHITECTURE UPDATE (January 2026)**: PSG construction has been moved to CCS (Clef Compiler Services).
+> CCS now builds the PSG with native types attached and SRTP resolved during type checking.
+> Composer consumes the PSG as "correct by construction" and focuses on lowering passes and code generation.
+> This document describes the nanopass principles that CCS uses for PSG construction.
 
 ## Executive Summary
 
 This document defines the nanopass principles for PSG (Program Semantic Graph) construction. Drawing directly from the nanopass framework principles (Sarkar, Waddell, Dybvig, Keep - Indiana University), PSG construction is a **true nanopass pipeline**.
 
-**Key Change**: PSG construction now happens in FNCS, not Firefly. Firefly receives the completed PSG and applies lowering nanopasses before code generation.
+**Key Change**: PSG construction now happens in CCS, not Composer. Composer receives the completed PSG and applies lowering nanopasses before code generation.
 
 ## Reference
 
@@ -38,7 +38,7 @@ Key properties:
 ### What We Had
 
 ```
-FCS (SynExpr + symbols) → [Monolithic PSG Builder] → PSG
+CCS (SynExpr + symbols) → [Monolithic PSG Builder] → PSG
                                     ↓
                               Type Integration (also monolithic)
                                     ↓
@@ -51,18 +51,18 @@ FCS (SynExpr + symbols) → [Monolithic PSG Builder] → PSG
 
 The "Monolithic PSG Builder" was doing too much:
 - Walking syntax tree (SynExpr)
-- Correlating FCS symbols
+- Correlating CCS symbols
 - Attempting to capture typed tree information
 - All in one pass
 
 ### What We Need
 
 ```
-FCS Parse → PSG₀ (Pure Syntax)
+CCS Parse → PSG₀ (Pure Syntax)
               ↓ Pass 1: Structural Construction (FULL LIBRARY)
             PSG₁ (Nodes + ChildOf edges)
               ↓ Pass 2: Symbol Correlation (FULL LIBRARY)
-            PSG₂ (+ FSharpSymbol attachments)
+            PSG₂ (+ ClefSymbol attachments)
               ↓ Pass 3: Reachability (SOFT DELETE - NARROWS SCOPE)
             PSG₃ (+ IsReachable marks, structure intact)
               │
@@ -105,11 +105,11 @@ The nanopass framework paper (Keep 2013) discusses this: passes may have orderin
 
 ### Why a Zipper?
 
-The typed tree (`FSharpExpr`) must be correlated with the syntax tree (`SynExpr`) during PSG construction. This correlation is NOT a simple traversal - it requires:
+The typed tree (`ClefExpr`) must be correlated with the syntax tree (`SynExpr`) during PSG construction. This correlation is NOT a simple traversal - it requires:
 
 1. **Bidirectional navigation** - Move forward and backward through both trees
 2. **Context preservation** - Know where we are in both trees
-3. **Structural alignment** - Match FSharpExpr nodes to PSG nodes by range
+3. **Structural alignment** - Match ClefExpr nodes to PSG nodes by range
 4. **Backtracking** - When misaligned, back up and realign
 
 A zipper provides exactly these capabilities.
@@ -117,7 +117,7 @@ A zipper provides exactly these capabilities.
 ### The Correlation Problem
 
 ```
-SynExpr (syntax)              FSharpExpr (typed)
+SynExpr (syntax)              ClefExpr (typed)
 ==================            ===================
 App                           Call
 ├── LongIdent:op_Dollar       ├── TraitCall (SRTP resolved!)
@@ -132,10 +132,10 @@ The syntax tree sees `op_Dollar` as a regular identifier. The typed tree knows i
 ### Zipper Design
 
 ```fsharp
-/// Typed tree zipper for FSharpExpr/PSG correlation
+/// Typed tree zipper for ClefExpr/PSG correlation
 type TypedTreeZipper = {
     /// Current focus in typed tree
-    TypedFocus: FSharpExpr
+    TypedFocus: ClefExpr
     /// Current focus in PSG
     PSGFocus: PSGNode
     /// Path back to root in typed tree
@@ -147,18 +147,18 @@ type TypedTreeZipper = {
 }
 
 type TypeCorrelation = {
-    ResolvedType: FSharpType
-    Constraints: FSharpGenericParameterConstraint list
+    ResolvedType: ClefType
+    Constraints: ClefGenericParameterConstraint list
     /// For TraitCall nodes - the resolved member info
     SRTPResolution: SRTPResolution option
 }
 
 type SRTPResolution = {
     TraitName: string           // e.g., "op_Dollar", "op_Addition"
-    SourceTypes: FSharpType list
+    SourceTypes: ClefType list
     MemberFlags: SynMemberFlags
-    /// The resolved target (extracted from FCS)
-    ResolvedMember: FSharpMemberOrFunctionOrValue option
+    /// The resolved target (extracted from CCS)
+    ResolvedMember: ClefMemberOrFunctionOrValue option
 }
 ```
 
@@ -167,17 +167,17 @@ type SRTPResolution = {
 The zipper combines with XParsec for pattern-based correlation:
 
 ```fsharp
-/// XParsec combinator for matching FSharpExpr patterns
+/// XParsec combinator for matching ClefExpr patterns
 let traitCall : Parser<TypedTreeZipper, SRTPResolution> =
     pexpr {
         let! focus = getFocus
         match focus.TypedFocus with
-        | FSharpExprPatterns.TraitCall(sourceTypes, traitName, flags, paramTypes, retTypes, args) ->
+        | ClefExprPatterns.TraitCall(sourceTypes, traitName, flags, paramTypes, retTypes, args) ->
             return {
                 TraitName = traitName
                 SourceTypes = sourceTypes
                 MemberFlags = flags
-                ResolvedMember = extractResolvedMember focus  // FCS internals
+                ResolvedMember = extractResolvedMember focus  // CCS internals
             }
         | _ ->
             return! fail "Not a trait call"
@@ -214,15 +214,15 @@ let markUnreachable (psg: ProgramSemanticGraph) : ProgramSemanticGraph =
 
 ## The New Pipeline
 
-### Phase 0: FCS Parse and Type Check
+### Phase 0: CCS Parse and Type Check
 
 ```
-F# Source → FCS → (ParseResults[], CheckProjectResults)
+Clef Source → CCS → (ParseResults[], CheckProjectResults)
 ```
 
-FCS provides:
+CCS provides:
 - `SynExpr` syntax trees (parse)
-- `FSharpExpr` typed trees (check)
+- `ClefExpr` typed trees (check)
 - Symbol resolution (check)
 
 ### Phase 1: Structural Construction
@@ -237,12 +237,12 @@ L_SynExpr → L_PSG₁
   Expr → (syntaxKind, children[], range, fileName)
 ```
 
-This pass ONLY walks syntax, creating structural nodes. No FCS symbols yet.
+This pass ONLY walks syntax, creating structural nodes. No CCS symbols yet.
 
 ### Phase 2: Symbol Correlation
 
 **Input**: `PSG₁`, `CheckProjectResults`
-**Output**: `PSG₂` with FSharpSymbol attachments
+**Output**: `PSG₂` with ClefSymbol attachments
 
 **Language transformation**:
 ```
@@ -250,7 +250,7 @@ L_PSG₁ → L_PSG₂
   Expr → (syntaxKind, children[], range, fileName, symbol?)
 ```
 
-Uses FCS `GetAllUsesOfAllSymbols()` to correlate by range.
+Uses CCS `GetAllUsesOfAllSymbols()` to correlate by range.
 
 ### Phase 3: Soft-Delete Reachability
 
@@ -267,7 +267,7 @@ Marks unreachable nodes but preserves ALL structure.
 
 ### Phase 4: Typed Tree Overlay (The Zipper Pass)
 
-**Input**: `PSG₃`, `CheckProjectResults` (FSharpExpr trees)
+**Input**: `PSG₃`, `CheckProjectResults` (ClefExpr trees)
 **Output**: `PSG₄` with Type, Constraints, SRTP resolution
 
 **Language transformation**:
@@ -277,7 +277,7 @@ L_PSG₃ → L_PSG₄
           type?, constraints?, srtpResolution?)
 ```
 
-This is where the TypedTreeZipper walks FSharpExpr in parallel with PSG, correlating by range and attaching:
+This is where the TypedTreeZipper walks ClefExpr in parallel with PSG, correlating by range and attaching:
 - Resolved types (after inference)
 - Resolved constraints (after solving)
 - SRTP resolution info (TraitCall → resolved member)
@@ -314,7 +314,7 @@ let pruneUnreachable (psg: ProgramSemanticGraph) : ProgramSemanticGraph =
 ### The Problem
 
 ```fsharp
-// Alloy/Console.fs (with FNCS - string has native semantics)
+// Alloy/Console.fs (with CCS - string has native semantics)
 type WritableString =
     | WritableString
     static member inline ($) (WritableString, s: string) = writeString s
@@ -325,11 +325,11 @@ let inline Write s = WritableString $ s
 When we call `Console.Write "hello"`:
 - Syntax sees: `App [op_Dollar, WritableString, "hello"]`
 - Types resolve: `$` → `WritableString.op_Dollar(WritableString, string)` → `writeString`
-- Note: With FNCS, `string` has native semantics (UTF-8 fat pointer) - no separate overloads needed
+- Note: With CCS, `string` has native semantics (UTF-8 fat pointer) - no separate overloads needed
 
 ### The Solution
 
-The typed tree overlay captures this via `FSharpExpr.TraitCall`:
+The typed tree overlay captures this via `ClefExpr.TraitCall`:
 
 ```fsharp
 // In TypedTreeZipper pass
@@ -339,7 +339,7 @@ match typedFocus with
         TraitName = "op_Dollar"
         SourceTypes = sourceTypes  // [WritableString]
         MemberFlags = flags
-        // FCS has resolved this - extract the target
+        // CCS has resolved this - extract the target
         ResolvedMember = Some (resolveToWriteSystemString ...)
     }
     attachToPSGNode currentNode srtpInfo
@@ -410,7 +410,7 @@ Each can be inspected independently. Diffs show exactly what each pass added.
 
 ## Conclusion
 
-This architectural revision makes PSG construction a **true nanopass pipeline** from the ground up. The critical addition is the **typed tree overlay pass** using a **zipper** for FSharpExpr/PSG correlation.
+This architectural revision makes PSG construction a **true nanopass pipeline** from the ground up. The critical addition is the **typed tree overlay pass** using a **zipper** for ClefExpr/PSG correlation.
 
 Key benefits:
 1. **SRTP resolution captured at source** - No downstream guessing

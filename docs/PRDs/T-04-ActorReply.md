@@ -60,7 +60,7 @@ bank.Post(Deposit 100)
 let balance = bank.PostAndReply(fun reply -> GetBalance reply)
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 AsyncReplyChannel Type
 
@@ -91,7 +91,7 @@ let balance = bank.PostAndReply(fun reply -> GetBalance reply)
         NativeType.TFun(replyVar, env.Globals.UnitType))
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Reply Channel Structure
 
@@ -283,14 +283,14 @@ let main _ =
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `NativeTypes.fs` | MODIFY | Add TAsyncReplyChannel |
 | `CheckExpressions.fs` | MODIFY | Add PostAndReply, Reply intrinsics |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|

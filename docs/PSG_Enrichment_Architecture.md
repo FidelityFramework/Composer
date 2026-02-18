@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Fidelity compiler transforms F# source code to native binaries through a multi-phase pipeline. A critical aspect of this pipeline is **enrichment** - the process by which the Program Semantic Graph (PSG) gains structure beyond what the user explicitly wrote.
+The Fidelity compiler transforms Clef source code to native binaries through a multi-phase pipeline. A critical aspect of this pipeline is **enrichment** - the process by which the Program Semantic Graph (PSG) gains structure beyond what the user explicitly wrote.
 
 This document establishes the canonical terminology and architecture for enrichment in the Fidelity framework.
 
@@ -44,7 +44,7 @@ The Fidelity compiler performs two distinct kinds of enrichment, tracked via met
 
 ### 1. Intrinsic Elaboration (`Elaboration.Kind = "Intrinsic"`)
 
-When the compiler encounters an intrinsic operation (defined in FNCS), it may need to synthesize PSG structure to implement that operation's semantics.
+When the compiler encounters an intrinsic operation (defined in CCS), it may need to synthesize PSG structure to implement that operation's semantics.
 
 **Examples:**
 - `Console.write "Hello"` - The user wrote a simple call, but the intrinsic implementation requires:
@@ -135,11 +135,11 @@ This enables tooling to:
 ```
 Source Code
     ↓
-  FCS (Parse + Type Check)
+  CCS (Parse + Type Check)
     ↓
   PSG Construction (Phase 1-3)
     ↓
-  FNCS Type Resolution (Phase 4)
+  CCS Type Resolution (Phase 4)
     ↓
 ┌─────────────────────────────────────┐
 │         PSG SATURATION              │
@@ -202,7 +202,7 @@ let synthesizedNode = baseNode |> markIntrinsic "Console.write" expansionId
 
 ## Phase Output Serialization
 
-The FNCS phase emitter includes enrichment metadata in JSON output:
+The CCS phase emitter includes enrichment metadata in JSON output:
 
 ```json
 {
@@ -245,7 +245,7 @@ The expansion ID links enable:
 
 - [Coeffect_Analysis_Architecture.md](./Coeffect_Analysis_Architecture.md) - Coeffect analysis (separate from enrichment)
 - [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) - PSG construction pipeline
-- [FNCS_Architecture.md](./FNCS_Architecture.md) - F# Native Compiler Services
+- [CCS_Architecture.md](./CCS_Architecture.md) - Clef Compiler Services
 - [Architecture_Canonical.md](./Architecture_Canonical.md) - Overall system architecture
 
 ## Serena Memories

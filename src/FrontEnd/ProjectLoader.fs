@@ -10,7 +10,7 @@ open FSharp.Native.Compiler.Project
 // PUBLIC API
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Load and type-check a Firefly project
+/// Load and type-check a Composer project
 /// This is the single entry point for the FrontEnd
 let load (projectPath: string) : Result<ProjectCheckResult, string> =
     ProjectChecker.checkProject projectPath

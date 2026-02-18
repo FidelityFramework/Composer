@@ -1,9 +1,9 @@
-# Firefly Regression Test Manifest
+# Composer Regression Test Manifest
 # Defines all samples and their expected outputs
 
 [config]
 samples_root = "../../samples/console/FidelityHelloWorld"
-compiler = "../../src/bin/Debug/net10.0/Firefly"
+compiler = "../../src/bin/Debug/net10.0/Composer"
 default_timeout_seconds = 30
 
 # =============================================================================

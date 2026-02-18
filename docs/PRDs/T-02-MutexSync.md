@@ -48,7 +48,7 @@ CondVar.signal cond        // Wake one waiter
 CondVar.broadcast cond     // Wake all waiters
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Mutex Type
 
@@ -104,7 +104,7 @@ CondVar.broadcast cond     // Wake all waiters
     NativeType.TFun(NativeType.TCondVar, env.Globals.UnitType)
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Mutex Structure
 
@@ -244,14 +244,14 @@ With mutex (expect 200000): 200000
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `NativeTypes.fs` | MODIFY | Add TMutex, TCondVar types |
 | `CheckExpressions.fs` | MODIFY | Add Mutex/CondVar intrinsics |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|

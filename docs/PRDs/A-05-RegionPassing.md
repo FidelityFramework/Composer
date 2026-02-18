@@ -36,7 +36,7 @@ When a region is passed to a function:
 
 This is "borrowing" the region - not ownership transfer.
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Region Parameter Tracking
 
@@ -50,7 +50,7 @@ type BorrowedRegionCoeffect = {
 
 ### 3.2 Ownership Analysis
 
-FNCS ensures:
+CCS ensures:
 1. Region parameters are not released by the callee
 2. Data allocated in borrowed region may escape (it's the caller's region)
 
@@ -76,7 +76,7 @@ val transform : r:Region -> input:nativeptr<int> -> len:int -> nativeptr<int>@r
 
 The `@r` annotation (not user-visible syntax) indicates the result is allocated in region `r`.
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Region Parameter SSA
 
@@ -105,7 +105,7 @@ type FunctionCoeffect = {
 
 let emitRegionRelease z regionSSA =
     if isBorrowedRegion regionSSA z then
-        // Compiler error - should have been caught in FNCS
+        // Compiler error - should have been caught in CCS
         failwith "Cannot release borrowed region"
     else
         emitMunmap z regionSSA
@@ -203,14 +203,14 @@ Doubled: 20 20 20 20 20
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `ScopeAnalysis.fs` | MODIFY | Track borrowed vs owned regions |
 | `CheckExpressions.fs` | MODIFY | Validate no release on borrowed |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -218,7 +218,7 @@ Doubled: 20 20 20 20 20
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Ownership Tracking
+### Phase 1: CCS Ownership Tracking
 - [ ] Distinguish owned vs borrowed regions
 - [ ] Error on releasing borrowed region
 - [ ] Track allocations per region parameter

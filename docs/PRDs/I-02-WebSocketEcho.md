@@ -52,7 +52,7 @@ let echoLoop (client: int) =
         | _ -> ()
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 WebSocket Types
 
@@ -88,9 +88,9 @@ For WebSocket handshake, we need SHA-1 and Base64:
         NativeType.TFun(env.Globals.IntType, env.Globals.StringType))
 ```
 
-**Note**: These can be implemented in F# using byte operations, or linked from a minimal crypto library.
+**Note**: These can be implemented in Clef using byte operations, or linked from a minimal crypto library.
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Frame Parsing
 
@@ -221,24 +221,24 @@ wscat -c ws://localhost:8080
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `CheckExpressions.fs` | MODIFY | Add Crypto intrinsics (optional) |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
-| Sample source | CREATE | WebSocket implementation in F# |
+| Sample source | CREATE | WebSocket implementation in Clef |
 
-### 7.3 Alternative: F# Implementation
+### 7.3 Alternative: Clef Implementation
 
-Most WebSocket logic can be implemented in F# using existing primitives:
+Most WebSocket logic can be implemented in Clef using existing primitives:
 - Byte manipulation: `NativePtr.get/set`
 - String operations: existing intrinsics
-- SHA-1/Base64: Either intrinsic or pure F# implementation
+- SHA-1/Base64: Either intrinsic or pure Clef implementation
 
 ## 8. Implementation Checklist
 

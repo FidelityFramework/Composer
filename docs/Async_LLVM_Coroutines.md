@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains Fidelity's approach to implementing F# async computation expressions using LLVM coroutine intrinsics rather than the MLIR async dialect.
+This document explains Fidelity's approach to implementing Clef async computation expressions using LLVM coroutine intrinsics rather than the MLIR async dialect.
 
 ## The Problem with MLIR Async Dialect
 
@@ -73,9 +73,9 @@ bool coro_resume(struct coro_frame* f) {
 | Freestanding support | No | Yes |
 | State machine | Runtime dispatch | Compile-time generated |
 
-## Mapping F# Async to LLVM Coroutines
+## Mapping Clef Async to LLVM Coroutines
 
-### F# Async Computation Expression
+### Clef Async Computation Expression
 
 ```fsharp
 async {
@@ -85,7 +85,7 @@ async {
 }
 ```
 
-### Desugared Form (FNCS)
+### Desugared Form (CCS)
 
 ```fsharp
 Async.Bind(fetchDataAsync(), fun data ->
@@ -160,7 +160,7 @@ In MLIR/LLVM:
 
 ## Integration with Fidelity
 
-### FNCS Intrinsics
+### CCS Intrinsics
 
 New intrinsic module `Async` with operations:
 
@@ -263,8 +263,8 @@ The LLVM coroutine implementation provides a working foundation while DCont is d
 
 - [WRENStack_Roadmap.md](./WRENStack_Roadmap.md) - Overall architecture
 - [FidelityHelloWorld_Progression.md](./FidelityHelloWorld_Progression.md) - Sample progression including async
-- [FNCS_Architecture.md](./FNCS_Architecture.md) - Intrinsic definition system
-- `~/repos/Firefly/.serena/memories/delimited_continuations_architecture.md` - DCont vision
+- [CCS_Architecture.md](./CCS_Architecture.md) - Intrinsic definition system
+- `~/repos/Composer/.serena/memories/delimited_continuations_architecture.md` - DCont vision
 
 ## References
 

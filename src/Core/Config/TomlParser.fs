@@ -1,5 +1,5 @@
 /// XParsec-based TOML Parser for .fidproj files
-/// Supports the subset of TOML needed for Firefly project configuration.
+/// Supports the subset of TOML needed for Composer project configuration.
 module Core.Config.TomlParser
 
 open System

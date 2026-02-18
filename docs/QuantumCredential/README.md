@@ -19,7 +19,7 @@ The QuantumCredential demo serves as a proving ground for the Fidelity framework
 
 ### Quotation-Based Memory Architecture
 
-At the heart of the Fidelity framework lies a novel approach to memory management where F# quotations and active patterns serve as the foundational substrate for type-safe hardware access. This is not a peripheral feature or stretch goal; it represents the central architectural innovation that distinguishes Fidelity from other compilation approaches.
+At the heart of the Fidelity framework lies a novel approach to memory management where Clef quotations and active patterns serve as the foundational substrate for type-safe hardware access. This is not a peripheral feature or stretch goal; it represents the central architectural innovation that distinguishes Fidelity from other compilation approaches.
 
 Quotations provide inspectable, transformable representations of memory constraints:
 
@@ -48,7 +48,7 @@ let (|VolatilePeripheralWrite|_|) (node: PSGNode) =
 
 This architecture enables compile-time validation of memory access patterns, ensuring that read-only registers cannot be written, volatile accesses generate appropriate memory barriers, and hardware constraints are enforced through the type system rather than runtime checks.
 
-The demo exercises this architecture through GPIO control, ADC sampling, and WebView rendering, validating the quotation flow from FNCS declarations through fsnative nanopasses to Alex emission.
+The demo exercises this architecture through GPIO control, ADC sampling, and WebView rendering, validating the quotation flow from CCS declarations through clef nanopasses to Alex emission.
 
 ### BAREWire Zero-Copy Protocol
 
@@ -56,10 +56,10 @@ The BAREWire protocol, protected by patent US 63/786,247 ("System and Method for
 
 ### Platform Binding Pattern
 
-The demo validates the Platform.Bindings pattern where FNCS defines hardware access signatures without implementation, and Alex provides platform-specific MLIR emission. This separation ensures that application code remains hardware-agnostic while enabling aggressive platform-specific optimization:
+The demo validates the Platform.Bindings pattern where CCS defines hardware access signatures without implementation, and Alex provides platform-specific MLIR emission. This separation ensures that application code remains hardware-agnostic while enabling aggressive platform-specific optimization:
 
 ```fsharp
-// FNCS defines the interface
+// CCS defines the interface
 module Platform.Bindings =
     let ioctl (fd: int) (request: uint64) (arg: nativeint) : int =
         Unchecked.defaultof<int>
@@ -89,13 +89,13 @@ let sampleQuadAvalanche () =
     |> conditionWithShake256
 ```
 
-The Firefly compiler emits `scf.parallel` for this pattern, generating code that executes simultaneously across all four cores with no synchronization overhead. See [03_MLIR_Dialect_Strategy.md](./03_MLIR_Dialect_Strategy.md) for details on the standard MLIR dialect approach.
+The Composer compiler emits `scf.parallel` for this pattern, generating code that executes simultaneously across all four cores with no synchronization overhead. See [03_MLIR_Dialect_Strategy.md](./03_MLIR_Dialect_Strategy.md) for details on the standard MLIR dialect approach.
 
 ## Hardware Strategy
 
 The demo runs on the YoshiPi carrier board (Raspberry Pi Zero 2 W running Debian) rather than bare-metal microcontrollers. This choice reflects pragmatic risk management for demo timelines while preserving the architectural validity of the demonstration.
 
-Both the YoshiPi (credential generator) and the Sweet Potato (keystation) are Linux/ARM64 systems. They share the same compilation target as desktop development machines, enabling code sharing across the UI, cryptographic, and communication layers. The Firefly compiler produces ARM64 binaries with only a target triple change from x86_64 development.
+Both the YoshiPi (credential generator) and the Sweet Potato (keystation) are Linux/ARM64 systems. They share the same compilation target as desktop development machines, enabling code sharing across the UI, cryptographic, and communication layers. The Composer compiler produces ARM64 binaries with only a target triple change from x86_64 development.
 
 The hardware platforms share identical analog front ends:
 - Quad-channel avalanche circuit for quantum-grade entropy generation
@@ -111,7 +111,7 @@ The STM32L5 bare-metal path remains documented in the Phase2_STM32L5 subdirector
 
 ### Core Documentation
 
-**[01_YoshiPi_Demo_Strategy.md](./01_YoshiPi_Demo_Strategy.md)** establishes the symmetric architecture where credential generator and keystation share code through common Linux targeting. The document explains how native F# APIs, WebView rendering, and Platform.Bindings work identically across both devices.
+**[01_YoshiPi_Demo_Strategy.md](./01_YoshiPi_Demo_Strategy.md)** establishes the symmetric architecture where credential generator and keystation share code through common Linux targeting. The document explains how native Clef APIs, WebView rendering, and Platform.Bindings work identically across both devices.
 
 **[02_YoshiPi_Architecture.md](./02_YoshiPi_Architecture.md)** details the hardware integration including the quad-channel avalanche circuit connection to ADC inputs, GPIO control via the Linux gpiochip interface, and display rendering through WebKitGTK. Memory layout diagrams show how stack-based allocation serves the demo's needs.
 
@@ -133,18 +133,18 @@ The STM32L5 bare-metal path remains documented in the Phase2_STM32L5 subdirector
 
 | Component | Capability Validated |
 |-----------|---------------------|
-| **Firefly** | ARM64 cross-compilation, build orchestration |
-| **FNCS** | String/Array with native semantics, Platform.Bindings pattern |
+| **Composer** | ARM64 cross-compilation, build orchestration |
+| **CCS** | String/Array with native semantics, Platform.Bindings pattern |
 | **Alex** | Linux syscall emission, WebKitGTK library bindings, scf.parallel code generation |
 | **BAREWire** | Credential serialization, memory-mapped descriptors |
-| **fsnative** | Quotation attachment, constraint validation nanopasses |
+| **clef** | Quotation attachment, constraint validation nanopasses |
 
 The demo provides concrete validation that the architectural principles documented in Quotation_Based_Memory_Architecture.md operate correctly in practice, even when the target platform is Linux rather than bare-metal. The nanopass pipeline processes quotation-based constraints identically regardless of whether the ultimate emission is a Linux syscall or a direct register write.
 
 ## Success Criteria
 
 The demo succeeds when:
-- F# code compiles to functional ARM64 Linux binaries
+- Clef code compiles to functional ARM64 Linux binaries
 - Avalanche circuit sampling produces quality entropy
 - Post-quantum credential generation completes correctly
 - Credentials transfer via USB (and optionally IR) to the keystation

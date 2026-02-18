@@ -4,7 +4,7 @@
 
 ## 1. Executive Summary
 
-This sample introduces the F# pipe operator (`|>`) and demonstrates that F# syntactic sugar is resolved in PSG transformations, not during code generation. The `ReducePipeOperators` nanopass normalizes data flow syntax into direct function applications.
+This sample introduces the Clef pipe operator (`|>`) and demonstrates that Clef syntactic sugar is resolved in PSG transformations, not during code generation. The `ReducePipeOperators` nanopass normalizes data flow syntax into direct function applications.
 
 **Key Achievement**: Established the nanopass pattern for syntactic sugar reduction, ensuring Alex sees normalized structure.
 
@@ -196,7 +196,7 @@ func.func @main() -> i32 {
 
 ```bash
 cd samples/console/FidelityHelloWorld/03_HelloWorldHalfCurried
-/path/to/Firefly compile HelloWorld.fidproj
+/path/to/Composer compile HelloWorld.fidproj
 echo "Pipes" | ./HelloWorld
 # Output: Hello, Pipes!
 ```

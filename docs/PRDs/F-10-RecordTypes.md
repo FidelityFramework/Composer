@@ -4,7 +4,7 @@
 
 ## 1. Executive Summary
 
-This sample introduces F# record types as structured data with named fields. Records are fundamental for closures, state machines, and typed IPC messages.
+This sample introduces Clef record types as structured data with named fields. Records are fundamental for closures, state machines, and typed IPC messages.
 
 **Key Achievements**:
 - Struct layout computation with GEP-based field access
@@ -73,7 +73,7 @@ Person Layout
 Total: 24 bytes
 ```
 
-### 3.2 FNCS Type Definition
+### 3.2 CCS Type Definition
 
 ```fsharp
 // Record type as NTU struct
@@ -322,7 +322,7 @@ ModuleOrNamespace: RecordTest
 
 ```bash
 cd samples/console/FidelityHelloWorld/10_Records
-/path/to/Firefly compile Records.fidproj
+/path/to/Composer compile Records.fidproj
 ./target/records
 ```
 

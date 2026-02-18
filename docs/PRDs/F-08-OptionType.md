@@ -4,7 +4,7 @@
 
 ## 1. Executive Summary
 
-This sample implements the canonical F# `Option<'T>` type as a homogeneous discriminated union. Option represents nullable values without null references, using `Some` and `None` constructors.
+This sample implements the canonical Clef `Option<'T>` type as a homogeneous discriminated union. Option represents nullable values without null references, using `Some` and `None` constructors.
 
 **Key Achievement**: Established inline struct representation for homogeneous DUs and `OptionRecipes` in Baker for HOF decomposition.
 
@@ -51,7 +51,7 @@ Option<T> Layout
 - Fixed size: `sizeof(i8) + alignment + sizeof(T)`
 - `None` has undefined value slot (tag = 0 is sufficient)
 
-### 3.2 FNCS Type Definition
+### 3.2 CCS Type Definition
 
 ```fsharp
 // Option<'T> as NTU type
@@ -222,7 +222,7 @@ memref.store %tag_none, %none_tag_ref[%c0] : memref<1xi8>
 
 ```bash
 cd samples/console/FidelityHelloWorld/08_Option
-/path/to/Firefly compile OptionTest.fidproj
+/path/to/Composer compile OptionTest.fidproj
 ./OptionTest
 # Output:
 # Value: 42

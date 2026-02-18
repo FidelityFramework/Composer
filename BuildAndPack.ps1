@@ -1,4 +1,4 @@
-﻿# BuildAndPack.ps1 - Simple version increment, build and pack for Firefly
+﻿# BuildAndPack.ps1 - Simple version increment, build and pack for Composer
 
 param(
     [Switch]$SkipBuild,
@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 
 # Paths
 $SrcPath = Join-Path $PSScriptRoot "src"
-$ProjectFile = Join-Path $SrcPath "Firefly.fsproj"
+$ProjectFile = Join-Path $SrcPath "Composer.fsproj"
 
 function Write-Status {
     param([string]$Message)
@@ -102,6 +102,6 @@ Write-Success "Package created"
 if ($newVersion) {
     Write-Host ""
     Write-Host "To update your tool installation:" -ForegroundColor Yellow
-    Write-Host "dotnet tool uninstall --global firefly" -ForegroundColor White
-    Write-Host "dotnet tool install --global --add-source $SrcPath/nupkg firefly --version $newVersion" -ForegroundColor White
+    Write-Host "dotnet tool uninstall --global composer" -ForegroundColor White
+    Write-Host "dotnet tool install --global --add-source $SrcPath/nupkg composer --version $newVersion" -ForegroundColor White
 }

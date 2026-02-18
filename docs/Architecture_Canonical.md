@@ -1,28 +1,28 @@
-# Firefly Architecture: Canonical Reference
+# Composer Architecture: Canonical Reference
 
 > **Memory Architecture**: For hardware targets (CMSIS, embedded), see [Quotation_Based_Memory_Architecture.md](./Quotation_Based_Memory_Architecture.md)
-> which describes the quotation + active pattern infrastructure spanning fsnative, BAREWire, and Farscape.
+> which describes the quotation + active pattern infrastructure spanning clef, BAREWire, and Farscape.
 >
 > **Desktop UI Stack**: For WebView-based desktop applications, see [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md)
-> which describes Partas.Solid frontend + Firefly native backend with system webview rendering.
+> which describes Partas.Solid frontend + Composer native backend with system webview rendering.
 
 ## The Pipeline Model
 
-**ARCHITECTURE UPDATE (January 2026)**: Alloy absorbed into FNCS. Types and operations are compiler intrinsics.
+**ARCHITECTURE UPDATE (January 2026)**: Alloy absorbed into CCS. Types and operations are compiler intrinsics.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  F# Application Code                                    │
-│  - Uses FNCS intrinsics: Console.writeln, Sys.write    │
+│  Clef Application Code                                    │
+│  - Uses CCS intrinsics: Console.writeln, Sys.write    │
 │  - Types provided by NTUKind: string, int, Uuid, etc.  │
 │  - NO external library dependencies                     │
 └─────────────────────────────────────────────────────────┘
                           │
-                          │ Compiled by FNCS
+                          │ Compiled by CCS
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│  FNCS (F# Native Compiler Services)                     │
-│  - Parses F# source (SynExpr, SynModule)                │
+│  CCS (Clef Compiler Services)                     │
+│  - Parses Clef source (SynExpr, SynModule)                │
 │  - Type checking with NTUKind native types              │
 │  - SRTP resolution during type checking                 │
 │  - Intrinsic modules: Sys.*, NativePtr.*, Console.*    │
@@ -34,7 +34,7 @@
                           │ PSG (correct by construction)
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│  FIREFLY (Consumes PSG from FNCS)                       │
+│  COMPOSER (Consumes PSG from CCS)                      │
 ├─────────────────────────────────────────────────────────┤
 │  Lowering Nanopasses (if needed)                        │
 │  - FlattenApplications, ReducePipeOperators             │
@@ -44,45 +44,45 @@
 ┌─────────────────────────────────────────────────────────┐
 │  Alex (Compiler Targeting Layer)                        │
 │  - Consumes PSG as "correct by construction"            │
-│  - NO type checking needed - trusts FNCS                │
+│  - NO type checking needed - trusts CCS                │
 │  - Zipper traversal + XParsec pattern matching          │
 │  - Intrinsic → MLIR mapping using NTUKind               │
 │  - Platform implementations for Sys.* intrinsics        │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**FNCS-First Architecture:** Types and operations ARE the compiler, not library code:
-- **FNCS**: Defines NTUKind types, provides intrinsic modules, builds PSG with intrinsics marked
+**CCS-First Architecture:** Types and operations ARE the compiler, not library code:
+- **CCS**: Defines NTUKind types, provides intrinsic modules, builds PSG with intrinsics marked
 - **Alex**: Traverses PSG → generates MLIR → LLVM → native binary
 - **No external library**: Following ML/Rust/Triton-CPU patterns, types ARE the language
 
-**Zipper Coherence:** Alex uses PSGZipper to traverse the PSG from FNCS:
-- PSG comes from FNCS with all type information attached
+**Zipper Coherence:** Alex uses PSGZipper to traverse the PSG from CCS:
+- PSG comes from CCS with all type information attached
 - Intrinsics are marked with `SemanticKind.Intrinsic`
 - Alex maps intrinsics to platform-specific MLIR
 
 ## Alloy: Historical Archive (Absorbed January 2026)
 
-> **Note**: Alloy has been absorbed into FNCS. The repository is preserved as a historical artifact.
+> **Note**: Alloy has been absorbed into CCS. The repository is preserved as a historical artifact.
 > See blog entry: [Absorbing Alloy](/blog/absorbing-alloy/)
 
-Alloy was a BCL-free F# standard library that proved native compilation was possible. Its functionality is now provided by FNCS intrinsic modules.
+Alloy was a BCL-free Clef standard library that proved native compilation was possible. Its functionality is now provided by CCS intrinsic modules.
 
 ### What Alloy Taught Us
 
 Alloy demonstrated:
-- **BCL-free F# is possible** - No System.* dependencies needed
+- **BCL-free Clef is possible** - No System.* dependencies needed
 - **Fat pointer types work** - NativeStr, NativeArray as (ptr, length) structs
 - **SRTP enables zero-cost abstractions** - Compile-time polymorphism
 
-These lessons are now embodied in FNCS as NTUKind types and intrinsic modules.
+These lessons are now embodied in CCS as NTUKind types and intrinsic modules.
 
-### FNCS Intrinsics (Replacement)
+### CCS Intrinsics (Replacement)
 
-What was Alloy is now FNCS:
+What was Alloy is now CCS:
 
 ```fsharp
-// FNCS intrinsic modules - defined in CheckExpressions.fs
+// CCS intrinsic modules - defined in CheckExpressions.fs
 // Sys.* for platform operations
 | "Sys.write" -> NativeType.TFun(intType, TFun(ptrType, TFun(intType, intType)))
 | "Sys.clock_gettime" -> NativeType.TFun(unitType, int64Type)
@@ -92,7 +92,7 @@ What was Alloy is now FNCS:
 
 // Application code uses intrinsics directly
 let main() =
-    Console.writeln "Hello, World!"  // FNCS intrinsic, not library call
+    Console.writeln "Hello, World!"  // CCS intrinsic, not library call
 ```
 
 **Why intrinsics?** Following ML/Rust/Triton-CPU patterns:
@@ -154,15 +154,15 @@ ExternDispatch.register Linux X86_64 "fidelity_write_bytes"
 ## The Fidelity Mission
 
 Unlike Fable (AST→AST, delegates memory to target runtime), Fidelity:
-- **Preserves type fidelity**: F# types → precise native representations
+- **Preserves type fidelity**: Clef types → precise native representations
 - **Preserves memory fidelity**: Compiler-verified lifetimes, deterministic allocation
 - **PSG carries proofs**: Not just syntax, but semantic guarantees about memory, types, ownership
 
-The generated native binary has the same safety properties as the source F#.
+The generated native binary has the same safety properties as the source Clef.
 
-## FNCS Intrinsic Modules
+## CCS Intrinsic Modules
 
-FNCS provides intrinsic modules that Alex maps to platform-specific implementations:
+CCS provides intrinsic modules that Alex maps to platform-specific implementations:
 
 | Intrinsic Module | MLIR Mapping | Purpose |
 |-----------------|--------------|---------|
@@ -183,8 +183,8 @@ Alex provides implementations for each `(intrinsic, platform)` pair based on tar
 ## File Organization
 
 ```
-fsnative/src/Compiler/Checking.Native/  # TYPES AND OPERATIONS
-├── NativeService.fs        # Public API for FNCS
+clef/src/Compiler/Checking.Native/  # TYPES AND OPERATIONS
+├── NativeService.fs        # Public API for CCS
 ├── NativeTypes.fs          # NTUKind enum - native type universe
 ├── NativeGlobals.fs        # Type constructors (string, int, Uuid, etc.)
 ├── CheckExpressions.fs     # Intrinsic modules (Sys.*, Console.*, etc.)
@@ -192,16 +192,16 @@ fsnative/src/Compiler/Checking.Native/  # TYPES AND OPERATIONS
 ├── SRTPResolution.fs       # SRTP resolution during type checking
 └── NameResolution.fs       # Compositional name resolution
 
-Firefly/src/Core/PSG/Nanopass/  # LOWERING PASSES (post-FNCS)
+Composer/src/Core/PSG/Nanopass/  # LOWERING PASSES (post-CCS)
 ├── FlattenApplications.fs
 ├── ReducePipeOperators.fs
 └── ...
 
-Firefly/src/Alex/
+Composer/src/Alex/
 ├── Traversal/
 │   ├── PSGZipper.fs       # Bidirectional traversal (attention)
-│   └── PSGXParsec.fs      # Local pattern matching combinators
-│   └── FNCSTransfer.fs    # Intrinsic → MLIR mapping
+│   ├── PSGXParsec.fs      # Local pattern matching combinators
+│   └── CCSTransfer.fs     # Intrinsic → MLIR mapping
 ├── Bindings/
 │   ├── BindingTypes.fs    # Platform types
 │   ├── SysBindings.fs     # Sys.* platform implementations
@@ -212,11 +212,11 @@ Firefly/src/Alex/
 └── Pipeline/
     └── CompilationOrchestrator.fs  # Entry point
 
-Alloy/ (HISTORICAL ARCHIVE - absorbed into FNCS January 2026)
+Alloy/ (HISTORICAL ARCHIVE - absorbed into CCS January 2026)
 └── README.md              # Explains absorbed status
 ```
 
-**Note:** Alloy functionality absorbed into FNCS as intrinsic modules.
+**Note:** Alloy functionality absorbed into CCS as intrinsic modules.
 **Note:** PSGEmitter.fs and PSGScribe.fs were removed - they were antipatterns.
 
 ## Anti-Patterns (DO NOT DO)
@@ -247,34 +247,34 @@ module PSGEmitter =
 ```
 
 **The correct model:**
-- Types defined by NTUKind in FNCS
-- Operations defined as intrinsic modules in FNCS
+- Types defined by NTUKind in CCS
+- Operations defined as intrinsic modules in CCS
 - Alex recognizes `SemanticKind.Intrinsic` markers
 - Zipper provides attention (focus + context)
 - XParsec provides local pattern matching
 - MLIR Builder accumulates (correct centralization point)
 
-## PSG Construction: Handled by FNCS
+## PSG Construction: Handled by CCS
 
-**ARCHITECTURE UPDATE**: PSG construction has moved to FNCS.
+**ARCHITECTURE UPDATE**: PSG construction has moved to CCS.
 
 See: `docs/PSG_Nanopass_Architecture.md` for nanopass principles.
-See: `docs/FNCS_Architecture.md` for how FNCS builds the PSG.
+See: `docs/CCS_Architecture.md` for how CCS builds the PSG.
 
-FNCS builds the PSG with:
+CCS builds the PSG with:
 - Native types attached during type checking
 - SRTP resolved during type checking (not post-hoc)
 - Full symbol information preserved for design-time tooling
 
-Firefly receives the completed PSG and applies **lowering nanopasses** if needed:
+Composer receives the completed PSG and applies **lowering nanopasses** if needed:
 - FlattenApplications
 - ReducePipeOperators  
 - DetectPlatformBindings
 - etc.
 
-### Why FNCS Builds PSG
+### Why CCS Builds PSG
 
-With FNCS handling PSG construction:
+With CCS handling PSG construction:
 - SRTP is resolved during type checking, not in a separate pass
 - Types are attached to nodes during construction, not overlaid later
 - No separate typed tree correlation needed
@@ -283,15 +283,15 @@ With FNCS handling PSG construction:
 ## Validation Samples
 
 These samples must compile WITHOUT modification:
-- `01_HelloWorldDirect` - Console.write, Console.writeln (FNCS intrinsics)
+- `01_HelloWorldDirect` - Console.write, Console.writeln (CCS intrinsics)
 - `02_HelloWorldSaturated` - Console.readln, interpolated strings
 - `03_HelloWorldHalfCurried` - Pipe operators, string formatting
 
-The samples use FNCS intrinsics directly. Compilation flow:
-1. FNCS: Parse, type check with NTUKind types, recognize intrinsics
-2. FNCS: Build PSG with intrinsics marked, SRTP resolved
-3. Firefly: Receive PSG from FNCS ("correct by construction")
-4. Firefly: Apply lowering nanopasses (flatten apps, reduce pipes, etc.)
+The samples use CCS intrinsics directly. Compilation flow:
+1. CCS: Parse, type check with NTUKind types, recognize intrinsics
+2. CCS: Build PSG with intrinsics marked, SRTP resolved
+3. Composer: Receive PSG from CCS ("correct by construction")
+4. Composer: Apply lowering nanopasses (flatten apps, reduce pipes, etc.)
 5. Alex/Zipper: Traverse PSG, map intrinsics → MLIR
 6. MLIR → LLVM → native binary
 
@@ -300,14 +300,14 @@ The samples use FNCS intrinsics directly. Compilation flow:
 ## Cross-References
 
 ### Core Architecture
-- [FNCS_Architecture.md](./FNCS_Architecture.md) - FNCS and PSG construction (PRIMARY)
+- [CCS_Architecture.md](./CCS_Architecture.md) - CCS and PSG construction (PRIMARY)
 - [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) - Nanopass principles
 - [Quotation_Based_Memory_Architecture.md](./Quotation_Based_Memory_Architecture.md) - Memory model for embedded targets
-- Note: Baker_Architecture.md is deprecated - FNCS now handles type correlation
+- Note: Baker_Architecture.md is deprecated - CCS now handles type correlation
 
 ### Desktop UI Stack
 - [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) - Partas.Solid + webview architecture
-- [WebView_Build_Integration.md](./WebView_Build_Integration.md) - Firefly as unified build orchestrator
+- [WebView_Build_Integration.md](./WebView_Build_Integration.md) - Composer as unified build orchestrator
 - [WebView_Desktop_Design.md](./WebView_Desktop_Design.md) - Implementation details (callbacks, IPC)
 
 ### QuantumCredential Demo

@@ -14,7 +14,7 @@
 | **Do nanopasses run in parallel?** | NO (sequential due to data dependencies) | Chez Scheme 50+ passes run sequentially |
 | **Can Alex parallelize?** | YES (at function level, not pass level) | Pre-computed coeffects enable fan-out |
 | **How does Triton parallelize?** | Function-level via MLIR threading | PassManager with context threading |
-| **What's the right granularity?** | Function-level (natural F# boundary) | Proven in LLVM, matches SSA scope |
+| **What's the right granularity?** | Function-level (natural Clef boundary) | Proven in LLVM, matches SSA scope |
 | **Expected speedup?** | 1.5-2× for programs with ≥10 functions | Typical multi-core benefit |
 
 ---
@@ -216,7 +216,7 @@ Next batch...
 #### 1. Granularity: **Function-Level**
 
 **Why?**
-- Natural F# program boundary
+- Natural Clef program boundary
 - SSA dependencies mostly intra-function
 - MLIR function definitions order-independent
 - Proven in LLVM/MLIR/Rust
@@ -579,9 +579,9 @@ let z = x + y
 
 ### Documentation Created
 
-- `/home/hhh/repos/Firefly/docs/Parallel_Zipper_Architecture.md` - Full architectural analysis
-- `/home/hhh/repos/Firefly/docs/Parallel_Zipper_Design_Synthesis.md` - Complete design proposal (54 pages)
-- `/home/hhh/repos/Firefly/docs/Next_Context_Handoff_Parallel_Zippers.md` - Research plan (executed)
+- `/home/hhh/repos/Composer/docs/Parallel_Zipper_Architecture.md` - Full architectural analysis
+- `/home/hhh/repos/Composer/docs/Parallel_Zipper_Design_Synthesis.md` - Complete design proposal (54 pages)
+- `/home/hhh/repos/Composer/docs/Next_Context_Handoff_Parallel_Zippers.md` - Research plan (executed)
 - This document - Executive summary
 
 ### Serena Memories

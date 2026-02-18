@@ -1,22 +1,22 @@
 # Closure Architecture
 
-> **MLKit-style flat closures with FNCS-computed captures.**
+> **MLKit-style flat closures with CCS-computed captures.**
 
 ## 1. Executive Summary
 
-F# Native uses **MLKit-style flat closures** where all captured variables are stored inline in the closure struct, not via pointer chains to enclosing environments.
+Clef Native uses **MLKit-style flat closures** where all captured variables are stored inline in the closure struct, not via pointer chains to enclosing environments.
 
-**Key Architectural Decision**: Capture analysis is **scope analysis**, and scope is resolved during type checking. Therefore, **capture analysis belongs in FNCS**, not Firefly. FNCS computes captures during PSG construction and includes them directly in `SemanticKind.Lambda`. Alex only handles SSA assignment and struct layout for code generation.
+**Key Architectural Decision**: Capture analysis is **scope analysis**, and scope is resolved during type checking. Therefore, **capture analysis belongs in CCS**, not Composer. CCS computes captures during PSG construction and includes them directly in `SemanticKind.Lambda`. Alex only handles SSA assignment and struct layout for code generation.
 
 ## 2. Layer Responsibilities
 
 | Layer | Responsibility |
 |-------|---------------|
-| **FNCS** | Compute captures during scope analysis, embed in `SemanticKind.Lambda` |
+| **CCS** | Compute captures during scope analysis, embed in `SemanticKind.Lambda` |
 | **Alex/SSAAssignment** | Assign SSAs for closure structs and environment slots |
 | **Alex/Witnesses** | Emit MLIR for closure construction and invocation |
 
-**Capture analysis is NOT a Firefly nanopass.** The PSG arrives from FNCS with complete capture information.
+**Capture analysis is NOT a Composer nanopass.** The PSG arrives from CCS with complete capture information.
 
 ## 3. Academic Background
 
@@ -32,7 +32,7 @@ Based on Shao & Appel (1994), "Space-Efficient Closure Representations":
 | Creation cost | Copy all captures | Store one pointer |
 | Cache behavior | Contiguous | Scattered |
 
-**Flat is superior for fsnative** because:
+**Flat is superior for clef** because:
 1. No GC - space safety is structural
 2. Region allocation - no heap fragmentation
 3. Predictable performance - no chain traversal
@@ -44,7 +44,7 @@ The MLKit compiler (Tofte, Elsman et al.) pioneered:
 - All values (including closures) allocated in regions
 - Compile-time lifetime inference
 
-F# Native follows this model: closures are stack or region allocated, never GC heap.
+Clef Native follows this model: closures are stack or region allocated, never GC heap.
 
 ## 4. Memory Layout
 
@@ -72,11 +72,11 @@ Closure Structure
 
 **Critical**: Mutable variables are captured by **reference** (pointer to stack slot), not by value. This enables mutation through the closure.
 
-## 5. FNCS Capture Analysis
+## 5. CCS Capture Analysis
 
 ### 5.1 SemanticKind.Lambda Definition
 
-FNCS computes captures during `checkLambda` in Applications.fs:
+CCS computes captures during `checkLambda` in Applications.fs:
 
 ```fsharp
 type CaptureInfo = {
@@ -94,7 +94,7 @@ type CaptureInfo = {
 
 ### 5.2 Capture Computation Algorithm
 
-FNCS uses free variable analysis during lambda checking:
+CCS uses free variable analysis during lambda checking:
 
 ```fsharp
 let checkLambda ... =
@@ -235,10 +235,10 @@ let witnessClosureCall (z: PSGZipper) (closureSSA: SSA) (args: SSA list) =
 ## 8. Pipeline Flow
 
 ```
-F# Source
+Clef Source
     │
     ▼
-FNCS (checkLambda with scope analysis)
+CCS (checkLambda with scope analysis)
     │
     ├─ Computes captures via free variable analysis
     ├─ Creates SemanticKind.Lambda(params, body, captures)
@@ -266,4 +266,4 @@ MLIR → LLVM → Native Binary
 
 - Shao & Appel (1994), "Space-Efficient Closure Representations"
 - MLKit Programming with Regions (Tofte, Elsman)
-- fsnative-spec `spec/closure-representation.md`
+- clef-spec `spec/closure-representation.md`

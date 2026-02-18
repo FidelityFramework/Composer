@@ -199,7 +199,7 @@ llvm.cond_br %is_ok, ^ok_case, ^error_case
 
 ```bash
 cd samples/console/FidelityHelloWorld/09_Result
-/path/to/Firefly compile ResultTest.fidproj
+/path/to/Composer compile ResultTest.fidproj
 ./ResultTest
 # Output:
 # Success: 5

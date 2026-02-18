@@ -51,7 +51,7 @@ The quad-channel architecture maps directly to the quad-core processor. Sampling
 - **Pure data transformation**: Voltage reading to entropy bits
 - **Perfect core mapping**: 4 ADC channels to 4 CPU cores
 
-The Firefly compiler emits `scf.parallel` for this pattern:
+The Composer compiler emits `scf.parallel` for this pattern:
 
 ```fsharp
 // Conceptual: quad-channel parallel sampling
@@ -80,7 +80,7 @@ Raw ADC samples are not directly usable as cryptographic entropy. The validation
 
 The interleaving and conditioning steps are also pure operations suitable for parallel execution via `scf.parallel`, allowing the entire entropy pipeline to benefit from multi-core processing.
 
-This pipeline is implemented in Fidelity F#, compiled by Firefly, with the statistical tests and hash functions either implemented natively or bound via Farscape.
+This pipeline is implemented in Fidelity Clef, compiled by Composer, with the statistical tests and hash functions either implemented natively or bound via Farscape.
 
 ## NIST Post-Quantum Cryptography Standards
 
@@ -145,7 +145,7 @@ Implementation variants in pqm4:
 
 ## Platform Bindings for PQC Libraries
 
-Fidelity uses the Platform.Bindings pattern (BCL-free) rather than DllImport. FNCS defines function signatures with `Unchecked.defaultof<T>` placeholders, and Alex provides platform-specific MLIR emission that links against the native PQC libraries.
+Fidelity uses the Platform.Bindings pattern (BCL-free) rather than DllImport. CCS defines function signatures with `Unchecked.defaultof<T>` placeholders, and Alex provides platform-specific MLIR emission that links against the native PQC libraries.
 
 ### Layer 1: Platform Bindings (BCL-Free)
 
@@ -212,7 +212,7 @@ type Dilithium2Signature = { Data: FixedArray<byte, 2420> }
 
 ### Layer 3: Functional Wrappers
 
-Idiomatic F# API with proper entropy integration:
+Idiomatic Clef API with proper entropy integration:
 
 ```fsharp
 module Fidelity.PQC.Kyber
@@ -353,7 +353,7 @@ Credential {
 ### Phase 2: PQC Bindings via Farscape
 
 - Parse pq-crystals headers for Layer 1 generation
-- Define F# type wrappers (Layer 2)
+- Define Clef type wrappers (Layer 2)
 - Implement functional API with entropy integration (Layer 3)
 - Test against known answer tests (KATs)
 
@@ -418,7 +418,7 @@ Credential {
 - liboqs: https://github.com/open-quantum-safe/liboqs
 - pqm4: https://github.com/mupq/pqm4
 
-### Related Firefly Documentation
+### Related Composer Documentation
 
 - `docs/Hardware_Showcase_Roadmap.md` - Platform deployment models
 - `docs/Farscape_GIR_Integration.md` - Binding generation architecture
@@ -427,5 +427,5 @@ Credential {
 ### SpeakEZ Blog Posts
 
 - "The Farscape Bridge" - Binding architecture principles
-- "Binding F# to C++ in Farscape" - Functional wrapper design
+- "Binding Clef to C++ in Farscape" - Functional wrapper design
 - "Memory Management by Choice" - Stack allocation for crypto buffers

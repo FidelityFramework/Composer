@@ -44,11 +44,11 @@ Region.copyTo<'T> : nativeptr<'T> -> int -> Region -> nativeptr<'T>
 Region.copyToHeap<'T> : nativeptr<'T> -> int -> 'T[]
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Escape Detection
 
-During scope exit analysis, FNCS checks if any region-allocated pointer could escape:
+During scope exit analysis, CCS checks if any region-allocated pointer could escape:
 
 ```fsharp
 type RegionAllocInfo = {
@@ -100,7 +100,7 @@ type DataProvenance =
             NativeType.TFun(NativeType.TRegion, NativeType.TNativePtr(tVar))))
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Escape Analysis Nanopass
 
@@ -258,7 +258,7 @@ Squared: 1 4 9 16 25
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -266,7 +266,7 @@ Squared: 1 4 9 16 25
 | `CheckExpressions.fs` | MODIFY | Add copyOut/copyTo intrinsics |
 | `EscapeDetection.fs` | CREATE | Detect unsafe escapes |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -275,7 +275,7 @@ Squared: 1 4 9 16 25
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Escape Detection
+### Phase 1: CCS Escape Detection
 - [ ] Implement data provenance tracking
 - [ ] Detect escaping region pointers
 - [ ] Add copyOut/copyTo intrinsics

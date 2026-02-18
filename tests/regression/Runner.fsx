@@ -1,8 +1,8 @@
 #!/usr/bin/env dotnet fsi
-// Runner.fsx - Firefly Regression Test Runner
+// Runner.fsx - Composer Regression Test Runner
 // Usage: dotnet fsi Runner.fsx [options]
 //
-#r "/home/hhh/repos/Firefly/src/bin/Debug/net10.0/XParsec.dll"
+#r "/home/hhh/repos/Composer/src/bin/Debug/net10.0/XParsec.dll"
 #r "/home/hhh/repos/Fidelity.Toml/src/bin/Debug/net10.0/Fidelity.Toml.dll"
 
 open System
@@ -195,7 +195,7 @@ let getStdinContent config sample =
 // =============================================================================
 
 let generateReport (report: TestReport) verbose =
-    printfn "\n=== Firefly Regression Test ==="
+    printfn "\n=== Composer Regression Test ==="
     printfn "Run ID: %s" report.RunId
     printfn "Manifest: %s" report.ManifestPath
     printfn "Compiler: %s" report.CompilerPath
@@ -333,7 +333,7 @@ let rec parseArgs args opts =
 
 let main argv =
     let opts = parseArgs (Array.toList argv) defaultOptions
-    printfn "=== Firefly Regression Test Runner ===\n"
+    printfn "=== Composer Regression Test Runner ===\n"
     if not (File.Exists opts.ManifestPath) then
         printfn "ERROR: Manifest not found at %s" opts.ManifestPath
         1
@@ -349,7 +349,7 @@ let main argv =
         printfn "Compiler: %s" config.CompilerPath
         printfn "Samples: %d\n" (List.length samplesToRun)
 
-        // CompilerPath points to bin/Debug/net10.0/Firefly, we need src/ for build
+        // CompilerPath points to bin/Debug/net10.0/Composer, we need src/ for build
         let compilerSourceDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(config.CompilerPath), "..", "..", ".."))
         printfn "Building compiler..."
         match buildCompiler compilerSourceDir with

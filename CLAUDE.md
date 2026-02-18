@@ -1,4 +1,4 @@
-# Firefly Compiler - Claude Context
+# Composer Compiler - Claude Context
 
 ## Active Assignment: Alex XParsec Remediation (January 2026)
 
@@ -170,7 +170,7 @@ Zipper.create(psg, entryNode) → fold over structure → at each node: XParsec 
 | Triton CPU | `~/triton-cpu` | MLIR dialect patterns, optimization |
 | MLIR Haskell Bindings | `~/repos/mlir-hs` | Alternative MLIR binding approach |
 | Alloy | `~/repos/Alloy` | HISTORICAL — absorbed into FNCS Jan 2026 |
-| Firefly Docs | `/docs/` | PRIMARY architecture docs |
+| Composer Docs | `/docs/` | PRIMARY architecture docs |
 | SpeakEZ Blog | `~/repos/SpeakEZ/hugo/content/blog` | Design philosophy |
 
 ### Key Documentation
@@ -191,23 +191,23 @@ Zipper.create(psg, entryNode) → fold over structure → at each node: XParsec 
 
 ```bash
 # Build compiler
-cd /home/hhh/repos/Firefly/src && dotnet build
+cd /home/hhh/repos/Composer/src && dotnet build
 
 # Compile a sample
-cd /home/hhh/repos/Firefly/samples/console/FidelityHelloWorld/01_HelloWorldDirect
-/home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly compile HelloWorld.fidproj
+cd /home/hhh/repos/Composer/samples/console/FidelityHelloWorld/01_HelloWorldDirect
+/home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer compile HelloWorld.fidproj
 
 # Execute and validate
 ./HelloWorld
 
 # Keep intermediates for debugging
-Firefly compile HelloWorld.fidproj -k
+Composer compile HelloWorld.fidproj -k
 ```
 
 ### Regression Runner (PRIMARY)
 
 ```bash
-cd /home/hhh/repos/Firefly/tests/regression
+cd /home/hhh/repos/Composer/tests/regression
 dotnet fsi Runner.fsx                              # Full suite
 dotnet fsi Runner.fsx -- --parallel --verbose       # Fast + detailed
 dotnet fsi Runner.fsx -- --sample 05_AddNumbers     # Specific sample
@@ -248,7 +248,7 @@ When debugging, inspect in pipeline order to find WHERE a bug originates.
 
 | File | Purpose |
 |------|---------|
-| `/src/Firefly.fsproj` | Main compiler project |
+| `/src/Composer.fsproj` | Main compiler project |
 | `/src/Core/IngestionPipeline.fs` | Pipeline orchestration |
 | `/src/Core/PSG/Builder.fs` | PSG construction |
 | `/src/Core/PSG/Nanopass/*.fs` | PSG enrichment passes |
@@ -274,7 +274,7 @@ output_kind = "freestanding"  # or "console"
 ## Serena Projects
 
 ```
-mcp__serena-local__activate_project "Firefly"       # Main compiler
+mcp__serena-local__activate_project "Composer"      # Main compiler
 mcp__serena-local__activate_project "fsnative"      # FNCS implementation
 mcp__serena-local__activate_project "fsnative-spec"  # F# Native spec
 ```

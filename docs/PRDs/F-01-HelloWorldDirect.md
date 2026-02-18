@@ -4,7 +4,7 @@
 
 ## 1. Executive Summary
 
-The inaugural Firefly sample establishes the complete compilation pipeline from F# source to native binary. While the surface feature is trivial - printing "Hello, World!" - the underlying infrastructure represents the full FNCS→PSG→Alex→MLIR→LLVM chain.
+The inaugural Composer sample establishes the complete compilation pipeline from Clef source to native binary. While the surface feature is trivial - printing "Hello, World!" - the underlying infrastructure represents the full CCS→PSG→Alex→MLIR→LLVM chain.
 
 **Key Achievement**: Proved that the compilation model works end-to-end, producing a freestanding binary with no runtime dependencies.
 
@@ -29,7 +29,7 @@ Hello, World!
 
 ### 3.1 String Representation
 
-The `string` type is not .NET's `System.String`. It is an FNCS native type with a fat pointer representation:
+The `string` type is not .NET's `System.String`. It is a CCS native type with a fat pointer representation:
 
 ```
 UTF-8 Fat Pointer
@@ -47,16 +47,16 @@ UTF-8 Fat Pointer
 
 ### 3.2 Console Intrinsics
 
-`Console.writeln` is an FNCS intrinsic, not a library function:
+`Console.writeln` is a CCS intrinsic, not a library function:
 
 ```fsharp
-// In FNCS CheckExpressions.fs
+// In CCS CheckExpressions.fs
 | "Console.writeln" ->
     NativeType.TFun(env.Globals.StringType, env.Globals.UnitType)
 ```
 
 **Lowering Path**:
-1. FNCS recognizes `Console.writeln` as intrinsic
+1. CCS recognizes `Console.writeln` as intrinsic
 2. PSG marks node with `SemanticKind.Intrinsic`
 3. Alex emits platform-specific syscall sequence via Bindings
 
@@ -151,7 +151,7 @@ module {
 
 ```bash
 cd samples/console/FidelityHelloWorld/01_HelloWorldDirect
-/path/to/Firefly compile HelloWorld.fidproj
+/path/to/Composer compile HelloWorld.fidproj
 ./HelloWorld
 # Output: Hello, World!
 ```
@@ -160,8 +160,8 @@ cd samples/console/FidelityHelloWorld/01_HelloWorldDirect
 
 ## 8. Architectural Lessons
 
-1. **Full Pipeline Required**: Even "hello world" needs the complete FNCS→PSG→Alex→MLIR chain
-2. **Intrinsics, Not Libraries**: Platform operations are FNCS intrinsics, not linked library functions
+1. **Full Pipeline Required**: Even "hello world" needs the complete CCS→PSG→Alex→MLIR chain
+2. **Intrinsics, Not Libraries**: Platform operations are CCS intrinsics, not linked library functions
 3. **Fat Pointers for Strings**: UTF-8 representation with explicit length, not null-terminated C strings
 4. **Coeffect Pattern Established**: Pre-computed metadata, not computed during emission
 
@@ -180,4 +180,4 @@ This sample's infrastructure enables:
 
 - [F-00-Synopsis](F-00-Synopsis.md) - Foundation Series overview
 - [Architecture_Canonical.md](../Architecture_Canonical.md) - Two-layer architecture
-- [FNCS_Architecture.md](../FNCS_Architecture.md) - FNCS intrinsic design
+- [CCS_Architecture.md](../CCS_Architecture.md) - CCS intrinsic design

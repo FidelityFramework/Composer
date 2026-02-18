@@ -29,7 +29,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   PSG from FNCS                          │
+│                   PSG from CCS                          │
 └─────────────────────────────────────────────────────────┘
                          ↓
           ┌──────────────┴──────────────┐
@@ -259,7 +259,7 @@ overlay (overlay a b) c = overlay a (overlay b c)
 ## IcedTasks Integration
 
 **Why IcedTasks**:
-- Cold tasks = proper F# async/task integration
+- Cold tasks = proper Clef async/task integration
 - `Array.Parallel.map` for parallel execution
 - Clean API for collecting results
 

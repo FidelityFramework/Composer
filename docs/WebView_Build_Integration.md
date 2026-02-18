@@ -2,17 +2,17 @@
 
 > **Related Documents**:
 > - [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) - Overall architecture
-> - [Architecture_Canonical.md](./Architecture_Canonical.md) - Firefly pipeline overview
+> - [Architecture_Canonical.md](./Architecture_Canonical.md) - Composer pipeline overview
 
 ---
 
 ## Overview
 
-This document describes how Firefly orchestrates the complete build of a WebView-based desktop application. The key insight is that Firefly serves as a **unified build coordinator**, similar to how `dotnet` coordinates SAFE Stack builds or how `cargo` coordinates Rust workspaces.
+This document describes how Composer orchestrates the complete build of a WebView-based desktop application. The key insight is that Composer serves as a **unified build coordinator**, similar to how `dotnet` coordinates SAFE Stack builds or how `cargo` coordinates Rust workspaces.
 
 A single command:
 ```bash
-firefly build MyApp.fidproj
+composer build MyApp.fidproj
 ```
 
 Produces a single native executable containing:
@@ -28,35 +28,35 @@ If you're familiar with .NET multi-project solutions, here's the mental model:
 
 | .NET Concept | Fidelity Equivalent |
 |--------------|---------------------|
-| `dotnet build MySolution.sln` | `firefly build MyApp.fidproj` |
+| `dotnet build MySolution.sln` | `composer build MyApp.fidproj` |
 | Project references | `[desktop]` section defines frontend/backend |
-| MSBuild targets | Firefly build phases |
+| MSBuild targets | Composer build phases |
 | NuGet packages | Fidelity.Platform library + npm packages |
-| `dotnet publish` | `firefly build --target <platform>` |
+| `dotnet publish` | `composer build --target <platform>` |
 
-The difference: Firefly also orchestrates **Fable** (F# → JS) and **Vite** (bundling), producing a truly unified build.
+The difference: Composer also orchestrates **Fable** (Clef → JS) and **Vite** (bundling), producing a truly unified build.
 
 ---
 
-## For Web Developers: What Firefly Does For You
+## For Web Developers: What Composer Does For You
 
 If you're coming from web development with npm/vite, here's what changes:
 
 **Before (typical web dev):**
 ```bash
 # Manual multi-step process
-npm run fable          # Compile F# to JS
+npm run fable          # Compile Clef to JS
 npm run build          # Vite bundles to dist/
 # Then somehow integrate with backend...
 ```
 
-**After (Firefly orchestrated):**
+**After (Composer orchestrated):**
 ```bash
 # Single command does everything
-firefly build
+composer build
 ```
 
-Firefly automatically:
+Composer automatically:
 1. Calls Fable to compile your Partas.Solid code
 2. Calls Vite to bundle and optimize
 3. Reads the bundled output
@@ -64,7 +64,7 @@ Firefly automatically:
 5. Compiles your native backend
 6. Links everything into one executable
 
-You still write your `package.json` and `vite.config.js` normally - Firefly just invokes them at the right time.
+You still write your `package.json` and `vite.config.js` normally - Composer just invokes them at the right time.
 
 ---
 
@@ -80,10 +80,10 @@ version = "0.1.0"
 # Desktop-specific configuration
 [desktop]
 frontend = "src/Frontend"       # Path to Partas.Solid project
-backend = "src/Backend"         # Path to native F# project
+backend = "src/Backend"         # Path to native Clef project
 embed_assets = true             # Embed HTML/JS/CSS in binary
 
-# Fable configuration (F# → JavaScript)
+# Fable configuration (Clef → JavaScript)
 [desktop.fable]
 output = "build/fable"          # Fable output directory
 extension = ".fs.jsx"           # Output file extension
@@ -95,7 +95,7 @@ config = "vite.config.js"       # Vite config file
 output = "build/dist"           # Bundled output directory
 inline = true                   # Inline all JS/CSS into HTML
 
-# Firefly compilation settings
+# Composer compilation settings
 [compilation]
 target = "native"
 
@@ -113,8 +113,8 @@ output_kind = "desktop"         # Triggers desktop build pipeline
 
 | Section | Field | Description |
 |---------|-------|-------------|
-| `[desktop]` | `frontend` | Path to F# project with Partas.Solid components |
-| | `backend` | Path to F# project with native application code |
+| `[desktop]` | `frontend` | Path to Clef project with Partas.Solid components |
+| | `backend` | Path to Clef project with native application code |
 | | `embed_assets` | If true, HTML bundle is embedded in binary |
 | `[desktop.fable]` | `output` | Where Fable writes compiled JavaScript |
 | | `extension` | File extension for Fable output (`.fs.jsx` for SolidJS) |
@@ -130,10 +130,10 @@ output_kind = "desktop"         # Triggers desktop build pipeline
 
 ### Phase 1: Frontend Compilation (Fable)
 
-Firefly invokes Fable to compile F# to JavaScript:
+Composer invokes Fable to compile Clef to JavaScript:
 
 ```bash
-# What Firefly runs internally
+# What Composer runs internally
 dotnet fable {frontend_path} \
     --outDir {fable_output} \
     --extension {extension} \
@@ -148,10 +148,10 @@ The Partas.Solid.FablePlugin transforms `[<SolidTypeComponent>]` definitions int
 
 ### Phase 2: Asset Bundling (Vite)
 
-Firefly invokes Vite to bundle and optimize:
+Composer invokes Vite to bundle and optimize:
 
 ```bash
-# What Firefly runs internally
+# What Composer runs internally
 npm run build
 # Or directly: npx vite build --config {vite_config}
 ```
@@ -186,7 +186,7 @@ export default defineConfig({
 
 ### Phase 3: Asset Embedding
 
-Firefly reads the bundled HTML and generates an F# source file:
+Composer reads the bundled HTML and generates a Clef source file:
 
 ```fsharp
 // Auto-generated: EmbeddedAssets.fs
@@ -211,11 +211,11 @@ The `[<Literal>]` attribute makes this a compile-time constant, ensuring it's em
 
 ### Phase 4: Native Compilation
 
-Firefly compiles the backend project plus the generated embedding:
+Composer compiles the backend project plus the generated embedding:
 
 ```bash
-# What Firefly does internally
-firefly compile {backend_path} \
+# What Composer does internally
+composer compile {backend_path} \
     --include EmbeddedAssets.fs \
     --output {output_name} \
     --target {platform}
@@ -250,7 +250,7 @@ let main () =
 ### Building for Current Platform
 
 ```bash
-firefly build
+composer build
 ```
 
 Produces a native executable for the current OS and architecture.
@@ -259,11 +259,11 @@ Produces a native executable for the current OS and architecture.
 
 ```bash
 # Specify target platform
-firefly build --target linux-x64
-firefly build --target linux-arm64
-firefly build --target windows-x64
-firefly build --target macos-x64
-firefly build --target macos-arm64
+composer build --target linux-x64
+composer build --target linux-arm64
+composer build --target windows-x64
+composer build --target macos-x64
+composer build --target macos-arm64
 ```
 
 The frontend compilation (Fable + Vite) is platform-agnostic - JavaScript works everywhere. Only the native backend compilation differs per target.
@@ -282,7 +282,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: firefly build --target ${{ matrix.target }}
+        run: composer build --target ${{ matrix.target }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -298,7 +298,7 @@ A typical WebView desktop project has this structure:
 
 ```
 my-desktop-app/
-├── my-desktop-app.fidproj      # Firefly project file
+├── my-desktop-app.fidproj      # Composer project file
 │
 ├── src/
 │   ├── Backend/
@@ -332,7 +332,7 @@ my-desktop-app/
 
 ### The .fsproj Files
 
-The `Backend.fsproj` and `Frontend.fsproj` files exist for **IDE support only** (Ionide, Rider). Firefly doesn't use them - it reads the `.fidproj` directly. However, the IDE needs project files to provide IntelliSense.
+The `Backend.fsproj` and `Frontend.fsproj` files exist for **IDE support only** (Ionide, Rider). Composer doesn't use them - it reads the `.fidproj` directly. However, the IDE needs project files to provide IntelliSense.
 
 **Frontend.fsproj** (for IDE):
 ```xml
@@ -397,7 +397,7 @@ The `package.json` configures JavaScript dependencies:
 }
 ```
 
-These scripts are for **development use** (hot reloading). For production builds, Firefly invokes these commands directly.
+These scripts are for **development use** (hot reloading). For production builds, Composer invokes these commands directly.
 
 ---
 
@@ -406,7 +406,7 @@ These scripts are for **development use** (hot reloading). For production builds
 ### Full Rebuild
 
 ```bash
-firefly build
+composer build
 ./MyDesktopApp
 ```
 
@@ -432,7 +432,7 @@ This allows hot reloading of UI changes without rebuilding the native backend. F
 
 ## Build Artifacts
 
-After `firefly build`, you'll have:
+After `composer build`, you'll have:
 
 ```
 my-desktop-app/
@@ -442,7 +442,7 @@ my-desktop-app/
 │   │   └── Components/*.fs.jsx
 │   ├── dist/
 │   │   └── index.html          # Bundled, inlined
-│   └── EmbeddedAssets.fs       # Generated F# source
+│   └── EmbeddedAssets.fs       # Generated Clef source
 │
 ├── MyDesktopApp                # Linux/macOS executable
 └── MyDesktopApp.exe            # Windows executable
@@ -456,12 +456,12 @@ For distribution, only the executable is needed. All assets are embedded.
 
 ### Fable Compilation Errors
 
-If Fable fails, Firefly reports the error and stops:
+If Fable fails, Composer reports the error and stops:
 
 ```
-[FIREFLY] Phase 1: Frontend compilation (Fable)
+[COMPOSER] Phase 1: Frontend compilation (Fable)
 [FABLE] error FABLE0001: Cannot find module 'Partas.Solid'
-[FIREFLY] Build failed: Frontend compilation error
+[COMPOSER] Build failed: Frontend compilation error
 ```
 
 ### Vite Bundling Errors
@@ -469,19 +469,19 @@ If Fable fails, Firefly reports the error and stops:
 If Vite fails:
 
 ```
-[FIREFLY] Phase 2: Asset bundling (Vite)
+[COMPOSER] Phase 2: Asset bundling (Vite)
 [VITE] error during build: RollupError: Could not resolve './missing.js'
-[FIREFLY] Build failed: Asset bundling error
+[COMPOSER] Build failed: Asset bundling error
 ```
 
 ### Native Compilation Errors
 
-If Firefly compilation fails:
+If Composer compilation fails:
 
 ```
-[FIREFLY] Phase 4: Native compilation
-[FIREFLY] error FS0001: This value is not a function
-[FIREFLY] Build failed: Native compilation error
+[COMPOSER] Phase 4: Native compilation
+[COMPOSER] error FS0001: This value is not a function
+[COMPOSER] Build failed: Native compilation error
 ```
 
 All errors propagate with context about which phase failed.
@@ -490,7 +490,7 @@ All errors propagate with context about which phase failed.
 
 ## Future: Incremental Builds
 
-Currently, `firefly build` runs all phases. Future optimizations may include:
+Currently, `composer build` runs all phases. Future optimizations may include:
 
 - **Dependency tracking**: Skip phases if inputs unchanged
 - **Parallel phases**: Run Fable and backend parsing concurrently
@@ -503,4 +503,4 @@ These optimizations are not in scope for the initial implementation.
 ## Cross-References
 
 - [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) - Overall architecture and IPC model
-- [Architecture_Canonical.md](./Architecture_Canonical.md) - Firefly compilation pipeline
+- [Architecture_Canonical.md](./Architecture_Canonical.md) - Composer compilation pipeline

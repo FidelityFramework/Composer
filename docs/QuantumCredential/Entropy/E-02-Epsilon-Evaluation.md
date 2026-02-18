@@ -171,7 +171,7 @@ This **proves** the mathematics works with real hardware.
 
 ## Implementation Architecture
 
-### F# Data Flow
+### Clef Data Flow
 
 ```fsharp
 /// Per-channel statistics accumulator

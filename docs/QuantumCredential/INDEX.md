@@ -183,7 +183,7 @@ The hardware (four independent avalanche diodes) implements a mathematical requi
 | **Renesas RA6M5** | 2 | Production (primary) | Internal 12-bit ADC, TrustZone |
 | **STM32L5** | 2 | Alternative (on hold) | Direct ADC, no OS |
 
-The same Firefly-compiled F# code runs on all platforms. Only `Platform.Bindings` differ.
+The same Composer-compiled Clef code runs on all platforms. Only `Platform.Bindings` differ.
 
 ---
 

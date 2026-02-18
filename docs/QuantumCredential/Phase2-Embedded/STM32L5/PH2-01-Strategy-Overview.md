@@ -37,9 +37,9 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 │                    Desktop WebView Architecture                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  Frontend (Partas.Solid)        │  Backend (Firefly-compiled)          │
+│  Frontend (Partas.Solid)        │  Backend (Composer-compiled)          │
 │  ┌───────────────────────┐      │  ┌────────────────────────────────┐  │
-│  │ F# → Fable → SolidJS  │ IPC  │  │ F# → PSG → Alex → MLIR → bin  │  │
+│  │ Clef → Fable → SolidJS  │ IPC  │  │ Clef → PSG → Alex → MLIR → bin  │  │
 │  │ Reactive UI           │◄────►│  │ Application logic              │  │
 │  └───────────────────────┘      │  │                                │  │
 │                                 │  │ Platform.Bindings.Webview      │  │
@@ -52,7 +52,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: The "native" part is minimal - just library calls to the system webview. The complexity is in build orchestration (Fable + Vite + Firefly) and IPC (BAREWire-over-webview).
+**Key Insight**: The "native" part is minimal - just library calls to the system webview. The complexity is in build orchestration (Fable + Vite + Composer) and IPC (BAREWire-over-webview).
 
 ### Embedded QuantumCredential Demo (with RTOS)
 
@@ -61,9 +61,9 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 │              Embedded QuantumCredential Architecture (RTOS)              │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  Application (Firefly-compiled)                                         │
+│  Application (Composer-compiled)                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ F# → PSG → Alex → MLIR → ARM Cortex-M33 binary                   │   │
+│  │ Clef → PSG → Alex → MLIR → ARM Cortex-M33 binary                   │   │
 │  │                                                                   │   │
 │  │ Platform.Bindings (POSIX-like)                                    │   │
 │  │   open("/dev/adc0")   → ADC for entropy                           │   │
@@ -99,9 +99,9 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 │                       [FUTURE - Full Architecture]                       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  Application (Firefly-compiled with quotation-based memory)             │
+│  Application (Composer-compiled with quotation-based memory)             │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ F# → PSG (with MemoryConstraint) → Alex → MLIR → binary          │   │
+│  │ Clef → PSG (with MemoryConstraint) → Alex → MLIR → binary          │   │
 │  │                                                                   │   │
 │  │ Memory access carries quoted constraints:                         │   │
 │  │   <@ { Region = Peripheral; Access = WriteOnly; Volatile } @>     │   │
@@ -129,7 +129,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: The full bare-metal path requires the complete quotation-based memory architecture to be functional: Farscape generating quoted descriptors, BAREWire providing interpretation infrastructure, fsnative nanopasses handling constraint validation, and Alex emitting correct volatile memory access. This is NOT a shortcut.
+**Key Insight**: The full bare-metal path requires the complete quotation-based memory architecture to be functional: Farscape generating quoted descriptors, BAREWire providing interpretation infrastructure, clef nanopasses handling constraint validation, and Alex emitting correct volatile memory access. This is NOT a shortcut.
 
 ---
 
@@ -142,7 +142,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 | Fidelity.Platform.Webview | Not started | Add ~15 webview conduit functions |
 | Fidelity.Platform Webview module | Not started | Create BCL-sympathetic wrapper API |
 | Alex Bindings/Webview | Not started | Generate library calls (not syscalls) |
-| Firefly build orchestration | Not started | Invoke Fable, Vite, embed HTML |
+| Composer build orchestration | Not started | Invoke Fable, Vite, embed HTML |
 | IPC (BAREWire-over-webview) | Design exists | Implement base64 encoding bridge |
 
 **Risk**: LOW - All pieces are well-understood extensions of existing patterns.
@@ -157,7 +157,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 | ADC driver config | NuttX provides | Enable CONFIG_STM32_ADC1 |
 | USB CDC driver config | NuttX provides | Enable CONFIG_CDCACM |
 | PQC library | External | Link liboqs or pqm4 |
-| Entropy conditioning | Not started | Implement SHAKE/SHA-3 in F# |
+| Entropy conditioning | Not started | Implement SHAKE/SHA-3 in Clef |
 
 **Risk**: MEDIUM - Unfamiliar territory, requires hardware testing.
 
@@ -165,13 +165,13 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 | Component | Status | Required Work |
 |-----------|--------|---------------|
-| fsnative-spec | Early stage | Define native types, memory layout |
-| fsnative (FNCS) | Planned | Fork FCS, implement native types |
+| clef-spec | Early stage | Define native types, memory layout |
+| clef (CCS) | Planned | Fork upstream compiler-services lineage into CCS, implement native types |
 | BAREWire quotation infrastructure | Design exists | Implement interpretation framework |
 | Farscape quotation output | Design exists | Generate Expr<PeripheralDescriptor> |
 | Farscape active pattern generation | Design exists | Generate recognition patterns |
-| fsnative PSG extensions | Not started | Add MemoryConstraint field |
-| fsnative constraint nanopasses | Not started | Attachment, validation, classification |
+| clef PSG extensions | Not started | Add MemoryConstraint field |
+| clef constraint nanopasses | Not started | Attachment, validation, classification |
 | Alex operation class emission | Not started | VolatileStore, VolatileLoad, etc. |
 | Baker quotation handling | Not started | Flow quotations through typed tree |
 
@@ -183,17 +183,17 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 ### Phase 1: Desktop WebView Demo (Lower Risk)
 
-**Goal**: Demonstrate "F# compiles to native desktop app with reactive UI"
+**Goal**: Demonstrate "Clef compiles to native desktop app with reactive UI"
 
-**Narrative**: "We compile Partas.Solid F# components to JavaScript for the UI, and the F# backend to native code. A single `firefly build` command orchestrates everything into one executable."
+**Narrative**: "We compile Partas.Solid Clef components to JavaScript for the UI, and the Clef backend to native code. A single `composer build` command orchestrates everything into one executable."
 
 **Timeline**: Can be achieved with Milestones 2-5 from WebView plan.
 
 ### Phase 2: Embedded Demo with RTOS (Medium Risk)
 
-**Goal**: Demonstrate "F# compiles to ARM microcontroller with hardware access"
+**Goal**: Demonstrate "Clef compiles to ARM microcontroller with hardware access"
 
-**Narrative**: "The same Fidelity compiler that builds desktop apps also targets embedded. We run F# on an STM32L5, sampling hardware entropy and generating post-quantum credentials."
+**Narrative**: "The same Fidelity compiler that builds desktop apps also targets embedded. We run Clef on an STM32L5, sampling hardware entropy and generating post-quantum credentials."
 
 **Key Shortcut**: NuttX provides POSIX abstraction, avoiding the need for Farscape-generated CMSIS bindings.
 
@@ -201,7 +201,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 ### Phase 3: Full Quotation Architecture (Long-Term)
 
-**Goal**: Demonstrate "F# carries memory semantics through compilation"
+**Goal**: Demonstrate "Clef carries memory semantics through compilation"
 
 **Narrative**: "Quotations describe hardware memory layouts. Active patterns recognize hardware operations. The compiler validates memory access at compile time and emits precisely correct code."
 
@@ -213,7 +213,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 ### What NuttX Provides
 
-1. **POSIX Compliance**: `open`, `read`, `write`, `ioctl`, `close` - the same patterns FNCS already uses for console I/O.
+1. **POSIX Compliance**: `open`, `read`, `write`, `ioctl`, `close` - the same patterns CCS already uses for console I/O.
 
 2. **Character Device Model**: Hardware peripherals appear as `/dev` entries:
    - `/dev/adc0` - ADC for entropy sampling
@@ -227,7 +227,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 ### How It Maps to Fidelity
 
 ```fsharp
-// F# with FNCS (same as desktop console I/O pattern)
+// Clef with CCS (same as desktop console I/O pattern)
 module Platform.Bindings =
     let openDevice (path: string) : int = Unchecked.defaultof<int>
     let closeDevice (fd: int) : int = Unchecked.defaultof<int>
@@ -279,7 +279,7 @@ The QuantumCredential project spans both demo targets:
 │  │                     │                            │ • Storage        ││
 │  └─────────────────────┘                            └──────────────────┘│
 │    (Embedded demo)                                    (Desktop demo)     │
-│    NuttX + Firefly                                   WebView + Firefly   │
+│    NuttX + Composer                                   WebView + Composer   │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -290,8 +290,8 @@ The QuantumCredential project spans both demo targets:
 |-----------|----------|---------|--------|
 | PQC algorithms | liboqs/pqm4 | liboqs | Algorithm code |
 | BAREWire schemas | For IR framing | For IPC | Schema definitions |
-| Credential types | F# record types | Same | Type definitions |
-| FNCS | Core modules | Full library | Core + Console |
+| Credential types | Clef record types | Same | Type definitions |
+| CCS | Core modules | Full library | Core + Console |
 
 ### Credential Exchange Protocol
 
@@ -325,17 +325,17 @@ let credentialSchema = BAREWire.schema<Credential>
 
 ### Near-Term (Demo Components)
 
-5. **PQC integration** - Link liboqs, create F# wrappers
+5. **PQC integration** - Link liboqs, create Clef wrappers
 6. **Entropy pipeline** - ADC sampling → conditioning → PQC seeding
-7. **Firefly build orchestration** - Fable + Vite integration
+7. **Composer build orchestration** - Fable + Vite integration
 8. **BAREWire IPC** - Base64 bridge for webview communication
 
 ### Long-Term (Full Architecture)
 
-9. **fsnative-spec** - Define native type semantics
+9. **clef-spec** - Define native type semantics
 10. **BAREWire quotation infrastructure** - Interpretation framework
 11. **Farscape quotation output** - Generate Expr<PeripheralDescriptor>
-12. **fsnative PSG extensions** - MemoryConstraint, nanopasses
+12. **clef PSG extensions** - MemoryConstraint, nanopasses
 13. **Baker quotation flow** - Typed tree overlay with memory semantics
 
 ---
@@ -344,14 +344,14 @@ let credentialSchema = BAREWire.schema<Credential>
 
 ### Desktop Demo Success
 
-- [ ] Single `firefly build` produces native executable
+- [ ] Single `composer build` produces native executable
 - [ ] Executable displays reactive UI via system webview
-- [ ] F# application logic runs natively (no .NET runtime)
+- [ ] Clef application logic runs natively (no .NET runtime)
 - [ ] Frontend/backend IPC functional
 
 ### Embedded Demo Success
 
-- [ ] F# code compiles to ARM Cortex-M33 binary
+- [ ] Clef code compiles to ARM Cortex-M33 binary
 - [ ] Binary runs on STM32L5 with NuttX
 - [ ] ADC samples entropy from hardware
 - [ ] PQC key generation completes
@@ -362,7 +362,7 @@ let credentialSchema = BAREWire.schema<Credential>
 - [ ] Embedded device generates credential
 - [ ] Desktop app receives and verifies credential
 - [ ] Both ends use the same Fidelity compiler
-- [ ] "F# from source to silicon" narrative demonstrated
+- [ ] "Clef from source to silicon" narrative demonstrated
 
 ---
 

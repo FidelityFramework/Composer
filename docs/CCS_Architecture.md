@@ -1,31 +1,31 @@
-# FNCS: F# Native Compiler Services
+# CCS: Clef Compiler Services
 
 ## Executive Summary
 
-FNCS (F# Native Compiler Services) is a minimal, surgical fork of F# Compiler Services (FCS) that provides native-first type resolution for the Fidelity framework. Rather than fighting FCS's BCL-centric assumptions downstream in Firefly, FNCS addresses the fundamental problem at its source: the type system itself.
+CCS (Clef Compiler Services) is a minimal, surgical fork of the legacy compiler-services lineage that provides native-first type resolution for the Fidelity framework. Rather than fighting legacy BCL-centric assumptions downstream in Composer, CCS addresses the fundamental problem at its source: the type system itself.
 
-FNCS is **not** a full rewrite of FCS. It is a targeted modification that:
+CCS is **not** a full rewrite of the upstream stack. It is a targeted modification that:
 
-1. Provides native semantics for standard F# types (`string`, `option`, `array`, etc.)
+1. Provides native semantics for standard Clef types (`string`, `option`, `array`, etc.)
 2. Types string literals with UTF-8 fat pointer semantics instead of `System.String`
 3. Resolves SRTP against a native witness hierarchy
 4. Enforces null-free semantics where BCL would allow nulls
-5. Maintains the same API surface as FCS for seamless Firefly integration
+5. Maintains a compatible API surface for seamless Composer integration
 
-**Key Principle**: Users write standard F# type names. FNCS provides native semantics transparently. No "NativeStr" or other internal naming - `string` is `string` everywhere.
+**Key Principle**: Users write standard Clef type names. CCS provides native semantics transparently. No "NativeStr" or other internal naming - `string` is `string` everywhere.
 
-## The Problem: FCS's BCL-Centric Type Universe
+## The Problem: BCL-Centric Type Universe
 
-FCS was designed for .NET compilation. Its type system assumes BCL primitives:
+The legacy compiler-services model was designed for .NET compilation. Its type system assumes BCL primitives:
 
 ```fsharp
-// In FCS CheckExpressions.fs, line ~7342
+// In legacy CheckExpressions.fs, line ~7342
 | false, LiteralArgumentType.Inline ->
     TcPropagatingExprLeafThenConvert cenv overallTy g.string_ty env m (fun () ->
         mkString g m s, tpenv)
 ```
 
-When you write `"Hello"` in F# code, FCS **always** types it as `Microsoft.FSharp.Core.string` (which is `System.String`). This is hardcoded. No amount of type shadows, namespace tricks, or downstream transformations can change this fundamental behavior.
+When you write `"Hello"` in Clef code, the legacy service model **always** types it with BCL string semantics (`System.String`). This is hardcoded. No amount of type shadows, namespace tricks, or downstream transformations can change this fundamental behavior.
 
 ### Why Type Shadows Don't Work
 
@@ -40,40 +40,40 @@ But type shadows only affect **type annotations**, not **literal inference**:
 
 ```fsharp
 let x: string = value  // Shadow works here
-let y = "Hello"        // Shadow IGNORED: y is System.String from FCS
+let y = "Hello"        // Shadow IGNORED: y is still inferred with BCL string semantics
 ```
 
-This asymmetry creates an impossible situation. User code looks correct (`Console.Write "Hello"`), but FCS has already decided that `"Hello"` is BCL string before any Alloy code runs.
+This asymmetry creates an impossible situation. User code looks correct (`Console.Write "Hello"`), but the checker has already fixed `"Hello"` to BCL string semantics before Alloy-level abstractions can influence typing.
 
 ### The Downstream Consequence
 
-Because FCS outputs BCL types, every downstream component must either:
+Because the inherited checker model outputs BCL-typed results, every downstream component must either:
 
-1. **Reject BCL types** - Firefly's `ValidateNativeTypes` does this, but then valid-looking code fails
+1. **Reject BCL types** - Composer's `ValidateNativeTypes` does this, but then valid-looking code fails
 2. **Transform BCL types** - Violates "no lowering" principle, creates semantic mismatches
 3. **Accept BCL types** - Requires BCL runtime, defeats purpose of native compilation
 
 None of these options are acceptable. The fix must happen at the source: the type system.
 
-## The Solution: Native Semantics for Standard F# Types
+## The Solution: Native Semantics for Standard Clef Types
 
-FNCS modifies FCS to provide **native semantics** for standard F# types:
+CCS replaces the inherited BCL-centric semantics with **native semantics** for standard Clef types:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  FCS Type Universe (BCL-centric)                                    │
+│  Legacy Service Type Universe (BCL-centric)                         │
 │                                                                     │
 │  string         → System.String (UTF-16, heap-allocated, nullable)  │
-│  option<'T>     → FSharp.Core.option<T> (reference type, nullable)  │
+│  option<'T>     → Reference-oriented option semantics (nullable)    │
 │  array<'T>      → System.Array (runtime-managed)                    │
 │  String literal → System.String (hardcoded)                         │
 │  SRTP           → Searches BCL method tables                        │
 └─────────────────────────────────────────────────────────────────────┘
 
-                              ↓ FNCS Fork ↓
+                           ↓ CCS Migration ↓
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│  FNCS Type Universe (Native semantics)                              │
+│  CCS Type Universe (Native semantics)                              │
 │                                                                     │
 │  string         → UTF-8 fat pointer {Pointer, Length}               │
 │  option<'T>     → Value-type, stack-allocated, never null           │
@@ -85,43 +85,43 @@ FNCS modifies FCS to provide **native semantics** for standard F# types:
 
 **Note**: The type NAME stays `string` - only the SEMANTICS change. No cognitive overhead for maintainers.
 
-## Architectural Layering with FNCS
+## Architectural Layering with CCS
 
-FNCS changes the fundamental layering of the Fidelity stack:
+CCS changes the fundamental layering of the Fidelity stack:
 
-### Before (Current - FCS)
+### Before (Legacy Service Model)
 
 ```
 User Code: Console.Write "Hello"
     ↓
-FCS: Types "Hello" as System.String (BCL)
-FCS: SRTP searches BCL method tables
+Legacy checker: Types "Hello" as System.String (BCL)
+Legacy checker: SRTP searches BCL method tables
     ↓
-Firefly/Baker: Receives BCL-typed tree
-Firefly: ValidateNativeTypes FAILS (BCL detected)
+Composer/Baker: Receives BCL-typed tree
+Composer: ValidateNativeTypes FAILS (BCL detected)
     ↓
 ERROR: BCL types in native compilation
 ```
 
-### After (FNCS)
+### After (CCS)
 
 ```
 User Code: Console.Write "Hello"
     ↓
-FNCS: Types "Hello" as string with native semantics (UTF-8 fat pointer)
-FNCS: SRTP searches native witness hierarchy
+CCS: Types "Hello" as string with native semantics (UTF-8 fat pointer)
+CCS: SRTP searches native witness hierarchy
     ↓
-Firefly/Baker: Receives native-typed tree
-Firefly: ValidateNativeTypes PASSES (native semantics)
+Composer/Baker: Receives native-typed tree
+Composer: ValidateNativeTypes PASSES (native semantics)
     ↓
 Alex: Generates MLIR directly
     ↓
 Native binary
 ```
 
-## What FNCS Contains
+## What CCS Contains
 
-FNCS is a focused modification. It contains:
+CCS is a focused modification. It contains:
 
 ### 1. Native Semantics for Primitive Types
 
@@ -129,8 +129,8 @@ The core type semantics redefinitions:
 
 ```fsharp
 // Conceptual - actual implementation in TcGlobals.fs
-// Type NAMES remain standard F#; SEMANTICS are native
-type FNCSSemantics = {
+// Type NAMES remain standard Clef; SEMANTICS are native
+type CCSSemantics = {
     // string has UTF-8 fat pointer semantics
     string_semantics: {| Pointer: nativeptr<byte>; Length: int |}
 
@@ -150,10 +150,10 @@ type FNCSSemantics = {
 The key modification in `CheckExpressions.fs`:
 
 ```fsharp
-// FNCS modification - string literals have native semantics
+// CCS modification - string literals have native semantics
 | false, LiteralArgumentType.Inline ->
     TcPropagatingExprLeafThenConvert cenv overallTy g.string_ty env m (fun () ->
-        mkString g m s, tpenv)  // Same API as FCS, but creates string with native semantics
+        mkString g m s, tpenv)  // Same API shape, but creates string with native semantics
 ```
 
 ### 3. Native SRTP Witness Resolution
@@ -161,7 +161,7 @@ The key modification in `CheckExpressions.fs`:
 SRTP resolution searches native witnesses instead of BCL method tables:
 
 ```fsharp
-// FNCS SRTP resolution
+// CCS SRTP resolution
 let resolveTraitCall (traitInfo: TraitConstraintInfo) =
     // Search native witness hierarchy, not BCL
     match traitInfo.MemberName with
@@ -173,10 +173,10 @@ let resolveTraitCall (traitInfo: TraitConstraintInfo) =
 
 ### 4. Null-Free Semantics
 
-FNCS enforces null-free semantics where BCL would allow nulls:
+CCS enforces null-free semantics where BCL would allow nulls:
 
 ```fsharp
-// FNCS null handling
+// CCS null handling
 let checkNullAssignment targetType sourceExpr =
     match targetType with
     | t when hasNativeSemantics t ->
@@ -188,11 +188,11 @@ let checkNullAssignment targetType sourceExpr =
 
 ### 5. Inline Expansion for Escape Analysis
 
-FNCS captures function bodies for functions marked `inline` and expands them at call sites during type checking. This is critical for **escape analysis** of stack-allocated memory.
+CCS captures function bodies for functions marked `inline` and expands them at call sites during type checking. This is critical for **escape analysis** of stack-allocated memory.
 
 **The Problem**: When a function allocates via `NativePtr.stackalloc` and returns a pointer, that pointer is invalid after the function returns (stack frame deallocated).
 
-**The Solution**: FNCS expands `inline` function bodies at call sites, lifting allocations to the caller's frame:
+**The Solution**: CCS expands `inline` function bodies at call sites, lifting allocations to the caller's frame:
 
 ```fsharp
 // In Platform/Console.fs
@@ -204,7 +204,7 @@ let inline readln () : string =
 // In user code
 let hello() =
     Console.readln() |> greet
-    // FNCS expands readln inline:
+    // CCS expands readln inline:
     // - stackalloc now in hello's frame
     // - fat pointer valid through hello's scope
 ```
@@ -219,16 +219,16 @@ let hello() =
 - Returns pointer/reference/fat pointer to that allocation
 - Caller needs returned value to remain valid
 
-This enables **Level 1 (Implicit) memory management** - developers write standard F# while the compiler ensures safety via inline expansion.
+This enables **Level 1 (Implicit) memory management** - developers write standard Clef while the compiler ensures safety via inline expansion.
 
 ### 6. BCL-Sympathetic API Surface
 
 Despite native semantics, the API surface remains familiar:
 
 ```fsharp
-// User code looks exactly like BCL F#
+// User code looks exactly like BCL Clef
 module Console =
-    let Write (s: string) = ...      // string has native semantics in FNCS
+    let Write (s: string) = ...      // string has native semantics in CCS
     let WriteLine (s: string) = ...
     let ReadLine () : string = ...
 
@@ -237,29 +237,29 @@ module String =
     let concat (sep: string) (strings: string seq) : string = ...
 ```
 
-## What FNCS Does NOT Contain
+## What CCS Does NOT Contain
 
-FNCS is intentionally minimal. It does NOT include:
+CCS is intentionally minimal. It does NOT include:
 
 ### Platform Bindings
 
-Platform-specific operations remain in Firefly/Alex:
+Platform-specific operations remain in Composer/Alex:
 
 ```fsharp
-// NOT in FNCS - stays in Alloy/Firefly
+// NOT in CCS - stays in Alloy/Composer
 module Platform.Bindings =
     let writeBytes fd buffer count : int = ...
     let readBytes fd buffer maxCount : int = ...
 ```
 
-FNCS defines type semantics; Firefly implements operations on those types.
+CCS defines type semantics; Composer implements operations on those types.
 
 ### Runtime Implementations
 
-FNCS provides type resolution, not runtime code:
+CCS provides type resolution, not runtime code:
 
 ```fsharp
-// NOT in FNCS - runtime implementation in Alloy
+// NOT in CCS - runtime implementation in Alloy
 let inline concat2 (dest: nativeptr<byte>) (s1: string) (s2: string) : string =
     // Actual byte-copying implementation
     ...
@@ -267,63 +267,63 @@ let inline concat2 (dest: nativeptr<byte>) (s1: string) (s2: string) : string =
 
 ### Code Generation
 
-FNCS produces typed trees. Code generation is Firefly/Alex's domain:
+CCS produces typed trees. Code generation is Composer/Alex's domain:
 
 ```fsharp
-// NOT in FNCS - stays in Alex
+// NOT in CCS - stays in Alex
 let emitString (ctx: EmissionContext) (str: string) : MLIR =
     // Place bytes in data section, emit struct construction
     ...
 ```
 
-## Integration with Firefly
+## Integration with Composer
 
-FNCS produces **FSharp.Native.Compiler.Service.dll** - a distinct library with native-first type resolution.
+CCS produces **Clef.Compiler.Service.dll** - a distinct library with native-first type resolution.
 
 ### Repository Structure
 
 ```
 dotnet/fsharp (upstream reference)
     │
-    └──→ SpeakEZ/fsnative (pure divergence)
+    └──→ SpeakEZ/clef (pure divergence)
               │
               ├── main          ← Initial fork point (reference only)
               │
-              └── fsnative      ← Active development branch
-                                   All FNCS modifications here
+              └── clef      ← Active development branch
+                                   All CCS modifications here
 ```
 
 **Key decisions:**
 - **Pure divergence** - No ongoing merge from upstream. `dotnet/fsharp` is reference only.
-- **Distinct identity** - Output is `FSharp.Native.Compiler.Service.dll`, not a drop-in replacement
-- **Companion spec** - `SpeakEZ/fsnative-spec` documents the native F# dialect
+- **Distinct identity** - Output is `Clef.Compiler.Service.dll`, not a drop-in replacement
+- **Companion spec** - `SpeakEZ/clef-spec` documents the native Clef dialect
 
-### Current (FCS from NuGet)
+### Bridge Baseline (Package Mode)
 
 ```xml
-<!-- Firefly.fsproj -->
-<PackageReference Include="FSharp.Compiler.Service" Version="43.8.x" />
+<!-- Composer.fsproj -->
+<PackageReference Include="Clef.Compiler.Service" Version="43.8.x" />
 ```
 
-### With FNCS (Local Build)
+### With CCS (Local Build)
 
 ```xml
-<!-- Firefly.fsproj -->
-<Reference Include="FSharp.Native.Compiler.Service">
-  <HintPath>../fsnative/artifacts/bin/FSharp.Native.Compiler.Service/Release/netstandard2.0/FSharp.Native.Compiler.Service.dll</HintPath>
+<!-- Composer.fsproj -->
+<Reference Include="Clef.Compiler.Service">
+  <HintPath>../clef/artifacts/bin/Clef.Compiler.Service/Release/netstandard2.0/Clef.Compiler.Service.dll</HintPath>
 </Reference>
 ```
 
 ### API Compatibility
 
-FNCS maintains API compatibility with FCS. Existing Firefly code requires minimal changes:
+CCS keeps compatibility with the legacy service API shape. Existing Composer code requires minimal changes:
 
 ```fsharp
-// Change: open FSharp.Compiler.* → open FSharp.Native.Compiler.*
-open FSharp.Native.Compiler.CodeAnalysis
-open FSharp.Native.Compiler.Symbols
+// Namespace migration target: legacy compiler namespace -> Clef-native compiler namespace
+open Clef.Native.Compiler.CodeAnalysis
+open Clef.Native.Compiler.Symbols
 
-let checker = FSharpChecker.Create()
+let checker = createChecker()
 let results = checker.ParseAndCheckFileInProject(...)
 let typedTree = results.TypedTree  // Contains string with native semantics
 ```
@@ -332,16 +332,16 @@ The API shape is the same; the namespace and type semantics differ.
 
 ## The Resulting Layer Separation
 
-With FNCS, the Fidelity stack has clean layer separation:
+With CCS, the Fidelity stack has clean layer separation:
 
 | Layer | Responsibility |
 |-------|---------------|
-| **FNCS** | Type universe, literal typing, type inference, SRTP resolution, **PSG construction**, editor services |
-| **Alloy** | Library implementations using standard F# types (Console, String, etc.) |
-| **Firefly/Alex** | **Consumes PSG from FNCS**, platform-aware MLIR generation |
+| **CCS** | Type universe, literal typing, type inference, SRTP resolution, **PSG construction**, editor services |
+| **Alloy** | Library implementations using standard Clef types (Console, String, etc.) |
+| **Composer/Alex** | **Consumes PSG from CCS**, platform-aware MLIR generation |
 | **Platform Bindings** | Syscall implementations per platform |
 
-**Key Architecture Change**: FNCS now builds the PSG (Program Semantic Graph). Firefly consumes the PSG as "correct by construction" and focuses purely on code generation.
+**Key Architecture Change**: CCS now builds the PSG (Program Semantic Graph). Composer consumes the PSG as "correct by construction" and focuses purely on code generation.
 
 Each layer has a single responsibility. No layer needs to "work around" another layer's assumptions.
 
@@ -349,13 +349,13 @@ Each layer has a single responsibility. No layer needs to "work around" another 
 
 ### ValidateNativeTypes
 
-With FNCS, `ValidateNativeTypes` becomes simpler:
+With CCS, `ValidateNativeTypes` becomes simpler:
 
 ```fsharp
 // Before: Complex classification, many edge cases
-// After: Simple - FNCS guarantees native semantics
+// After: Simple - CCS guarantees native semantics
 let validateNode (node: PSGNode) =
-    // FNCS already ensured all types have native semantics
+    // CCS already ensured all types have native semantics
     // This pass becomes a sanity check, not a gatekeeper
     ()
 ```
@@ -366,11 +366,11 @@ Baker's job becomes easier:
 
 ```fsharp
 // Before: Extract types, handle BCL/native mismatches
-// After: Types already have native semantics from FNCS
-let overlayTypes (node: PSGNode) (fsharpExpr: FSharpExpr) =
-    // Types from fsharpExpr already have native semantics
+// After: Types already have native semantics from CCS
+let overlayTypes (node: PSGNode) (typedExpr: TypedExpr) =
+    // Types from typedExpr already have native semantics
     // No translation needed
-    node.Type <- fsharpExpr.Type
+    node.Type <- typedExpr.Type
 ```
 
 ### Alloy Type Shadows
@@ -381,7 +381,7 @@ Type shadows are no longer needed:
 // Before: Attempted shadowing (didn't work for literals)
 type string = NativeStr  // This was wrong and is now removed
 
-// After: Not needed - FNCS provides native semantics for string
+// After: Not needed - CCS provides native semantics for string
 // Alloy is a pure library with no type system workarounds
 ```
 
@@ -396,22 +396,22 @@ SRTP resolution becomes straightforward:
 type WritableString =
     | WritableString
     static member inline ($) (WritableString, s: string) = writeString s
-    // FNCS ensures string has native semantics
+    // CCS ensures string has native semantics
 ```
 
 ## Implementation Roadmap
 
 ### Phase 0: Repository Setup (DONE)
 
-- **`SpeakEZ/fsnative`** - Fork of `dotnet/fsharp` on GitHub
-- **`SpeakEZ/fsnative-spec`** - Fork of `fsharp/fslang-spec` on GitHub
-- **Branch**: `fsnative` for all development (main frozen at fork point)
+- **`SpeakEZ/clef`** - Fork of `dotnet/fsharp` on GitHub
+- **`SpeakEZ/clef-spec`** - Fork of `fsharp/fslang-spec` on GitHub
+- **Branch**: `clef` for all development (main frozen at fork point)
 - **Pure divergence** - `dotnet/fsharp` is reference only, kept at `~/repos/fsharp`
 
 ### Phase 1: Assembly Identity and Build Infrastructure
 
-1. Rename assembly to `FSharp.Native.Compiler.Service`
-2. Update namespaces: `FSharp.Compiler.*` → `FSharp.Native.Compiler.*`
+1. Rename assembly to `Clef.Compiler.Service`
+2. Update namespaces: `Clef.Compiler.*` → `Clef.Native.Compiler.*`
 3. Verify build produces correctly named DLL
 4. Create test harness for validating type resolution
 
@@ -430,7 +430,7 @@ type WritableString =
 
 ### Phase 4: SRTP Native Witnesses
 
-1. Define native witness hierarchy in FNCS
+1. Define native witness hierarchy in CCS
 2. Modify constraint solver to search native witnesses
 3. Ensure common operations (`+`, `$`, `Length`, etc.) resolve correctly
 
@@ -442,14 +442,14 @@ type WritableString =
 
 ### Phase 6: Integration and Testing
 
-1. Update Firefly to reference FNCS DLL
+1. Update Composer to reference CCS DLL
 2. Verify HelloWorld samples compile
 3. Run full test suite
 4. Document any API differences
 
-## FCS Files Requiring Modification
+## CCS Files Requiring Modification
 
-Based on the "From Bridged to Self Hosted" analysis and FCS structure:
+Based on the "From Bridged to Self Hosted" analysis and CCS structure:
 
 | File | Modification |
 |------|-------------|
@@ -463,23 +463,23 @@ The modification surface is intentionally small - surgical changes to type resol
 
 ## Relationship to Self-Hosting Roadmap
 
-FNCS is an **intermediate step** on the path to full self-hosting:
+CCS is an **intermediate step** on the path to full self-hosting:
 
 ```
-Current:     FCS (BCL) → Firefly → Native Binary
+Current:     Legacy Service (BCL) → Composer → Native Binary
                 ↓
-FNCS:        FNCS (Native) → Firefly → Native Binary  ← WE ARE HERE
+Near-Term:   CCS (Native) → Composer → Native Binary  ← WE ARE HERE
                 ↓
-Extracted:   Firefly.Syntax (Native) → Firefly → Native Binary
+Extracted:   Composer.Syntax (Native) → Composer → Native Binary
                 ↓
-Self-Hosted: Native Firefly → Native Firefly
+Self-Hosted: Native Composer → Native Composer
 ```
 
-FNCS provides immediate relief from BCL contamination while maintaining .NET tooling for Firefly itself. The full extraction (as described in "From Bridged to Self Hosted") remains the long-term goal, but FNCS unblocks current development.
+CCS provides immediate relief from BCL contamination while maintaining .NET tooling for Composer itself. The full extraction (as described in "From Bridged to Self Hosted") remains the long-term goal, but CCS unblocks current development.
 
 ## Success Criteria
 
-FNCS is successful when:
+CCS is successful when:
 
 1. `Console.Write "Hello"` compiles without BCL type errors
 2. String literals in the typed tree have native semantics, not `System.String`
@@ -487,16 +487,16 @@ FNCS is successful when:
 4. `ValidateNativeTypes` passes without special cases
 5. HelloWorld samples execute correctly
 6. No changes required to Alloy namespace structure
-7. No "lowering" or "transformation" passes needed in Firefly
+7. No "lowering" or "transformation" passes needed in Composer
 
 ## Conclusion
 
-FNCS represents a pragmatic middle ground between fighting FCS's assumptions downstream and undertaking a full compiler extraction. By making targeted modifications to FCS's type semantics, we get:
+CCS represents a pragmatic middle ground between fighting inherited BCL assumptions downstream and undertaking a full compiler extraction. By making targeted modifications to compiler-service type semantics, we get:
 
 - **Correctness**: Types have native semantics from the start
 - **Simplicity**: No downstream workarounds, no internal naming differences
-- **Compatibility**: Same FCS API, same Firefly integration
+- **Compatibility**: Compatible API surface, same Composer integration model
 - **Progress**: Immediate unblocking of current development
 - **Foundation**: Clear path to full self-hosting
 
-The key insight is that the problem was never in Firefly, Baker, or Alloy - it was in FCS's fundamental assumption that all F# code targets .NET. FNCS corrects that assumption at the source while maintaining standard F# type names for zero cognitive overhead.
+The key insight is that the problem was never in Composer, Baker, or Alloy - it was in the inherited assumption that all Clef code targets .NET/BCL semantics. CCS corrects that assumption at the source while maintaining standard Clef type names for zero cognitive overhead.

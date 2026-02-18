@@ -42,7 +42,7 @@ gtk_widget_show(window)
 gtk_main()  // Blocks until quit
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 DllImport Attribute
 
@@ -52,7 +52,7 @@ type DllImportAttribute(library: string) =
     member _.Library = library
 ```
 
-FNCS recognizes `[<DllImport>]` and marks the function as external:
+CCS recognizes `[<DllImport>]` and marks the function as external:
 
 ```fsharp
 type SemanticKind =
@@ -85,7 +85,7 @@ type GtkCallback = nativeptr<byte> -> nativeptr<byte> -> unit
 
 Fidelity closures with no captures can be passed as C function pointers.
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 External Function Declaration
 
@@ -248,7 +248,7 @@ let main _ =
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -256,7 +256,7 @@ let main _ =
 | `CheckExpressions.fs` | MODIFY | Handle extern function declarations |
 | `SemanticGraph.fs` | MODIFY | Add ExternFunction SemanticKind |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -265,7 +265,7 @@ let main _ =
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS FFI Support
+### Phase 1: CCS FFI Support
 - [ ] Implement DllImport attribute parsing
 - [ ] Add ExternFunction to SemanticKind
 - [ ] Type-check extern declarations

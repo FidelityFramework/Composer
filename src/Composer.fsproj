@@ -5,10 +5,10 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <PackAsTool>true</PackAsTool>
-    <ToolCommandName>firefly</ToolCommandName>
+    <ToolCommandName>composer</ToolCommandName>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <Version>0.0.1</Version>
-    <Description>Firefly F# Compiler - Native Type Universe via FNCS</Description>
+    <Description>Composer F# Compiler - Native Type Universe via FNCS</Description>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
@@ -159,7 +159,7 @@
       <Compile Include="CLI/Commands/VerifyCommand.fs" />
       <Compile Include="CLI/Commands/DoctorCommand.fs" />
 
-      <!-- CLI - Firefly Entry Point -->
+      <!-- CLI - Composer Entry Point -->
       <Compile Include="CLI/Program.fs" />
   </ItemGroup>
 
@@ -167,7 +167,7 @@
     <PackageReference Include="FSharp.Core" Version="10.0.101" />
     <PackageReference Include="IcedTasks" Version="0.11.7" />
     <!-- FNCS: F# Native Compiler Services (native type universe) -->
-    <ProjectReference Include="../../fsnative/src/Compiler/FSharp.Native.Compiler.Service.fsproj" />
+    <ProjectReference Include="../../clef/src/Compiler/Clef.Compiler.Service.fsproj" />
     <PackageReference Include="XParsec" Version="0.3.0" />
     <PackageReference Include="Argu" Version="6.1.1" />
     <PackageReference Include="FSharp.SystemTextJson" Version="1.2.42" />

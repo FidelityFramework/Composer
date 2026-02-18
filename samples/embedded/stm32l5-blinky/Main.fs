@@ -1,4 +1,4 @@
-/// STM32L5 Blinky - First embedded Firefly sample
+/// STM32L5 Blinky - First embedded Composer sample
 /// Demonstrates GPIO control on NUCLEO-L552ZE-Q board
 ///
 /// Hardware:

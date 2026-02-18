@@ -1,11 +1,11 @@
-# Firefly Regression Test Harness
+# Composer Regression Test Harness
 
-A standalone F# script-based regression test infrastructure for validating Firefly compiler correctness across the FidelityHelloWorld sample suite.
+A standalone F# script-based regression test infrastructure for validating Composer compiler correctness across the FidelityHelloWorld sample suite.
 
 ## Quick Start
 
 ```bash
-cd /home/hhh/repos/Firefly/tests/regression
+cd /home/hhh/repos/Composer/tests/regression
 
 # Run full test suite
 dotnet fsi Runner.fsx
@@ -36,7 +36,7 @@ dotnet fsi Runner.fsx -- --timeout 60
 
 ## How It Works
 
-1. **Single Build**: The harness builds the Firefly compiler once at startup (which pulls in fsnative if needed).
+1. **Single Build**: The harness builds the Composer compiler once at startup (which pulls in fsnative if needed).
 2. **Sample Discovery**: Reads `Manifest.toml` for sample definitions and expected outputs.
 3. **Compilation Phase**: Compiles each sample using the built compiler **with `-k` flag**.
 4. **Execution Phase**: Runs successfully compiled binaries and compares output.
@@ -54,7 +54,7 @@ The `Manifest.toml` file defines all samples:
 ```toml
 [config]
 samples_root = "../../samples/console/FidelityHelloWorld"
-compiler = "../../src/bin/Debug/net10.0/Firefly"
+compiler = "../../src/bin/Debug/net10.0/Composer"
 default_timeout_seconds = 30
 
 [[samples]]
@@ -86,10 +86,10 @@ expected_output = ""
 ## Output Format
 
 ```
-=== Firefly Regression Test ===
+=== Composer Regression Test ===
 Run ID: 2026-01-18T15:47:30
-Manifest: /home/hhh/repos/Firefly/tests/regression/Manifest.toml
-Compiler: /home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly
+Manifest: /home/hhh/repos/Composer/tests/regression/Manifest.toml
+Compiler: /home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer
 
 === Compilation Phase ===
 [PASS] 01_HelloWorldDirect (922ms)

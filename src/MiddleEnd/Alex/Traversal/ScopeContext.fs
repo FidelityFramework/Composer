@@ -9,7 +9,7 @@
 /// Inspired by:
 /// - Nanopass Framework (Scheme): Explicit state threading through scope boundaries
 /// - MLIR mlir-hs: Region builder monads with isolated scopes
-/// - Firefly Codata principle: Witnesses observe, patterns emit, elements are atomic
+/// - Composer Codata principle: Witnesses observe, patterns emit, elements are atomic
 module Alex.Traversal.ScopeContext
 
 open Alex.Dialects.Core.Types

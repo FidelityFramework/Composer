@@ -1,4 +1,4 @@
-# STM32L5 UART Echo - Firefly Embedded Sample
+# STM32L5 UART Echo - Composer Embedded Sample
 # Serial communication demo for NUCLEO-L552ZE-Q
 
 [package]

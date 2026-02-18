@@ -94,7 +94,7 @@ For mutable captures that escape (e.g., lazy value returned from function), the 
 ```
 Note: `count_ptr` points to the mutable's storage location (stack or arena).
 
-## 4. FNCS Layer Implementation
+## 4. CCS Layer Implementation
 
 ### 4.1 NativeType Extension
 
@@ -105,7 +105,7 @@ type NativeType =
     | TLazy of elementType: NativeType
 ```
 
-**Note**: `TLazy` represents the semantic type. The concrete MLIR struct layout varies by capture set - this is resolved during Alex lowering, not in FNCS.
+**Note**: `TLazy` represents the semantic type. The concrete MLIR struct layout varies by capture set - this is resolved during Alex lowering, not in CCS.
 
 ### 4.2 SemanticKind.LazyExpr
 
@@ -116,7 +116,7 @@ type SemanticKind =
 
 The `captures` list uses the same `CaptureInfo` type as Lambda (C-01):
 - Name, Type, IsMutable, SourceNodeId
-- FNCS computes captures during type checking (scope is known)
+- CCS computes captures during type checking (scope is known)
 
 ### 4.3 SemanticKind.LazyForce
 
@@ -168,9 +168,9 @@ let checkLazyExpr
         children = [bodyNode.Id])
 ```
 
-**Key Point**: Capture analysis is reused from C-01. FNCS already knows how to identify captured variables during lambda checking - the same logic applies to lazy.
+**Key Point**: Capture analysis is reused from C-01. CCS already knows how to identify captured variables during lambda checking - the same logic applies to lazy.
 
-### 4.6 Files to Modify (FNCS)
+### 4.6 Files to Modify (CCS)
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -375,7 +375,7 @@ let lazyForceSSACost (numCaptures: int) : int =
 | `Alex/Preprocessing/LazyLayout.fs` | CREATE | Compute lazy struct layouts |
 | `Alex/Witnesses/LazyWitness.fs` | CREATE | Emit lazy creation and force MLIR |
 | `Alex/Preprocessing/SSAAssignment.fs` | MODIFY | Add LazyExpr, LazyForce SSA costs |
-| `Alex/Traversal/FNCSTransfer.fs` | MODIFY | Handle LazyExpr, LazyForce |
+| `Alex/Traversal/CCSTransfer.fs` | MODIFY | Handle LazyExpr, LazyForce |
 | `Alex/CodeGeneration/TypeMapping.fs` | MODIFY | Map TLazy to concrete struct types |
 
 ## 6. MLIR Output Specification
@@ -567,21 +567,21 @@ Sum: 30
 
 ## 9. Implementation Checklist
 
-### Phase 1: FNCS Foundation
+### Phase 1: CCS Foundation
 - [ ] Add `TLazy` to NativeTypes
 - [ ] Add `LazyExpr`, `LazyForce` to SemanticKind
 - [ ] Implement `lazy { }` checking with capture analysis (reuse C-01 logic)
 - [ ] Add `Lazy.force` intrinsic
-- [ ] FNCS builds successfully
+- [ ] CCS builds successfully
 
 ### Phase 2: Alex Implementation
 - [ ] Create `LazyLayout.fs` coeffect computation
 - [ ] Create `LazyWitness.fs` with flat closure model
 - [ ] Update SSAAssignment for LazyExpr, LazyForce
 - [ ] Update TypeMapping for TLazy → concrete struct
-- [ ] Handle LazyExpr, LazyForce in FNCSTransfer
+- [ ] Handle LazyExpr, LazyForce in CCSTransfer
 - [ ] Generate thunk functions with capture parameters
-- [ ] Firefly builds successfully
+- [ ] Composer builds successfully
 
 ### Phase 3: Validation
 - [ ] Sample 14 compiles without errors
@@ -658,7 +658,7 @@ See Serena memory: `lazy_thunk_calling_convention`
 
 ### 12.3 Capture Analysis Reuse
 
-FNCS already had capture analysis for Lambda (C-01). The correct approach was to **reuse it**:
+CCS already had capture analysis for Lambda (C-01). The correct approach was to **reuse it**:
 
 ```fsharp
 // In Applications.fs - made public for reuse
@@ -696,11 +696,11 @@ Before implementing ANY new feature:
 
 ### 12.6 Files Modified (Reference)
 
-**FNCS:**
+**CCS:**
 - `Applications.fs` - Made `collectVarRefs` public, added `computeCaptures`
 - `Coordinator.fs` - `checkLazy` uses `computeCaptures`
 
 **Alex:**
 - `LazyWitness.fs` - Struct pointer passing calling convention
 - `SSAAssignment.fs` - SSA costs (LazyExpr: 5+N, LazyForce: 4)
-- `FNCSTransfer.fs` - Simplified LazyForce (uniform, no capture tracking)
+- `CCSTransfer.fs` - Simplified LazyForce (uniform, no capture tracking)

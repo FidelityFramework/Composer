@@ -76,7 +76,7 @@ The quad avalanche architecture enables true parallel execution on the quad-core
 | **Pure data transformation** | Voltage reading to entropy bits |
 | **Perfect core mapping** | 4 ADC channels to 4 Cortex-A53 cores |
 
-The Firefly compiler emits `scf.parallel` for this pattern, generating code that executes simultaneously across all four cores with no synchronization overhead. See [03_MLIR_Dialect_Strategy.md](./03_MLIR_Dialect_Strategy.md) for details on the standard MLIR dialect approach.
+The Composer compiler emits `scf.parallel` for this pattern, generating code that executes simultaneously across all four cores with no synchronization overhead. See [03_MLIR_Dialect_Strategy.md](./03_MLIR_Dialect_Strategy.md) for details on the standard MLIR dialect approach.
 
 ### Interleaved Entropy
 
@@ -288,7 +288,7 @@ YoshiPi                         Desktop
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  User Space Process (Firefly-compiled binary)                       │
+│  User Space Process (Composer-compiled binary)                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐   │
@@ -322,7 +322,7 @@ YoshiPi                         Desktop
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │ Text segment (read-only, executable)                         │   │
-│  │ • Compiled F# code                                           │   │
+│  │ • Compiled Clef code                                           │   │
 │  │ • PQC algorithm implementations                              │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │

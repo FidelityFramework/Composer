@@ -43,7 +43,7 @@ At each `let!`:
 
 For now (single-threaded), inner asyncs complete immediately, so suspension is technically immediate resumption. True suspension matters when combined with I/O (I-01/I-02) or threading (T-01/T-02).
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 SemanticKind.AsyncBind
 
@@ -92,7 +92,7 @@ let checkAsyncBind env builder name innerExpr contExpr =
         error "let! requires Async<_> on right-hand side"
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Suspension Point Numbering (Nanopass)
 
@@ -277,24 +277,24 @@ Result: 42
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `SemanticGraph.fs` | MODIFY | Add AsyncBind, AsyncDo SemanticKinds |
 | `Expressions/Computations.fs` | MODIFY | Handle let! and do! in async |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `src/Alex/Preprocessing/SuspensionIndices.fs` | MODIFY | Number suspension points |
 | `src/Alex/Witnesses/AsyncWitness.fs` | MODIFY | Emit state machine with suspension |
-| `src/Alex/Traversal/FNCSTransfer.fs` | MODIFY | Handle AsyncBind, AsyncDo |
+| `src/Alex/Traversal/CCSTransfer.fs` | MODIFY | Handle AsyncBind, AsyncDo |
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Suspension Points
+### Phase 1: CCS Suspension Points
 - [ ] Add AsyncBind, AsyncDo to SemanticKind
 - [ ] Implement let!/do! type checking
 - [ ] Assign suspension indices during checking

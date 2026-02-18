@@ -50,7 +50,7 @@ type CounterMessage =
 
 Messages are discriminated unions (already supported via F-05+).
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 MailboxProcessor Type
 
@@ -95,7 +95,7 @@ Messages are discriminated unions (already supported via F-05+).
         NativeType.TAsync(msgVar))
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Actor Structure
 
@@ -347,14 +347,14 @@ Done
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `NativeTypes.fs` | MODIFY | Add TMailboxProcessor, TInbox |
 | `CheckExpressions.fs` | MODIFY | Add MailboxProcessor intrinsics |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|

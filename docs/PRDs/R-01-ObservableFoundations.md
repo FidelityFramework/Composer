@@ -89,7 +89,7 @@ Observable Inline Layout (Multicast, 2 subscribers)
 
 Emission is direct dispatch to inlined closures - no allocation per event.
 
-### 3.3 FNCS Type Definitions
+### 3.3 CCS Type Definitions
 
 ```fsharp
 // In NativeTypes.fs

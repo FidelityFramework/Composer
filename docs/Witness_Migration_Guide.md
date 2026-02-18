@@ -111,7 +111,7 @@ let initializeRegistry () =
         // |> NanopassRegistry.register ArithWitness.nanopass     // Uncomment when migrated
 ```
 
-**Add to Firefly.fsproj** (after ParallelNanopass.fs):
+**Add to Composer.fsproj** (after ParallelNanopass.fs):
 ```xml
 <Compile Include="MiddleEnd/Alex/Traversal/WitnessRegistry.fs" />
 ```

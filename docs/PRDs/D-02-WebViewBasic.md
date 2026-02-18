@@ -6,7 +6,7 @@
 
 This PRD adds WebKitGTK WebView to GTK windows - enabling hybrid web/native applications. This is the foundation for the WREN (WebView + Region + Elmish + Native) stack vision.
 
-**Key Insight**: WebKitGTK provides a C API similar to GTK. The same FFI patterns from D-01 apply. JavaScript<->F# bridging is future work (PRD beyond scope).
+**Key Insight**: WebKitGTK provides a C API similar to GTK. The same FFI patterns from D-01 apply. JavaScript<->Clef bridging is future work (PRD beyond scope).
 
 ## 2. Language Feature Specification
 
@@ -45,7 +45,7 @@ webkit_web_view_load_html(webview, html, "about:blank")
 gtk_widget_show(window)
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 WebKit Extern Declarations
 
@@ -62,9 +62,9 @@ extern void webkit_web_view_load_uri(view: nativeptr<byte>, uri: string)
 extern void webkit_web_view_load_html(view: nativeptr<byte>, content: string, baseUri: string)
 ```
 
-No new FNCS machinery needed beyond D-01.
+No new CCS machinery needed beyond D-01.
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Same FFI Patterns
 
@@ -212,13 +212,13 @@ No new files beyond D-01. Sample code demonstrates WebKit usage.
 
 ## 9. Future: JavaScript Bridge
 
-Full WREN stack needs JavaScript<->F# communication:
+Full WREN stack needs JavaScript<->Clef communication:
 
 ```fsharp
 // Future API
 webkit_web_view_run_javascript(webview, "document.title = 'Updated'")
 
-// Callback from JS to F#
+// Callback from JS to Clef
 webkit_web_view_register_script_message_handler(webview, "fsharp", onMessage)
 ```
 

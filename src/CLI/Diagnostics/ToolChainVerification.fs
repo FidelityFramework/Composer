@@ -301,7 +301,7 @@ module ComponentChecking =
 
 /// Main toolchain verification with comprehensive reporting
 let verifyToolchain (verbose: bool) : DiagnosticResult<unit> =
-    printfn "Verifying Firefly toolchain requirements..."
+    printfn "Verifying Composer toolchain requirements..."
     printfn "=========================================="
     
     // Enhanced platform detection and environment analysis
@@ -409,14 +409,14 @@ let verifyToolchain (verbose: bool) : DiagnosticResult<unit> =
     
     if hasErrors then
         printfn "ERROR: Missing required components!"
-        printfn "Please install the missing components before using Firefly."
+        printfn "Please install the missing components before using Composer."
         if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
             printfn ""
             printfn "Quick setup for Windows:"
             printfn "1. Install MSYS2 from https://www.msys2.org/"
             printfn "2. Open 'MSYS2 MINGW64' terminal"
             printfn "3. Run: pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-llvm"
-            printfn "4. Run: firefly doctor"
+            printfn "4. Run: composer doctor"
         Failure [InternalError("toolchain", "Missing required toolchain components", None)]
     elif hasWarnings then
         printfn "All required components found!"
@@ -479,4 +479,4 @@ let suggestToolchainFixes (error: string) : unit =
         printfn "1. Verify you're in MSYS2 MINGW64 terminal"
         printfn "2. Update package database: pacman -Sy"
         printfn "3. Install core tools: pacman -S mingw-w64-x86_64-toolchain"
-        printfn "4. Run: firefly doctor --verbose"
+        printfn "4. Run: composer doctor --verbose"

@@ -18,7 +18,7 @@ This document captures the pragmatic dialect strategy for the demo and the progr
 
 ## The DCont/Inet Duality (Conceptual Model)
 
-The Firefly compiler analyzes referential transparency to determine compilation strategy:
+The Composer compiler analyzes referential transparency to determine compilation strategy:
 
 | Pattern | Compilation Target | Characteristics |
 |---------|-------------------|-----------------|
@@ -201,7 +201,7 @@ Using standard dialects, the demo still validates:
 | **Natural suspension at I/O** | Syscalls yield to OS scheduler |
 | **Interleaved entropy** | arith operations combine channels |
 | **Platform.Bindings pattern** | func.call to Alex-emitted syscalls |
-| **Quotation-based constraints** | fsnative nanopasses attach metadata |
+| **Quotation-based constraints** | clef nanopasses attach metadata |
 
 What it defers:
 

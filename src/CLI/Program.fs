@@ -1,4 +1,4 @@
-/// Firefly CLI - Thin wrapper around CompilationOrchestrator
+/// Composer CLI - Thin wrapper around CompilationOrchestrator
 ///
 /// This is intentionally minimal. All compilation logic lives in the orchestrator.
 /// The CLI only handles:
@@ -61,7 +61,7 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
                 exit 1
             else
                 printfn "Error: No .fidproj file found and no project specified."
-                printfn "Usage: firefly compile <project.fidproj>"
+                printfn "Usage: composer compile <project.fidproj>"
                 exit 1
 
     // Build options and delegate to orchestrator
@@ -84,7 +84,7 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Display version information
-/// Version is read from assembly (set in Firefly.fsproj <Version>)
+/// Version is read from assembly (set in Composer.fsproj <Version>)
 let private showVersion() =
     let assembly = Assembly.GetExecutingAssembly()
     let version =
@@ -92,21 +92,21 @@ let private showVersion() =
         |> Option.ofObj
         |> Option.map (fun a -> a.InformationalVersion)
         |> Option.defaultValue (assembly.GetName().Version.ToString())
-    printfn "Firefly %s - F# to Native Compiler with Deterministic Memory Management" version
+    printfn "Composer %s - F# to Native Compiler with Deterministic Memory Management" version
     printfn "Copyright (c) 2025-2026 SpeakEZ Technologies, Inc."
     0
 
 /// Display usage information
 let private showUsage() =
-    printfn "Firefly - F# to Native Compiler"
+    printfn "Composer - F# to Native Compiler"
     printfn ""
     printfn "Usage:"
-    printfn "  firefly compile [options]    Compile F# to native code"
-    printfn "  firefly verify [options]     Verify binary meets constraints"
-    printfn "  firefly doctor [options]     Diagnose toolchain issues"
-    printfn "  firefly --version            Display version information"
+    printfn "  composer compile [options]    Compile F# to native code"
+    printfn "  composer verify [options]     Verify binary meets constraints"
+    printfn "  composer doctor [options]     Diagnose toolchain issues"
+    printfn "  composer --version            Display version information"
     printfn ""
-    printfn "Use 'firefly <subcommand> --help' for more information about a subcommand."
+    printfn "Use 'composer <subcommand> --help' for more information about a subcommand."
 
 [<EntryPoint>]
 let main argv =
@@ -119,17 +119,17 @@ let main argv =
         elif argv.[0] = "--version" then
             showVersion()
         elif argv.[0] = "compile" then
-            let compileParser = ArgumentParser.Create<CompileArgs>(programName = "firefly compile", errorHandler = errorHandler)
+            let compileParser = ArgumentParser.Create<CompileArgs>(programName = "composer compile", errorHandler = errorHandler)
             let compileArgs = Array.skip 1 argv
             let compileResults = compileParser.ParseCommandLine(compileArgs)
             executeCompile compileResults
         elif argv.[0] = "verify" then
-            let verifyParser = ArgumentParser.Create<VerifyArgs>(programName = "firefly verify", errorHandler = errorHandler)
+            let verifyParser = ArgumentParser.Create<VerifyArgs>(programName = "composer verify", errorHandler = errorHandler)
             let verifyArgs = Array.skip 1 argv
             let verifyResults = verifyParser.ParseCommandLine(verifyArgs)
             verify verifyResults
         elif argv.[0] = "doctor" then
-            let doctorParser = ArgumentParser.Create<DoctorArgs>(programName = "firefly doctor", errorHandler = errorHandler)
+            let doctorParser = ArgumentParser.Create<DoctorArgs>(programName = "composer doctor", errorHandler = errorHandler)
             let doctorArgs = Array.skip 1 argv
             let doctorResults = doctorParser.ParseCommandLine(doctorArgs)
             doctor doctorResults

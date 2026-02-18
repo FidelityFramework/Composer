@@ -4,7 +4,7 @@
 
 ## 1. Executive Summary
 
-Sequence expressions (`seq { }`) provide lazy, on-demand iteration in F#. Unlike `Lazy<'T>` (single deferred value), `Seq<'T>` produces multiple values through resumable computation.
+Sequence expressions (`seq { }`) provide lazy, on-demand iteration in Clef. Unlike `Lazy<'T>` (single deferred value), `Seq<'T>` produces multiple values through resumable computation.
 
 **Key Insight**: A sequence is an **extended flat closure with state machine fields**. Like Lazy (C-05), captures are inlined directly into the struct. The sequence adds state tracking for resumable computation at yield points.
 
@@ -162,7 +162,7 @@ Resulting struct layout:
 - Both are accessed via fixed struct offsets
 - Internal state requires read-modify-write in MoveNext; captures are read-only
 
-## 4. FNCS Layer Implementation
+## 4. CCS Layer Implementation
 
 ### 4.1 NTUKind and NativeType Extensions
 
@@ -332,7 +332,7 @@ let checkForEach
         children = [sourceNode.Id; bodyNode.Id])
 ```
 
-### 4.7 Files to Modify (FNCS)
+### 4.7 Files to Modify (CCS)
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -349,7 +349,7 @@ let checkForEach
 
 #### 4.8.1 The Type Representation Duality
 
-Types like `Seq<T>`, `Lazy<T>`, `nativeptr<T>`, and `byref<T>` exist in **TWO representations** within FNCS:
+Types like `Seq<T>`, `Lazy<T>`, `nativeptr<T>`, and `byref<T>` exist in **TWO representations** within CCS:
 
 | Representation | Source | Example | Memory Model |
 |----------------|--------|---------|--------------|
@@ -357,8 +357,8 @@ Types like `Seq<T>`, `Lazy<T>`, `nativeptr<T>`, and `byref<T>` exist in **TWO re
 | **TApp Form** | Parsing type syntax (`seq<int>`, `Lazy<string>`) | `TApp(seqTyCon, [elem])` | Generic type application |
 
 **Why both exist:**
-- When FNCS constructs types programmatically (e.g., `mkSeqType int`), it creates `TSeq int` directly
-- When FCS parses type syntax like `seq<int>`, it creates `TApp(seqTyCon, [int])`
+- When CCS constructs types programmatically (e.g., `mkSeqType int`), it creates `TSeq int` directly
+- When CCS parses type syntax like `seq<int>`, it creates `TApp(seqTyCon, [int])`
 - Both represent the **same semantic type** but through different construction paths
 
 #### 4.8.2 The Unification Problem
@@ -690,7 +690,7 @@ let forEachSSACost : int =
 | `Alex/Preprocessing/SeqLayout.fs` | CREATE | Seq struct layout coeffects |
 | `Alex/Witnesses/SeqWitness.fs` | CREATE | Seq creation, MoveNext emission |
 | `Alex/Witnesses/ForEachWitness.fs` | CREATE | For-each loop emission |
-| `Alex/Traversal/FNCSTransfer.fs` | MODIFY | Handle SeqExpr, Yield, ForEach |
+| `Alex/Traversal/CCSTransfer.fs` | MODIFY | Handle SeqExpr, Yield, ForEach |
 
 ## 6. MLIR Output Specification
 
@@ -929,7 +929,7 @@ let main _ =
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Foundation
+### Phase 1: CCS Foundation
 - [ ] Add `NTUseq` to NTUKind enum
 - [ ] Add `TSeq` to NativeType
 - [ ] Add `SeqExpr`, `Yield`, `ForEach` to SemanticKind
@@ -937,16 +937,16 @@ let main _ =
 - [ ] Implement seq { } expression checking with capture analysis
 - [ ] Implement yield checking
 - [ ] Implement for...in checking
-- [ ] FNCS builds successfully
+- [ ] CCS builds successfully
 
 ### Phase 2: Alex Implementation
 - [ ] Create `YieldStateIndices.fs` coeffect pass
 - [ ] Create `SeqLayout.fs` coeffect pass
 - [ ] Create `SeqWitness.fs` with flat closure model
 - [ ] Create `ForEachWitness.fs`
-- [ ] Handle SeqExpr, Yield, ForEach in FNCSTransfer
+- [ ] Handle SeqExpr, Yield, ForEach in CCSTransfer
 - [ ] Generate MoveNext functions with state machines
-- [ ] Firefly builds successfully
+- [ ] Composer builds successfully
 
 ### Phase 3: Validation
 - [ ] Sample 15 compiles without errors

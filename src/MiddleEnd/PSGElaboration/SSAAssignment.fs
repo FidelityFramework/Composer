@@ -86,20 +86,20 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         // Boolean: 1-bit
         | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt I1
         // Fixed-width integers by NTUKind
-        | _, Some NTUKind.NTUint8 -> TInt I8
-        | _, Some NTUKind.NTUuint8 -> TInt I8
-        | _, Some NTUKind.NTUint16 -> TInt I16
-        | _, Some NTUKind.NTUuint16 -> TInt I16
-        | _, Some NTUKind.NTUint32 -> TInt I32
-        | _, Some NTUKind.NTUuint32 -> TInt I32
-        | _, Some NTUKind.NTUint64 -> TInt I64
-        | _, Some NTUKind.NTUuint64 -> TInt I64
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 8)) -> TInt I8
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 8)) -> TInt I8
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 16)) -> TInt I16
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 16)) -> TInt I16
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 32)) -> TInt I32
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 32)) -> TInt I32
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 64)) -> TInt I64
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 64)) -> TInt I64
         // Platform-word integers (int, uint, nativeint, size_t, ptrdiff_t)
         // Size depends on target architecture via platformWordWidth
-        | TypeLayout.PlatformWord, Some NTUKind.NTUint
-        | TypeLayout.PlatformWord, Some NTUKind.NTUuint
-        | TypeLayout.PlatformWord, Some NTUKind.NTUnint
-        | TypeLayout.PlatformWord, Some NTUKind.NTUunint
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register))
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Pointer))
+        | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Pointer))
         | TypeLayout.PlatformWord, Some NTUKind.NTUsize
         | TypeLayout.PlatformWord, Some NTUKind.NTUdiff
         | TypeLayout.PlatformWord, None -> TInt wordWidth  // Platform word resolved per architecture
@@ -108,8 +108,8 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         | TypeLayout.PlatformWord, Some NTUKind.NTUfnptr -> TIndex
         | _, Some NTUKind.NTUptr -> TIndex
         // Floats
-        | _, Some NTUKind.NTUfloat32 -> TFloat F32
-        | _, Some NTUKind.NTUfloat64 -> TFloat F64
+        | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 32)) -> TFloat F32
+        | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 64)) -> TFloat F64
         // Char (Unicode codepoint)
         | _, Some NTUKind.NTUchar -> TInt I32
         // String (fat pointer)

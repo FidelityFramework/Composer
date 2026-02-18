@@ -4,7 +4,7 @@
 
 ## 1. Executive Summary
 
-This sample introduces discriminated unions (DUs), the fundamental sum type of F#. A homogeneous DU (`Number = IntVal | FloatVal`) demonstrates tag-based dispatch, pattern matching, payload extraction, and numeric formatting.
+This sample introduces discriminated unions (DUs), the fundamental sum type of Clef. A homogeneous DU (`Number = IntVal | FloatVal`) demonstrates tag-based dispatch, pattern matching, payload extraction, and numeric formatting.
 
 **Key Achievement**: Established DU representation with byte-level `memref<Nxi8>` layout, `memref.view` for typed payload access, expression-valued `scf.if` for match results, and Baker's `MatchRecipes` for pattern match lowering.
 
@@ -156,8 +156,8 @@ checks `node.Type` — if non-unit, it emits the expression-valued form with `sc
 
 ### 3.8 Format as Platform Library
 
-`Format.int` and `Format.float` are F# code in `Fidelity.Platform` — same compilation pattern as
-`Console.write`. They compile through the full pipeline (FNCS → PSG → Baker → Alex) naturally.
+`Format.int` and `Format.float` are Clef code in `Fidelity.Platform` — same compilation pattern as
+`Console.write`. They compile through the full pipeline (CCS → PSG → Baker → Alex) naturally.
 Alex witnesses them like any other function. No push-model construction.
 
 This supersedes the retired `FormatOps.fs` (861 lines of imperative MLIR in Alex).
@@ -265,7 +265,7 @@ memref.store %payload_val, %payload_view[%c0] : memref<1xi64>
 
 ```bash
 cd samples/console/FidelityHelloWorld/05_AddNumbers
-/home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly compile AddNumbers.fidproj
+/home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer compile AddNumbers.fidproj
 ./AddNumbers
 # Output:
 # === DU Pattern Match Test ===
@@ -284,7 +284,7 @@ cd samples/console/FidelityHelloWorld/05_AddNumbers
 4. **`[<RequireQualifiedAccess>]` Gotcha**: `NTUKind` has this attribute. Bare `NTUunit` in a pattern is a variable binding (matches anything!), not a DU case match. Must use `NTUKind.NTUunit`.
 5. **Baker Decomposition**: Pattern matches lowered to IfThenElse + DUGetTag + DUEliminate before Alex sees them.
 6. **PatternBindings Coeffect**: Extracted values need explicit SSA tracking.
-7. **Platform Library Pattern**: Format.int/float are F# in Fidelity.Platform, not imperative MLIR construction in Alex.
+7. **Platform Library Pattern**: Format.int/float are Clef in Fidelity.Platform, not imperative MLIR construction in Alex.
 8. **Pointer Offset Adjustment (MemRef.add fusion)**: When `NativePtr.add buf offset` flows into `NativeStr.fromPointer`, the witness must fuse them. Baker transforms `NativePtr.add` → `MemRef.add` (marker op). The MemRef.add witness returns only the offset (`TIndex`), discarding the base. Consumers like `NativeStr.fromPointer` detect this pattern, extract both base + offset, then compute the adjusted source pointer: `%adjusted = arith.addi %base_ptr, %offset : index`. Same fusion pattern exists in `MemRef.store`.
 9. **Elements Take Explicit Types**: Arithmetic Elements must receive their operand type as an explicit parameter from the Pattern — never pull from `state.Current.Type`. The PSG node type can differ from operand types (e.g., comparison nodes have type `bool`/`i1` while operands are `i64`/`f64`; nativeint arithmetic nodes resolve to `i64` while operands are `index`).
 10. **Deterministic Compilation**: The compiler MUST produce byte-identical output for identical input. Two non-determinism sources were eliminated: (a) `Async.Parallel` in Baker's `FanOut.fs` caused race conditions on the global `NodeId.fresh()` counter — replaced with sequential processing; (b) `String.GetHashCode()` is randomized per-process in .NET — replaced with deterministic FNV-1a hash for string global names.

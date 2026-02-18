@@ -103,11 +103,11 @@ let coordinatorBehavior (inbox: Inbox<CoordinatorMessage>) = async {
 }
 ```
 
-## 4. FNCS Layer Implementation
+## 4. CCS Layer Implementation
 
-No new FNCS features needed beyond T-03-30. This sample validates composition of existing features.
+No new CCS features needed beyond T-03-30. This sample validates composition of existing features.
 
-## 5. Firefly/Alex Layer Implementation
+## 5. Composer/Alex Layer Implementation
 
 No new Alex features needed. This sample validates that multiple actors work correctly.
 

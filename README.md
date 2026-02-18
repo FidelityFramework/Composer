@@ -1,4 +1,4 @@
-# Firefly: F# Native Compiler
+# Composer: F# Native Compiler
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](Commercial.md)
@@ -34,7 +34,7 @@ See: `docs/PRDs/README.md` for full feature roadmap and status.
 
 ## Architecture
 
-Firefly implements a true nanopass compiler architecture with ~25 distinct passes from F# source to native binary. Each pass performs a single, well-defined transformation on an intermediate representation.
+Composer implements a true nanopass compiler architecture with ~25 distinct passes from F# source to native binary. Each pass performs a single, well-defined transformation on an intermediate representation.
 
 ### Nanopass Pipeline
 
@@ -180,7 +180,7 @@ Compiles to native binary with:
 - MLIR → LLVM optimization
 
 ```bash
-firefly compile HelloWorld.fidproj
+composer compile HelloWorld.fidproj
 echo "Alice" | ./target/helloworld
 # Output: "Enter your name: Hello, Alice!"
 ```
@@ -211,10 +211,10 @@ output_kind = "console"  # or "freestanding"
 cd src && dotnet build
 
 # Compile project
-firefly compile MyProject.fidproj
+composer compile MyProject.fidproj
 
 # Keep intermediates for inspection
-firefly compile MyProject.fidproj -k
+composer compile MyProject.fidproj -k
 ```
 
 ### Intermediate Artifacts

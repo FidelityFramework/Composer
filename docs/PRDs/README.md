@@ -1,4 +1,4 @@
-# Firefly PRDs - Master Index
+# Composer PRDs - Master Index
 
 > **Purpose**: Category-prefixed PRD organization enabling modular growth across platform targets
 

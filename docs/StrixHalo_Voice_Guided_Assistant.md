@@ -2,7 +2,7 @@
 
 ## Status: Speculative Design
 
-This document describes a local MoE inference system with voice I/O, compiled entirely through the Fidelity/Firefly stack. No llama.cpp, no vLLM, no Python runtime. The entire inference pipeline is F# source compiled to native code via MLIR.
+This document describes a local MoE inference system with voice I/O, compiled entirely through the Fidelity/Composer stack. No llama.cpp, no vLLM, no Python runtime. The entire inference pipeline is Clef source compiled to native code via MLIR.
 
 The design principle is complete hardware utilization. Every processor on the die does meaningful inference work: the CPU runs a ternary routing model that makes hardware-aware dispatch decisions in microseconds, the NPU runs quantized experts at 50 TOPS, and the GPU runs dense language models at full FP16 precision. The ternary router is not a decision tree; it is a small, fast model whose job is to make the agentic flow responsive to what each processor does best.
 
@@ -179,21 +179,21 @@ The user hears the beginning of the response while the expert is still generatin
 
 | Conventional Stack | This Architecture |
 |-------------------|-------------------|
-| whisper.cpp (C++) | Whisper model compiled from F# weight loader + NPU dispatch |
-| llama.cpp / vLLM (C++/Python) | Ternary and dense inference compiled from F# via MLIR, hardware-dispatched |
-| Python glue scripts | F# actor pipeline, compile-time wired |
+| whisper.cpp (C++) | Whisper model compiled from Clef weight loader + NPU dispatch |
+| llama.cpp / vLLM (C++/Python) | Ternary and dense inference compiled from Clef via MLIR, hardware-dispatched |
+| Python glue scripts | Clef actor pipeline, compile-time wired |
 | GGML/GGUF format | BAREWire-serialized weight tensors |
 | Multiple processes, IPC | Single process, actors on unified memory |
 | nvidia-smi / htop monitoring | Per-actor latency signals, Fidelity.UI dashboard |
 
-### What the F# Inference Engine Must Implement
+### What the Clef Inference Engine Must Implement
 
-The inference engine is the core engineering deliverable. It replaces the C++ inference runtimes (GGML, vLLM) with F# compiled through MLIR:
+The inference engine is the core engineering deliverable. It replaces the C++ inference runtimes (GGML, vLLM) with Clef compiled through MLIR:
 
 | Component | Complexity | Notes |
 |-----------|-----------|-------|
 | Tokenizer (BPE) | Low | String processing; well-understood algorithm |
-| Ternary layer forward pass | Low | Add-subtract on packed integers; ~30 lines F# per layer type |
+| Ternary layer forward pass | Low | Add-subtract on packed integers; ~30 lines Clef per layer type |
 | Attention mechanism | **High** | KV cache management, multi-head attention, softmax |
 | Layer normalization | Medium | Element-wise; needs vectorization for throughput |
 | Activation functions (GELU, SiLU) | Low | Single-pass element-wise |
@@ -208,7 +208,7 @@ Attention and KV cache management are the hardest problems. For ternary experts,
 
 ## Distillation Pipeline
 
-The user distills their own models using a conventional training stack (PyTorch), then exports weights for the F# inference engine.
+The user distills their own models using a conventional training stack (PyTorch), then exports weights for the Clef inference engine.
 
 ### Training (External, PyTorch)
 
@@ -249,10 +249,10 @@ Memory-mapping this file gives direct pointer access to each layer's weights. No
 
 All inference on CPU via AVX-512. No NPU, no GPU. Proves the actor pipeline, weight loading, and inference engine work end-to-end.
 
-- [ ] BPE tokenizer in F#
+- [ ] BPE tokenizer in Clef
 - [ ] Ternary weight loader (memory-mapped)
 - [ ] Ternary forward pass (add-subtract, AVX-512)
-- [ ] Attention mechanism (scalar F#, then vectorized)
+- [ ] Attention mechanism (scalar Clef, then vectorized)
 - [ ] Whisper inference on CPU (slow but correct)
 - [ ] TTS inference on CPU (VITS/Piper)
 - [ ] Actor pipeline wiring
@@ -295,21 +295,21 @@ Expert pool management and learned routing.
 
 **Model quality depends on distillation.** Ternary quantization works well for encoder models and feed-forward-dominant architectures. Autoregressive generation with ternary weights and INT8 activations may produce lower quality output than FP16 inference. This is exactly why the GPU runs dense LLMs as first-class participants: the router dispatches to the processor and model that best serves each query, not as a fallback but as part of the hardware-aware scheduling that makes the system work.
 
-**Attention is the engineering bottleneck.** Everything else in the inference engine (tokenizer, ternary forward pass, layer norm, activation functions) is straightforward. Attention with KV cache management is where llama.cpp has thousands of lines of carefully optimized C++. The F# implementation will be correct before it is fast; MLIR/LLVM optimization narrows the gap over time, but the initial version will not match llama.cpp throughput.
+**Attention is the engineering bottleneck.** Everything else in the inference engine (tokenizer, ternary forward pass, layer norm, activation functions) is straightforward. Attention with KV cache management is where llama.cpp has thousands of lines of carefully optimized C++. The Clef implementation will be correct before it is fast; MLIR/LLVM optimization narrows the gap over time, but the initial version will not match llama.cpp throughput.
 
-**The training pipeline remains Python.** Distillation requires PyTorch and GPU access. The F# stack handles inference, not training. The boundary between training and inference is the weight file format.
+**The training pipeline remains Python.** Distillation requires PyTorch and GPU access. The Clef stack handles inference, not training. The boundary between training and inference is the weight file format.
 
 ---
 
 ## Cross-References
 
-### Firefly Docs
+### Composer Docs
 - [Architecture_Canonical.md](./Architecture_Canonical.md): Two-layer model, platform bindings
 - [Platform_Binding_Model.md](./Platform_Binding_Model.md): How NPU and GPU bindings would be structured
 
 ### SpeakEZ Blog
 - [A Unified Vision for Ternary Models](/blog/a-unified-vision-for-ternary-models/): Ternary quantization, MoE routing, Strix Halo deployment model
-- [Bringing Posit Arithmetic to F#](/blog/bringing-posit-arithmetic-to-fsharp/): Posit accumulation for precision-critical paths
+- [Bringing Posit Arithmetic to Clef](/blog/bringing-posit-arithmetic-to-fsharp/): Posit accumulation for precision-critical paths
 - [Fidelity.Rx / Signal-Actor Isomorphism](/blog/fidelityrx-native-reactivity-in-fidelity/): Actor pipeline model
 
 ### External

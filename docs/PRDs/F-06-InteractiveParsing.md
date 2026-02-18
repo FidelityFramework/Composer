@@ -48,7 +48,7 @@ Console.writeln $"Result: {result}"
 Character search for decimal point detection:
 
 ```fsharp
-// In FNCS CheckExpressions.fs
+// In CCS CheckExpressions.fs
 | "String.contains" ->
     // string -> char -> bool
     NativeType.TFun(env.Globals.StringType,
@@ -225,7 +225,7 @@ func.func @parseNumber(%s: memref<?xi8>) -> memref<9xi8> {
 
 ```bash
 cd samples/console/FidelityHelloWorld/06_AddNumbersInteractive
-/path/to/Firefly compile AddNumbers.fidproj
+/path/to/Composer compile AddNumbers.fidproj
 echo -e "10\n2.5" | ./AddNumbers
 # Output: Result: FloatVal 12.5
 ```
@@ -254,4 +254,4 @@ This sample's infrastructure enables:
 
 - [F-05-DiscriminatedUnions](F-05-DiscriminatedUnions.md) - DU foundation
 - [F-08-OptionType](F-08-OptionType.md) - Option for fallible parsing
-- [FNCS_Architecture.md](../FNCS_Architecture.md) - Intrinsic design
+- [CCS_Architecture.md](../CCS_Architecture.md) - Intrinsic design

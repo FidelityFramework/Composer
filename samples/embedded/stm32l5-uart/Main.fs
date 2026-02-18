@@ -19,7 +19,7 @@ open STM32L5.Delay
 let sendWelcome() =
     USART2.sendLine ""
     USART2.sendLine "=================================="
-    USART2.sendLine "  Firefly UART Echo Demo"
+    USART2.sendLine "  Composer UART Echo Demo"
     USART2.sendLine "  NUCLEO-L552ZE-Q"
     USART2.sendLine "=================================="
     USART2.sendLine ""

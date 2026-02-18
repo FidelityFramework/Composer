@@ -10,7 +10,7 @@
 
 ### Quick Start Checklist
 
-1. **Activate Firefly project**: `mcp__serena-local__activate_project "Firefly"`
+1. **Activate Composer project**: `mcp__serena-local__activate_project "Composer"`
 2. **Read progress memory**: `mcp__serena-local__read_memory "prd16_seqoperations_progress"`
 3. **Review this PRD**: Understand the architectural through-line
 4. **Check standing art files**: Review the key implementation files listed below
@@ -38,7 +38,7 @@ These files contain the patterns that C-07 MUST compose from:
 
 | File | Purpose | Key Patterns |
 |------|---------|--------------|
-| `FNCSTransfer.fs` | PSG traversal → MLIR emission | `SemanticKind.SeqExpr` handling (~line 408, ~1128), WhileBased pattern with `loadVar`/`storeVar`, capture extraction |
+| `CCSTransfer.fs` | PSG traversal → MLIR emission | `SemanticKind.SeqExpr` handling (~line 408, ~1128), WhileBased pattern with `loadVar`/`storeVar`, capture extraction |
 
 #### Type Mapping (`src/Alex/CodeGeneration/`)
 
@@ -71,9 +71,9 @@ C-07 (SeqOperations)→ Wrapper sequences: {state, current, code_ptr, inner_seq,
 
 ## NORMATIVE SPEC REFERENCES
 
-> **The fsnative-spec repository contains the authoritative specifications. These documents are the "north star" for implementation.**
+> **The clef-spec repository contains the authoritative specifications. These documents are the "north star" for implementation.**
 
-### Primary Spec Chapters (fsnative-spec/spec/)
+### Primary Spec Chapters (clef-spec/spec/)
 
 | Chapter | Path | C-07 Relevance |
 |---------|------|------------------|
@@ -84,7 +84,7 @@ C-07 (SeqOperations)→ Wrapper sequences: {state, current, code_ptr, inner_seq,
 
 ### NEW: Seq Operations Representation (Draft)
 
-**Path**: `fsnative-spec/spec/drafts/seq-operations-representation.md`
+**Path**: `clef-spec/spec/drafts/seq-operations-representation.md`
 
 This draft chapter was created to fill a spec gap identified during C-07 development. It specifies:
 
@@ -323,13 +323,13 @@ memref.store %code_ptr, %moveNext_ref[%c0] : memref<1xindex>
 
 **Critical**: The closure is stored **by value** (bytes copied) in the wrapper's byte buffer. When invoking, we view the code pointer and captures from the inlined closure bytes, not from a pointer indirection.
 
-## 4. FNCS Layer Implementation
+## 4. CCS Layer Implementation
 
 ### 4.1 Seq Module Intrinsics
 
-**File**: `~/repos/fsnative/src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs`
+**File**: `~/repos/clef/src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs`
 
-> **Note (January 2026)**: `Seq.empty` was added early to FNCS to unblock BAREWire dependency resolution.
+> **Note (January 2026)**: `Seq.empty` was added early to CCS to unblock BAREWire dependency resolution.
 > This is a foundational sequence producer that belongs conceptually between C-06 (seq expressions)
 > and C-07 (seq operations). Added here for convenience given shared PRD boundaries.
 
@@ -403,7 +403,7 @@ Application(
 
 With intrinsic info attached marking it as `{Module = Seq; Operation = "map"}`.
 
-### 4.3 Files to Modify (FNCS)
+### 4.3 Files to Modify (CCS)
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -1311,7 +1311,7 @@ deepPipelineWithFold: 400
 - [ ] Verify SSA cost formulas match actual generation
 
 ### Phase 1: Seq.map
-- [ ] Add Seq.map intrinsic to FNCS
+- [ ] Add Seq.map intrinsic to CCS
 - [ ] Create MapSeqLayout coeffect (with SSA cost)
 - [ ] Implement MapSeq wrapper creation with copy semantics
 - [ ] Implement MapSeq MoveNext generation

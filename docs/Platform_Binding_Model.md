@@ -89,7 +89,7 @@ let vectorAdd (a: array<float>) (b: array<float>) =
         vectorAdd_scalar a b
 ```
 
-FNCS sees the predicates as abstract. Alex witnesses them to eliminate dead branches at compile time.
+CCS sees the predicates as abstract. Alex witnesses them to eliminate dead branches at compile time.
 
 ## Memory Regions
 
@@ -195,16 +195,16 @@ output_kind = "freestanding"
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Firefly CLI                                             │
+│  Composer CLI                                             │
 │  1. Parse fidproj with Fidelity.Toml                    │
 │  2. Load Fidelity.Platform library                      │
 │  3. Extract quotations (platform, capabilities, etc.)   │
-│  4. Pass to FNCS as PlatformContext                     │
+│  4. Pass to CCS as PlatformContext                     │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│  FNCS                                                    │
+│  CCS                                                    │
 │  1. Receive PlatformContext as parameter                │
 │  2. Attach platform metadata to PSG nodes               │
 │  3. Validate types (NTUint identity, not width)         │
@@ -262,4 +262,4 @@ Platform bindings define how NTU types resolve:
 
 - `NTU_Architecture.md` - NTU type system design
 - `Architecture_Canonical.md` - Overall Fidelity architecture
-- `FNCS_Architecture.md` - FNCS native type checking
+- `CCS_Architecture.md` - CCS native type checking

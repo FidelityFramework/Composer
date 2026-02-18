@@ -10,7 +10,7 @@
 
 ### 1.1 The Gap Between Language and Implementation
 
-The **fsnative-spec** documents what F# Native programmers can express: types, expressions, memory regions, and representation guarantees. It answers "what does this program mean?"
+The **clef-spec** documents what Clef Native programmers can express: types, expressions, memory regions, and representation guarantees. It answers "what does this program mean?"
 
 But there is no specification for **how the compiler achieves these semantics**. This gap matters because:
 
@@ -22,25 +22,25 @@ But there is no specification for **how the compiler achieves these semantics**.
 
 ### 1.2 A Functionally Pure Compilation Model
 
-Firefly aspires to be a **functionally pure compiler** in a specific sense: the compilation pipeline is a series of deterministic, composable transformations with explicit data dependencies.
+Composer aspires to be a **functionally pure compiler** in a specific sense: the compilation pipeline is a series of deterministic, composable transformations with explicit data dependencies.
 
 **This aspiration warrants careful qualification.** We have not thoroughly researched whether other commercial-grade compilers achieve similar purity. What we can assert is our design intent:
 
 - **No mutable state in the core pipeline**: PSG construction, elaboration, saturation, and coeffect analysis are pure functions over immutable data structures.
 
-- **Coeffects over effects**: Where traditional compilers might accumulate state during traversal (symbol tables, SSA counters), Firefly pre-computes this information as "coeffects" - metadata that witnesses observe but do not mutate.
+- **Coeffects over effects**: Where traditional compilers might accumulate state during traversal (symbol tables, SSA counters), Composer pre-computes this information as "coeffects" - metadata that witnesses observe but do not mutate.
 
-- **Recipes as data**: FNCS elaboration produces "recipes" (declarative transformation specifications) rather than imperatively modifying the PSG. Fold-in applies recipes to produce a new PSG.
+- **Recipes as data**: CCS elaboration produces "recipes" (declarative transformation specifications) rather than imperatively modifying the PSG. Fold-in applies recipes to produce a new PSG.
 
-Whether this makes Firefly unique among production compilers is an open research question. What it provides is **architectural clarity**: each stage has well-defined inputs and outputs, making the compiler amenable to formal reasoning.
+Whether this makes Composer unique among production compilers is an open research question. What it provides is **architectural clarity**: each stage has well-defined inputs and outputs, making the compiler amenable to formal reasoning.
 
 ### 1.3 The Shared Edge Problem
 
-F# Native exists in a rich ecosystem of related languages and runtimes. A compiler specification must draw clear lines:
+Clef Native exists in a rich ecosystem of related languages and runtimes. A compiler specification must draw clear lines:
 
 | System | Shared Edge | Line of Distinction |
 |--------|-------------|---------------------|
-| **.NET/CLR** | F# syntax, core library signatures | No managed runtime, no GC, no reflection |
+| **.NET/CLR** | Clef syntax, core library signatures | No managed runtime, no GC, no reflection |
 | **Rust** | Ownership intuitions, LLVM backend | No borrow checker, arena-based not RC-based |
 | **OCaml** | ML heritage, algebraic types | Native types (NTU), no boxing, explicit regions |
 | **F\*** (FStar) | Dependent types for verification | Coeffects vs effects, compilation vs proof |
@@ -55,7 +55,7 @@ Each shared edge creates opportunities for knowledge transfer but also risks of 
 ### 2.1 What the Compiler Spec Would Document
 
 **Part I: Pipeline Architecture**
-- FNCS → PSG → Alex → MLIR → LLVM → Native
+- CCS → PSG → Alex → MLIR → LLVM → Native
 - Stage responsibilities and interfaces
 - Invariants maintained at each stage
 
@@ -87,12 +87,12 @@ Each shared edge creates opportunities for knowledge transfer but also risks of 
 - Dialect selection (portable vs backend-specific)
 - ABI compliance
 
-### 2.2 Relationship to fsnative-spec
+### 2.2 Relationship to clef-spec
 
-The compiler spec has a **shared edge** with fsnative-spec:
+The compiler spec has a **shared edge** with clef-spec:
 
 ```
-fsnative-spec                          compiler-spec
+clef-spec                          compiler-spec
 ─────────────────────────────────────────────────────────────
 "Arena<'lifetime> is a bump           "Arena allocation uses
  allocator with these operations"  →   ArenaLayout coeffect with
@@ -135,7 +135,7 @@ If a witness needs to emit a load-before-extract sequence, that structure should
 
 > Compiler stages produce coeffects (observable metadata), not effects (mutations).
 
-Traditional compilers might increment an SSA counter during emission. Firefly pre-computes all SSA assignments as a coeffect map. This enables:
+Traditional compilers might increment an SSA counter during emission. Composer pre-computes all SSA assignments as a coeffect map. This enables:
 - Parallel emission (no shared mutable state)
 - Reproducible builds (deterministic assignment)
 - Easier debugging (inspect coeffects, not trace mutations)
@@ -144,7 +144,7 @@ Traditional compilers might increment an SSA counter during emission. Firefly pr
 
 > Transformations are specified as data, then applied uniformly.
 
-FNCS doesn't imperatively rewrite the PSG. It produces recipes (replacement specifications), and fold-in applies them. This enables:
+CCS doesn't imperatively rewrite the PSG. It produces recipes (replacement specifications), and fold-in applies them. This enables:
 - Inspectable intermediate artifacts
 - Transformation composition
 - Rollback capability (keep original PSG)
@@ -170,14 +170,14 @@ Before claiming architectural uniqueness, we should investigate:
 1. **Skeleton creation**: Establish document structure in `/docs/compiler-spec/`
 2. **Coeffect catalog**: Document all existing coeffects with their schemas
 3. **Witness inventory**: Catalog witness functions and their PSG→MLIR mappings
-4. **Cross-reference**: Link compiler-spec sections to fsnative-spec counterparts
+4. **Cross-reference**: Link compiler-spec sections to clef-spec counterparts
 5. **Literature review**: Research comparable compiler architectures
 
 ---
 
 ## 6. Document Location
 
-This proposal recommends creating the compiler specification as a separate document set within Firefly:
+This proposal recommends creating the compiler specification as a separate document set within Composer:
 
 ```
 /docs/
@@ -206,4 +206,4 @@ A compiler specification serves multiple audiences:
 - **Educators** who teach compiler construction
 - **Contributors** who extend the compiler
 
-By documenting the coeffect model, witness architecture, and elaboration system, we make Firefly's functional purity explicit and inspectable. This transparency is itself a contribution to compiler engineering practice.
+By documenting the coeffect model, witness architecture, and elaboration system, we make Composer's functional purity explicit and inspectable. This transparency is itself a contribution to compiler engineering practice.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-WRENStack is the paved path for building native desktop applications with F#. The goal: a user installs MLIR/clang tooling, .NET 10 SDK, and the Firefly dotnet tool, then uses a WRENStack template to build native desktop applications with WebView frontends and bidirectional IPC.
+WRENStack is the paved path for building native desktop applications with Clef. The goal: a user installs MLIR/clang tooling, .NET 10 SDK, and the Composer dotnet tool, then uses a WRENStack template to build native desktop applications with WebView frontends and bidirectional IPC.
 
 **WREN** = **W**ebview + **R**eactive + **E**mbedded + **N**ative
 
@@ -10,9 +10,9 @@ WRENStack is the paved path for building native desktop applications with F#. Th
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        F# Source Code                                │
+│                        Clef Source Code                                │
 │  ┌──────────────────┐         ┌──────────────────┐                  │
-│  │  Frontend (Fable) │         │  Backend (Firefly)│                 │
+│  │  Frontend (Fable) │         │  Backend (Composer)│                 │
 │  │  - Partas.Solid   │         │  - Native binary  │                 │
 │  │  - SolidJS UI     │         │  - GTK/WebKitGTK  │                 │
 │  └────────┬─────────┘         └────────┬─────────┘                  │
@@ -27,9 +27,9 @@ WRENStack is the paved path for building native desktop applications with F#. Th
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Compilation Pipeline                             │
 │                                                                      │
-│  F# Source → FNCS → PSG → Alex → MLIR → LLVM → Native Binary        │
+│  Clef Source → CCS → PSG → Alex → MLIR → LLVM → Native Binary        │
 │                                                                      │
-│  FNCS: F# Native Compiler Services (type resolution, intrinsics)    │
+│  CCS: Clef Compiler Services (type resolution, intrinsics)    │
 │  PSG:  Program Semantic Graph (nanopass-enriched coeffects)         │
 │  Alex: Zipper + XParsec + Bindings (witness and emit via Templates) │
 └─────────────────────────────────────────────────────────────────────┘
@@ -92,7 +92,7 @@ See: Serena memory `scoped_regions_architecture`
 
 ### 5. MailboxProcessor as Capstone Feature
 
-**Decision**: MailboxProcessor (F#'s actor model primitive) is the **capstone feature** of WRENStack. It synthesizes:
+**Decision**: MailboxProcessor (Clef's actor model primitive) is the **capstone feature** of WRENStack. It synthesizes:
 - Async (for message loop) via LLVM coroutines
 - Closures (for behavior functions) - capture set is coeffect-tagged
 - Threading (for true parallelism) via OS thread primitives
@@ -168,8 +168,8 @@ See: [PRDs/INDEX.md](./PRDs/INDEX.md) for detailed PRD specifications
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │
-│  │    Firefly      │  │    fsnative     │  │   FCS (F#)      │     │
-│  │  (Compiler)     │  │    (FNCS)       │  │  (Frontend)     │     │
+│  │    Composer      │  │    clef     │  │   CCS (Clef)      │     │
+│  │  (Compiler)     │  │    (CCS)       │  │  (Frontend)     │     │
 │  │  - Alex/Zipper  │  │  - Intrinsics   │  │  - Parsing      │     │
 │  │  - PSG/Nanopass │  │  - NTU Types    │  │  - Type Check   │     │
 │  │  - Templates    │  │  - Coeffects    │  │  - Symbols      │     │
@@ -233,12 +233,12 @@ See: [PRDs/INDEX.md](./PRDs/INDEX.md) for detailed PRD specifications
 | Fidelity.WebView | `~/repos/Fidelity.WebView/` | High-level WebView API |
 | Fidelity.Desktop | `~/repos/Fidelity.Desktop/` | Unified desktop API |
 | BAREWire | `~/repos/BAREWire/` | Binary protocol, IPC |
-| Partas.Solid | `~/repos/Partas.Solid/` | F# DSL for SolidJS (Fable) |
+| Partas.Solid | `~/repos/Partas.Solid/` | Clef DSL for SolidJS (Fable) |
 
 ## Reference Application
 
 **WrenHello** (`~/repos/WrenHello/`) is the reference WREN application demonstrating:
-- Dual-track build (Fable frontend + Firefly backend)
+- Dual-track build (Fable frontend + Composer backend)
 - Shared Protocol.fs with BAREWire codecs
 - WebView IPC communication
 - GTK window management
@@ -249,8 +249,8 @@ See: [PRDs/INDEX.md](./PRDs/INDEX.md) for detailed PRD specifications
 - [PRDs/INDEX.md](./PRDs/INDEX.md) - Master PRD index with dependency graph
 
 **Architecture**:
-- [Architecture_Canonical.md](./Architecture_Canonical.md) - Two-layer FNCS/Alex model
-- [FNCS_Architecture.md](./FNCS_Architecture.md) - F# Native Compiler Services
+- [Architecture_Canonical.md](./Architecture_Canonical.md) - Two-layer CCS/Alex model
+- [CCS_Architecture.md](./CCS_Architecture.md) - Clef Compiler Services
 - [Async_LLVM_Coroutines.md](./Async_LLVM_Coroutines.md) - Technical approach for async
 - [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) - Desktop UI architecture
 

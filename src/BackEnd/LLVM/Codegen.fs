@@ -5,7 +5,7 @@
 /// - clang: object files → linked executable
 /// - Target-specific optimizations
 ///
-/// When Firefly becomes self-hosted, this module gets replaced with
+/// When Composer becomes self-hosted, this module gets replaced with
 /// native LLVM code generation.
 module BackEnd.LLVM.Codegen
 

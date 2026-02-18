@@ -435,5 +435,5 @@ cabi.call @func(...) convention("sysv_amd64") : (...) -> ...
 ---
 
 **Last Updated:** January 29, 2026
-**Maintainer:** Firefly Core Team
+**Maintainer:** Composer Core Team
 **Related:** `/home/hhh/.claude/plans/llvm-dialect-cleanup.md`

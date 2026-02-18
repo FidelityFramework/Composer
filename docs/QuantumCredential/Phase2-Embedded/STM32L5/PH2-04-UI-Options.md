@@ -1,6 +1,6 @@
 # Demo Day UI Stretch Goal: FidelityUI
 
-This document outlines a stretch goal for demo day: building graphical user interfaces for both the Keystation (Libre Sweet Potato with WaveShare display) and a desktop companion app for QuantumCredential operations. The goal is to demonstrate the full Fidelity vision: F# functional UI code compiled to native binaries, running without runtime overhead.
+This document outlines a stretch goal for demo day: building graphical user interfaces for both the Keystation (Libre Sweet Potato with WaveShare display) and a desktop companion app for QuantumCredential operations. The goal is to demonstrate the full Fidelity vision: Clef functional UI code compiled to native binaries, running without runtime overhead.
 
 ## Executive Summary
 
@@ -9,7 +9,7 @@ The stretch goal is to have **two FidelityUI applications** demonstrating Quantu
 1. **Keystation UI** - Running on the Libre Sweet Potato with WaveShare 7" touchscreen (LVGL backend)
 2. **Desktop Companion App** - Running on Linux x86_64 for QuantumCredential demo interactions (GTK4 backend)
 
-Both applications share the same **F# MVU codebase**, compiled to their respective native targets via Firefly with different rendering backends. This demonstrates the true Fidelity promise: **F# is the universal syntax: what it binds to is an implementation detail.**
+Both applications share the same **Clef MVU codebase**, compiled to their respective native targets via Composer with different rendering backends. This demonstrates the true Fidelity promise: **Clef is the universal syntax: what it binds to is an implementation detail.**
 
 ## The Multi-Backend Strategy
 
@@ -17,7 +17,7 @@ Rather than forcing LVGL (an embedded toolkit) onto the Linux desktop, FidelityU
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ F# Application Code (Fabulous-style MVU API)               │
+│ Clef Application Code (Fabulous-style MVU API)               │
 │   - Same Model, View, Update for all platforms             │
 │   - Shared business logic and UI structure                 │
 └─────────────────────────────────────────────────────────────┘
@@ -83,12 +83,12 @@ From the SpeakEZ blog documentation, FidelityUI follows this architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ F# Application Code (Fabulous-style MVU API)               │
+│ Clef Application Code (Fabulous-style MVU API)               │
 │   - Model: Application state                                │
 │   - View: Declarative widget descriptions                   │
 │   - Update: Pure state transitions                          │
 └─────────────────────────────────────────────────────────────┘
-                              ↓ Firefly Compiler
+                              ↓ Composer Compiler
 ┌─────────────────────────────────────────────────────────────┐
 │ MLIR Transformation (Progressive Lowering)                  │
 │   - Widget descriptions → Direct LVGL calls                 │
@@ -110,10 +110,10 @@ From the SpeakEZ blog documentation, FidelityUI follows this architecture:
 
 From "Building User Interfaces with the Fidelity Framework":
 
-1. **Widget descriptions exist only at compile time** - The Firefly compiler transforms functional descriptions into efficient native code
+1. **Widget descriptions exist only at compile time** - The Composer compiler transforms functional descriptions into efficient native code
 2. **No heap allocations** - All state management uses stack/arena allocation
 3. **Event handlers become static function pointers** - No closure allocations
-4. **Same F# API across all targets** - Developer writes Fabulous-style code
+4. **Same Clef API across all targets** - Developer writes Fabulous-style code
 
 ### MVU Pattern Preserved
 
@@ -259,7 +259,7 @@ let keystationView model dispatch =
 ### Compilation Target
 
 ```bash
-firefly compile Keystation.fidproj --target aarch64-none-elf
+composer compile Keystation.fidproj --target aarch64-none-elf
 ```
 
 The generated binary:
@@ -367,7 +367,7 @@ let desktopView model dispatch =
 ### Compilation Target
 
 ```bash
-firefly compile DesktopDemo.fidproj --target x86_64-unknown-linux-gnu
+composer compile DesktopDemo.fidproj --target x86_64-unknown-linux-gnu
 ```
 
 The generated binary:
@@ -523,7 +523,7 @@ module QuantumCredentialUSB =
 
 ### Phase A: LVGL Integration Foundation
 
-1. **Farscape bindings for LVGL** - Generate F# bindings from `lvgl.h`
+1. **Farscape bindings for LVGL** - Generate Clef bindings from `lvgl.h`
 2. **Basic widget wrappers** - Label, Button, Container
 3. **Event handling** - Touch/click events → MVU dispatch
 4. **Build system** - Link LVGL into Fidelity output
@@ -538,7 +538,7 @@ module QuantumCredentialUSB =
 
 1. **MVU runtime** - Model/View/Update loop
 2. **Virtual DOM diffing** - Efficient updates
-3. **Layout engine** - Map F# layouts to LVGL flex/grid
+3. **Layout engine** - Map Clef layouts to LVGL flex/grid
 
 ### Phase D: Demo Applications
 
@@ -562,7 +562,7 @@ Use standard Avalonia.FuncUI for the desktop companion:
 Write the Keystation UI directly in C with LVGL:
 - Proves the hardware works
 - Shows the target output of FidelityUI
-- Can be replaced with F# version later
+- Can be replaced with Clef version later
 
 ### Option 3: TUI (Terminal UI)
 
@@ -578,7 +578,7 @@ The stretch goal is **successful** if:
 1. **Keystation** displays a graphical UI on the WaveShare screen
 2. **Touch input** works for basic navigation
 3. **Desktop app** can initiate QuantumCredential operations
-4. **Both apps** share significant F# code
+4. **Both apps** share significant Clef code
 
 The stretch goal is **partially successful** if:
 
@@ -606,7 +606,7 @@ The stretch goal is **deferred** if:
 - [WaveShare 7" Display Wiki](https://www.waveshare.com/wiki/7inch_HDMI_LCD_(C))
 - [WaveShare Touch Driver](https://github.com/derekhe/waveshare-7inch-touchscreen-driver)
 
-### Related Firefly Documentation
+### Related Composer Documentation
 - `docs/Hardware_Showcase_Roadmap.md` - Full hardware target vision
 - `docs/Farscape_GIR_Integration.md` - GTK4 binding generation via GIR
 - `docs/Architecture_Canonical.md` - Fidelity layer architecture

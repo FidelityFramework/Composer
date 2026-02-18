@@ -6,7 +6,7 @@
 
 Higher-order functions (HOFs) are functions that take functions as arguments or return functions as results. This PRD builds directly on the closure infrastructure from C-01 - HOFs are essentially the *use* of closures.
 
-**Key Insight**: If closures work correctly, HOFs are largely "free" - they're just function values being passed around. The remaining work is ensuring function types propagate correctly through FNCS type inference and that Alex handles function-typed parameters/returns.
+**Key Insight**: If closures work correctly, HOFs are largely "free" - they're just function values being passed around. The remaining work is ensuring function types propagate correctly through CCS type inference and that Alex handles function-typed parameters/returns.
 
 ## 2. Language Feature Specification
 
@@ -43,11 +43,11 @@ call(closure, args...) = extractCodePtr(closure)(extractEnv(closure), args...)
 
 For functions without captures, the closure is a minimal flat closure `{ code_ptr }` with zero capture fields. There is no env pointer - the struct itself contains only the code pointer.
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Function Type in Parameters
 
-FNCS already handles function types - verify that:
+CCS already handles function types - verify that:
 
 ```fsharp
 // In CheckExpressions.fs - parameter type checking
@@ -78,7 +78,7 @@ HOF usage relies entirely on existing kinds:
 - `VarRef` - for referencing function-typed bindings
 - `PatternBinding` - for binding function-typed parameters
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Function-Typed Parameters
 
@@ -198,23 +198,23 @@ increment then double on 5: 12
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
 | None expected | - | HOF support should already exist if closures work |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `src/Alex/Witnesses/LambdaWitness.fs` | VERIFY | Closure invocation handles function-typed callees |
-| `src/Alex/Traversal/FNCSTransfer.fs` | VERIFY | App witness handles indirect calls |
+| `src/Alex/Traversal/CCSTransfer.fs` | VERIFY | App witness handles indirect calls |
 
 ## 8. Implementation Checklist
 
-- [ ] Verify FNCS type-checks function-typed parameters
-- [ ] Verify FNCS type-checks function return types
+- [ ] Verify CCS type-checks function-typed parameters
+- [ ] Verify CCS type-checks function return types
 - [ ] Verify Alex handles function-typed parameter SSAs
 - [ ] Verify Alex emits correct indirect call for function parameters
 - [ ] Verify closure calling convention works uniformly

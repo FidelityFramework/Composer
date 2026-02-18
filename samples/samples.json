@@ -1,7 +1,7 @@
 {
   "$schema": "./samples-schema.json",
   "version": "1.0.0",
-  "description": "Firefly sample projects catalog",
+  "description": "Composer sample projects catalog",
   "samples": {
     "console": {
       "description": "Desktop console applications",

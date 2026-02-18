@@ -327,7 +327,7 @@ let witnessRecordExpr (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
 ### CRITICAL (Immediate)
 
 1. ✅ **LazyWitness** - Already done (pilot)
-2. **FormatOps** (862 lines, 181 MLIR ops) - Check for transform logic, may need FNCS fix
+2. **FormatOps** (862 lines, 181 MLIR ops) - Check for transform logic, may need CCS fix
 3. **SeqWitness** (1,021 lines → ~60 lines) - Extract state machine patterns
 4. **MemoryWitness** (878 lines → ~50 lines) - Extract GEP/Load/Store patterns
 
@@ -446,7 +446,7 @@ let witnessFieldGet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
 
 ## Related Documentation
 
-- `Architecture_Canonical.md` - Overall Firefly pipeline architecture
+- `Architecture_Canonical.md` - Overall Composer pipeline architecture
 - `Alex_Architecture_Overview.md` - Alex component overview
 - `XParsec_PSG_Architecture.md` - XParsec integration details
 

@@ -46,17 +46,17 @@ Concatenation result:      memref<?x i8>     (len1 + len2, computed at runtime)
 ### 3.2 String.Length
 
 ```fsharp
-// F# signature
+// Clef signature
 String.Length : string -> int
 ```
 
 **MLIR implementation**:
 ```mlir
 %len_index = memref.dim %str, %c0 : memref<?xi8>  // Returns index type
-%len_int = index.casts %len_index : index to i64   // Cast to platform int for F#
+%len_int = index.casts %len_index : index to i64   // Cast to platform int for Clef
 ```
 
-**Key point**: `memref.dim` returns `index` type. Cast to platform int at F# boundary.
+**Key point**: `memref.dim` returns `index` type. Cast to platform int at Clef boundary.
 
 ### 3.3 String.concat2
 
@@ -219,7 +219,7 @@ module {
 ## 8. Type Flow
 
 ```
-F# Type System          FNCS NativeType              MLIR Type
+Clef Type System          CCS NativeType              MLIR Type
 ─────────────────────────────────────────────────────────────────
 string (literal)   →    NTUstring, Opaque      →     memref<N x i8>
 string (dynamic)   →    NTUstring, Opaque      →     memref<?x i8>
@@ -229,7 +229,7 @@ Memref size/dim    →    (no NativeType)        →     index
 ```
 
 **Critical distinction**:
-- **F# `int`** (String.Length result) → platform word (i64 on x86_64)
+- **Clef `int`** (String.Length result) → platform word (i64 on x86_64)
 - **MLIR `index`** (memref.dim result, size arithmetic) → MLIR index type
 - Convert between them with `index.casts`
 
@@ -239,7 +239,7 @@ Memref size/dim    →    (no NativeType)        →     index
 
 ```bash
 cd samples/console/FidelityHelloWorld/02_HelloWorldSaturated
-/home/hhh/repos/Firefly/src/bin/Debug/net10.0/Firefly compile HelloWorld.fidproj -k
+/home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer compile HelloWorld.fidproj -k
 echo "World" | ./HelloWorld
 # Expected output:
 # Enter your name:
@@ -250,14 +250,14 @@ Check intermediate: `cat target/intermediates/07_output.mlir`
 - Should see `memref.alloc(%size)` where `%size` is `index` type
 - Should see `arith.addi` on `index` values for size arithmetic
 - Should NOT see `llvm.*` operations
-- Should NOT see `i64` in size arithmetic (only as result of `index.casts` for F# int)
+- Should NOT see `i64` in size arithmetic (only as result of `index.casts` for Clef int)
 
 ---
 
 ## 10. Architectural Lessons
 
 1. **Strings ARE memrefs**: No fat pointers, no control structs
-2. **Index vs int**: MLIR `index` for sizes/dims, F# `int` (platform word) for user-visible values
+2. **Index vs int**: MLIR `index` for sizes/dims, Clef `int` (platform word) for user-visible values
 3. **Runtime-sized allocation**: `memref.alloc(%size)` with runtime-computed size
 4. **Heap bridge**: Using `memref.alloc` (heap) until arena infrastructure ready
 5. **FFI boundary**: `memref.extract_aligned_pointer_as_index` for libc memcpy calls

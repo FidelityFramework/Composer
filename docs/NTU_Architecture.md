@@ -4,13 +4,13 @@
 
 The NTU (Native Type Universe) architecture provides platform-generic types for Fidelity that resolve via quotation-based platform bindings. This follows the F* pattern where type WIDTH is an **erased assumption**, not part of type identity.
 
-**Core Principle**: Platform awareness flows FROM THE TOP via quotation-based binding libraries, not from FNCS type inference.
+**Core Principle**: Platform awareness flows FROM THE TOP via quotation-based binding libraries, not from CCS type inference.
 
 ## Nomenclature
 
 NTU = **N**ative **T**ype **U**niverse
 
-The "NTU" prefix is used internally by FNCS to mark platform-generic types, similar to how FCS used "IL" prefixes extensively.
+The "NTU" prefix is used internally by CCS to mark platform-generic types, similar to how CCS used "IL" prefixes extensively.
 
 ## NTU Type System
 
@@ -47,7 +47,7 @@ The architecture uses a layered approach:
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Application Code                                        │
-│  Level 1: int, uint (standard F#)                       │
+│  Level 1: int, uint (standard Clef)                       │
 │  Level 2/3: platformint, platformsize (explicit)        │
 └─────────────────────────────────────────────────────────┘
                           │
@@ -59,7 +59,7 @@ The architecture uses a layered approach:
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│  FNCS                                                    │
+│  CCS                                                    │
 │  NTU types: NTUint, NTUuint, NTUsize, etc.              │
 └─────────────────────────────────────────────────────────┘
                           │
@@ -72,7 +72,7 @@ The architecture uses a layered approach:
 
 ### Mapping Table
 
-| Level 1 (Default) | Level 2/3 (Explicit) | FNCS Internal |
+| Level 1 (Default) | Level 2/3 (Explicit) | CCS Internal |
 |-------------------|----------------------|---------------|
 | `int` | `platformint` | `NTUint` |
 | `uint` | `platformuint` | `NTUuint` |
@@ -83,12 +83,12 @@ The architecture uses a layered approach:
 
 **Key Insight from F***: Type WIDTH is an erased assumption, not part of type identity.
 
-### What FNCS Enforces (Type Identity)
+### What CCS Enforces (Type Identity)
 - `NTUint ≠ NTUint64` - These are **different types**
 - `NTUint + NTUint` ✓ - Same type, valid
 - `NTUint + NTUint64` ✗ - Different types, compile error
 
-### What FNCS Does NOT Assume (Type Width)
+### What CCS Does NOT Assume (Type Width)
 - Whether `NTUint` is 32 or 64 bits
 - Memory layout of platform-dependent types
 - Exact byte sizes
@@ -103,8 +103,8 @@ The architecture uses a layered approach:
 NTU supports all three memory management levels:
 
 ### Level 1 (Default): Invisible Management
-- Developers write standard F#
-- FNCS treats `int` as `NTUint` internally
+- Developers write standard Clef
+- CCS treats `int` as `NTUint` internally
 - Platform quotations resolve width
 - Compiler manages all memory decisions
 
@@ -142,7 +142,7 @@ module Platform.Predicates =
 
 These predicates enable conditional compilation without runtime checks.
 
-## Implementation in FNCS
+## Implementation in CCS
 
 ### NTUKind Discriminated Union
 
@@ -179,11 +179,11 @@ type NTULayout = {
 ## Pipeline Flow
 
 ```
-F# Source (int, platformint)
+Clef Source (int, platformint)
     │
     ▼
 ┌──────────────────────────────────────────────┐
-│ FNCS: Maps to NTU types (NTUint)             │
+│ CCS: Maps to NTU types (NTUint)             │
 │ - Type identity checking                      │
 │ - SRTP resolution                             │
 │ - Width is NOT resolved                       │
@@ -224,11 +224,11 @@ let write (fd: platformint) (buf: nativeptr<byte>) (count: platformsize) : platf
 //             ^^^^^^^^^^^ resolved via quotations
 ```
 
-FNCS sees `platformint` as `NTUint`, validates type identity (not width), and Alex resolves to `i64` on x86_64 via platform quotations.
+CCS sees `platformint` as `NTUint`, validates type identity (not width), and Alex resolves to `i64` on x86_64 via platform quotations.
 
 ## Related Documentation
 
 - `Platform_Binding_Model.md` - Sophisticated platform binding capabilities
-- `docs/fidelity/NTU_Type_System.md` (fsnative) - Implementation details
-- `docs/fidelity/Platform_Predicates.md` (fsnative) - F*-style predicates
-- `spec/ntu-types.md` (fsnative-spec) - Normative specification
+- `docs/fidelity/NTU_Type_System.md` (clef) - Implementation details
+- `docs/fidelity/Platform_Predicates.md` (clef) - F*-style predicates
+- `spec/ntu-types.md` (clef-spec) - Normative specification

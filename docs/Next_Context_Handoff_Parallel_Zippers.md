@@ -113,7 +113,7 @@ If Pass 1 and Pass 2 are independent:
 
 ---
 
-## Architectural Constraints from Current Firefly
+## Architectural Constraints from Current Composer
 
 ### What We Have (Correct)
 - ✅ Immutable SemanticGraph
@@ -185,12 +185,12 @@ If time permits, implement minimal fan-out/fold-in on HelloWorld samples to vali
 ## Key Documentation References
 
 ### Already Created (This Context)
-- `/home/hhh/repos/Firefly/docs/Parallel_Zipper_Architecture.md` - Full architectural analysis
+- `/home/hhh/repos/Composer/docs/Parallel_Zipper_Architecture.md` - Full architectural analysis
 - Serena memory: `parallel_zipper_fan_out_fold_in` - Core findings
 - This handoff document
 
 ### Existing (Prior Contexts)
-- `/home/hhh/repos/Firefly/docs/PSG_Nanopass_Architecture.md` - PSG nanopass design
+- `/home/hhh/repos/Composer/docs/PSG_Nanopass_Architecture.md` - PSG nanopass design
 - `/home/hhh/repos/SpeakEZ/hugo/content/blog/Learning to Walk.md` - Zipper philosophy
 - Serena memory: `mlir_transfer_canonical_architecture` - Transfer layer design
 - Serena memory: `alex_xparsec_throughout_architecture` - XParsec usage

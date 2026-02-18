@@ -2,18 +2,18 @@
 
 > **Sample**: `13a_Collections` | **Status**: Planned | **Depends On**: C-01 (Closures), C-03 (Recursion)
 
-**Foundation for Eager Collections and Idiomatic F# Syntax**: This PRD establishes the core collection types and range expressions that BAREWire and most F# programs require. Unlike Seq (lazy, pull-based), these are eager, fully-materialized data structures.
+**Foundation for Eager Collections and Idiomatic Clef Syntax**: This PRD establishes the core collection types and range expressions that BAREWire and most Clef programs require. Unlike Seq (lazy, pull-based), these are eager, fully-materialized data structures.
 
 ## 1. Executive Summary
 
-F# programs fundamentally rely on:
+Clef programs fundamentally rely on:
 
 **Core Collection Types:**
-- **List<'T>** - Immutable singly-linked list (F#'s workhorse collection)
+- **List<'T>** - Immutable singly-linked list (Clef's workhorse collection)
 - **Map<'K, 'V>** - Immutable key-value dictionary
 - **Set<'T>** - Immutable set of unique values
 
-**Range Expressions** (extremely common F# syntax):
+**Range Expressions** (extremely common Clef syntax):
 - `[1..10]` - List from 1 to 10
 - `[1..2..10]` - Stepped list: 1, 3, 5, 7, 9
 - `[|1..10|]` - Array range
@@ -29,13 +29,13 @@ These are NOT lazy sequences - collections are fully materialized in memory. Ran
 - `Set.empty`, `Set.contains`, `Set.add` (3 occurrences)
 - `Option.map` (1 occurrence)
 
-**Conspicuous Absence**: Range expressions like `[1..10]` are among the most common F# patterns, yet currently error with "requires slice support" in FNCS.
+**Conspicuous Absence**: Range expressions like `[1..10]` are among the most common Clef patterns, yet currently error with "requires slice support" in CCS.
 
-**Glaring Omission**: The PRD roadmap (11-31) covers closures, lazy, seq, async, regions, networking, desktop - but NO PRD covers the fundamental eager collection types that virtually every F# program uses.
+**Glaring Omission**: The PRD roadmap (11-31) covers closures, lazy, seq, async, regions, networking, desktop - but NO PRD covers the fundamental eager collection types that virtually every Clef program uses.
 
 ### 1.2 Design Philosophy
 
-Following FNCS principles:
+Following CCS principles:
 1. **Monomorphization** - Collections are specialized per element type (no uniform representation)
 2. **No Boxing** - Element types are stored directly, not as `obj`
 3. **Arena-Friendly** - Collections allocate from regions when available (A-04+)
@@ -45,7 +45,7 @@ Following FNCS principles:
 
 ### 2.1 List<'T>
 
-F# lists are immutable singly-linked lists with structural sharing.
+Clef lists are immutable singly-linked lists with structural sharing.
 
 ```
 // List as flat closure
@@ -58,7 +58,7 @@ List<T> = FlatClosure<T>
     - captures: 0 for empty, 2 for cons (head + tail)
 ```
 
-**Note**: Unlike .NET's two-pointer FSharpList (for IEnumerable), native lists are single-pointer cons cells. This is the classic ML/Lisp representation.
+**Note**: Unlike .NET's two-pointer ClefList (for IEnumerable), native lists are single-pointer cons cells. This is the classic ML/Lisp representation.
 
 ### 2.2 Map<'K, 'V>
 
@@ -75,7 +75,7 @@ Map<K, V> = FlatClosure<K, V>
     - captures: 0 for empty, 5 for node (key, value, left, right, height)
 ```
 
-**Key Constraint**: Keys must support comparison (`IComparable` in BCL terms). In FNCS, this is expressed via SRTP: `'K when 'K : comparison`.
+**Key Constraint**: Keys must support comparison (`IComparable` in BCL terms). In CCS, this is expressed via SRTP: `'K when 'K : comparison`.
 
 ### 2.3 Set<'T>
 
@@ -138,7 +138,7 @@ type NativeType =
 
 ### 2.7 Range Expressions
 
-Range expressions are idiomatic F# syntax for generating sequences of values. They desugar to collection initialization.
+Range expressions are idiomatic Clef syntax for generating sequences of values. They desugar to collection initialization.
 
 #### 2.7.1 Syntax Forms
 
@@ -152,12 +152,12 @@ Range expressions are idiomatic F# syntax for generating sequences of values. Th
 | `seq { 1..10 }` | Lazy sequence | State machine (C-06) |
 | `{ 1..10 }` | Sequence (implicit) | Same as `seq { 1..10 }` |
 
-#### 2.7.2 FCS Representation
+#### 2.7.2 CCS Representation
 
-FCS parses range expressions as `SynExpr.IndexRange`:
+CCS parses range expressions as `SynExpr.IndexRange`:
 
 ```fsharp
-// From FCS SyntaxTree.fs
+// From CCS SyntaxTree.fs
 | IndexRange of
     expr1: SynExpr option *    // Start (None = unbounded)
     opm: range *               // Range of .. operator
@@ -169,9 +169,9 @@ FCS parses range expressions as `SynExpr.IndexRange`:
 // Stepped ranges use nested IndexRange or special handling
 ```
 
-**Current FNCS Status**: `IndexRange` currently errors with "requires slice support". This PRD implements proper range expression handling.
+**Current CCS Status**: `IndexRange` currently errors with "requires slice support". This PRD implements proper range expression handling.
 
-#### 2.7.3 FNCS Implementation
+#### 2.7.3 CCS Implementation
 
 **SemanticKind Extension:**
 
@@ -313,7 +313,7 @@ llvm.func @range_stepped_to_array(%start: i32, %step: i32, %finish: i32) -> !arr
 
 **Note**: These intrinsics are generic over numeric types supporting `(+)` and comparison. In practice, `int` is most common.
 
-## 3. FNCS Intrinsics
+## 3. CCS Intrinsics
 
 ### 3.1 List Intrinsics
 
@@ -336,7 +336,7 @@ llvm.func @range_stepped_to_array(%start: i32, %step: i32, %finish: i32) -> !arr
 | `List.forall` | `('T -> bool) -> List<'T> -> bool` | All elements match |
 | `List.exists` | `('T -> bool) -> List<'T> -> bool` | Any element matches |
 
-**F# List Syntax Sugar**:
+**Clef List Syntax Sugar**:
 - `[1; 2; 3]` desugars to `List.cons 1 (List.cons 2 (List.cons 3 List.empty))`
 - `x :: xs` desugars to `List.cons x xs`
 
@@ -410,10 +410,10 @@ Option already exists but needs these operations:
 
 > **Added January 2026** - Identified during BAREWire compilation work.
 
-Tuple destructuring in let bindings is a core F# pattern that FNCS must support:
+Tuple destructuring in let bindings is a core Clef pattern that CCS must support:
 
 ```fsharp
-// Tuple destructuring pattern - currently broken in FNCS
+// Tuple destructuring pattern - currently broken in CCS
 let (a, b) = someFunction()   // Should bind 'a' and 'b'
 let x, y, z = triple          // Should bind 'x', 'y', 'z'
 
@@ -485,7 +485,7 @@ let b = snd __tuple
 
 This approach reuses existing infrastructure (`fst`, `snd`, or `Tuple.item`).
 
-#### 3.6.3 FNCS Implementation Note
+#### 3.6.3 CCS Implementation Note
 
 Per the diagnostic principle: **No silent default cases**. The `| _ -> "_"` fall-through must be replaced with explicit error handling:
 
@@ -638,7 +638,7 @@ llvm.func @map_tryFind(%map: !llvm.ptr, %key: !key_type) -> !option_value_type {
 
 ### 5.3 Comparison Constraint
 
-Map and Set require comparable keys/elements. In FNCS, this is expressed via SRTP:
+Map and Set require comparable keys/elements. In CCS, this is expressed via SRTP:
 
 ```fsharp
 // Map.add requires comparison constraint on key type
@@ -687,7 +687,7 @@ zs: Cons(2, Cons(3, Empty))  // Same as xs.tail
 
 ## 7. Files to Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -702,7 +702,7 @@ zs: Cons(2, Cons(3, Empty))  // Same as xs.tail
 | `Witnesses/ListWitness.fs` | CREATE | List operation MLIR generation |
 | `Witnesses/MapWitness.fs` | CREATE | Map operation MLIR generation |
 | `Witnesses/SetWitness.fs` | CREATE | Set operation MLIR generation |
-| `FNCSTransfer.fs` | MODIFY | Handle collection intrinsics |
+| `CCSTransfer.fs` | MODIFY | Handle collection intrinsics |
 
 ## 8. Validation
 
@@ -715,7 +715,7 @@ module CollectionsSample
 let main _ =
     Console.writeln "=== Core Collections Test ==="
 
-    // Range expressions - the idiomatic F# way
+    // Range expressions - the idiomatic Clef way
     Console.writeln "--- Range Expressions ---"
 
     // Array range
@@ -815,7 +815,7 @@ Set contains 2
 
 ### Phase 2: Range Expressions (High Visibility)
 - [ ] Add `RangeExpr` SemanticKind with `RangeTargetKind`
-- [ ] Update FNCS Coordinator to handle `SynExpr.IndexRange`
+- [ ] Update CCS Coordinator to handle `SynExpr.IndexRange`
 - [ ] Implement `Range.toArray` intrinsic (simplest case)
 - [ ] Implement `Range.toList` intrinsic
 - [ ] Implement stepped range variants (`Range.toArrayStep`, etc.)
@@ -875,7 +875,7 @@ The `box`/`unbox` usage in `Memory/View.fs` (lines 459-503) is the critical bloc
 
 | Component | Specified | Status | Notes |
 |-----------|-----------|--------|-------|
-| FNCS type signatures (Intrinsics.fs) | §3 | ✅ Complete | List, Map, Set, Option operations |
+| CCS type signatures (Intrinsics.fs) | §3 | ✅ Complete | List, Map, Set, Option operations |
 | NativeType TList/TMap/TSet | §2.5 | ✅ Complete | Added to NativeTypes.fs |
 | UnionFind bridge cases | §7.1 | ✅ Complete | applySubst, occursIn, freeTypeVars |
 | TypeMapping.fs collection types | implicit | ✅ Complete | TList/TMap/TSet → TPtr |
@@ -885,13 +885,13 @@ The `box`/`unbox` usage in `Memory/View.fs` (lines 459-503) is the critical bloc
 | **MapWitness.fs** | §7.2 | ❌ NOT CREATED | Alex witness needed |
 | **SetWitness.fs** | §7.2 | ❌ NOT CREATED | Alex witness needed |
 | **OptionWitness.fs** | implicit | ❌ NOT CREATED | Option operations need witness |
-| **FNCSTransfer.fs handlers** | §7.2 | ❌ NOT IMPLEMENTED | Collection intrinsic dispatch |
+| **CCSTransfer.fs handlers** | §7.2 | ❌ NOT IMPLEMENTED | Collection intrinsic dispatch |
 | **Functional decomposition** | §13.4 | ❌ NOT IMPLEMENTED | HOFs need PSG decomposition |
 | **Vector dialect integration** | §13.2 | ❌ NOT CONNECTED | Templates exist but unused |
 
 ### 13.2 The Functional Decomposition Requirement
 
-Per `fncs_functional_decomposition_principle` memory, current FNCS intrinsics are **type-only stubs**:
+Per `fncs_functional_decomposition_principle` memory, current CCS intrinsics are **type-only stubs**:
 
 ```fsharp
 // CURRENT STATE (antipattern)
@@ -913,9 +913,9 @@ These cannot decompose further - they ARE the primitives:
 | **Set** | `empty`, `isEmpty` | Flat closure check |
 | **Option** | `None`, `Some`, `isSome`, `isNone` | Tag check |
 
-#### 13.2.2 Decomposable Operations (FNCS Provides Functional Structure)
+#### 13.2.2 Decomposable Operations (CCS Provides Functional Structure)
 
-These should decompose in FNCS/PSGSaturation to primitives:
+These should decompose in CCS/PSGSaturation to primitives:
 
 ```fsharp
 // List.map SHOULD decompose to:
@@ -974,7 +974,7 @@ let witnessListIsEmpty (z: PSGZipper) (listVal: Val) : MLIROp list * Val =
 
 Add functional decomposition for higher-order operations. This creates PSG structure that Alex witnesses as recursion.
 
-**File: `FNCS/PSGSaturation/ListSaturation.fs`** (NEW)
+**File: `CCS/PSGSaturation/ListSaturation.fs`** (NEW)
 ```fsharp
 /// Saturate List.map call to explicit recursion
 /// Input: Call(List.map, [mapper; source])
@@ -1106,7 +1106,7 @@ Not all operations vectorize. Eligibility criteria:
 - [x] Create `Alex/Witnesses/MapWitness.fs` with: empty, isEmpty (tree ops later) ✅
 - [x] Create `Alex/Witnesses/SetWitness.fs` with: empty, isEmpty (tree ops later) ✅
 - [x] Create `Alex/Witnesses/OptionWitness.fs` with: None, Some, isSome, isNone, get ✅
-- [ ] Update `FNCSTransfer.fs` to dispatch to collection witnesses
+- [ ] Update `CCSTransfer.fs` to dispatch to collection witnesses
 
 ### Phase B: Higher-Order Decomposition (Baker)
 - [x] Create `Baker/ShadowAST.fs` for editing transparency ✅ (January 2026)

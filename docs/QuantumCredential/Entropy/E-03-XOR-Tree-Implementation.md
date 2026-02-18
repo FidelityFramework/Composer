@@ -191,7 +191,7 @@ For 4096 bytes of entropy, we need exactly 4096 sample cycles. No waste, no retr
 
 ---
 
-## Part 5: F# Implementation for Fidelity
+## Part 5: Clef Implementation for Fidelity
 
 ### Core XOR Function
 
@@ -450,7 +450,7 @@ The four-channel parallel XOR method provides:
 5. **Transparency**: Auditable at every level from physics to machine code
 6. **Performance**: Achieves <500 ms target for 4096 bytes on constrained hardware
 
-The F# implementation lowers cleanly through Fidelity to MLIR, preserving the parallel structure for optimization while generating efficient native code for the target platform.
+The Clef implementation lowers cleanly through Fidelity to MLIR, preserving the parallel structure for optimization while generating efficient native code for the target platform.
 
 ---
 
@@ -472,7 +472,7 @@ The F# implementation lowers cleanly through Fidelity to MLIR, preserving the pa
      CH3 ──┘
 ```
 
-### The Core F# Code
+### The Core Clef Code
 
 ```fsharp
 let inline combineEntropy (ch0: byte) (ch1: byte) (ch2: byte) (ch3: byte) : byte =

@@ -112,7 +112,7 @@ let foldIn recipeSet graph =
 ## Implementation Location
 
 ```
-fsnative/src/Compiler/Nanopass/
+clef/src/Compiler/Nanopass/
 ├── Recipe.fs        - Recipe, RecipeSet types
 ├── FanOut.fs        - Parallel recipe creation
 ├── FoldIn.fs        - Generic fold-in
@@ -143,7 +143,7 @@ emitRecipeSet "fncs_saturation_recipes.json" saturationRecipes
 let psg2 = FoldIn.foldIn saturationRecipes psg1
 emitPhase "fncs_phase_N_saturated.json" psg2
 
-// Deliver to Firefly/Alex
+// Deliver to Composer/Alex
 { Graph = psg2; ... }
 ```
 

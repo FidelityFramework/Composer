@@ -44,7 +44,7 @@ let client () =
     Sys.close sock
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Socket Intrinsics
 
@@ -101,7 +101,7 @@ let client () =
 | "SOCK_DGRAM" -> NativeType.TInt, 2
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 Platform Bindings
 
@@ -240,7 +240,7 @@ Server setup complete
 
 ## 7. Files to Create/Modify
 
-### 7.1 FNCS
+### 7.1 CCS
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -248,7 +248,7 @@ Server setup complete
 | `CheckExpressions.fs` | MODIFY | Add socket syscall intrinsics |
 | `NativeGlobals.fs` | MODIFY | Add socket constants |
 
-### 7.2 Firefly
+### 7.2 Composer
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -257,7 +257,7 @@ Server setup complete
 
 ## 8. Implementation Checklist
 
-### Phase 1: FNCS Foundation
+### Phase 1: CCS Foundation
 - [ ] Add TSockAddr type
 - [ ] Add socket intrinsics
 - [ ] Add socket constants

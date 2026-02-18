@@ -97,12 +97,12 @@ The RA6M5 uses Renesas FSP rather than STM32's HAL. FSP provides:
 
 The RA6M5 has [first-class Zephyr RTOS support](https://docs.zephyrproject.org/latest/boards/renesas/ek_ra6m5/doc/index.html), providing an alternative to bare-metal or NuttX approaches.
 
-### Firefly Integration Path
+### Composer Integration Path
 
 ```
-F# Source + FNCS
+Clef Source + CCS
        ↓
-   Firefly/Alex
+   Composer/Alex
        ↓
    MLIR (ARM Cortex-M33 target)
        ↓
@@ -140,14 +140,14 @@ The Phase 1 YoshiPi implementation provides the foundation:
 |-----------|-------------------|-----------------|
 | Entropy source | 4-channel avalanche | Same circuit, different ADC |
 | ADC interface | MCP3004 via SPI/IIO | RA6M5 internal 12-bit ADC |
-| Epsilon evaluation | Software (F#) | Same algorithm |
-| XOR combination | Software (F#) | Same algorithm |
+| Epsilon evaluation | Software (Clef) | Same algorithm |
+| XOR combination | Software (Clef) | Same algorithm |
 | Crypto operations | Software (ML-KEM/DSA) | Hardware accelerated (SCE9) |
 | Credential storage | File system | Secure Flash (TrustZone) |
 | Device binding | None (portable) | **HUK-wrapped (clone-proof)** |
 | Device identity | MAC address | **Factory Unique ID** |
 
-The F# application code remains largely unchanged; Platform.Bindings implementations differ.
+The Clef application code remains largely unchanged; Platform.Bindings implementations differ.
 
 ---
 

@@ -25,7 +25,7 @@ Through deep research into nanopass framework, Triton-CPU, and Chez Scheme, we v
 
 ```
 ┌─────────────────────────────────────────┐
-│          PSG from FNCS                   │
+│          PSG from CCS                   │
 └──────────────┬──────────────────────────┘
                ↓
 ┌──────────────────────────────────────────┐
@@ -291,7 +291,7 @@ let ``ArithNanopass handles binary ops`` () =
 ### Phase 2: Registry (NEXT)
 
 1. ⬜ Create `WitnessRegistry.fs`
-2. ⬜ Add to `Firefly.fsproj` (after ParallelNanopass.fs)
+2. ⬜ Add to `Composer.fsproj` (after ParallelNanopass.fs)
 
 ### Phase 3: Witness Migration (Per Witness)
 

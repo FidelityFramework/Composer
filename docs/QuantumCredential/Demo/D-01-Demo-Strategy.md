@@ -1,6 +1,6 @@
 # YoshiPi Demo Strategy: Linux Symmetry
 
-> **The Key Insight**: Both the YoshiPi device and the desktop Keystation are Linux systems. This means the same Firefly compilation pipeline, the same native F# APIs, and the same WebView UI approach work on both ends.
+> **The Key Insight**: Both the YoshiPi device and the desktop Keystation are Linux systems. This means the same Composer compilation pipeline, the same native Clef APIs, and the same WebView UI approach work on both ends.
 
 ---
 
@@ -15,9 +15,9 @@ The QuantumCredential demo consists of two components:
 
 Both run:
 - Linux kernel
-- Firefly-compiled native binaries
+- Composer-compiled native binaries
 - WebView-based UI (via system webview)
-- Same FNCS APIs
+- Same CCS APIs
 
 The "it's just Linux" symmetry dramatically reduces complexity compared to bare-metal embedded approaches.
 
@@ -31,7 +31,7 @@ The "it's just Linux" symmetry dramatically reduces complexity compared to bare-
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
-│  │  F# Application (Firefly-compiled to ARM64 Linux ELF)             │ │
+│  │  Clef Application (Composer-compiled to ARM64 Linux ELF)             │ │
 │  │                                                                   │ │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐   │ │
 │  │  │ Entropy     │  │ PQC Engine  │  │ Credential Generator    │   │ │
@@ -42,7 +42,7 @@ The "it's just Linux" symmetry dramatically reduces complexity compared to bare-
 │  │         │                                      │                  │ │
 │  │         ▼                                      ▼                  │ │
 │  │  ┌─────────────┐                    ┌─────────────────────────┐   │ │
-│  │  │ FNCS        │                    │ WebView Monitor UI      │   │ │
+│  │  │ CCS        │                    │ WebView Monitor UI      │   │ │
 │  │  │ Platform.   │                    │ • Status display        │   │ │
 │  │  │ Bindings    │                    │ • Entropy visualization │   │ │
 │  │  └─────────────┘                    │ • Credential preview    │   │ │
@@ -75,7 +75,7 @@ The "it's just Linux" symmetry dramatically reduces complexity compared to bare-
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
-│  │  F# Application (Firefly-compiled to x86_64 Linux ELF)            │ │
+│  │  Clef Application (Composer-compiled to x86_64 Linux ELF)            │ │
 │  │                                                                   │ │
 │  │  ┌─────────────────┐  ┌─────────────────────────────────────────┐│ │
 │  │  │ Credential      │  │ WebView UI (Partas.Solid)               ││ │
@@ -103,13 +103,13 @@ The "it's just Linux" symmetry dramatically reduces complexity compared to bare-
 |--------|---------|---------|--------|
 | **Target** | Linux/ARM64 | Linux/x86_64 | Linux ABI |
 | **Syscalls** | ARM64 syscall convention | x86_64 syscall convention | Same syscall numbers |
-| **FNCS** | Platform.Bindings | Platform.Bindings | Same API |
+| **CCS** | Platform.Bindings | Platform.Bindings | Same API |
 | **WebView** | WebKitGTK (ARM) | WebKitGTK (x86_64) | Same library |
 | **IPC** | BAREWire schemas | BAREWire schemas | Same types |
 
-### What Firefly Already Does
+### What Composer Already Does
 
-Firefly already compiles to Linux/x86_64 (the console samples work). The delta to Linux/ARM64:
+Composer already compiles to Linux/x86_64 (the console samples work). The delta to Linux/ARM64:
 
 1. **LLVM target triple**: `aarch64-unknown-linux-gnu` instead of `x86_64-unknown-linux-gnu`
 2. **Syscall convention**: Different registers, but same syscall numbers for most operations
@@ -281,7 +281,7 @@ backend = "src/Generator"    # Entropy + PQC + Credential
 embed_assets = true
 
 [dependencies]
-# Uses FNCS intrinsics (no separate dependency)
+# Uses CCS intrinsics (no separate dependency)
 
 [build]
 output = "qc-generator"
@@ -303,7 +303,7 @@ backend = "src/Receiver"
 embed_assets = true
 
 [dependencies]
-# Uses FNCS intrinsics (no separate dependency)
+# Uses CCS intrinsics (no separate dependency)
 
 [build]
 output = "keystation"
@@ -333,7 +333,7 @@ output_kind = "desktop"
 
 ### Demo Day Requirements
 
-- [ ] F# code compiles to ARM64 Linux binary
+- [ ] Clef code compiles to ARM64 Linux binary
 - [ ] Binary runs on YoshiPi, samples ADC
 - [ ] Entropy conditioning produces quality randomness
 - [ ] PQC credential generation completes
@@ -343,7 +343,7 @@ output_kind = "desktop"
 
 ### Narrative Points
 
-1. **"Same F# code, same compiler"** - Firefly targets both platforms
+1. **"Same Clef code, same compiler"** - Composer targets both platforms
 2. **"Real hardware entropy"** - Avalanche circuit provides quantum randomness
 3. **"Post-quantum security"** - ML-KEM and ML-DSA algorithms
 4. **"Native performance"** - No runtime, no GC, direct hardware access
@@ -365,4 +365,4 @@ output_kind = "desktop"
 
 ### Architecture Documents
 - [WebView_Desktop_Architecture](../WebView_Desktop_Architecture.md) - WebView stack (applies to both!)
-- [WebView_Build_Integration](../WebView_Build_Integration.md) - Firefly build orchestration
+- [WebView_Build_Integration](../WebView_Build_Integration.md) - Composer build orchestration

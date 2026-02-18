@@ -1,6 +1,6 @@
-# Firefly Sample Suite
+# Composer Sample Suite
 
-This directory contains sample projects demonstrating Firefly's capabilities for compiling F# to native code. The samples serve as both documentation and regression tests for the compiler, progressing toward the **WREN Stack Alpha** capstone.
+This directory contains sample projects demonstrating Composer's capabilities for compiling F# to native code. The samples serve as both documentation and regression tests for the compiler, progressing toward the **WREN Stack Alpha** capstone.
 
 > **WREN** = **W**ebView + **R**eactive + **E**mbedded + **N**ative
 
@@ -56,14 +56,14 @@ Samples 29-31 synthesize all prior capabilities: async (message loop), closures 
 
 ```bash
 cd samples/console/FidelityHelloWorld/01_HelloWorldDirect
-firefly compile HelloWorld.fidproj
+composer compile HelloWorld.fidproj
 ./target/helloworld
 ```
 
 ### With Intermediate Files
 
 ```bash
-firefly compile HelloWorld.fidproj -k
+composer compile HelloWorld.fidproj -k
 ls target/intermediates/
 # fncs_phase_*.json, alex_coeffects.json, *.mlir, *.ll
 ```

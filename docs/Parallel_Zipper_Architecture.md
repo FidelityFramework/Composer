@@ -156,7 +156,7 @@ for batch in batches do
 ### 1. What Constitutes a "Unit"?
 
 **Options:**
-- **Function-level**: Each function is a unit (natural for F#)
+- **Function-level**: Each function is a unit (natural for Clef)
 - **Module-level**: Each module is a unit (coarser granularity)
 - **Expression-level**: Each independent expression tree (finest granularity)
 
@@ -293,7 +293,7 @@ Key findings documented inline above.
 
 - `/home/hhh/repos/nanopass-framework-scheme/` - Nanopass implementation
 - `/home/hhh/repos/triton-cpu/` - Production MLIR compiler with parallelization
-- `/home/hhh/repos/Firefly/docs/PSG_Nanopass_Architecture.md` - PSG nanopass design
+- `/home/hhh/repos/Composer/docs/PSG_Nanopass_Architecture.md` - PSG nanopass design
 - `/home/hhh/repos/SpeakEZ/hugo/content/blog/Learning to Walk.md` - Zipper philosophy
 
 ---

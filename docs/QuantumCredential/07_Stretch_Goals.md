@@ -139,7 +139,7 @@ This transforms the demo from "credential generator" to "decentralized PKI infra
 │  │  Circuit       Keygen   │         │                                 │   │
 │  └─────────────────────────┘         └─────────────────────────────────┘   │
 │                                                                             │
-│  Both devices: Linux + WebKitGTK + Firefly-compiled F# + Same UI code      │
+│  Both devices: Linux + WebKitGTK + Composer-compiled Clef + Same UI code      │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -162,7 +162,7 @@ This transforms the demo from "credential generator" to "decentralized PKI infra
 **Why Sweet Potato for Keystation:**
 - More RAM (2GB vs 512MB) - comfortable for WebKitGTK
 - Same Linux/ARM64 target as YoshiPi
-- Same native F# APIs, same WebView UI
+- Same native Clef APIs, same WebView UI
 - Can drive an ultra-wide touchscreen via DSI or USB
 
 ### Ultra-Wide Touchscreen
@@ -317,7 +317,7 @@ YoshiPi                          Sweet Potato
 ```
 
 **Implementation considerations:**
-- QR generation: Pure F# (no external lib needed for basic QR)
+- QR generation: Pure Clef (no external lib needed for basic QR)
 - QR scanning: Requires camera + decoding library (zbar or similar)
 - Credential size: ML-KEM public keys are ~1KB - need multiple QR codes or compression
 - Adds hardware requirement: USB camera on Sweet Potato
@@ -505,7 +505,7 @@ let EntropyWaveform (samples: Accessor<uint16 array>) =
 >
 > The credential appears as a QR code. The Keystation scans it with its camera... verified! The ML-DSA signature checks out. This credential is now stored and ready to use.
 >
-> Both of these devices are running the same F# code, compiled to native ARM binaries by Firefly. No runtime, no garbage collection, no security vulnerabilities from managed code. Just pure, verified, post-quantum security."
+> Both of these devices are running the same Clef code, compiled to native ARM binaries by Composer. No runtime, no garbage collection, no security vulnerabilities from managed code. Just pure, verified, post-quantum security."
 
 ### Without Stretch Goals (Core Demo)
 

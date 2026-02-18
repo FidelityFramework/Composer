@@ -4,13 +4,13 @@
 
 ## 1. Executive Summary
 
-This PRD specifies the implementation of MLKit-style flat closures for F# Native compilation. Closures are foundational to functional programming - they enable functions to capture variables from enclosing scopes. This feature unlocks higher-order functions (Sample 12), sequences (Samples 14-15), async (Samples 17-19), and ultimately the MailboxProcessor capstone (Samples 29-31).
+This PRD specifies the implementation of MLKit-style flat closures for Clef Native compilation. Closures are foundational to functional programming - they enable functions to capture variables from enclosing scopes. This feature unlocks higher-order functions (Sample 12), sequences (Samples 14-15), async (Samples 17-19), and ultimately the MailboxProcessor capstone (Samples 29-31).
 
-**Key Architectural Decision**: Capture analysis is scope analysis. Scope is resolved during type checking. Therefore, **capture analysis belongs in FNCS**, not Firefly. FNCS computes captures during PSG construction; Alex handles only SSA assignment and MLIR emission.
+**Key Architectural Decision**: Capture analysis is scope analysis. Scope is resolved during type checking. Therefore, **capture analysis belongs in CCS**, not Composer. CCS computes captures during PSG construction; Alex handles only SSA assignment and MLIR emission.
 
 ## 2. Language Feature Specification
 
-### 2.1 F# Closure Semantics
+### 2.1 Clef Closure Semantics
 
 A closure is a function bundled with its captured environment:
 
@@ -69,11 +69,11 @@ For `makeCounter`, the returned closure:
 +---------------------+----------------------------------+
 ```
 
-## 3. FNCS Layer Implementation
+## 3. CCS Layer Implementation
 
 ### 3.1 Type Definitions
 
-**File**: `~/repos/fsnative/src/Compiler/Checking.Native/SemanticGraph.fs`
+**File**: `~/repos/clef/src/Compiler/Checking.Native/SemanticGraph.fs`
 
 ```fsharp
 /// Information about a captured variable
@@ -95,7 +95,7 @@ type SemanticKind =
 
 ### 3.2 Capture Analysis Algorithm
 
-**File**: `~/repos/fsnative/src/Compiler/Checking.Native/Expressions/Applications.fs`
+**File**: `~/repos/clef/src/Compiler/Checking.Native/Expressions/Applications.fs`
 
 The `checkLambda` function computes captures during type checking:
 
@@ -183,7 +183,7 @@ builder.Create(
 
 ### 3.6 Traversal Updates
 
-**File**: `~/repos/fsnative/src/Compiler/Checking.Native/SemanticGraph.fs`
+**File**: `~/repos/clef/src/Compiler/Checking.Native/SemanticGraph.fs`
 
 The `foldWithSCFRegions` function must walk Lambda parameter PatternBindings before the body region:
 
@@ -200,7 +200,7 @@ The `foldWithSCFRegions` function must walk Lambda parameter PatternBindings bef
     state
 ```
 
-## 4. Firefly/Alex Layer Implementation
+## 4. Composer/Alex Layer Implementation
 
 ### 4.1 SSA Assignment
 
@@ -337,7 +337,7 @@ llvm.func @lambda_impl(%env: !llvm.ptr) -> i32 {
 
 ### 4.6 PatternBinding Handler Update
 
-**File**: `src/Alex/Traversal/FNCSTransfer.fs`
+**File**: `src/Alex/Traversal/CCSTransfer.fs`
 
 Lambda parameter PatternBindings need special handling - they define bindings but don't have values from the outer scope:
 
@@ -421,9 +421,9 @@ llvm.func @counter_increment_impl(%env: !llvm.ptr) -> i32 {
 %result = llvm.call %code_ptr(%env_ptr) : (!llvm.ptr) -> i32
 ```
 
-## 6. fsnative-spec Updates
+## 6. clef-spec Updates
 
-**File**: `~/repos/fsnative-spec/spec/closure-representation.md`
+**File**: `~/repos/clef-spec/spec/closure-representation.md`
 
 Document the normative closure specification:
 - Flat closure requirement
@@ -433,7 +433,7 @@ Document the normative closure specification:
 
 ## 7. Reference Patterns
 
-### 7.1 MLKit (FNCS Reference)
+### 7.1 MLKit (CCS Reference)
 
 MLKit's `ClosExp.sml` shows flat closure construction:
 - All captured values copied into environment record
@@ -524,15 +524,15 @@ ALL samples 01-10 must continue to pass after closure implementation:
 
 ```bash
 for i in 01 02 03 04 05 06 07 08 09 10; do
-  cd ~/repos/Firefly/samples/console/FidelityHelloWorld/${i}_*/
-  ~/repos/Firefly/src/bin/Debug/net10.0/Firefly compile *.fidproj
+  cd ~/repos/Composer/samples/console/FidelityHelloWorld/${i}_*/
+  ~/repos/Composer/src/bin/Debug/net10.0/Composer compile *.fidproj
   ./target/* || echo "FAIL: Sample $i"
 done
 ```
 
 ## 9. Files to Create/Modify
 
-### 9.1 FNCS (~/repos/fsnative/)
+### 9.1 CCS (~/repos/clef/)
 
 | File | Action | Purpose |
 |------|--------|---------|
@@ -541,22 +541,22 @@ done
 | `src/Compiler/Checking.Native/Expressions/Bindings.fs` | MODIFY | Update Lambda creation sites for Children structure |
 | `src/Compiler/Checking.Native/Expressions/Coordinator.fs` | MODIFY | Update any Lambda pattern matches |
 | `src/Compiler/Checking.Native/Expressions/Collections.fs` | MODIFY | Update any Lambda pattern matches |
-| `src/Compiler/Checking.Native/FSharpNativeExpr.fs` | MODIFY | Update Lambda pattern matches for 3-tuple |
+| `src/Compiler/Checking.Native/ClefNativeExpr.fs` | MODIFY | Update Lambda pattern matches for 3-tuple |
 
-### 9.2 Firefly (~/repos/Firefly/)
+### 9.2 Composer (~/repos/Composer/)
 
 | File | Action | Purpose |
 |------|--------|---------|
 | `src/Alex/Preprocessing/SSAAssignment.fs` | MODIFY | Add closure-aware SSA assignments |
-| `src/Alex/Traversal/FNCSTransfer.fs` | MODIFY | Update Lambda pattern match, fix PatternBinding handler |
+| `src/Alex/Traversal/CCSTransfer.fs` | MODIFY | Update Lambda pattern match, fix PatternBinding handler |
 | `src/Alex/Witnesses/LambdaWitness.fs` | MODIFY | Implement flat closure MLIR emission |
 | `src/Alex/XParsec/PSGCombinators.fs` | MODIFY | Update Lambda pattern matching |
-| `src/Firefly.fsproj` | MODIFY | Any new file references |
+| `src/Composer.fsproj` | MODIFY | Any new file references |
 | `docs/Closure_Nanopass_Architecture.md` | UPDATED | Reflects correct architecture |
 
 ## 10. Implementation Checklist
 
-### Phase 1: FNCS Changes (COMPLETE)
+### Phase 1: CCS Changes (COMPLETE)
 - [x] Define CaptureInfo type in SemanticGraph.fs
 - [x] Update SemanticKind.Lambda to 3-tuple with captures
 - [x] Implement collectVarRefs helper in Applications.fs
@@ -564,10 +564,10 @@ done
 - [x] Fix unit-parameterized lambda types (`fun () -> ...`)
 - [x] Fix Lambda Children to include parameter PatternBindings
 - [x] Update Lambda traversal in foldWithSCFRegions
-- [x] Update all Lambda pattern matches in FNCS
+- [x] Update all Lambda pattern matches in CCS
 
-### Phase 2: Firefly Basic Support (COMPLETE)
-- [x] Update Lambda pattern matches in FNCSTransfer.fs
+### Phase 2: Composer Basic Support (COMPLETE)
+- [x] Update Lambda pattern matches in CCSTransfer.fs
 - [x] Update Lambda pattern matches in PSGCombinators.fs
 - [x] Fix PatternBinding handler for Lambda parameters
 - [x] Verify samples 01-10 still pass

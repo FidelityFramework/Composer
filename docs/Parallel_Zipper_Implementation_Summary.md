@@ -2,7 +2,7 @@
 
 **Date**: January 27, 2026
 **Status**: Architecture Implemented - Ready for Integration
-**Pattern**: Baker Fan-Out/Fold-In (Proven in FNCS)
+**Pattern**: Baker Fan-Out/Fold-In (Proven in CCS)
 
 ---
 
@@ -390,7 +390,7 @@ src/MiddleEnd/Alex/Traversal/
 Based on:
 - LLVM function-level parallelism results
 - MLIR PassManager threading results
-- Baker parallel recipe elaboration (FNCS)
+- Baker parallel recipe elaboration (CCS)
 
 ---
 
@@ -429,7 +429,7 @@ Based on:
 
 | Aspect | Triton | Alex Implementation |
 |--------|--------|---------------------|
-| **Threading** | MLIR context threading | F# Array.Parallel |
+| **Threading** | MLIR context threading | Clef Array.Parallel |
 | **Granularity** | Function-level | Function-level ✅ |
 | **Mutation** | In-place with locks | Immutable PSG, fresh accumulators |
 | **Merge** | No merge (in-place) | Associative fold |

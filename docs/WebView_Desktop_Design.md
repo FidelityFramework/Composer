@@ -21,7 +21,7 @@ webview_error_t webview_bind(
 );
 ```
 
-Firefly-compiled code must provide a function matching this signature. Two approaches are viable:
+Composer-compiled code must provide a function matching this signature. Two approaches are viable:
 
 ### Approach A: C Shim (Pragmatic)
 
@@ -58,7 +58,7 @@ let fidelity_dispatch (name: nativeint) (id: nativeint) (req: nativeint) : unit 
 ```
 
 **Pros:**
-- Works with current Firefly capabilities
+- Works with current Composer capabilities
 - Minimal C code (~20 lines)
 - Well-understood pattern
 
@@ -67,9 +67,9 @@ let fidelity_dispatch (name: nativeint) (id: nativeint) (req: nativeint) : unit 
 - Additional linkage complexity
 - Not pure Fidelity
 
-### Approach B: Firefly Function Export
+### Approach B: Composer Function Export
 
-Extend Firefly to export functions with C calling convention:
+Extend Composer to export functions with C calling convention:
 
 ```fsharp
 // Hypothetical syntax
@@ -79,10 +79,10 @@ let myCallback (id: nativeint) (req: nativeint) (arg: nativeint) : unit =
     ()
 ```
 
-Firefly generates:
+Composer generates:
 ```llvm
 define void @my_callback(ptr %id, ptr %req, ptr %arg) {
-    ; ... compiled F# body ...
+    ; ... compiled Clef body ...
 }
 ```
 
@@ -94,7 +94,7 @@ Then Platform.Bindings.bindWebview can pass `@my_callback` directly to webview_b
 - Cleaner distribution
 
 **Cons:**
-- Requires Firefly enhancement (export with C linkage)
+- Requires Composer enhancement (export with C linkage)
 - Must handle calling convention correctly
 - More implementation work
 
@@ -154,7 +154,7 @@ Option 3 is most consistent with the stack - same encoding logic on both sides.
 
 ### Schema Sharing
 
-Shared schema defined in F#:
+Shared schema defined in Clef:
 
 ```fsharp
 // Shared/Messages.fs
@@ -175,7 +175,7 @@ let requestSchema = BAREWire.schema<Request>
 let responseSchema = BAREWire.schema<Response>
 ```
 
-Frontend (Fable-compiled) and backend (Firefly-compiled) use the same types and schemas.
+Frontend (Fable-compiled) and backend (Composer-compiled) use the same types and schemas.
 
 ### Base64 Utilities
 

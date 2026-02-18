@@ -1,6 +1,6 @@
 /// MLIRGeneration - MiddleEnd orchestration layer
 ///
-/// Firefly Pipeline Context:
+/// Composer Pipeline Context:
 ///   FrontEnd (FNCS) → PSG → MiddleEnd → MLIR text → BackEnd (mliropt/LLVM)
 ///
 /// This module is the PUBLIC API for the MiddleEnd. It orchestrates:
