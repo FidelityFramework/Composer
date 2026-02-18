@@ -13,9 +13,9 @@
 /// Design authority: "Managed Mutability" blog post — EscapeKind DU, four components.
 module PSGElaboration.EscapeAnalysis
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types

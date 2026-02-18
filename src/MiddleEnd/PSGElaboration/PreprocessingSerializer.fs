@@ -16,10 +16,10 @@ module PSGElaboration.PreprocessingSerializer
 
 open System.IO
 open System.Text.Json
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
-open FSharp.Native.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open PSGElaboration.Coeffects
 open PSGElaboration.SSAAssignment
 open PSGElaboration.MutabilityAnalysis

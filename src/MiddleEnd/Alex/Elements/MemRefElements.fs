@@ -16,7 +16,7 @@ open Alex.XParsec.PSGCombinators
 open Alex.Dialects.Core.Types
 open Alex.CodeGeneration.TypeMapping
 open Alex.Traversal.TransferTypes
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
 // All Elements use XParsec state for platform/type context
 

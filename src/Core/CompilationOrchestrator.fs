@@ -8,13 +8,13 @@ module Core.CompilationOrchestrator
 
 open System.IO
 open System.Reflection
-open FSharp.Native.Compiler.Project
+open Clef.Compiler.Project
 
 open MiddleEnd.MLIROpt.Lowering
 open BackEnd.LLVM.Codegen
 open Core.Timing
 open Core.CompilerConfig
-open FSharp.Native.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
+open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -159,7 +159,7 @@ let compileProject (options: CompilationOptions) : int =
                 // Write MLIR to file
                 let mlirPath =
                     match ctx.IntermediatesDir with
-                    | Some dir -> Path.Combine(dir, artifactFilename FSharp.Native.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.ArtifactId.Mlir)
+                    | Some dir -> Path.Combine(dir, artifactFilename Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.ArtifactId.Mlir)
                     | None -> Path.Combine(Path.GetTempPath(), ctx.ProjectName + ".mlir")
                 File.WriteAllText(mlirPath, mlirText)
 
@@ -170,7 +170,7 @@ let compileProject (options: CompilationOptions) : int =
                     // Phase 3: BackEnd - Lower MLIR to LLVM IR
                     let llPath =
                         match ctx.IntermediatesDir with
-                        | Some dir -> Path.Combine(dir, artifactFilename FSharp.Native.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.ArtifactId.Llvm)
+                        | Some dir -> Path.Combine(dir, artifactFilename Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.ArtifactId.Llvm)
                         | None -> Path.Combine(Path.GetTempPath(), ctx.ProjectName + ".ll")
 
                     runMLIRLowering mlirPath llPath

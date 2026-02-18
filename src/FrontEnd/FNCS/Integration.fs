@@ -14,15 +14,15 @@
 module Core.FNCS.Integration
 
 // Re-export FNCS types for use throughout Composer
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Traversal
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Diagnostics
-open FSharp.Native.Compiler.NativeService
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.PSGSaturation.SemanticGraph.Traversal
+open Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics
+open Clef.Compiler.NativeService
 // Baker - Post-construction semantic enrichment (peer to NativeTypedTree)
 // ModuleClassifications now computed lazily on SemanticGraph itself
-module BakerPipeline = FSharp.Native.Compiler.Baker.Pipeline
+module BakerPipeline = Clef.Compiler.Baker.Pipeline
 
 /// Type aliases for cleaner code
 type FNCSNode = SemanticNode
@@ -207,7 +207,7 @@ type FNCSParseResult = ParseResult
 type FNCSParseAndCheckResult = ParseAndCheckResult
 
 /// Default parse options (from NativeService module)
-let defaultFNCSParseOptions : FNCSParseOptions = FSharp.Native.Compiler.NativeService.defaultParseOptions
+let defaultFNCSParseOptions : FNCSParseOptions = Clef.Compiler.NativeService.defaultParseOptions
 
 /// Parse a source string with default options
 let parseSource (source: string) (fileName: string) : FNCSParseResult =
@@ -224,7 +224,7 @@ let parseAndCheckSource (source: string) (fileName: string) : FNCSParseAndCheckR
 /// Check multiple parsed inputs together with shared type environment
 /// This is the correct way to compile multi-file projects - type abbreviations,
 /// bindings, etc. from earlier files are visible when checking later files.
-let checkMultipleInputs (inputs: FSharp.Native.Compiler.Syntax.ParsedInput list) : FNCSCheckResult =
+let checkMultipleInputs (inputs: Clef.Compiler.Syntax.ParsedInput list) : FNCSCheckResult =
     checkParsedInputs inputs
 
 /// Check if parse result succeeded
@@ -234,7 +234,7 @@ let parseSucceeded (result: FNCSParseResult) : bool =
     | ParseError _ -> false
 
 /// Get parsed input from successful parse
-let parsedInput (result: FNCSParseResult) : FSharp.Native.Compiler.Syntax.ParsedInput option =
+let parsedInput (result: FNCSParseResult) : Clef.Compiler.Syntax.ParsedInput option =
     match result with
     | ParseSuccess input -> Some input
     | ParseError _ -> None

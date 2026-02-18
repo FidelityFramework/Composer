@@ -4,7 +4,7 @@
 /// their arguments for quotation-based MLIR generation.
 module PSGElaboration.PlatformPatterns
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open PSGElaboration.PlatformConfig
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -8,7 +8,7 @@
 /// All other nodes return WitnessOutput.skip for other nanopasses to handle.
 module Alex.Witnesses.IntrinsicWitness
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 

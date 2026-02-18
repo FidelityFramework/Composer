@@ -1,6 +1,6 @@
 module Alex.Pipeline.CompilationTypes
 
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.NativeTypes
 open System
 
 // ===================================================================

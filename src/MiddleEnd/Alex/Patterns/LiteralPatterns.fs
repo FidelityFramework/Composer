@@ -15,7 +15,7 @@ open Alex.Elements.MLIRAtomics  // pConstI, pConstF, pUndef, pInsertValue
 open Alex.Elements.MemRefElements  // pMemRefGetGlobal, pExtractBasePtr, pMemRefDim
 open Alex.Elements.IndexElements  // pIndexCastS
 open Alex.CodeGeneration.TypeMapping
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.NativeTypes
 
 // ═══════════════════════════════════════════════════════════
 // XPARSEC HELPERS

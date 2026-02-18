@@ -19,7 +19,7 @@
 module Alex.Pipeline.MLIRNanopass
 
 open Alex.Dialects.Core.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open PSGElaboration.PlatformConfig
 
 // ═══════════════════════════════════════════════════════════════════════════

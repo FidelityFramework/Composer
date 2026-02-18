@@ -16,7 +16,7 @@ open Alex.Elements.MemRefElements
 open Alex.Elements.ArithElements
 open Alex.Elements.FuncElements
 open Alex.CodeGeneration.TypeMapping
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.NativeTypes
 
 // ═══════════════════════════════════════════════════════════
 // HELPERS

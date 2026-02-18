@@ -17,8 +17,8 @@ open Alex.Traversal.TransferTypes  // TransferResult, TRValue, TRVoid
 open Alex.Elements.MLIRAtomics  // pExtractValue, pConstI
 open Alex.Elements.ArithElements  // pCmpI
 open Alex.Patterns.MemoryPatterns  // pDUCase - DU construction foundation
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
 // ═══════════════════════════════════════════════════════════
 // OPTION PATTERNS

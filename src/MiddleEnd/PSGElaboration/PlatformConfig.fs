@@ -205,8 +205,8 @@ type PlatformModel = {
     /// Recognition function (PSG graph + node → platform operation)
     /// Analogous to Farscape's MemoryModel.Recognize
     /// Takes both graph (for traversal) and node (to recognize)
-    Recognize: FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.SemanticGraph ->
-               FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types.SemanticNode ->
+    Recognize: Clef.Compiler.PSGSaturation.SemanticGraph.Types.SemanticGraph ->
+               Clef.Compiler.PSGSaturation.SemanticGraph.Types.SemanticNode ->
                PlatformOperation option
 
     /// Whether _start wrapper is needed (freestanding mode)
@@ -214,7 +214,7 @@ type PlatformModel = {
 }
 
 /// Build PlatformResolutionResult from FNCS PlatformContext
-let fromPlatformContext (ctx: FSharp.Native.Compiler.NativeTypedTree.NativeTypes.PlatformContext) (mode: RuntimeMode) : PlatformResolutionResult =
+let fromPlatformContext (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext) (mode: RuntimeMode) : PlatformResolutionResult =
     // Parse platform ID to extract OS and architecture
     // Format is typically "Linux_x86_64", "Windows_ARM64", etc.
     let (os, arch) =

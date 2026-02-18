@@ -25,9 +25,9 @@
 ///    - Shared blocks: check, yield, done
 module PSGElaboration.YieldStateIndices
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.NativeTypedTree.NativeTypes
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERNAL STATE TRACKING

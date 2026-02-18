@@ -12,8 +12,8 @@
 module MiddleEnd.MLIRGeneration
 
 open System.IO
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
 open Alex.Dialects.Core.Serialize
 open Alex.Traversal.TransferTypes

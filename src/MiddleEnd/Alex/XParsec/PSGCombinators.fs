@@ -18,9 +18,9 @@ module Alex.XParsec.PSGCombinators
 open XParsec
 open XParsec.Parsers     // preturn, fail, getUserState, setUserState, updateUserState
 open XParsec.Combinators // >>=, |>>, .>>, >>., <|>, parser { }
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Traversal.PSGZipper
 open Alex.Dialects.Core.Types
 open PSGElaboration.PlatformConfig
@@ -314,7 +314,7 @@ let pGetApplicationArgs : PSGParser<NodeId list> =
     }
 
 /// Match a Lambda node (params are name*type*nodeId tuples for SSA assignment)
-let pLambda : PSGParser<(string * FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId> =
+let pLambda : PSGParser<(string * Clef.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId> =
     parser {
         let! node = getCurrentNode
         match node.Kind with
@@ -324,7 +324,7 @@ let pLambda : PSGParser<(string * FSharp.Native.Compiler.NativeTypedTree.NativeT
 
 /// Match a Lambda node with captures
 /// Returns: (params, bodyId, captures)
-let pLambdaWithCaptures : PSGParser<(string * FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId * CaptureInfo list> =
+let pLambdaWithCaptures : PSGParser<(string * Clef.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId * CaptureInfo list> =
     parser {
         let! node = getCurrentNode
         match node.Kind with
@@ -335,7 +335,7 @@ let pLambdaWithCaptures : PSGParser<(string * FSharp.Native.Compiler.NativeTyped
 /// Match a Lambda node with parent Binding name
 /// Composes: pLambdaWithCaptures + zipper navigation + pBinding
 /// Returns: (bindingName, params, bodyId, captures)
-let pLambdaWithBinding : PSGParser<string * (string * FSharp.Native.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId * CaptureInfo list> =
+let pLambdaWithBinding : PSGParser<string * (string * Clef.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId * CaptureInfo list> =
     parser {
         // Get Lambda data from current node
         let! (params', bodyId, captures) = pLambdaWithCaptures

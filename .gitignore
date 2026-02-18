@@ -70,6 +70,8 @@ src/.claude/settings.local.json
 .serena/
 .azuredevops/
 .vscode/
+.config/
+.devcontainer/
 **/build**
 **/target
 **/helpers

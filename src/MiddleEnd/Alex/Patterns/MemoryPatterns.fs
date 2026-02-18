@@ -4,7 +4,7 @@
 /// Patterns compose Elements (internal) into semantic memory operations.
 module Alex.Patterns.MemoryPatterns
 
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId - MUST be before TransferTypes
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId - MUST be before TransferTypes
 open XParsec
 open XParsec.Parsers     // fail, preturn
 open XParsec.Combinators // parser { }
@@ -18,8 +18,8 @@ open Alex.Elements.ArithElements
 open Alex.Elements.IndexElements
 open Alex.Elements.FuncElements
 open Alex.CodeGeneration.TypeMapping
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open PSGElaboration.EscapeAnalysis
 
 // ═══════════════════════════════════════════════════════════

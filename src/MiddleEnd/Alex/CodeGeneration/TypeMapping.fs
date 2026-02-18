@@ -3,13 +3,13 @@
 /// Maps FNCS native types to their MLIR representations.
 /// Uses structured MLIRType from Alex.Dialects.Core.Types.
 ///
-/// FNCS-native: Uses NativeType from FSharp.Native.Compiler.NativeTypedTree
+/// FNCS-native: Uses NativeType from Clef.Compiler.NativeTypedTree
 module Alex.CodeGeneration.TypeMapping
 
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
-open FSharp.Native.Compiler.NativeTypedTree.UnionFind
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.UnionFind
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
 
 // ═══════════════════════════════════════════════════════════════════════════

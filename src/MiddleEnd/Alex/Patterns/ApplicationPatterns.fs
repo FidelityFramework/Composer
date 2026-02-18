@@ -7,8 +7,8 @@
 /// Patterns extract SSAs monadically via getNodeSSAs - witnesses pass NodeIds, not SSAs.
 module Alex.Patterns.ApplicationPatterns
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators

@@ -11,10 +11,10 @@
 /// - Knows MLIR expansion costs: one PSG node may need multiple SSAs
 module PSGElaboration.SSAAssignment
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes
-open FSharp.Native.Compiler.NativeTypedTree.UnionFind
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.UnionFind
 open Alex.Dialects.Core.Types
 open Alex.CodeGeneration.TypeMapping
 open PSGElaboration.Coeffects

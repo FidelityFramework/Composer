@@ -6,7 +6,7 @@
 /// NANOPASS: Handles String.* and NativeStr.* intrinsic applications.
 module Alex.Witnesses.StringIntrinsicWitness
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators

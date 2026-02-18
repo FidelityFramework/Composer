@@ -4,7 +4,7 @@
 /// Wraps FNCS project loading and type checking
 module FrontEnd.ProjectLoader
 
-open FSharp.Native.Compiler.Project
+open Clef.Compiler.Project
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC API

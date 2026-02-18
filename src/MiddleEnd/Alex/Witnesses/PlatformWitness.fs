@@ -6,7 +6,7 @@
 /// NANOPASS: Handles Sys.write and Sys.read intrinsic applications.
 module Alex.Witnesses.PlatformWitness
 
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators

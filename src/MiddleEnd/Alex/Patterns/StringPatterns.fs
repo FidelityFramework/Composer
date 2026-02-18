@@ -20,9 +20,9 @@ open Alex.Elements.MLIRAtomics
 open Alex.Elements.IndexElements
 open Alex.Elements.SCFElements
 open Alex.CodeGeneration.TypeMapping
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Core
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad, pDetectMemRefAddFusion
 
 // ═══════════════════════════════════════════════════════════

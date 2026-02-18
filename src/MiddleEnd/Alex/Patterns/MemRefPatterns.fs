@@ -7,7 +7,7 @@
 /// This enforces composition - witnesses cannot directly emit Element operations.
 module Alex.Patterns.MemRefPatterns
 
-open FSharp.Native.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators

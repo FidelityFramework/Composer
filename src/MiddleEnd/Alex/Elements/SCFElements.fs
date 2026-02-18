@@ -9,7 +9,7 @@ open XParsec.Parsers     // getUserState
 open XParsec.Combinators // parser { }
 open Alex.XParsec.PSGCombinators
 open Alex.Dialects.Core.Types
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
 // All Elements use XParsec state for platform/type context
 

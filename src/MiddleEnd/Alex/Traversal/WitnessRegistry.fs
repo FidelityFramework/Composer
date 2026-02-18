@@ -13,7 +13,7 @@ module Alex.Traversal.WitnessRegistry
 
 open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.TransferTypes
-open FSharp.Native.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITNESS MODULE IMPORTS
