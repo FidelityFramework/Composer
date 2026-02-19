@@ -167,6 +167,11 @@ let getGraph : PSGParser<SemanticGraph> =
 let getPlatform : PSGParser<PlatformResolutionResult> =
     getUserState |>> (fun state -> state.Platform)
 
+/// Get target platform (CPU/FPGA/GPU/MCU/NPU) from coeffects
+/// Patterns use this to select which Elements to invoke (codata-dependent elision)
+let getTargetPlatform : PSGParser<Core.Types.Dialects.TargetPlatform> =
+    getUserState |>> (fun state -> state.Coeffects.TargetPlatform)
+
 /// Set current node in state
 let setCurrentNode (node: SemanticNode) : PSGParser<unit> =
     updateUserState (fun state -> { state with Current = node })

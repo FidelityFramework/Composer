@@ -90,6 +90,9 @@
       <Compile Include="MiddleEnd/Alex/Elements/FuncElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/IndexElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/VectorElements.fs" />
+      <Compile Include="MiddleEnd/Alex/Elements/CombElements.fs" />
+      <Compile Include="MiddleEnd/Alex/Elements/HWElements.fs" />
+      <Compile Include="MiddleEnd/Alex/Elements/SeqElements.fs" />
 
       <!-- Alex Elision Patterns - Composable MLIR templates (public, XParsec-based) -->
       <Compile Include="MiddleEnd/Alex/Patterns/MemoryPatterns.fs" />
@@ -147,6 +150,8 @@
       <Compile Include="BackEnd/LLVM/Pipeline.fs" />
 
       <!-- BackEnd - CIRCT -->
+      <Compile Include="BackEnd/CIRCT/Lowering.fs" />
+
       <Compile Include="BackEnd/CIRCT/Pipeline.fs" />
 
       <!-- Core - Pipeline Resolution (AFTER backends, BEFORE orchestrator) -->

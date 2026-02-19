@@ -159,6 +159,75 @@ let arithOpToString (op: ArithOp) : string =
     | ShRSI (result, lhs, rhs, ty) ->
         sprintf "%s = arith.shrsi %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
 
+/// Serialize CombOp to CIRCT MLIR text (comb dialect)
+let combOpToString (op: CombOp) : string =
+    match op with
+    | CombAdd (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.add %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombSub (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.sub %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombMul (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.mul %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombDivS (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.divs %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombDivU (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.divu %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombMod (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.mods %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombAnd (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.and %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombOr (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.or %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombXor (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.xor %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombShl (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.shl %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombShrU (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.shru %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombShrS (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.shrs %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombICmp (result, pred, lhs, rhs, ty) ->
+        sprintf "%s = comb.icmp %s %s, %s : %s" (ssaToString result) (icmpPredToString pred) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | CombMux (result, cond, trueVal, falseVal, ty) ->
+        sprintf "%s = comb.mux %s, %s, %s : %s" (ssaToString result) (ssaToString cond) (ssaToString trueVal) (ssaToString falseVal) (typeToString ty)
+
+/// Serialize HWOp to CIRCT MLIR text (hw dialect)
+/// Note: HWModule body serialization delegates to opToString (defined later),
+/// which handles all MLIROp cases. A non-CIRCT op in an hw.module body is a
+/// pipeline error — it means a CPU-dialect op leaked into FPGA output.
+let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
+    match op with
+    | HWModule (name, inputs, outputs, body) ->
+        let inputsStr = inputs |> List.map (fun (n, ty) -> sprintf "in %%%s: %s" n (typeToString ty)) |> String.concat ", "
+        let outputsStr = outputs |> List.map (fun (n, ty) -> sprintf "out %s: %s" n (typeToString ty)) |> String.concat ", "
+        let portsStr =
+            match inputs, outputs with
+            | [], [] -> ""
+            | _, [] -> inputsStr
+            | [], _ -> outputsStr
+            | _, _ -> sprintf "%s, %s" inputsStr outputsStr
+        let bodyStr = body |> List.map opToString |> String.concat "\n    "
+        sprintf "hw.module @%s(%s) {\n    %s\n}" name portsStr bodyStr
+    | HWOutput vals ->
+        match vals with
+        | [] -> "hw.output"
+        | _ ->
+            let valsStr = vals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
+            let typesStr = vals |> List.map (fun (_, ty) -> typeToString ty) |> String.concat ", "
+            sprintf "hw.output %s : %s" valsStr typesStr
+
+/// Serialize SeqOp to CIRCT MLIR text (seq dialect)
+let seqOpToString (op: SeqOp) : string =
+    match op with
+    | SeqCompreg (result, input, clk, resetOpt, ty) ->
+        match resetOpt with
+        | Some resetVal ->
+            sprintf "%s = seq.compreg %s, %s reset %s : %s"
+                (ssaToString result) (ssaToString input) (ssaToString clk) (ssaToString resetVal) (typeToString ty)
+        | None ->
+            sprintf "%s = seq.compreg %s, %s : %s"
+                (ssaToString result) (ssaToString input) (ssaToString clk) (typeToString ty)
+
 /// Serialize MemRefOp to MLIR text
 let memrefOpToString (op: MemRefOp) : string =
     match op with
@@ -330,6 +399,9 @@ let rec opToString (op: MLIROp) : string =
         | SCFOp.Condition (cond, args) ->
             let argsStr = args |> List.map ssaToString |> String.concat ", "
             sprintf "scf.condition(%s) %s" (ssaToString cond) argsStr
+    | MLIROp.CombOp cop -> combOpToString cop
+    | MLIROp.HWOp hop -> hwOpToString opToString hop
+    | MLIROp.SeqOp sop -> seqOpToString sop
     | _ ->
         // For now, return placeholder for unimplemented operations (CFOp, VectorOp, Block, Region)
         sprintf "// TODO: Serialize %A" op

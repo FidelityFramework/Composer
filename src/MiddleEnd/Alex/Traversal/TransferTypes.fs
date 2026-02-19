@@ -49,6 +49,9 @@ type TransferCoeffects = {
     EscapeAnalysis: EscapeAnalysis.EscapeAnalysisResult
     CurryFlattening: CurryFlat.CurryFlatteningResult
     EntryPointLambdaIds: Set<int>
+    /// Target platform — determines which MLIR dialects Patterns emit
+    /// CPU → func/arith/scf, FPGA → hw/comb/seq (codata-dependent elision)
+    TargetPlatform: Core.Types.Dialects.TargetPlatform
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

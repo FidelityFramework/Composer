@@ -15,7 +15,9 @@ open Alex.Elements.MLIRAtomics
 open Alex.Elements.MemRefElements
 open Alex.Elements.ArithElements
 open Alex.Elements.FuncElements
+open Alex.Elements.HWElements   // pHWModule, pHWOutput (FPGA function wrapping)
 open Alex.CodeGeneration.TypeMapping
+open Core.Types.Dialects        // TargetPlatform (codata-dependent elision)
 open Clef.Compiler.NativeTypedTree.NativeTypes
 
 // ═══════════════════════════════════════════════════════════
@@ -62,14 +64,37 @@ let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * S
 // ═══════════════════════════════════════════════════════════
 
 /// Create function definition (func.func for named calls, llvm.func for closures)
-/// isClosure: true for llvm.func (address taken), false for func.func (named calls)
-let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (retTy: MLIRType)
-                 (body: MLIROp list) (isClosure: bool) : PSGParser<MLIROp> =
+/// Coeffect-aware function definition wrapping.
+/// Observes TargetPlatform to elide to func.func (CPU) or hw.module (FPGA).
+/// Handles the function terminator internally: func.return (CPU) or hw.output (FPGA).
+///
+/// `paramNames`: optional port names for hw.module (defaults to "in0", "in1", ...)
+/// `returnSSA`: the SSA of the return value (None for void/unit functions)
+let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: string list option)
+                 (retTy: MLIRType) (bodyOps: MLIROp list) (returnSSA: SSA option)
+                 : PSGParser<MLIROp> =
     parser {
-        // For now, always use func.func
-        // The distinction between func.func and llvm.func will be handled by the witness
-        let visibility = if name = "main" then FuncVisibility.Public else FuncVisibility.Private
-        return! pFuncDef name params' retTy body visibility
+        let! targetPlatform = getTargetPlatform
+        match targetPlatform with
+        | FPGA ->
+            // hw.module with named input/output ports
+            let names = paramNames |> Option.defaultValue (params' |> List.mapi (fun i _ -> sprintf "in%d" i))
+            let inputs = List.map2 (fun pname (_, ty) -> (pname, ty)) names params'
+            let outputs =
+                match returnSSA with
+                | Some _ -> [("result", retTy)]
+                | None -> []
+            let outputOp = MLIROp.HWOp (HWOp.HWOutput (match returnSSA with
+                                                        | Some ssa -> [(ssa, retTy)]
+                                                        | None -> []))
+            let body = bodyOps @ [outputOp]
+            return! pHWModule name inputs outputs body
+        | _ ->
+            // func.func with positional parameters
+            let visibility = if name = "main" then FuncVisibility.Public else FuncVisibility.Private
+            let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some retTy))
+            let body = bodyOps @ [returnOp]
+            return! pFuncDef name params' retTy body visibility
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -184,41 +209,7 @@ let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType
         return extractCodeOps @ List.concat extractCaptureOpLists @ [callOp]
     }
 
-// ═══════════════════════════════════════════════════════════
-// LAMBDA CONSTRUCTION
-// ═══════════════════════════════════════════════════════════
 
-/// Build simple lambda (no captures) - just creates function definition
-/// Returns: (topLevelOps, inlineOps, resultSSA)
-/// - topLevelOps: function definition
-/// - inlineOps: empty (no struct to construct)
-/// - resultSSA: function reference
-let pBuildSimpleLambda (name: string) (params': (SSA * MLIRType) list) (retTy: MLIRType)
-                       (bodyOps: MLIROp list) (funcRefSSA: SSA) : PSGParser<MLIROp list * MLIROp list * SSA> =
-    parser {
-        let! funcDefOp = pFunctionDef name params' retTy bodyOps false
-        return [funcDefOp], [], funcRefSSA
-    }
-
-/// Build closure lambda (with captures) - creates function definition + closure struct
-/// Returns: (topLevelOps, inlineOps, resultSSA)
-/// - topLevelOps: function definition
-/// - inlineOps: closure struct construction (via pFlatClosure)
-/// - resultSSA: closure struct value
-let pBuildClosureLambda (name: string) (params': (SSA * MLIRType) list) (retTy: MLIRType)
-                        (bodyOps: MLIROp list) (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list)
-                        (ssas: SSA list) : PSGParser<MLIROp list * MLIROp list * SSA> =
-    parser {
-        // Create function definition (with env_ptr as first parameter for captures)
-        let envPtrParam = Arg 0, TIndex
-        let allParams = envPtrParam :: params'
-        let! funcDefOp = pFunctionDef name allParams retTy bodyOps true
-
-        // Create closure struct (delegates to pFlatClosure)
-        let! structOps = pFlatClosure codePtr codePtrTy captures ssas
-
-        return [funcDefOp], structOps, List.last ssas
-    }
 
 // ═══════════════════════════════════════════════════════════
 // LAZY PATTERNS (PRD-14)

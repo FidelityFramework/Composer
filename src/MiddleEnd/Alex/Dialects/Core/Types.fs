@@ -254,6 +254,33 @@ type VectorOp =
     | ConstantMask of SSA * int list                                        // result, maskDimSizes
     | Print of SSA * string option                                          // source, punctuation
 
+/// CIRCT Combinational Logic Dialect (pure, stateless operations)
+/// Maps to hw/comb dialect — synthesizable combinational logic for FPGA targets
+type CombOp =
+    // Integer arithmetic (combinational — no clock, no state)
+    | CombAdd of SSA * SSA * SSA * MLIRType                    // result, lhs, rhs, type
+    | CombSub of SSA * SSA * SSA * MLIRType
+    | CombMul of SSA * SSA * SSA * MLIRType
+    | CombDivS of SSA * SSA * SSA * MLIRType                   // signed
+    | CombDivU of SSA * SSA * SSA * MLIRType                   // unsigned
+    | CombMod of SSA * SSA * SSA * MLIRType
+    // Bitwise
+    | CombAnd of SSA * SSA * SSA * MLIRType
+    | CombOr of SSA * SSA * SSA * MLIRType
+    | CombXor of SSA * SSA * SSA * MLIRType
+    | CombShl of SSA * SSA * SSA * MLIRType
+    | CombShrU of SSA * SSA * SSA * MLIRType
+    | CombShrS of SSA * SSA * SSA * MLIRType
+    // Comparison
+    | CombICmp of SSA * ICmpPred * SSA * SSA * MLIRType        // result, pred, lhs, rhs, type
+    // Multiplexer (if/else → combinational select)
+    | CombMux of SSA * SSA * SSA * SSA * MLIRType              // result, cond, trueVal, falseVal, type
+
+/// CIRCT Sequential Logic Dialect (clocked state, registers)
+/// Maps to seq dialect — flip-flops and clocked elements for FPGA targets
+type SeqOp =
+    | SeqCompreg of SSA * SSA * SSA * SSA option * MLIRType    // result, input, clk, resetValue, type
+
 /// Top-level MLIR operation (all dialects)
 /// Single-phase execution with nested accumulators - no scope markers needed
 type MLIROp =
@@ -268,6 +295,10 @@ type MLIROp =
     | Region of MLIROp list                                         // blocks
     // Module-level declarations (backend-agnostic)
     | GlobalString of string * string * int                         // name, content, byteLength
+    // CIRCT hardware dialects (FPGA targets)
+    | CombOp of CombOp
+    | HWOp of HWOp
+    | SeqOp of SeqOp
 
 /// Structured Control Flow (SCF) dialect operations
 and SCFOp =
@@ -296,3 +327,11 @@ and FuncOp =
     | FuncConstant of SSA * string * MLIRType                                              // result, funcName, funcType
     // Return
     | Return of SSA option * MLIRType option                                               // value, type
+
+/// CIRCT Hardware Construction Dialect (structural, module-level)
+/// Maps to hw dialect — hardware modules, instances, and ports for FPGA targets
+and HWOp =
+    | HWModule of string * (string * MLIRType) list * (string * MLIRType) list * MLIROp list
+      // name, inputs (name*type), outputs (name*type), body
+    | HWOutput of (SSA * MLIRType) list
+      // output port values

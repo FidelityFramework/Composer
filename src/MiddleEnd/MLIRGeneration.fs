@@ -29,6 +29,7 @@ let generate
     (graph: SemanticGraph)
     (platformCtx: PlatformContext)
     (deploymentMode: Core.Types.Dialects.DeploymentMode)
+    (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
     : Result<string, string> =
 
@@ -88,6 +89,7 @@ let generate
         EscapeAnalysis = escapeAnalysis
         CurryFlattening = curryFlatteningResult
         EntryPointLambdaIds = ssaAssignment.EntryPointLambdas
+        TargetPlatform = targetPlatform
     }
 
     // Execute Alex transfer (parallel nanopasses)

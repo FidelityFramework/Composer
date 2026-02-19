@@ -39,8 +39,8 @@ let transfer
     (intermediatesDir: string option)
     : Result<MLIROp list * MLIROp list, string> =
 
-    // Initialize witness registry (populates all migrated nanopasses)
-    initializeRegistry()
+    // Initialize witness registry — TargetPlatform gates which witnesses are registered
+    initializeRegistry(coeffects.TargetPlatform)
 
     // Check entry point exists
     match SemanticGraph.tryGetNode entryNodeId graph with

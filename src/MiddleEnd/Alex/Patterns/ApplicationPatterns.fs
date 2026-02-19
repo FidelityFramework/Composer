@@ -17,7 +17,9 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements  // pFuncCall, pFuncCallIndirect
 open Alex.Elements.ArithElements // Arithmetic elements for wrapper patterns
+open Alex.Elements.CombElements  // FPGA combinational elements (codata-dependent)
 open Alex.Elements.IndexElements // pIndexCastS
+open Core.Types.Dialects         // TargetPlatform
 open Alex.CodeGeneration.TypeMapping
 open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad (monadic TMemRef auto-load)
 
@@ -96,30 +98,51 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
         do! ensure (ssas.Length >= 1) $"pBinaryArithOp: Expected 1 SSA, got {ssas.Length}"
         let resultSSA = ssas.[0]
 
-        // Select Element based on semantic operation AND pulled operand type
+        // Select Element based on target platform, semantic operation, and operand type
+        // This is the codata-dependent elision point: same Pattern, different Elements
+        let! targetPlatform = getTargetPlatform
         let! op =
-            match operation, lhsType with
-            // Type-aware arithmetic: the pulled lhsType determines int vs float
-            | "add", TFloat _ -> pAddF resultSSA lhsSSA rhsSSA lhsType
-            | "add", _ -> pAddI resultSSA lhsSSA rhsSSA lhsType
-            | "sub", TFloat _ -> pSubF resultSSA lhsSSA rhsSSA lhsType
-            | "sub", _ -> pSubI resultSSA lhsSSA rhsSSA lhsType
-            | "mul", TFloat _ -> pMulF resultSSA lhsSSA rhsSSA lhsType
-            | "mul", _ -> pMulI resultSSA lhsSSA rhsSSA lhsType
-            | "div", TFloat _ -> pDivF resultSSA lhsSSA rhsSSA lhsType
-            | "div", _ -> pDivSI resultSSA lhsSSA rhsSSA lhsType
-            | "rem", _ -> pRemSI resultSSA lhsSSA rhsSSA lhsType
-            // Bitwise (always integer)
-            | "andi", _ -> pAndI resultSSA lhsSSA rhsSSA lhsType
-            | "ori", _ -> pOrI resultSSA lhsSSA rhsSSA lhsType
-            | "xori", _ -> pXorI resultSSA lhsSSA rhsSSA lhsType
-            | "shli", _ -> pShLI resultSSA lhsSSA rhsSSA lhsType
-            | "shrui", _ -> pShRUI resultSSA lhsSSA rhsSSA lhsType
-            | "shrsi", _ -> pShRSI resultSSA lhsSSA rhsSSA lhsType
-            // Unsigned integer arithmetic (NTUKind.NTUuint — resolved by pBinaryArithIntrinsic)
-            | "divu", _ -> pDivUI resultSSA lhsSSA rhsSSA lhsType
-            | "remu", _ -> pRemUI resultSSA lhsSSA rhsSSA lhsType
-            | _ -> fail (Message $"Unknown binary arithmetic operation: {operation} on {lhsType}")
+            match targetPlatform with
+            | FPGA ->
+                // FPGA: combinational logic (comb dialect) — no float, integer only
+                match operation with
+                | "add" -> pCombAdd resultSSA lhsSSA rhsSSA lhsType
+                | "sub" -> pCombSub resultSSA lhsSSA rhsSSA lhsType
+                | "mul" -> pCombMul resultSSA lhsSSA rhsSSA lhsType
+                | "div" -> pCombDivS resultSSA lhsSSA rhsSSA lhsType
+                | "rem" -> pCombMod resultSSA lhsSSA rhsSSA lhsType
+                | "andi" -> pCombAnd resultSSA lhsSSA rhsSSA lhsType
+                | "ori" -> pCombOr resultSSA lhsSSA rhsSSA lhsType
+                | "xori" -> pCombXor resultSSA lhsSSA rhsSSA lhsType
+                | "shli" -> pCombShl resultSSA lhsSSA rhsSSA lhsType
+                | "shrui" -> pCombShrU resultSSA lhsSSA rhsSSA lhsType
+                | "shrsi" -> pCombShrS resultSSA lhsSSA rhsSSA lhsType
+                | "divu" -> pCombDivU resultSSA lhsSSA rhsSSA lhsType
+                | _ -> fail (Message $"Unsupported FPGA arithmetic operation: {operation}")
+            | _ ->
+                // CPU/MCU: standard MLIR arithmetic (arith dialect)
+                match operation, lhsType with
+                // Type-aware arithmetic: the pulled lhsType determines int vs float
+                | "add", TFloat _ -> pAddF resultSSA lhsSSA rhsSSA lhsType
+                | "add", _ -> pAddI resultSSA lhsSSA rhsSSA lhsType
+                | "sub", TFloat _ -> pSubF resultSSA lhsSSA rhsSSA lhsType
+                | "sub", _ -> pSubI resultSSA lhsSSA rhsSSA lhsType
+                | "mul", TFloat _ -> pMulF resultSSA lhsSSA rhsSSA lhsType
+                | "mul", _ -> pMulI resultSSA lhsSSA rhsSSA lhsType
+                | "div", TFloat _ -> pDivF resultSSA lhsSSA rhsSSA lhsType
+                | "div", _ -> pDivSI resultSSA lhsSSA rhsSSA lhsType
+                | "rem", _ -> pRemSI resultSSA lhsSSA rhsSSA lhsType
+                // Bitwise (always integer)
+                | "andi", _ -> pAndI resultSSA lhsSSA rhsSSA lhsType
+                | "ori", _ -> pOrI resultSSA lhsSSA rhsSSA lhsType
+                | "xori", _ -> pXorI resultSSA lhsSSA rhsSSA lhsType
+                | "shli", _ -> pShLI resultSSA lhsSSA rhsSSA lhsType
+                | "shrui", _ -> pShRUI resultSSA lhsSSA rhsSSA lhsType
+                | "shrsi", _ -> pShRSI resultSSA lhsSSA rhsSSA lhsType
+                // Unsigned integer arithmetic (NTUKind.NTUuint — resolved by pBinaryArithIntrinsic)
+                | "divu", _ -> pDivUI resultSSA lhsSSA rhsSSA lhsType
+                | "remu", _ -> pRemUI resultSSA lhsSSA rhsSSA lhsType
+                | _ -> fail (Message $"Unknown binary arithmetic operation: {operation} on {lhsType}")
 
         // Infer result type from operand types
         let resultType = lhsType  // Binary ops preserve operand type
@@ -147,37 +170,62 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
         do! ensure (ssas.Length >= 1) $"pComparisonOp: Expected 1 SSA, got {ssas.Length}"
         let resultSSA = ssas.[0]
 
-        // Select Element based on pulled operand type
+        // Codata-dependent elision: TargetPlatform determines which Elements to invoke
+        let! targetPlatform = getTargetPlatform
+
         let! op =
-            match lhsType with
-            | TFloat _ ->
-                let fcmpPred =
-                    match predName with
-                    | "eq" -> FCmpPred.OEq
-                    | "ne" -> FCmpPred.ONe
-                    | "lt" -> FCmpPred.OLt
-                    | "le" -> FCmpPred.OLe
-                    | "gt" -> FCmpPred.OGt
-                    | "ge" -> FCmpPred.OGe
-                    | _ -> failwith $"Unknown float comparison predicate: {predName}"
-                pCmpF resultSSA fcmpPred lhsSSA rhsSSA lhsType
+            match targetPlatform with
+            | FPGA ->
+                // FPGA: combinational comparison — integer only, no float
+                match lhsType with
+                | TFloat _ ->
+                    fail (Message $"FPGA does not support float comparison: {predName}")
+                | _ ->
+                    let icmpPred =
+                        match predName with
+                        | "eq"  -> ICmpPred.Eq
+                        | "ne"  -> ICmpPred.Ne
+                        | "lt"  -> ICmpPred.Slt
+                        | "le"  -> ICmpPred.Sle
+                        | "gt"  -> ICmpPred.Sgt
+                        | "ge"  -> ICmpPred.Sge
+                        | "ult" -> ICmpPred.Ult
+                        | "ule" -> ICmpPred.Ule
+                        | "ugt" -> ICmpPred.Ugt
+                        | "uge" -> ICmpPred.Uge
+                        | _ -> failwith $"Unknown FPGA comparison predicate: {predName}"
+                    pCombICmp resultSSA icmpPred lhsSSA rhsSSA lhsType
             | _ ->
-                let icmpPred =
-                    match predName with
-                    | "eq"  -> ICmpPred.Eq
-                    | "ne"  -> ICmpPred.Ne
-                    // Signed (NTUint — default)
-                    | "lt"  -> ICmpPred.Slt
-                    | "le"  -> ICmpPred.Sle
-                    | "gt"  -> ICmpPred.Sgt
-                    | "ge"  -> ICmpPred.Sge
-                    // Unsigned (NTUuint — resolved by pBinaryArithIntrinsic before reaching here)
-                    | "ult" -> ICmpPred.Ult
-                    | "ule" -> ICmpPred.Ule
-                    | "ugt" -> ICmpPred.Ugt
-                    | "uge" -> ICmpPred.Uge
-                    | _ -> failwith $"Unknown int comparison predicate: {predName}"
-                pCmpI resultSSA icmpPred lhsSSA rhsSSA lhsType
+                // CPU: type-dependent dispatch (int vs float)
+                match lhsType with
+                | TFloat _ ->
+                    let fcmpPred =
+                        match predName with
+                        | "eq" -> FCmpPred.OEq
+                        | "ne" -> FCmpPred.ONe
+                        | "lt" -> FCmpPred.OLt
+                        | "le" -> FCmpPred.OLe
+                        | "gt" -> FCmpPred.OGt
+                        | "ge" -> FCmpPred.OGe
+                        | _ -> failwith $"Unknown float comparison predicate: {predName}"
+                    pCmpF resultSSA fcmpPred lhsSSA rhsSSA lhsType
+                | _ ->
+                    let icmpPred =
+                        match predName with
+                        | "eq"  -> ICmpPred.Eq
+                        | "ne"  -> ICmpPred.Ne
+                        // Signed (NTUint — default)
+                        | "lt"  -> ICmpPred.Slt
+                        | "le"  -> ICmpPred.Sle
+                        | "gt"  -> ICmpPred.Sgt
+                        | "ge"  -> ICmpPred.Sge
+                        // Unsigned (NTUuint — resolved by pBinaryArithIntrinsic before reaching here)
+                        | "ult" -> ICmpPred.Ult
+                        | "ule" -> ICmpPred.Ule
+                        | "ugt" -> ICmpPred.Ugt
+                        | "uge" -> ICmpPred.Uge
+                        | _ -> failwith $"Unknown int comparison predicate: {predName}"
+                    pCmpI resultSSA icmpPred lhsSSA rhsSSA lhsType
 
         return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = TInt I1 })  // Comparisons always return i1
     }

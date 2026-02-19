@@ -14,6 +14,7 @@ module Alex.Traversal.WitnessRegistry
 open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.TransferTypes
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Core.Types.Dialects  // TargetPlatform
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WITNESS MODULE IMPORTS
@@ -65,46 +66,47 @@ let mutable globalRegistry = NanopassRegistry.empty
 
 /// Initialize the global registry
 /// Called once at startup to populate the registry with all witness nanopasses
-let initializeRegistry () =
+let initializeRegistry (targetPlatform: TargetPlatform) =
+    // Conditional registration — target-gated witnesses are only registered
+    // for platforms where they apply. This is the nanopass-level expression
+    // of the Three-Category Model (fully shared, codata-dependent, target-gated).
+    let conditionalRegister condition np reg =
+        if condition then NanopassRegistry.register np reg else reg
+
+    let isCPULike = targetPlatform <> FPGA  // CPU, MCU share memory/mutable semantics
+
     // First register leaf witnesses (literals, arithmetic, memory, etc.)
     // These witnesses don't need sub-graph traversal
     let leafRegistry =
         NanopassRegistry.empty
-        // Priority 1: Simple Witnesses
+        // ─── Fully shared (all platforms) ───
         |> NanopassRegistry.register LiteralWitness.nanopass
         |> NanopassRegistry.register TypeAnnotationWitness.nanopass
-        |> NanopassRegistry.register PlatformWitness.nanopass
         |> NanopassRegistry.register IntrinsicWitness.nanopass
-
-        // Structural Witnesses (transparent witnesses for container nodes)
         |> NanopassRegistry.register StructuralWitness.nanopass
         |> NanopassRegistry.register BindingWitness.nanopass
         |> NanopassRegistry.register VarRefWitness.nanopass
-        |> NanopassRegistry.register MutableAssignmentWitness.nanopass
 
-        // Domain intrinsic witnesses (register BEFORE ApplicationWitness)
-        |> NanopassRegistry.register MemoryIntrinsicWitness.nanopass
-        |> NanopassRegistry.register StringIntrinsicWitness.nanopass
+        // ─── Codata-dependent (all platforms, elision varies inside) ───
         |> NanopassRegistry.register ArithIntrinsicWitness.nanopass
-        // PlatformWitness already registered above (now revived with <|> composition)
-
-        // Application witness (non-intrinsic: curry flattening, VarRef calls, indirect calls)
         |> NanopassRegistry.register ApplicationWitness.nanopass
 
-        // Priority 2: Collection Witnesses
-        |> NanopassRegistry.register OptionWitness.nanopass
-        |> NanopassRegistry.register ListWitness.nanopass
-        |> NanopassRegistry.register MapWitness.nanopass
-        |> NanopassRegistry.register SetWitness.nanopass
+        // ─── Target-gated (CPU/MCU only — FPGA has no mutable state, heap, or syscalls) ───
+        |> conditionalRegister isCPULike MutableAssignmentWitness.nanopass
+        |> conditionalRegister isCPULike MemoryIntrinsicWitness.nanopass
+        |> conditionalRegister isCPULike StringIntrinsicWitness.nanopass
+        |> conditionalRegister isCPULike PlatformWitness.nanopass
+        |> conditionalRegister isCPULike MemoryWitness.nanopass
 
-        // Priority 4: Memory
-        |> NanopassRegistry.register MemoryWitness.nanopass
+        // ─── Collections (CPU/MCU only for now — FPGA collection support is future) ───
+        |> conditionalRegister isCPULike OptionWitness.nanopass
+        |> conditionalRegister isCPULike ListWitness.nanopass
+        |> conditionalRegister isCPULike MapWitness.nanopass
+        |> conditionalRegister isCPULike SetWitness.nanopass
 
-        // Priority 5: Advanced Features
-        |> NanopassRegistry.register LazyWitness.nanopass
-        
-        // Priority 5: Seq Witness
-        |> NanopassRegistry.register SeqWitness.nanopass
+        // ─── Advanced features (CPU/MCU only) ───
+        |> conditionalRegister isCPULike LazyWitness.nanopass
+        |> conditionalRegister isCPULike SeqWitness.nanopass
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Y-COMBINATOR FIXED POINT FOR RECURSIVE SCOPE WITNESSES

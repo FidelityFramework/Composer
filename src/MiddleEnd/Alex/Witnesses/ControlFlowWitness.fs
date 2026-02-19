@@ -24,6 +24,7 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.ScopeContext
 open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
+
 open Alex.Patterns.ControlFlowPatterns
 open Alex.Elements.SCFElements
 
@@ -116,92 +117,34 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
             trace "[ControlFlowWitness] IfThenElse: ERROR - Condition %A witnessed but no result" (NodeId.value condId)
             WitnessOutput.error "IfThenElse: Condition witnessed but no result"
         | Some (condSSA, _) ->
-            trace "[ControlFlowWitness] IfThenElse: Visiting then branch %A" (NodeId.value thenId)
+            // Walk branches — always scope-isolated for op collection.
+            // The Pattern layer decides what to do with these ops based on
+            // the observed TargetPlatform coeffect (scf.if regions vs inline + comb.mux).
             let thenOps = witnessBranchScope thenId ctx combinator
+            let elseOps = elseIdOpt |> Option.map (fun elseId -> witnessBranchScope elseId ctx combinator)
 
-            let elseOps =
-                match elseIdOpt with
-                | Some elseId ->
-                    trace "[ControlFlowWitness] IfThenElse: Visiting else branch %A" (NodeId.value elseId)
-                    Some (witnessBranchScope elseId ctx combinator)
-                | None ->
-                    trace "[ControlFlowWitness] IfThenElse: No else branch"
-                    None
+            let thenValueNodeId = findLastValueNode thenId ctx.Graph
+            let elseValueNodeIdOpt = elseIdOpt |> Option.map (fun elseId -> findLastValueNode elseId ctx.Graph)
 
-            trace "[ControlFlowWitness] IfThenElse: Building MLIR (then has %d ops, else has %d ops)"
-                (List.length thenOps)
-                (elseOps |> Option.map List.length |> Option.defaultValue 0)
-
-            // Check if this IfThenElse produces a value (expression-valued, non-unit type)
-            // NOTE: NTUKind has [<RequireQualifiedAccess>] — bare NTUunit would be a variable binding!
             let isExpressionValued =
                 match node.Type with
                 | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) -> false
                 | _ -> true
-            trace "[ControlFlowWitness] IfThenElse: isExpressionValued = %b (type: %A)" isExpressionValued node.Type
 
-            if isExpressionValued then
-                // Expression-valued if: branches yield results, scf.if produces a value
-                // Find last value-producing node in each branch
-                let thenValueNodeId = findLastValueNode thenId ctx.Graph
-                let thenResult = MLIRAccumulator.recallNode thenValueNodeId ctx.Accumulator
-                let elseResult =
-                    match elseIdOpt with
-                    | Some elseId ->
-                        let elseValueNodeId = findLastValueNode elseId ctx.Graph
-                        MLIRAccumulator.recallNode elseValueNodeId ctx.Accumulator
-                    | None -> None
-
-                let resultType = mapType node.Type ctx
-
-                match thenResult, elseResult with
-                | Some (thenSSA, _), Some (elseSSA, _) ->
-                    // Both branches produced values — get IfThenElse node's SSA for scf.if result
+            let result =
+                if isExpressionValued then
+                    let resultType = mapType node.Type ctx
                     match tryMatch (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (ssas, _) when ssas.Length >= 1 ->
-                        let resultSSA = ssas.[0]
+                    | Some (ssas, _) when ssas.Length >= 1 -> Some (ssas.[0], resultType)
+                    | _ -> None  // Fall back to void
+                else None
 
-                        // Build typed yields for each branch
-                        let thenYield = MLIROp.SCFOp (SCFOp.Yield [(thenSSA, resultType)])
-                        let elseYield = MLIROp.SCFOp (SCFOp.Yield [(elseSSA, resultType)])
-                        let thenOpsWithYield = thenOps @ [thenYield]
-                        let elseOpsWithYield = elseOps |> Option.map (fun ops -> ops @ [elseYield])
-
-                        match tryMatch (pBuildIfThenElseWithResult condSSA thenOpsWithYield elseOpsWithYield resultSSA resultType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Some (ops, _) ->
-                            trace "[ControlFlowWitness] IfThenElse: Expression-valued, built MLIR with %d ops, result SSA %A" (List.length ops) resultSSA
-                            { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = resultSSA; Type = resultType } }
-                        | None ->
-                            WitnessOutput.error "IfThenElse expression pattern emission failed"
-                    | _ ->
-                        WitnessOutput.error "IfThenElse: Could not get SSAs for expression result"
-                | _ ->
-                    // Branch results not available — fall back to void
-                    trace "[ControlFlowWitness] IfThenElse: Expression-valued but branch results not found, falling back to void"
-                    match tryMatch (pSCFYield []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (yieldTerminator, _) ->
-                        let thenOpsWithYield = thenOps @ [yieldTerminator]
-                        let elseOpsWithYield = elseOps |> Option.map (fun ops -> ops @ [yieldTerminator])
-                        match tryMatch (pBuildIfThenElse condSSA thenOpsWithYield elseOpsWithYield) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Some (ops, _) -> { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
-                        | None -> WitnessOutput.error "IfThenElse pattern emission failed"
-                    | None -> WitnessOutput.error "IfThenElse: pSCFYield failed"
-            else
-                // Void if-then-else (statement, unit type) — no result threading
-                match tryMatch (pSCFYield []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some (yieldTerminator, _) ->
-                    let thenOpsWithYield = thenOps @ [yieldTerminator]
-                    let elseOpsWithYield = elseOps |> Option.map (fun ops -> ops @ [yieldTerminator])
-
-                    match tryMatch (pBuildIfThenElse condSSA thenOpsWithYield elseOpsWithYield) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (ops, _) ->
-                        trace "[ControlFlowWitness] IfThenElse: Void, built MLIR with %d ops" (List.length ops)
-                        { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
-                    | None ->
-                        trace "[ControlFlowWitness] IfThenElse: ERROR - Pattern emission failed"
-                        WitnessOutput.error "IfThenElse pattern emission failed"
-                | None ->
-                    WitnessOutput.error "IfThenElse: pSCFYield failed"
+            match tryMatch (pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Some ((ops, transferResult), _) ->
+                trace "[ControlFlowWitness] IfThenElse: Built conditional with %d ops" (List.length ops)
+                { InlineOps = ops; TopLevelOps = []; Result = transferResult }
+            | None ->
+                WitnessOutput.error "IfThenElse: conditional elision failed"
 
     | None ->
         match tryMatch pWhileLoop ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

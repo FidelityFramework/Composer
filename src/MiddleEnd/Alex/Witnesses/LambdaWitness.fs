@@ -300,20 +300,15 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         MLIRAccumulator.addError err ctx.Accumulator
                         None
 
-            // Build return operation
-            let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some returnType))
-
-            let completeBody = bodyOps @ [returnOp]
-
-            // Build FuncDef for module-level function
-            let funcDef = FuncOp.FuncDef(funcName, mlirParams, returnType, completeBody, Public)
-
-            // Add FuncDef to ROOT scope (module level - all FuncDefs are top-level in MLIR)
-            let updatedRootScope = ScopeContext.addOp (MLIROp.FuncOp funcDef) !ctx.RootScopeContext
-            ctx.RootScopeContext := updatedRootScope
-
-            // Return empty - FuncDef already added to root scope
-            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+            // Delegate function wrapping to Pattern — coeffect determines func.func vs hw.module
+            let paramNames = params' |> List.map (fun (name, _, _) -> name)
+            match tryMatch (pFunctionDef funcName mlirParams (Some paramNames) returnType bodyOps returnSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Some (funcDefOp, _) ->
+                let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
+                ctx.RootScopeContext := updatedRootScope
+                { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+            | None ->
+                WitnessOutput.error (sprintf "Function definition '%s' pattern failed" funcName)
 
     | None -> WitnessOutput.skip
 

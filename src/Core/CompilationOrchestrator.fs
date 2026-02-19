@@ -66,6 +66,7 @@ let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext)
                 project.CheckResult.Graph
                 platformCtx
                 ctx.DeploymentMode
+                ctx.TargetPlatform
                 ctx.IntermediatesDir)
 
 // ═══════════════════════════════════════════════════════════════════════════

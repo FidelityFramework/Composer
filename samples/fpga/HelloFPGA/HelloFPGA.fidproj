@@ -1,0 +1,16 @@
+[package]
+name = "HelloFPGA"
+version = "0.1.0"
+description = "Minimal FPGA target test - validates CIRCT backend routing"
+authors = ["SpeakEZ Technologies, Inc."]
+
+[compilation]
+target = "fpga"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64" }
+
+[build]
+sources = ["HelloFPGA.fs"]
+output = "hellofpga"
+output_kind = "freestanding"
