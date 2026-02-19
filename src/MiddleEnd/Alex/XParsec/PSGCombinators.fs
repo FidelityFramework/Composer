@@ -576,6 +576,14 @@ let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     | IntrinsicModule.Operators, "op_BooleanAnd" -> BinaryArith "andi"
     | IntrinsicModule.Operators, "op_BooleanOr" -> BinaryArith "ori"
     | IntrinsicModule.Operators, "not" -> UnaryArith "xori"
+    | IntrinsicModule.Operators, "op_LogicalNot" -> UnaryArith "complement"  // ~~~ bitwise NOT
+    // Bitwise operators — type-preserving (int only, no float analog)
+    | IntrinsicModule.Operators, "op_BitwiseAnd"  -> BinaryArith "andi"
+    | IntrinsicModule.Operators, "op_BitwiseOr"   -> BinaryArith "ori"
+    | IntrinsicModule.Operators, "op_ExclusiveOr" -> BinaryArith "xori"
+    // Shift operators — integer only; signedness dispatched via NTUKind in pBinaryArithIntrinsic
+    | IntrinsicModule.Operators, "op_LeftShift"   -> BinaryArith "shli"
+    | IntrinsicModule.Operators, "op_RightShift"  -> BinaryArith "shr"   // resolved to shrsi/shrui per NTUKind
     // Memory
     | IntrinsicModule.NativePtr, op -> MemoryOp op
     // String

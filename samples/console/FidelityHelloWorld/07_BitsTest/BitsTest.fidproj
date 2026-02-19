@@ -1,7 +1,7 @@
 [package]
-name = "BitsTest"
+name = "BitwiseOps"
 version = "0.1.0"
-description = "Test Bits intrinsics (byte order, bit casting)"
+description = "Idiomatic F# bitwise operators (&&&, |||, ^^^, <<<, >>>) on integers"
 authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
@@ -9,9 +9,9 @@ license = "MIT"
 target = "native"
 
 [dependencies]
-platform = { path = "/home/hhh/repos/Fidelity.Platform/Linux_x86_64" }
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64" }
 
 [build]
 sources = ["BitsTest.fs"]
 output = "bitstest"
-output_kind = "freestanding"
+output_kind = "console"

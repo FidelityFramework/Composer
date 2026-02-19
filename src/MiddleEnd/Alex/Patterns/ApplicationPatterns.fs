@@ -116,6 +116,9 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
             | "shli", _ -> pShLI resultSSA lhsSSA rhsSSA lhsType
             | "shrui", _ -> pShRUI resultSSA lhsSSA rhsSSA lhsType
             | "shrsi", _ -> pShRSI resultSSA lhsSSA rhsSSA lhsType
+            // Unsigned integer arithmetic (NTUKind.NTUuint — resolved by pBinaryArithIntrinsic)
+            | "divu", _ -> pDivUI resultSSA lhsSSA rhsSSA lhsType
+            | "remu", _ -> pRemUI resultSSA lhsSSA rhsSSA lhsType
             | _ -> fail (Message $"Unknown binary arithmetic operation: {operation} on {lhsType}")
 
         // Infer result type from operand types
@@ -161,12 +164,18 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
             | _ ->
                 let icmpPred =
                     match predName with
-                    | "eq" -> ICmpPred.Eq
-                    | "ne" -> ICmpPred.Ne
-                    | "lt" -> ICmpPred.Slt
-                    | "le" -> ICmpPred.Sle
-                    | "gt" -> ICmpPred.Sgt
-                    | "ge" -> ICmpPred.Sge
+                    | "eq"  -> ICmpPred.Eq
+                    | "ne"  -> ICmpPred.Ne
+                    // Signed (NTUint — default)
+                    | "lt"  -> ICmpPred.Slt
+                    | "le"  -> ICmpPred.Sle
+                    | "gt"  -> ICmpPred.Sgt
+                    | "ge"  -> ICmpPred.Sge
+                    // Unsigned (NTUuint — resolved by pBinaryArithIntrinsic before reaching here)
+                    | "ult" -> ICmpPred.Ult
+                    | "ule" -> ICmpPred.Ule
+                    | "ugt" -> ICmpPred.Ugt
+                    | "uge" -> ICmpPred.Uge
                     | _ -> failwith $"Unknown int comparison predicate: {predName}"
                 pCmpI resultSSA icmpPred lhsSSA rhsSSA lhsType
 
@@ -196,6 +205,29 @@ let pUnaryNot (nodeId: NodeId)
         // Emit constant 1 for boolean NOT
         let constOp = MLIROp.ArithOp (ArithOp.ConstI (constSSA, 1L, TInt I1))
         // Emit XOR operation
+        let! xorOp = pXorI resultSSA operandSSA constSSA operandType
+
+        return (loadOps @ [constOp; xorOp], TRValue { SSA = resultSSA; Type = operandType })
+    }
+
+/// Bitwise complement pattern (~~~, op_LogicalNot) — xori with all-ones
+/// Emits: constSSA = constant -1 : operandType; result = xori operand, constSSA
+/// SSA extracted from coeffects via nodeId: [0] = constant, [1] = result
+let pBitwiseNot (nodeId: NodeId)
+                : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! argIds = pGetApplicationArgs
+        do! ensure (argIds.Length >= 1) $"pBitwiseNot: Expected 1 arg, got {argIds.Length}"
+
+        let! (loadOps, operandSSA, operandType) = pRecallArgWithLoad argIds.[0]
+
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 2) $"pBitwiseNot: Expected 2 SSAs, got {ssas.Length}"
+        let constSSA = ssas.[0]
+        let resultSSA = ssas.[1]
+
+        // -1 in two's complement is all-ones bits — the bitwise NOT mask
+        let constOp = MLIROp.ArithOp (ArithOp.ConstI (constSSA, -1L, operandType))
         let! xorOp = pXorI resultSSA operandSSA constSSA operandType
 
         return (loadOps @ [constOp; xorOp], TRValue { SSA = resultSSA; Type = operandType })
@@ -247,7 +279,44 @@ let pTypeConversion (nodeId: NodeId)
 // COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
 // ═══════════════════════════════════════════════════════════
 
-/// Binary arithmetic intrinsic — dispatches on classifyAtomicOp within parser CE
+/// Parser that succeeds only when the current node's Clef type is unsigned (NTUuint / NTUsize).
+/// Fails otherwise, enabling <|> composition with the signed variant.
+/// This is the XParsec monadic encoding of DTS signedness: the type IS the selector.
+let private pRequireUnsigned : PSGParser<unit> =
+    parser {
+        let! state = getUserState
+        match Types.tryGetNTUKind state.Current.Type with
+        | Some (NTUKind.NTUuint _) | Some NTUKind.NTUsize -> return ()
+        | _ -> return! fail (Message "Not unsigned type")
+    }
+
+/// Unsigned-guarded binary arith: succeeds only for NTUuint, emitting the unsigned op.
+/// Composes with pBinaryArithOp (signed) via <|> in pBinaryArithIntrinsic.
+let private pIfUnsignedArith (nodeId: NodeId) (unsignedOp: string)
+                              : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        do! pRequireUnsigned
+        return! pBinaryArithOp nodeId unsignedOp
+    }
+
+/// Unsigned-guarded comparison: succeeds only for NTUuint, emitting the unsigned predicate.
+let private pIfUnsignedCmp (nodeId: NodeId) (unsignedPred: string)
+                            : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        do! pRequireUnsigned
+        return! pComparisonOp nodeId unsignedPred
+    }
+
+/// Binary arithmetic intrinsic — folds over classifyAtomicOp via XParsec catamorphism.
+///
+/// Signedness-sensitive operations use <|> composition:
+///   pIfUnsignedArith (succeeds for NTUuint, fails otherwise)
+///   <|> pBinaryArithOp (signed/float — tried on failure of unsigned guard)
+///
+/// The Clef Dimensional Type System flows through to MLIR operation variants:
+///   NTUuint → shrui / divu / remu / ult,ule,ugt,uge
+///   NTUint  → shrsi / divi / remi / slt,sle,sgt,sge
+///   NTUfloat → shrsi n/a, divf, remf handled inside pBinaryArithOp
 let pBinaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Operators
@@ -255,8 +324,20 @@ let pBinaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! node = getCurrentNode
         let category = classifyAtomicOp info
         match category with
-        | BinaryArith op -> return! pBinaryArithOp node.Id op
-        | Comparison pred -> return! pComparisonOp node.Id pred
+        | BinaryArith "shr" ->
+            return! (pIfUnsignedArith node.Id "shrui" <|> pBinaryArithOp node.Id "shrsi")
+        | BinaryArith "div" ->
+            return! (pIfUnsignedArith node.Id "divu" <|> pBinaryArithOp node.Id "div")
+        | BinaryArith "rem" ->
+            return! (pIfUnsignedArith node.Id "remu" <|> pBinaryArithOp node.Id "rem")
+        | BinaryArith op ->
+            return! pBinaryArithOp node.Id op
+        | Comparison "lt" -> return! (pIfUnsignedCmp node.Id "ult" <|> pComparisonOp node.Id "lt")
+        | Comparison "le" -> return! (pIfUnsignedCmp node.Id "ule" <|> pComparisonOp node.Id "le")
+        | Comparison "gt" -> return! (pIfUnsignedCmp node.Id "ugt" <|> pComparisonOp node.Id "gt")
+        | Comparison "ge" -> return! (pIfUnsignedCmp node.Id "uge" <|> pComparisonOp node.Id "ge")
+        | Comparison pred ->
+            return! pComparisonOp node.Id pred  // eq/ne are sign-agnostic
         | _ -> return! fail (Message $"Not binary arith: {info.Operation}")
     }
 
@@ -268,7 +349,8 @@ let pUnaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! node = getCurrentNode
         let category = classifyAtomicOp info
         match category with
-        | UnaryArith "xori" -> return! pUnaryNot node.Id
+        | UnaryArith "xori"       -> return! pUnaryNot node.Id
+        | UnaryArith "complement" -> return! pBitwiseNot node.Id
         | _ -> return! fail (Message $"Not unary arith: {info.Operation}")
     }
 

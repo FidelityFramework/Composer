@@ -89,15 +89,20 @@ Enter first number: Enter second number: 42 + 3.14 = 45.14
 """
 
 # =============================================================================
-# Sample 07: BitsTest
-# Byte order conversion, bit casting
+# Sample 07: BitwiseOps
+# Idiomatic F# bitwise operators (&&&, |||, ^^^, <<<, >>>)
 # =============================================================================
 [[samples]]
 name = "07_BitsTest"
 project = "BitsTest.fidproj"
 binary = "targets/bitstest"
 expected_output = """
-Bits intrinsics test passed!
+AND: 20
+OR:  165
+XOR: 153
+NOT: -1
+SHL: 16
+SHR: 32
 """
 
 # =============================================================================
