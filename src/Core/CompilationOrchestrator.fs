@@ -1,19 +1,21 @@
 /// CompilationOrchestrator - Top-level compiler pipeline coordination
 ///
 /// Orchestrates the full compilation pipeline:
-/// FrontEnd (FNCS) → MiddleEnd (Alex + MLIROpt) → BackEnd (LLVM)
+/// FrontEnd (FNCS) → MiddleEnd (Alex) → BackEnd (resolved from target platform)
 ///
-/// This is the "adult supervision" layer that coordinates all phases.
+/// The orchestrator is backend-agnostic. It resolves the backend once at
+/// pipeline assembly time and delegates to it. No dispatch, no branching
+/// on target type.
 module Core.CompilationOrchestrator
 
 open System.IO
 open System.Reflection
 open Clef.Compiler.Project
 
-open MiddleEnd.MLIROpt.Lowering
 open BackEnd.LLVM.Codegen
 open Core.Timing
 open Core.CompilerConfig
+open Core.Types.Pipeline
 open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -37,7 +39,8 @@ type CompilationContext = {
     IntermediatesDir: string option
     OutputPath: string
     TargetTriple: string
-    OutputKind: Core.Types.Dialects.OutputKind
+    TargetPlatform: Core.Types.Dialects.TargetPlatform
+    DeploymentMode: Core.Types.Dialects.DeploymentMode
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -49,7 +52,7 @@ let private runFrontEnd (projectPath: string) : Result<ProjectCheckResult, strin
         FrontEnd.ProjectLoader.load projectPath)
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Phase 2: MiddleEnd (Alex + PSGElaboration) 
+// Phase 2: MiddleEnd (Alex + PSGElaboration)
 // ═══════════════════════════════════════════════════════════════════════════
 
 let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<string, string> =
@@ -62,24 +65,8 @@ let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext)
             MiddleEnd.MLIRGeneration.generate
                 project.CheckResult.Graph
                 platformCtx
-                ctx.OutputKind
+                ctx.DeploymentMode
                 ctx.IntermediatesDir)
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Phase 3: BackEnd (MLIR Lowering)
-// ═══════════════════════════════════════════════════════════════════════════
-
-let private runMLIRLowering (mlirPath: string) (llPath: string) : Result<unit, string> =
-    timePhase "BackEnd.MLIRLower" "Lowering MLIR to LLVM IR" (fun () ->
-        lowerToLLVM mlirPath llPath)
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Phase 4: BackEnd (Linking)
-// ═══════════════════════════════════════════════════════════════════════════
-
-let private runLinking (llPath: string) (outputPath: string) (triple: string) (kind: Core.Types.Dialects.OutputKind) : Result<unit, string> =
-    timePhase "BackEnd.Link" "Linking to native binary" (fun () ->
-        compileToNative llPath outputPath triple kind)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Context Setup
@@ -99,12 +86,20 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
         else
             None
 
-    let outputKind =
-        match config.OutputKind with
-        | OutputKind.Freestanding -> Core.Types.Dialects.OutputKind.Freestanding
-        | OutputKind.Console -> Core.Types.Dialects.OutputKind.Console
-        | OutputKind.Library -> Core.Types.Dialects.OutputKind.Console
-        | OutputKind.Embedded -> Core.Types.Dialects.OutputKind.Freestanding
+    let targetPlatform =
+        match config.TargetPlatform with
+        | TargetPlatform.CPU -> Core.Types.Dialects.TargetPlatform.CPU
+        | TargetPlatform.FPGA -> Core.Types.Dialects.TargetPlatform.FPGA
+        | TargetPlatform.GPU -> Core.Types.Dialects.TargetPlatform.GPU
+        | TargetPlatform.MCU -> Core.Types.Dialects.TargetPlatform.MCU
+        | TargetPlatform.NPU -> Core.Types.Dialects.TargetPlatform.NPU
+
+    let deploymentMode =
+        match config.DeploymentMode with
+        | DeploymentMode.Freestanding -> Core.Types.Dialects.DeploymentMode.Freestanding
+        | DeploymentMode.Console -> Core.Types.Dialects.DeploymentMode.Console
+        | DeploymentMode.Library -> Core.Types.Dialects.DeploymentMode.Library
+        | DeploymentMode.Embedded -> Core.Types.Dialects.DeploymentMode.Embedded
 
     {
         ProjectName = config.Name
@@ -112,7 +107,8 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
         IntermediatesDir = intermediatesDir
         OutputPath = options.OutputPath |> Option.defaultValue (Path.Combine(buildDir, config.OutputName |> Option.defaultValue config.Name))
         TargetTriple = options.TargetTriple |> Option.defaultValue (getDefaultTarget())
-        OutputKind = outputKind
+        TargetPlatform = targetPlatform
+        DeploymentMode = deploymentMode
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -148,42 +144,42 @@ let compileProject (options: CompilationOptions) : int =
         |> Result.bind (fun project ->
             let ctx = setupContext options project
 
-            printfn "Project: %s" ctx.ProjectName
-            printfn "Target:  %s" ctx.TargetTriple
-            printfn "Output:  %s" ctx.OutputPath
+            // Resolve backend from target platform (assembly time — once, not dispatch)
+            let backEnd = PlatformPipeline.resolveBackEnd ctx.TargetPlatform
+
+            printfn "Project:  %s" ctx.ProjectName
+            printfn "Target:   %s" ctx.TargetTriple
+            printfn "Backend:  %s" backEnd.Name
+            printfn "Output:   %s" ctx.OutputPath
             printfn ""
 
-            // Phase 2: MiddleEnd - Generate MLIR from PSG
+            // Phase 2: MiddleEnd - Generate MLIR from PSG (target-agnostic)
             runMiddleEnd project ctx
             |> Result.bind (fun mlirText ->
-                // Write MLIR to file
-                let mlirPath =
-                    match ctx.IntermediatesDir with
-                    | Some dir -> Path.Combine(dir, artifactFilename Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.ArtifactId.Mlir)
-                    | None -> Path.Combine(Path.GetTempPath(), ctx.ProjectName + ".mlir")
-                File.WriteAllText(mlirPath, mlirText)
+                // Write MLIR to intermediates (if enabled)
+                if ctx.IntermediatesDir.IsSome then
+                    let mlirPath = Path.Combine(ctx.IntermediatesDir.Value, artifactFilename ArtifactId.Mlir)
+                    File.WriteAllText(mlirPath, mlirText)
 
                 if options.EmitMLIROnly then
                     printfn "Stopped after MLIR generation (--emit-mlir)"
                     Ok ()
                 else
-                    // Phase 3: BackEnd - Lower MLIR to LLVM IR
-                    let llPath =
-                        match ctx.IntermediatesDir with
-                        | Some dir -> Path.Combine(dir, artifactFilename Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.ArtifactId.Llvm)
-                        | None -> Path.Combine(Path.GetTempPath(), ctx.ProjectName + ".ll")
-
-                    runMLIRLowering mlirPath llPath
-                    |> Result.bind (fun () ->
-                        if options.EmitLLVMOnly then
-                            printfn "Stopped after LLVM IR generation (--emit-llvm)"
-                            Ok ()
-                        else
-                            // Phase 4: BackEnd - Link to native binary
-                            runLinking llPath ctx.OutputPath ctx.TargetTriple ctx.OutputKind
-                            |> Result.map (fun () ->
-                                printfn ""
-                                printfn "Compilation successful: %s" ctx.OutputPath))))
+                    // Phase 3+: BackEnd — the backend function runs its own pipeline
+                    let backEndCtx = {
+                        OutputPath = ctx.OutputPath
+                        IntermediatesDir = ctx.IntermediatesDir
+                        TargetTriple = ctx.TargetTriple
+                        DeploymentMode = ctx.DeploymentMode
+                        EmitIntermediateOnly = options.EmitLLVMOnly
+                    }
+                    backEnd.Compile mlirText backEndCtx
+                    |> Result.map (fun artifact ->
+                        printfn ""
+                        match artifact with
+                        | NativeBinary path -> printfn "Compilation successful: %s" path
+                        | Verilog path -> printfn "Verilog generated: %s" path
+                        | IntermediateOnly fmt -> printfn "Produced %s intermediate" fmt)))
 
     printSummary()
     match result with

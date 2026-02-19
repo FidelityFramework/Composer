@@ -28,6 +28,7 @@
 
       <!-- Core Types -->
       <Compile Include="Core/Types/Dialects.fs" />
+      <Compile Include="Core/Types/Pipeline.fs" />
 
       <!-- Alex MLIR Type System (used by TypeMapping and Elements) -->
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Types.fs" />
@@ -140,14 +141,16 @@
       <!-- MiddleEnd - MLIR Generation (Public API: PSG → MLIR) -->
       <Compile Include="MiddleEnd/MLIRGeneration.fs" />
 
-      <!-- MiddleEnd - MLIR Optimization -->
-      <Compile Include="MiddleEnd/MLIROpt/Lowering.fs" />
-
-      <!-- BackEnd - LLVM Code Generation -->
+      <!-- BackEnd - LLVM -->
+      <Compile Include="BackEnd/LLVM/Lowering.fs" />
       <Compile Include="BackEnd/LLVM/Codegen.fs" />
+      <Compile Include="BackEnd/LLVM/Pipeline.fs" />
 
-      <!-- Core - Deprecated Toolchain wrapper (AFTER MiddleEnd/BackEnd so it can delegate) -->
-      <Compile Include="Core/Toolchain.fs" />
+      <!-- BackEnd - CIRCT -->
+      <Compile Include="BackEnd/CIRCT/Pipeline.fs" />
+
+      <!-- Core - Pipeline Resolution (AFTER backends, BEFORE orchestrator) -->
+      <Compile Include="Core/PlatformPipeline.fs" />
       <!-- Core - Top-level Compilation Orchestration (AFTER all components) -->
       <Compile Include="Core/CompilationOrchestrator.fs" />
 

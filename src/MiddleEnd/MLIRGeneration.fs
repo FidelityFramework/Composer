@@ -28,7 +28,7 @@ open Alex.Traversal.MLIRTransfer
 let generate
     (graph: SemanticGraph)
     (platformCtx: PlatformContext)
-    (outputKind: Core.Types.Dialects.OutputKind)
+    (deploymentMode: Core.Types.Dialects.DeploymentMode)
     (intermediatesDir: string option)
     : Result<string, string> =
 
@@ -43,11 +43,11 @@ let generate
         | _ -> (Linux, X86_64)
 
     let runtimeMode =
-        match outputKind with
-        | Core.Types.Dialects.OutputKind.Freestanding -> PSGElaboration.PlatformConfig.Freestanding
-        | Core.Types.Dialects.OutputKind.Console -> PSGElaboration.PlatformConfig.Console
-        | Core.Types.Dialects.OutputKind.Library -> PSGElaboration.PlatformConfig.Console
-        | Core.Types.Dialects.OutputKind.Embedded -> PSGElaboration.PlatformConfig.Freestanding
+        match deploymentMode with
+        | Core.Types.Dialects.DeploymentMode.Freestanding -> PSGElaboration.PlatformConfig.Freestanding
+        | Core.Types.Dialects.DeploymentMode.Console -> PSGElaboration.PlatformConfig.Console
+        | Core.Types.Dialects.DeploymentMode.Library -> PSGElaboration.PlatformConfig.Console
+        | Core.Types.Dialects.DeploymentMode.Embedded -> PSGElaboration.PlatformConfig.Freestanding
 
     // Phase 0: Flatten curried lambdas (graph normalization BEFORE coeffect analysis)
     // Merges Lambda(a) → Lambda(b) → body into Lambda(a,b) → body

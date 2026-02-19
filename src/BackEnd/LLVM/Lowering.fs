@@ -1,13 +1,12 @@
-/// MLIROpt Lowering - MLIR dialect lowering to LLVM dialect
+/// LLVM Lowering - MLIR dialect lowering to LLVM dialect
 ///
-/// This module handles MLIR-to-LLIR conversion:
-/// - Dialect lowering (vector, scf, cf, func, arith → llvm)
-/// - MLIR validation passes
+/// This module handles MLIR-to-LLVM IR conversion:
+/// - Dialect lowering via mlir-opt (vector, scf, cf, func, arith → llvm)
 /// - mlir-translate to LLVM IR
 ///
 /// When Composer becomes self-hosted, this module gets replaced with
 /// native MLIR dialect lowering.
-module MiddleEnd.MLIROpt.Lowering
+module BackEnd.LLVM.Lowering
 
 open System.IO
 

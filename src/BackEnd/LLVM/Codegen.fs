@@ -28,7 +28,7 @@ let compileToNative
     (llvmPath: string)
     (outputPath: string)
     (targetTriple: string)
-    (outputKind: OutputKind) : Result<unit, string> =
+    (deploymentMode: DeploymentMode) : Result<unit, string> =
     try
         let objPath = Path.ChangeExtension(llvmPath, ".o")
 
@@ -49,7 +49,7 @@ let compileToNative
         else
             // Step 2: clang to link into executable
             let clangArgs =
-                match outputKind with
+                match deploymentMode with
                 | Console ->
                     // Use -no-pie to avoid relocation issues with LLVM-generated code
                     // Include webview dependencies: webkit2gtk and gtk3
