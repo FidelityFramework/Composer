@@ -36,7 +36,21 @@ type MLIRType =
     | TVector of int * MLIRType             // Vector type (SIMD)
     | TIndex                                // Index type
     | TUnit                                 // Unit type (represented as i32 0)
+    | TStruct of (string * MLIRType) list   // Named struct type (record fields)
     | TError of string                      // Error type
+
+/// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct).
+/// Rank-1 memref descriptors are 5 words: {allocPtr, alignPtr, offset, size, stride}.
+let rec mlirTypeSize (ty: MLIRType) : int =
+    match ty with
+    | TInt I1 | TInt I8 -> 1 | TInt I16 -> 2 | TInt I32 -> 4 | TInt I64 -> 8
+    | TFloat F32 -> 4 | TFloat F64 -> 8
+    | TFunc _ -> 16
+    | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 40
+    | TVector (_, elemTy) -> mlirTypeSize elemTy
+    | TIndex -> 8
+    | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
+    | TUnit -> 0 | TError _ -> 0
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM TYPES
@@ -334,4 +348,11 @@ and HWOp =
     | HWModule of string * (string * MLIRType) list * (string * MLIRType) list * MLIROp list
       // name, inputs (name*type), outputs (name*type), body
     | HWOutput of (SSA * MLIRType) list
+    // Struct operations (hw.struct_create, hw.struct_extract, hw.struct_inject)
+    | HWStructCreate of SSA * (SSA * MLIRType) list * MLIRType
+      // result, field values (ssa * fieldType), structType
+    | HWStructExtract of SSA * SSA * string * MLIRType
+      // result, input, fieldName, structType
+    | HWStructInject of SSA * SSA * string * SSA * MLIRType
+      // result, input, fieldName, newValue, structType
       // output port values

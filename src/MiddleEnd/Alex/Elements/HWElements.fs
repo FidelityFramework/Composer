@@ -24,3 +24,21 @@ let pHWOutput (vals: (SSA * MLIRType) list) : PSGParser<MLIROp> =
     parser {
         return MLIROp.HWOp (HWOp.HWOutput vals)
     }
+
+/// hw.struct_create — create a struct from field values
+let internal pHWStructCreate (result: SSA) (fieldVals: (SSA * MLIRType) list) (structTy: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.HWOp (HWOp.HWStructCreate (result, fieldVals, structTy))
+    }
+
+/// hw.struct_extract — extract a named field from a struct
+let internal pHWStructExtract (result: SSA) (input: SSA) (fieldName: string) (structTy: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.HWOp (HWOp.HWStructExtract (result, input, fieldName, structTy))
+    }
+
+/// hw.struct_inject — produce new struct with one field replaced
+let internal pHWStructInject (result: SSA) (input: SSA) (fieldName: string) (newValue: SSA) (structTy: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.HWOp (HWOp.HWStructInject (result, input, fieldName, newValue, structTy))
+    }

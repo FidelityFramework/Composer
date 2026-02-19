@@ -45,6 +45,9 @@ let rec typeToString (ty: MLIRType) : string =
         sprintf "vector<%dx%s>" count (typeToString elemTy)
     | TIndex -> "index"
     | TUnit -> "i32"  // Unit represented as i32 (value 0)
+    | TStruct fields ->
+        // CPU: flatten to byte-level memref using the canonical size catamorphism
+        sprintf "memref<%dxi8>" (mlirTypeSize (TStruct fields))
     | TError msg -> sprintf "<<ERROR: %s>>" msg
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -196,6 +199,12 @@ let combOpToString (op: CombOp) : string =
 /// which handles all MLIROp cases. A non-CIRCT op in an hw.module body is a
 /// pipeline error — it means a CPU-dialect op leaked into FPGA output.
 let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
+    let hwStructTypeStr (ty: MLIRType) =
+        match ty with
+        | TStruct fields ->
+            let fs = fields |> List.map (fun (n, t) -> sprintf "%s: %s" n (typeToString t))
+            sprintf "!hw.struct<%s>" (String.concat ", " fs)
+        | other -> typeToString other
     match op with
     | HWModule (name, inputs, outputs, body) ->
         let inputsStr = inputs |> List.map (fun (n, ty) -> sprintf "in %%%s: %s" n (typeToString ty)) |> String.concat ", "
@@ -215,6 +224,16 @@ let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
             let valsStr = vals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
             let typesStr = vals |> List.map (fun (_, ty) -> typeToString ty) |> String.concat ", "
             sprintf "hw.output %s : %s" valsStr typesStr
+    | HWStructCreate (result, fieldVals, structTy) ->
+        let valsStr = fieldVals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
+        let tyStr = hwStructTypeStr structTy
+        sprintf "%s = hw.struct_create (%s) : %s" (ssaToString result) valsStr tyStr
+    | HWStructExtract (result, input, fieldName, structTy) ->
+        let tyStr = hwStructTypeStr structTy
+        sprintf "%s = hw.struct_extract %s[\"%s\"] : %s" (ssaToString result) (ssaToString input) fieldName tyStr
+    | HWStructInject (result, input, fieldName, newValue, structTy) ->
+        let tyStr = hwStructTypeStr structTy
+        sprintf "%s = hw.struct_inject %s[\"%s\"], %s : %s" (ssaToString result) (ssaToString input) fieldName (ssaToString newValue) tyStr
 
 /// Serialize SeqOp to CIRCT MLIR text (seq dialect)
 let seqOpToString (op: SeqOp) : string =

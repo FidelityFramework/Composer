@@ -16,26 +16,6 @@ open Alex.Dialects.Core.Types
 // TYPE SIZE COMPUTATION (for DU slot sizing)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Compute byte size of an MLIRType (for DU payload slot sizing)
-/// This is used to determine which payload type is larger for heterogeneous DUs
-let rec mlirTypeSize (ty: MLIRType) : int =
-    match ty with
-    | TInt I1 -> 1
-    | TInt I8 -> 1
-    | TInt I16 -> 2
-    | TInt I32 -> 4
-    | TInt I64 -> 8
-    | TFloat F32 -> 4
-    | TFloat F64 -> 8
-    | TFunc _ -> 16  // Function pointer + closure = 2 words
-    | TMemRef _ -> 8  // Pointer-sized (dynamic memref)
-    | TMemRefStatic _ -> 8  // Pointer-sized (static memref)
-    | TMemRefScalar _ -> 8  // Pointer-sized (scalar memref)
-    | TVector (_, elemTy) -> mlirTypeSize elemTy  // Vector element size (shape is complex)
-    | TIndex -> 8  // Platform word
-    | TUnit -> 0
-    | TError _ -> 0  // Error types have no runtime size
-
 /// Compute max payload size in bytes for heterogeneous DUs
 let maxPayloadBytes (ty1: MLIRType) (ty2: MLIRType) : int =
     max (mlirTypeSize ty1) (mlirTypeSize ty2)
@@ -58,10 +38,11 @@ let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
     | TFloat F64 -> 8
     | TIndex -> wordBytes            // Platform-sized
     | TFunc _ -> 2 * wordBytes       // Function pointer + closure = 2 words
-    | TMemRef _ -> wordBytes         // Pointer-sized (dynamic memref)
-    | TMemRefStatic _ -> wordBytes   // Pointer-sized (static memref)
-    | TMemRefScalar _ -> wordBytes   // Pointer-sized (scalar memref)
+    | TMemRef _ -> 5 * wordBytes    // Rank-1 memref descriptor: {allocPtr, alignPtr, offset, size, stride}
+    | TMemRefStatic _ -> 5 * wordBytes  // Same descriptor layout even for static memrefs
+    | TMemRefScalar _ -> 5 * wordBytes  // Same descriptor layout for scalar memrefs
     | TVector (_, elemTy) -> mlirTypeSizeForArch arch elemTy
+    | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSizeForArch arch ft)
     | TUnit -> 0
     | TError _ -> 0
 
@@ -463,13 +444,12 @@ let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (f
 let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : MLIRType =
     match ty with
     | NativeType.TApp(tycon, args) when tycon.FieldCount > 0 ->
-        // Record type: look up field types from TypeDef
+        // Record type: look up field types from TypeDef → TStruct with named fields
         match SemanticGraph.tryGetRecordFields tycon.Name graph with
         | Some fields ->
             // Map each field type to MLIR RECURSIVELY (nested records also use graph lookup)
-            let fieldTypes = fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy)
-            let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
-            TMemRefStatic(totalBytes, TInt I8)
+            let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
+            TStruct mlirFields
         | None ->
             // Fallback: shouldn't happen if TypeDef nodes are properly created
             failwithf "Record type '%s' not found in TypeDef nodes - FNCS must create TypeDef for records" tycon.Name
@@ -478,10 +458,9 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
         // This handles cases where FieldCount wasn't preserved in type extraction
         match SemanticGraph.tryGetRecordFields tycon.Name graph with
         | Some fields ->
-            // Found record definition - use graph lookup
-            let fieldTypes = fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy)
-            let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
-            TMemRefStatic(totalBytes, TInt I8)
+            // Found record definition - use graph lookup → TStruct
+            let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
+            TStruct mlirFields
         | None ->
             // Not a record - use standard mapping with architecture
             mapNativeTypeForArch arch ty
@@ -491,10 +470,9 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
         let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
         TMemRefStatic(totalBytes, TInt I8)
     | NativeType.TAnon(fields, _) ->
-        // Anonymous records need recursive mapping
-        let fieldTypes = fields |> List.map (fun (_, fieldTy) -> mapNativeTypeWithGraphForArch arch graph fieldTy)
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
-        TMemRefStatic(totalBytes, TInt I8)
+        // Anonymous records → TStruct with named fields
+        let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
+        TStruct mlirFields
     // PRD-14: Lazy<T> - FLAT CLOSURE, need recursive mapping in case T is a record
     | NativeType.TLazy elemTy ->
         let elemMlir = mapNativeTypeWithGraphForArch arch graph elemTy

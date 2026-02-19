@@ -487,10 +487,13 @@ let pTupleStruct (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> 
 // ═══════════════════════════════════════════════════════════
 
 /// Extract static memref shape from an MLIRType
-let private extractMemRefShape (ty: MLIRType) =
+let extractMemRefShape (ty: MLIRType) =
     match ty with
     | TMemRefStatic (count, elemType) -> (count, elemType)
-    | _ -> failwith $"pAllocValue: expected TMemRefStatic, got {ty}"
+    | TStruct fields ->
+        let totalBytes = fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
+        (totalBytes, TInt I8)
+    | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
 
 /// Allocate memory for a constructed value — queries escape analysis coeffect
 /// PULL model: pattern pulls allocation decision from pre-computed coeffects

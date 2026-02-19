@@ -35,6 +35,7 @@ type EscapeKind =
 /// What kind of allocating site produced this value
 type AllocSiteKind =
     | DUConstruction
+    | RecordConstruction
     | StringReturningCall
 
 /// Result of escape analysis for a single allocating site
@@ -153,6 +154,8 @@ let findAllocatingSites (graph: SemanticGraph) : (NodeId * string * AllocSiteKin
         match kvp.Value.Kind with
         | SemanticKind.DUConstruct (caseName, _, _, _) ->
             Some (nodeId, caseName, DUConstruction)
+        | SemanticKind.RecordExpr _ ->
+            Some (nodeId, "record", RecordConstruction)
         | SemanticKind.Application (funcId, _) when isStringType kvp.Value.Type ->
             // Try to get function name from the function node
             let funcName =
@@ -177,8 +180,8 @@ let analyzeAllocSite (siteId: NodeId) (name: string) (siteKind: AllocSiteKind) (
     // For string-returning calls, trace through binding to find scope
     let (valueId, valueName) =
         match siteKind with
-        | DUConstruction ->
-            // DU construction IS the value — check if THIS node escapes
+        | DUConstruction | RecordConstruction ->
+            // DU/Record construction IS the value — check if THIS node escapes
             (siteId, name)
         | StringReturningCall ->
             // String-returning call — check binding (original behavior)

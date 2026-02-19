@@ -250,6 +250,11 @@ module MLIRAccumulator =
                 match existingTy, ty with
                 | TMemRefStatic (_, elemA), TMemRef elemB when elemA = elemB -> true
                 | TMemRef elemA, TMemRefStatic (_, elemB) when elemA = elemB -> true
+                // Physical TMemRefStatic from alloca → logical TStruct from witness (record types)
+                // Prefer TStruct: it carries field names needed by RecordWitness FieldGet
+                | TMemRefStatic _, TStruct _ ->
+                    acc.SSATypes <- Map.add ssa ty acc.SSATypes
+                    true
                 | _ -> false
             if not isBenignMemRefRefinement then
                 let ssaStr = match ssa with | V n -> sprintf "%%v%d" n | Arg n -> sprintf "%%arg%d" n

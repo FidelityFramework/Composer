@@ -49,7 +49,8 @@ module SetWitness = Alex.Witnesses.SetWitness
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
 module MatchWitness = Alex.Witnesses.MatchWitness
 
-// Priority 4: Memory & Lambda (Lambda is special - needs nanopass list for body witnessing)
+// Priority 4: Records, Memory & Lambda
+module RecordWitness = Alex.Witnesses.RecordWitness
 module MemoryWitness = Alex.Witnesses.MemoryWitness
 module LambdaWitness = Alex.Witnesses.LambdaWitness
 
@@ -98,6 +99,9 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         |> conditionalRegister isCPULike StringIntrinsicWitness.nanopass
         |> conditionalRegister isCPULike PlatformWitness.nanopass
         |> conditionalRegister isCPULike MemoryWitness.nanopass
+
+        // ─── Records (all platforms, must be AFTER MemoryWitness — register prepends) ───
+        |> NanopassRegistry.register RecordWitness.nanopass  // Prepends → runs BEFORE MemoryWitness
 
         // ─── Collections (CPU/MCU only for now — FPGA collection support is future) ───
         |> conditionalRegister isCPULike OptionWitness.nanopass

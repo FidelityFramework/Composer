@@ -211,112 +211,215 @@ let pBuildMatchElimination
             return! fail (Message "FPGA match elimination requires comb.mux chain (future)")
 
         | _ ->
-            // ── CPU path: DUGetTag + nested scf.if chain ──
-
-            // Step 1: Extract tag from scrutinee
-            // Use SSAs from the CaseElimination node's pre-allocation
-            let! allSSAs = getNodeSSAs nodeId
-            let tagTy = TInt I8
-
-            // Index 0 is reserved for the result SSA — tag extraction starts at index 1
-            let tagExtractOps, tagSSA, tagExtractEnd =
-                match scrutineeType with
-                | TIndex ->
-                    // Pointer-based DU: load tag byte from offset 0
-                    let indexZeroSSA = allSSAs.[1]
-                    let tagSSA = allSSAs.[2]
-                    let memrefI8Ty = TMemRef (TInt I8)
-                    let indexZeroOp = MLIROp.ArithOp (ArithOp.ConstI (indexZeroSSA, 0L, TIndex))
-                    let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, scrutineeSSA, [indexZeroSSA], tagTy, memrefI8Ty))
-                    [indexZeroOp; loadOp], tagSSA, 3
-                | _ ->
-                    // Inline struct DU: reinterpret_cast at byte offset 0
-                    let castSSA = allSSAs.[1]
-                    let zeroSSA = allSSAs.[2]
-                    let tagSSA = allSSAs.[3]
-                    let memrefI8Ty = TMemRef (TInt I8)
-                    let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, scrutineeType, memrefI8Ty))
-                    let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
-                    let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))
-                    [castOp; zeroOp; loadOp], tagSSA, 4
-
-            // Step 2: Recall all arm value SSAs upfront (monadic, sequential)
-            // This avoids let! inside for loop which doesn't work in parser CE
             let numArms = List.length arms
 
-            let! armValueSSAs =
-                match result with
-                | Some _ ->
-                    // Recall each arm's value node SSA in order
-                    let rec recallAll idx acc =
-                        if idx >= numArms then
-                            preturn (List.rev acc)
-                        else
-                            let (_, armValueNodeId, _) = arms.[idx]
-                            parser {
-                                let! (armSSA, _) = pRecallNode armValueNodeId
-                                return! recallAll (idx + 1) (armSSA :: acc)
-                            }
-                    recallAll 0 []
-                | None -> preturn []
+            // Detect record match (all arms are Record/Wildcard patterns — no DU tag)
+            let isRecordMatch =
+                arms |> List.forall (fun (_, _, arm) ->
+                    match arm.Pattern with
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Record _ -> true
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard -> true
+                    | _ -> false)
 
-            // Step 3: Build nested scf.if chain from inside-out (pure, no let!)
-            // arm[0]: if (tag == 0) then arm0Ops else
-            //   arm[1]: if (tag == 1) then arm1Ops else
-            //     arm[N-1]: arm(N-1)Ops  ← exhaustive default, no comparison
-            let mutable ssaOffset = tagExtractEnd
+            if isRecordMatch then
+                // ── Record match path: no DU tag extraction ──
+                // Selection is by guard evaluation (or passthrough for single arm)
 
-            // Start with the last arm (exhaustive default — no comparison needed)
-            let (lastArmOps, _, _) = arms.[numArms - 1]
+                // Recall all arm value SSAs upfront
+                let! armValueSSAs =
+                    match result with
+                    | Some _ ->
+                        let rec recallAll idx acc =
+                            if idx >= numArms then preturn (List.rev acc)
+                            else
+                                let (_, armValueNodeId, _) = arms.[idx]
+                                parser {
+                                    let! (armSSA, _) = pRecallNode armValueNodeId
+                                    return! recallAll (idx + 1) (armSSA :: acc)
+                                }
+                        recallAll 0 []
+                    | None -> preturn []
 
-            let lastArmElseOps =
-                match result with
-                | Some (_, resultType) ->
-                    let lastSSA = armValueSSAs.[numArms - 1]
-                    let yieldOp = MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])
-                    lastArmOps @ [yieldOp]
-                | None ->
-                    let yieldOp = MLIROp.SCFOp (SCFOp.Yield [])
-                    lastArmOps @ [yieldOp]
+                if numArms = 1 then
+                    // Single arm: passthrough — just emit arm ops and use arm value directly
+                    let (armOps, _, _) = arms.[0]
+                    match result with
+                    | Some (_, resultType) ->
+                        let armSSA = armValueSSAs.[0]
+                        return (armOps, TRValue { SSA = armSSA; Type = resultType })
+                    | None ->
+                        return (armOps, TRVoid)
+                else
+                    // Multi-arm record match with guards: nested scf.if chain by guard evaluation
+                    // Guards were already walked by MatchWitness — recall their SSAs from accumulator
+                    let! graph = getGraph
 
-            // Fold from second-to-last arm down to first (pure — no monadic binds)
-            let outerOps =
-                List.foldBack (fun i currentElseOps ->
-                    let (armOps, _, arm) = arms.[i]
-                    let tagIndex = getArmTagIndex i arm.Pattern
+                    // Pre-recall guard SSAs for non-default arms
+                    let! guardSSAs =
+                        let rec recallGuards idx acc =
+                            if idx >= numArms - 1 then preturn (List.rev acc)
+                            else
+                                let (_, _, arm) = arms.[idx]
+                                match arm.Guard with
+                                | Some guardId ->
+                                    parser {
+                                        let guardValueNodeId = findLastValueNode guardId graph
+                                        let! (guardSSA, _) = pRecallNode guardValueNodeId
+                                        return! recallGuards (idx + 1) (guardSSA :: acc)
+                                    }
+                                | None ->
+                                    // No guard on non-last arm — shouldn't happen but handle gracefully
+                                    recallGuards (idx + 1) (V -1 :: acc)
+                        recallGuards 0 []
 
-                    let tagLitSSA = allSSAs.[ssaOffset]
-                    let cmpSSA = allSSAs.[ssaOffset + 1]
-                    ssaOffset <- ssaOffset + 2
-
-                    let tagLitOp = MLIROp.ArithOp (ArithOp.ConstI (tagLitSSA, int64 tagIndex, tagTy))
-                    let cmpOp = MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, tagSSA, tagLitSSA, tagTy))
-
-                    let thenOps =
+                    // Build nested scf.if from inside-out using recursive builder
+                    // Last arm is the exhaustive default (else body)
+                    let (lastArmOps, _, _) = arms.[numArms - 1]
+                    let lastArmElseOps =
                         match result with
                         | Some (_, resultType) ->
-                            let armSSA = armValueSSAs.[i]
-                            let yieldOp = MLIROp.SCFOp (SCFOp.Yield [(armSSA, resultType)])
-                            armOps @ [yieldOp]
+                            let lastSSA = armValueSSAs.[numArms - 1]
+                            lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])]
                         | None ->
-                            let yieldOp = MLIROp.SCFOp (SCFOp.Yield [])
-                            armOps @ [yieldOp]
+                            lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+
+                    // Recursive builder: returns ops for else region content (WITH trailing yield)
+                    let rec buildElseContent armIndex =
+                        if armIndex >= numArms - 1 then
+                            lastArmElseOps  // Already has yield
+                        else
+                            let (armOps, _, _) = arms.[armIndex]
+                            let condSSA = guardSSAs.[armIndex]
+                            let thenOps =
+                                match result with
+                                | Some (_, resultType) ->
+                                    armOps @ [MLIROp.SCFOp (SCFOp.Yield [(armValueSSAs.[armIndex], resultType)])]
+                                | None ->
+                                    armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+                            let innerElse = buildElseContent (armIndex + 1)
+                            let ifOp =
+                                match result with
+                                | Some (resultSSA, resultType) ->
+                                    MLIROp.SCFOp (SCFOp.If (condSSA, thenOps, Some innerElse, Some (resultSSA, resultType)))
+                                | None ->
+                                    MLIROp.SCFOp (SCFOp.If (condSSA, thenOps, Some innerElse, None))
+                            // Append yield to propagate inner scf.if result in the else region
+                            match result with
+                            | Some (resultSSA, resultType) ->
+                                [ifOp; MLIROp.SCFOp (SCFOp.Yield [(resultSSA, resultType)])]
+                            | None ->
+                                [ifOp; MLIROp.SCFOp (SCFOp.Yield [])]
+
+                    // Build outermost if (no trailing yield — this is top-level)
+                    let (firstArmOps, _, _) = arms.[0]
+                    let firstCondSSA = guardSSAs.[0]
+                    let firstThenOps =
+                        match result with
+                        | Some (_, resultType) ->
+                            firstArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(armValueSSAs.[0], resultType)])]
+                        | None ->
+                            firstArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+                    let elseContent = buildElseContent 1
+                    let outerIfOp =
+                        match result with
+                        | Some (resultSSA, resultType) ->
+                            MLIROp.SCFOp (SCFOp.If (firstCondSSA, firstThenOps, Some elseContent, Some (resultSSA, resultType)))
+                        | None ->
+                            MLIROp.SCFOp (SCFOp.If (firstCondSSA, firstThenOps, Some elseContent, None))
 
                     match result with
                     | Some (resultSSA, resultType) ->
-                        let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (resultSSA, resultType)))
-                        [tagLitOp; cmpOp; ifOp]
+                        return ([outerIfOp], TRValue { SSA = resultSSA; Type = resultType })
                     | None ->
-                        let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
-                        [tagLitOp; cmpOp; ifOp]
-                ) [0 .. numArms - 2] lastArmElseOps
+                        return ([outerIfOp], TRVoid)
+            else
+                // ── DU match path: DUGetTag + nested scf.if chain ──
 
-            // Final result: tag extraction + the outermost if chain
-            let allOps = tagExtractOps @ outerOps
+                // Step 1: Extract tag from scrutinee
+                let! allSSAs = getNodeSSAs nodeId
+                let tagTy = TInt I8
 
-            match result with
-            | Some (resultSSA, resultType) ->
-                return (allOps, TRValue { SSA = resultSSA; Type = resultType })
-            | None ->
-                return (allOps, TRVoid)
+                // Index 0 is reserved for the result SSA — tag extraction starts at index 1
+                let tagExtractOps, tagSSA, tagExtractEnd =
+                    match scrutineeType with
+                    | TIndex ->
+                        let indexZeroSSA = allSSAs.[1]
+                        let tagSSA = allSSAs.[2]
+                        let memrefI8Ty = TMemRef (TInt I8)
+                        let indexZeroOp = MLIROp.ArithOp (ArithOp.ConstI (indexZeroSSA, 0L, TIndex))
+                        let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, scrutineeSSA, [indexZeroSSA], tagTy, memrefI8Ty))
+                        [indexZeroOp; loadOp], tagSSA, 3
+                    | _ ->
+                        let castSSA = allSSAs.[1]
+                        let zeroSSA = allSSAs.[2]
+                        let tagSSA = allSSAs.[3]
+                        let memrefI8Ty = TMemRef (TInt I8)
+                        let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, scrutineeType, memrefI8Ty))
+                        let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
+                        let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))
+                        [castOp; zeroOp; loadOp], tagSSA, 4
+
+                // Step 2: Recall all arm value SSAs upfront
+                let! armValueSSAs =
+                    match result with
+                    | Some _ ->
+                        let rec recallAll idx acc =
+                            if idx >= numArms then preturn (List.rev acc)
+                            else
+                                let (_, armValueNodeId, _) = arms.[idx]
+                                parser {
+                                    let! (armSSA, _) = pRecallNode armValueNodeId
+                                    return! recallAll (idx + 1) (armSSA :: acc)
+                                }
+                        recallAll 0 []
+                    | None -> preturn []
+
+                // Step 3: Build nested scf.if chain from inside-out
+                let mutable ssaOffset = tagExtractEnd
+                let (lastArmOps, _, _) = arms.[numArms - 1]
+
+                let lastArmElseOps =
+                    match result with
+                    | Some (_, resultType) ->
+                        let lastSSA = armValueSSAs.[numArms - 1]
+                        lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])]
+                    | None ->
+                        lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+
+                let outerOps =
+                    List.foldBack (fun i currentElseOps ->
+                        let (armOps, _, arm) = arms.[i]
+                        let tagIndex = getArmTagIndex i arm.Pattern
+
+                        let tagLitSSA = allSSAs.[ssaOffset]
+                        let cmpSSA = allSSAs.[ssaOffset + 1]
+                        ssaOffset <- ssaOffset + 2
+
+                        let tagLitOp = MLIROp.ArithOp (ArithOp.ConstI (tagLitSSA, int64 tagIndex, tagTy))
+                        let cmpOp = MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, tagSSA, tagLitSSA, tagTy))
+
+                        let thenOps =
+                            match result with
+                            | Some (_, resultType) ->
+                                let armSSA = armValueSSAs.[i]
+                                armOps @ [MLIROp.SCFOp (SCFOp.Yield [(armSSA, resultType)])]
+                            | None ->
+                                armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+
+                        match result with
+                        | Some (resultSSA, resultType) ->
+                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (resultSSA, resultType)))
+                            [tagLitOp; cmpOp; ifOp]
+                        | None ->
+                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
+                            [tagLitOp; cmpOp; ifOp]
+                    ) [0 .. numArms - 2] lastArmElseOps
+
+                let allOps = tagExtractOps @ outerOps
+
+                match result with
+                | Some (resultSSA, resultType) ->
+                    return (allOps, TRValue { SSA = resultSSA; Type = resultType })
+                | None ->
+                    return (allOps, TRVoid)
     }

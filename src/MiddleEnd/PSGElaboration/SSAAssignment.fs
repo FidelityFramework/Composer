@@ -619,11 +619,16 @@ let private computeTupleSSACost (childIds: NodeId list) : int =
     // Each insertvalue needs 2 SSAs in memref semantics
     1 + 2 * List.length childIds
 
-/// Compute exact SSA count for RecordExpr based on field count
-let private computeRecordSSACost (fields: (string * NodeId) list) : int =
-    // undef + (offset constant + insertvalue result) per field
-    // Each insertvalue needs 2 SSAs in memref semantics
-    1 + 2 * List.length fields
+/// Compute exact SSA count for RecordExpr based on field count and copy-from
+let private computeRecordSSACost (fields: (string * NodeId) list) (copyFrom: NodeId option) : int =
+    match copyFrom with
+    | None ->
+        // alloca(1) + per field: byte-offset constant(1) + view(1) + zero-index(1)
+        1 + 3 * List.length fields
+    | Some _ ->
+        // alloca(1) + extractPtr src(1) + extractPtr dst(1) + castSrc(1) + castDst(1) + sizeConst(1) + memcpyResult(1)
+        // + per updated field: byte-offset constant(1) + view(1) + zero-index(1)
+        7 + 3 * List.length fields
 
 /// Compute exact SSA count for UnionCase based on payload presence
 let private computeUnionCaseSSACost (payloadOpt: NodeId option) : int =
@@ -649,8 +654,8 @@ let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType o
                 let okMlir = mapCaptureType arch okTy
                 let errorMlir = mapCaptureType arch errorTy
                 // Pick the larger type (same logic as TypeMapping.maxMLIRType)
-                let okSize = Alex.CodeGeneration.TypeMapping.mlirTypeSize okMlir
-                let errorSize = Alex.CodeGeneration.TypeMapping.mlirTypeSize errorMlir
+                let okSize = mlirTypeSize okMlir
+                let errorSize = mlirTypeSize errorMlir
                 Some (if okSize >= errorSize then okMlir else errorMlir)
             | _ -> None
         // Other DUs with known layout
@@ -751,8 +756,8 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.TupleExpr childIds ->
         computeTupleSSACost childIds
 
-    | SemanticKind.RecordExpr (fields, _) ->
-        computeRecordSSACost fields
+    | SemanticKind.RecordExpr (fields, copyFrom) ->
+        computeRecordSSACost fields copyFrom
 
     | SemanticKind.UnionCase (_, _, payloadOpt) ->
         computeUnionCaseSSACost payloadOpt
@@ -773,7 +778,7 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.IndexSet _ -> 1
     | SemanticKind.AddressOf _ -> 2
     | SemanticKind.VarRef _ -> 2
-    | SemanticKind.FieldGet _ -> 3  // Max: extract + optional intermediate + cast (for string fields)
+    | SemanticKind.FieldGet _ -> 4  // View-based: offset + view + zero + result (for TStruct records)
     | SemanticKind.FieldSet _ -> 2  // Offset constant + store
     | SemanticKind.Set _ -> 1  // For module-level mutable address operation
     | SemanticKind.TraitCall _ -> 1

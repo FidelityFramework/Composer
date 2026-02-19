@@ -221,6 +221,15 @@ let pFieldGet : PSGParser<NodeId * string> =
         | _ -> return! fail (Message "Expected FieldGet")
     }
 
+/// Match RecordExpr node — returns field assignments and optional copy-from source
+let pRecordExpr : PSGParser<(string * NodeId) list * NodeId option> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.RecordExpr (fields, copyFrom) -> return (fields, copyFrom)
+        | _ -> return! fail (Message "Expected RecordExpr")
+    }
+
 /// Match an Application node
 let pApplication : PSGParser<NodeId * NodeId list> =
     parser {
