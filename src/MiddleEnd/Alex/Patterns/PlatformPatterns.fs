@@ -93,7 +93,10 @@ let pSysWrite (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTy
         ]
         let! writeCall = pFuncCall (Some resultSSA) "write" vals platformWordTy
 
-        return ([extractOp; castOp; dimConstOp; dimOp; countCastOp; writeCall], TRValue { SSA = resultSSA; Type = platformWordTy })
+        // External function — emit declaration alongside call
+        let! writeDecl = pFuncDecl "write" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+
+        return ([writeDecl; extractOp; castOp; dimConstOp; dimOp; countCastOp; writeCall], TRValue { SSA = resultSSA; Type = platformWordTy })
     }
 
 /// Build Sys.read syscall pattern with FFI pointer extraction
@@ -154,7 +157,10 @@ let pSysRead (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTyp
         ]
         let! readCall = pFuncCall (Some resultSSA) "read" vals platformWordTy
 
-        return ([extractOp; castOp; dimConstOp; dimOp; capacityCastOp; readCall], TRValue { SSA = resultSSA; Type = platformWordTy })
+        // External function — emit declaration alongside call
+        let! readDecl = pFuncDecl "read" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+
+        return ([readDecl; extractOp; castOp; dimConstOp; dimOp; capacityCastOp; readCall], TRValue { SSA = resultSSA; Type = platformWordTy })
     }
 
 // ═══════════════════════════════════════════════════════════

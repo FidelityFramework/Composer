@@ -35,6 +35,7 @@ let backend : BackEnd = {
             else
                 // Phase 2: LLVM IR → native binary (llc + clang)
                 timePhase "BackEnd.Link" "Linking to native binary" (fun () ->
-                    Codegen.compileToNative llPath ctx.OutputPath ctx.TargetTriple ctx.DeploymentMode)
+                    let targetTriple = ctx.TargetTripleOverride |> Option.defaultValue (Codegen.getDefaultTarget())
+                    Codegen.compileToNative llPath ctx.OutputPath targetTriple ctx.DeploymentMode)
                 |> Result.map (fun () -> NativeBinary ctx.OutputPath))
 }

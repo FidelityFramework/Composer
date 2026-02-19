@@ -1,6 +1,6 @@
 # Composer Sample Suite
 
-This directory contains sample projects demonstrating Composer's capabilities for compiling F# to native code. The samples serve as both documentation and regression tests for the compiler, progressing toward the **WREN Stack Alpha** capstone.
+This directory contains sample projects demonstrating Composer's capabilities for compiling Clef to hardware. The samples serve as both documentation and regression tests for the compiler, progressing toward the **WREN Stack Alpha** capstone.
 
 > **WREN** = **W**ebView + **R**eactive + **E**mbedded + **N**ative
 

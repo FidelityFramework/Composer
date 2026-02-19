@@ -17,7 +17,9 @@ type BackEndArtifact =
 type BackEndContext = {
     OutputPath: string
     IntermediatesDir: string option
-    TargetTriple: string
+    /// CLI target override (e.g., --target x86_64-pc-windows-gnu for cross-compilation).
+    /// Backend-specific: LLVM uses it, CIRCT ignores it.
+    TargetTripleOverride: string option
     DeploymentMode: Dialects.DeploymentMode
     /// Stop after intermediate generation (e.g., --emit-llvm for LLVM, Verilog-only for CIRCT)
     EmitIntermediateOnly: bool

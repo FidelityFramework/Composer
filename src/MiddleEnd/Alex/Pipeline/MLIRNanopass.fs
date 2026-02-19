@@ -23,97 +23,108 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open PSGElaboration.PlatformConfig
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DECLARATION COLLECTION PASS (Emit FuncDecl from FuncCall analysis)
+// DECLARATION VALIDATION + RELOCATION PASS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Declaration Collection Pass
+/// Declaration Validation + Relocation Pass
 ///
-/// Scans all FuncCall operations and emits unified FuncDecl operations.
-/// This eliminates the "first witness wins" coordination during witnessing.
+/// Validates that every function call has a matching definition or declaration,
+/// then relocates all FuncDecl ops to module top level (deduplicated).
 ///
-/// ARCHITECTURAL RATIONALE:
-/// - Function declarations are MLIR-level structure (not PSG semantics)
-/// - Witnesses emit calls with actual types (no coordination needed)
-/// - This pass analyzes ALL calls before emitting declarations (deterministic)
-/// - Signature unification happens here (one place, not scattered across witnesses)
+/// Patterns that call external functions (write, read, memcpy) emit their own
+/// FuncDecl alongside the FuncCall. This pass validates completeness and
+/// reorganizes the declarations.
 ///
-/// ALGORITHM:
-/// 1. Recursively collect all FuncCall operations
-/// 2. Group calls by function name
-/// 3. Unify signatures (currently: first signature wins, future: type coercion)
-/// 4. Emit FuncDecl operations
-/// 5. Remove any existing FuncDecl operations from witnesses (duplicates)
+/// Hard error on any call to a function with no definition or declaration.
 let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
 
-    /// Collect all function DEFINITIONS in the module
-    /// These are functions implemented in this module - they need NO declarations
+    /// Collect all function/module DEFINITIONS in the module
     let definedFunctions =
-        operations
-        |> List.choose (function
-            | MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> Some name
-            | _ -> None)
-        |> Set.ofList
+        let rec collectDefs (op: MLIROp) =
+            match op with
+            | MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> [name]
+            | MLIROp.HWOp (HWOp.HWModule (name, _, _, _)) -> [name]
+            | _ -> []
+        operations |> List.collect collectDefs |> Set.ofList
 
-    /// Recursively collect all function calls from operations
-    let rec collectCalls (op: MLIROp) : (string * MLIRType list * MLIRType) list =
+    /// Collect all FuncDecl names (emitted by patterns for external calls)
+    let rec collectDecls (op: MLIROp) : (string * MLIROp) list =
         match op with
-        | MLIROp.FuncOp (FuncOp.FuncCall (_, name, args, retTy)) ->
-            // Collect this call's signature
-            [(name, args |> List.map (fun v -> v.Type), retTy)]
-
-        // Recurse into nested operations
-        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) ->
-            body |> List.collect collectCalls
-
+        | MLIROp.FuncOp (FuncOp.FuncDecl (name, _, _, _)) as decl -> [(name, decl)]
+        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectDecls
+        | MLIROp.HWOp (HWOp.HWModule (_, _, _, body)) -> body |> List.collect collectDecls
         | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->
-            let thenCalls = thenOps |> List.collect collectCalls
-            let elseCalls = elseOps |> Option.map (List.collect collectCalls) |> Option.defaultValue []
-            thenCalls @ elseCalls
-
+            let t = thenOps |> List.collect collectDecls
+            let e = elseOps |> Option.map (List.collect collectDecls) |> Option.defaultValue []
+            t @ e
         | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
-            let condCalls = condOps |> List.collect collectCalls
-            let bodyCalls = bodyOps |> List.collect collectCalls
-            condCalls @ bodyCalls
-
-        | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) ->
-            bodyOps |> List.collect collectCalls
-
-        | MLIROp.Block (_, blockOps) ->
-            blockOps |> List.collect collectCalls
-
-        | MLIROp.Region ops ->
-            ops |> List.collect collectCalls
-
+            (condOps |> List.collect collectDecls) @ (bodyOps |> List.collect collectDecls)
+        | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) -> bodyOps |> List.collect collectDecls
+        | MLIROp.Block (_, blockOps) -> blockOps |> List.collect collectDecls
+        | MLIROp.Region ops -> ops |> List.collect collectDecls
         | _ -> []
 
-    /// Collect all function calls from all operations
-    let allCalls = operations |> List.collect collectCalls
+    let allDecls = operations |> List.collect collectDecls
+    let declaredNames = allDecls |> List.map fst |> Set.ofList
 
-    /// Generate declarations ONLY for EXTERNAL functions (not defined in this module)
-    /// Internal functions already have FuncDef - declarations would cause redefinition errors
-    let declarations =
-        allCalls
-        |> List.groupBy (fun (name, _, _) -> name)
-        |> List.filter (fun (name, _) -> not (Set.contains name definedFunctions))  // ONLY external functions
-        |> List.map (fun (name, signatures) ->
-            // Pick first signature (deterministic due to post-order)
-            let (_, paramTypes, retType) = signatures.Head
-            MLIROp.FuncOp (FuncOp.FuncDecl (name, paramTypes, retType, FuncVisibility.Private)))
-    
-    /// Remove any FuncDecl operations emitted by witnesses (now duplicates)
-    let withoutWitnessDecls =
-        operations
-        |> List.filter (function
-            | MLIROp.FuncOp (FuncOp.FuncDecl _) -> false  // Remove witness-emitted declarations
-            | _ -> true)
+    /// Combined: all names that have a definition OR declaration
+    let knownFunctions = Set.union definedFunctions declaredNames
 
-    // Emit only EXTERNAL function declarations (functions called but not defined in this module)
-    // Internal functions (with FuncDef) need NO declarations - they're already defined
-    if List.isEmpty declarations then
-        withoutWitnessDecls
-    else
-        printfn "[Alex] Declaration collection: Emitted %d external function declarations" (List.length declarations)
-        declarations @ withoutWitnessDecls
+    /// Recursively collect all function calls
+    let rec collectCalls (op: MLIROp) : string list =
+        match op with
+        | MLIROp.FuncOp (FuncOp.FuncCall (_, name, _, _)) -> [name]
+        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectCalls
+        | MLIROp.HWOp (HWOp.HWModule (_, _, _, body)) -> body |> List.collect collectCalls
+        | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->
+            let t = thenOps |> List.collect collectCalls
+            let e = elseOps |> Option.map (List.collect collectCalls) |> Option.defaultValue []
+            t @ e
+        | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
+            (condOps |> List.collect collectCalls) @ (bodyOps |> List.collect collectCalls)
+        | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) -> bodyOps |> List.collect collectCalls
+        | MLIROp.Block (_, blockOps) -> blockOps |> List.collect collectCalls
+        | MLIROp.Region ops -> ops |> List.collect collectCalls
+        | _ -> []
+
+    let calledNames = operations |> List.collect collectCalls |> Set.ofList
+
+    /// Hard error: any call to a function with no definition or declaration
+    let undefinedCalls = Set.difference calledNames knownFunctions
+    if not (Set.isEmpty undefinedCalls) then
+        let names = undefinedCalls |> String.concat ", "
+        failwithf "[Alex] ERROR: Calls to undefined functions: %s. All called functions must have a definition or an explicit declaration." names
+
+    /// Deduplicate declarations (patterns may emit the same decl multiple times)
+    let uniqueDecls =
+        allDecls
+        |> List.distinctBy fst
+        |> List.map snd
+
+    /// Remove all FuncDecl ops from their original locations (they'll be at module top)
+    let rec stripDecls (op: MLIROp) : MLIROp option =
+        match op with
+        | MLIROp.FuncOp (FuncOp.FuncDecl _) -> None
+        | MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body, vis)) ->
+            Some (MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body |> List.choose stripDecls, vis)))
+        | MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body)) ->
+            Some (MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body |> List.choose stripDecls)))
+        | MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps, result)) ->
+            Some (MLIROp.SCFOp (SCFOp.If (cond, thenOps |> List.choose stripDecls, elseOps |> Option.map (List.choose stripDecls), result)))
+        | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
+            Some (MLIROp.SCFOp (SCFOp.While (condOps |> List.choose stripDecls, bodyOps |> List.choose stripDecls)))
+        | MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps)) ->
+            Some (MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps |> List.choose stripDecls)))
+        | MLIROp.Block (label, blockOps) ->
+            Some (MLIROp.Block (label, blockOps |> List.choose stripDecls))
+        | MLIROp.Region ops ->
+            Some (MLIROp.Region (ops |> List.choose stripDecls))
+        | _ -> Some op
+
+    let strippedOps = operations |> List.choose stripDecls
+
+    /// Relocated declarations at top, then all other ops
+    uniqueDecls @ strippedOps
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS ORCHESTRATION (Apply All Passes)

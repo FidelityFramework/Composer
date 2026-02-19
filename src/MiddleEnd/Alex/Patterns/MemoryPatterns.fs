@@ -585,7 +585,8 @@ let pMemCopy (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp lis
             { SSA = countSSA; Type = platformWordTy }
         ]
         let! memcpyCall = pFuncCall None "memcpy" args platformWordTy
-        return ([memcpyCall], TRVoid)
+        let! memcpyDecl = pFuncDecl "memcpy" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+        return ([memcpyDecl; memcpyCall], TRVoid)
     }
 
 /// MemRef load operation - MLIR memref.load (NOT LLVM pointer load)

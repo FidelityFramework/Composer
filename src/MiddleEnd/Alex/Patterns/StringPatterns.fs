@@ -47,8 +47,9 @@ let pStringMemCopy (resultSSA: SSA) (destSSA: SSA) (srcSSA: SSA) (lenSSA: SSA) :
 
         // Call external memcpy - uses result SSA from coeffects analysis
         let! call = pFuncCall (Some resultSSA) "memcpy" args platformWordTy
+        let! memcpyDecl = pFuncDecl "memcpy" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
 
-        return [call]
+        return [memcpyDecl; call]
     }
 
 // ═══════════════════════════════════════════════════════════

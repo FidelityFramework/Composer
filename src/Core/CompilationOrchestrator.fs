@@ -12,7 +12,6 @@ open System.IO
 open System.Reflection
 open Clef.Compiler.Project
 
-open BackEnd.LLVM.Codegen
 open Core.Timing
 open Core.CompilerConfig
 open Core.Types.Pipeline
@@ -38,7 +37,6 @@ type CompilationContext = {
     BuildDir: string
     IntermediatesDir: string option
     OutputPath: string
-    TargetTriple: string
     TargetPlatform: Core.Types.Dialects.TargetPlatform
     DeploymentMode: Core.Types.Dialects.DeploymentMode
 }
@@ -107,7 +105,6 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
         BuildDir = buildDir
         IntermediatesDir = intermediatesDir
         OutputPath = options.OutputPath |> Option.defaultValue (Path.Combine(buildDir, config.OutputName |> Option.defaultValue config.Name))
-        TargetTriple = options.TargetTriple |> Option.defaultValue (getDefaultTarget())
         TargetPlatform = targetPlatform
         DeploymentMode = deploymentMode
     }
@@ -149,7 +146,7 @@ let compileProject (options: CompilationOptions) : int =
             let backEnd = PlatformPipeline.resolveBackEnd ctx.TargetPlatform
 
             printfn "Project:  %s" ctx.ProjectName
-            printfn "Target:   %s" ctx.TargetTriple
+            printfn "Platform: %A" ctx.TargetPlatform
             printfn "Backend:  %s" backEnd.Name
             printfn "Output:   %s" ctx.OutputPath
             printfn ""
@@ -170,7 +167,7 @@ let compileProject (options: CompilationOptions) : int =
                     let backEndCtx = {
                         OutputPath = ctx.OutputPath
                         IntermediatesDir = ctx.IntermediatesDir
-                        TargetTriple = ctx.TargetTriple
+                        TargetTripleOverride = options.TargetTriple
                         DeploymentMode = ctx.DeploymentMode
                         EmitIntermediateOnly = options.EmitLLVMOnly
                     }
