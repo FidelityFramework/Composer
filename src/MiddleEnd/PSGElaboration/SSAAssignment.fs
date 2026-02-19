@@ -735,6 +735,16 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.Match (scrutineeId, cases) ->
         computeMatchSSACost ctx.Graph scrutineeId cases
 
+    | SemanticKind.CaseElimination (_scrutineeId, arms) ->
+        // Tag extraction: 3 SSAs (reinterpret_cast + zero + load)
+        // Per non-final arm: tag literal + comparison = 2 SSAs
+        // Result SSA + control flow structure
+        let numArms = List.length arms
+        let tagSSAs = 3
+        let comparisonSSAs = max 0 (numArms - 1) * 2
+        let resultSSA = 1
+        tagSSAs + comparisonSSAs + resultSSA + (numArms * 2) + 5
+
     | SemanticKind.Application _ ->
         computeApplicationSSACost ctx node
 
@@ -850,6 +860,7 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.Sequential _ -> true
     | SemanticKind.IfThenElse _ -> true
     | SemanticKind.Match _ -> true
+    | SemanticKind.CaseElimination _ -> true
     | SemanticKind.TupleExpr _ -> true
     | SemanticKind.TupleGet _ -> true
     | SemanticKind.RecordExpr _ -> true

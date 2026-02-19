@@ -21,3 +21,4 @@ let main _ =
 
     Console.writeln "Done!"
     0
+/compa

@@ -47,6 +47,7 @@ module SetWitness = Alex.Witnesses.SetWitness
 
 // Priority 3: Control Flow (special - needs nanopass list for sub-graph traversal)
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
+module MatchWitness = Alex.Witnesses.MatchWitness
 
 // Priority 4: Memory & Lambda (Lambda is special - needs nanopass list for body witnessing)
 module MemoryWitness = Alex.Witnesses.MemoryWitness
@@ -146,6 +147,7 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
             [
                 LambdaWitness.createNanopass (fun () -> lazyCombinator.Value)
                 ControlFlowWitness.createNanopass (fun () -> lazyCombinator.Value)
+                MatchWitness.createNanopass (fun () -> lazyCombinator.Value)
             ]
         )
 

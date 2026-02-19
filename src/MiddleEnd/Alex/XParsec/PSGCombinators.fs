@@ -468,6 +468,17 @@ let pDUConstruct : PSGParser<string * int * NodeId option * NodeId option> =
         | _ -> return! fail (Message "Expected DUConstruct")
     }
 
+/// Match a CaseElimination node — structural elimination (catamorphism)
+/// Returns: (scrutineeNodeId, arms)
+let pCaseElimination : PSGParser<NodeId * CaseArm list> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.CaseElimination (scrutineeId, arms) ->
+            return (scrutineeId, arms)
+        | _ -> return! fail (Message "Expected CaseElimination")
+    }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // NAVIGATION COMBINATORS (use XParsec's state threading)
 // ═══════════════════════════════════════════════════════════════════════════

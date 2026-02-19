@@ -165,3 +165,158 @@ let pSwitch (flag: SSA) (flagTy: MLIRType) (defaultOps: MLIROp list)
         let! switchOp = Alex.Elements.CFElements.pSwitch flag flagTy defaultBlock [] caseBlocks
         return [switchOp]
     }
+
+// ═══════════════════════════════════════════════════════════
+// MATCH ELIMINATION (catamorphism elision)
+// ═══════════════════════════════════════════════════════════
+
+/// Extract the tag index from a CaseArm pattern.
+/// Union patterns carry tagIndex directly; others default to arm position.
+let private getArmTagIndex (armIndex: int) (pattern: Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern) : int =
+    match pattern with
+    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Union (_, tagIndex, _, _) -> tagIndex
+    | _ -> armIndex  // Const/Wildcard/Var patterns use positional index
+
+/// Get the DU union type from a CaseArm pattern (for tag extraction).
+let private getScrutineeUnionType (arms: Clef.Compiler.PSGSaturation.SemanticGraph.Types.CaseArm list) : NativeType option =
+    arms |> List.tryPick (fun arm ->
+        match arm.Pattern with
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Union (_, _, _, unionType) -> Some unionType
+        | _ -> None)
+
+/// Build match elimination — tag extract + nested scf.if chain (CPU)
+/// or all arms inline + comb.mux chain (FPGA, future).
+///
+/// Tag extraction and comparisons are emitted HERE at elision time, not in Baker.
+/// Baker preserved the structural fold; this pattern decides how to realize it.
+///
+/// Parameters:
+///   scrutineeSSA - SSA of the matched value
+///   scrutineeType - MLIR type of the matched value
+///   scrutineeNodeId - PSG node ID of the scrutinee (for DUGetTag SSAs)
+///   arms - list of (armOps, armBodyValueNodeId, pattern) per arm
+///   result - Some (resultSSA, resultType) if expression-valued, None if void
+///   nodeId - the CaseElimination node's ID (for SSA allocation)
+let pBuildMatchElimination
+    (scrutineeSSA: SSA) (scrutineeType: MLIRType) (scrutineeNodeId: NodeId)
+    (arms: (MLIROp list * NodeId * Clef.Compiler.PSGSaturation.SemanticGraph.Types.CaseArm) list)
+    (result: (SSA * MLIRType) option)
+    (nodeId: NodeId)
+    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! targetPlatform = getTargetPlatform
+
+        match targetPlatform with
+        | FPGA ->
+            return! fail (Message "FPGA match elimination requires comb.mux chain (future)")
+
+        | _ ->
+            // ── CPU path: DUGetTag + nested scf.if chain ──
+
+            // Step 1: Extract tag from scrutinee
+            // Use SSAs from the CaseElimination node's pre-allocation
+            let! allSSAs = getNodeSSAs nodeId
+            let tagTy = TInt I8
+
+            // Index 0 is reserved for the result SSA — tag extraction starts at index 1
+            let tagExtractOps, tagSSA, tagExtractEnd =
+                match scrutineeType with
+                | TIndex ->
+                    // Pointer-based DU: load tag byte from offset 0
+                    let indexZeroSSA = allSSAs.[1]
+                    let tagSSA = allSSAs.[2]
+                    let memrefI8Ty = TMemRef (TInt I8)
+                    let indexZeroOp = MLIROp.ArithOp (ArithOp.ConstI (indexZeroSSA, 0L, TIndex))
+                    let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, scrutineeSSA, [indexZeroSSA], tagTy, memrefI8Ty))
+                    [indexZeroOp; loadOp], tagSSA, 3
+                | _ ->
+                    // Inline struct DU: reinterpret_cast at byte offset 0
+                    let castSSA = allSSAs.[1]
+                    let zeroSSA = allSSAs.[2]
+                    let tagSSA = allSSAs.[3]
+                    let memrefI8Ty = TMemRef (TInt I8)
+                    let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, scrutineeType, memrefI8Ty))
+                    let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
+                    let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))
+                    [castOp; zeroOp; loadOp], tagSSA, 4
+
+            // Step 2: Recall all arm value SSAs upfront (monadic, sequential)
+            // This avoids let! inside for loop which doesn't work in parser CE
+            let numArms = List.length arms
+
+            let! armValueSSAs =
+                match result with
+                | Some _ ->
+                    // Recall each arm's value node SSA in order
+                    let rec recallAll idx acc =
+                        if idx >= numArms then
+                            preturn (List.rev acc)
+                        else
+                            let (_, armValueNodeId, _) = arms.[idx]
+                            parser {
+                                let! (armSSA, _) = pRecallNode armValueNodeId
+                                return! recallAll (idx + 1) (armSSA :: acc)
+                            }
+                    recallAll 0 []
+                | None -> preturn []
+
+            // Step 3: Build nested scf.if chain from inside-out (pure, no let!)
+            // arm[0]: if (tag == 0) then arm0Ops else
+            //   arm[1]: if (tag == 1) then arm1Ops else
+            //     arm[N-1]: arm(N-1)Ops  ← exhaustive default, no comparison
+            let mutable ssaOffset = tagExtractEnd
+
+            // Start with the last arm (exhaustive default — no comparison needed)
+            let (lastArmOps, _, _) = arms.[numArms - 1]
+
+            let lastArmElseOps =
+                match result with
+                | Some (_, resultType) ->
+                    let lastSSA = armValueSSAs.[numArms - 1]
+                    let yieldOp = MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])
+                    lastArmOps @ [yieldOp]
+                | None ->
+                    let yieldOp = MLIROp.SCFOp (SCFOp.Yield [])
+                    lastArmOps @ [yieldOp]
+
+            // Fold from second-to-last arm down to first (pure — no monadic binds)
+            let outerOps =
+                List.foldBack (fun i currentElseOps ->
+                    let (armOps, _, arm) = arms.[i]
+                    let tagIndex = getArmTagIndex i arm.Pattern
+
+                    let tagLitSSA = allSSAs.[ssaOffset]
+                    let cmpSSA = allSSAs.[ssaOffset + 1]
+                    ssaOffset <- ssaOffset + 2
+
+                    let tagLitOp = MLIROp.ArithOp (ArithOp.ConstI (tagLitSSA, int64 tagIndex, tagTy))
+                    let cmpOp = MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, tagSSA, tagLitSSA, tagTy))
+
+                    let thenOps =
+                        match result with
+                        | Some (_, resultType) ->
+                            let armSSA = armValueSSAs.[i]
+                            let yieldOp = MLIROp.SCFOp (SCFOp.Yield [(armSSA, resultType)])
+                            armOps @ [yieldOp]
+                        | None ->
+                            let yieldOp = MLIROp.SCFOp (SCFOp.Yield [])
+                            armOps @ [yieldOp]
+
+                    match result with
+                    | Some (resultSSA, resultType) ->
+                        let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (resultSSA, resultType)))
+                        [tagLitOp; cmpOp; ifOp]
+                    | None ->
+                        let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
+                        [tagLitOp; cmpOp; ifOp]
+                ) [0 .. numArms - 2] lastArmElseOps
+
+            // Final result: tag extraction + the outermost if chain
+            let allOps = tagExtractOps @ outerOps
+
+            match result with
+            | Some (resultSSA, resultType) ->
+                return (allOps, TRValue { SSA = resultSSA; Type = resultType })
+            | None ->
+                return (allOps, TRVoid)
+    }
