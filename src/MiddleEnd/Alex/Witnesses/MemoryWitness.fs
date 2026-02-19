@@ -16,7 +16,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemoryPatterns
-open Alex.CodeGeneration.TypeMapping  // mlirTypeSizeForArch
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -77,9 +76,7 @@ let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                             | None -> []
                         | None -> []
 
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let payloadBytes = payload |> List.sumBy (fun p -> mlirTypeSizeForArch arch p.Type)
-                    let duTy = TMemRefStatic(1 + payloadBytes, TInt I8)
+                    let duTy = mapType node.Type ctx
 
                     match tryMatch (pDUCase node.Id tag payload duTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

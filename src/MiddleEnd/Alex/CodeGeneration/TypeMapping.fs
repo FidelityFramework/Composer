@@ -208,10 +208,17 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                     let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
                     TMemRefStatic(totalBytes, TInt I8)
                 | _ -> failwithf "voption type requires exactly one type argument: %A" ty
-            | "result" ->
-                // Result<'T, 'E> is a pointer to arena-allocated case-specific storage
-                // Per architecture: "DU values are pointers"
-                TIndex
+            | "Result" ->
+                // Result<'T, 'E> is stored inline as a byte-level memref.
+                // Allocate for the larger of the two case payloads so either case fits.
+                // Layout: i8 tag + max(sizeof('T), sizeof('E)) bytes
+                match args with
+                | [okTy; errTy] ->
+                    let okMlir  = mapNativeTypeForArch arch okTy
+                    let errMlir = mapNativeTypeForArch arch errTy
+                    let payloadBytes = max (mlirTypeSizeForArch arch okMlir) (mlirTypeSizeForArch arch errMlir)
+                    TMemRefStatic(1 + payloadBytes, TInt I8)
+                | _ -> failwithf "result type requires exactly two type arguments: %A" ty
             | "list" ->
                 // PRD-13a: list<'T> is a pointer to cons cell (linked list)
                 TIndex
