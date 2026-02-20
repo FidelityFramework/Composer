@@ -123,7 +123,7 @@ Key: Soft-delete reachability (never hard-delete — zipper needs full structure
   - `Pipeline/` — Orchestration, lowering, optimization
   - `Bindings/` — Platform-aware code generation
   - `CodeGeneration/` — Type mapping, MLIR builders
-- **FNCS Intrinsics** (external: `~/repos/fsnative/src/Compiler/NativeTypedTree/Expressions/`) — NTUKind type universe, intrinsic operations, platform resolution.
+- **CCS Intrinsics** (external: `~/repos/clef/src/Compiler/NativeTypedTree/Expressions/`) — NTUKind type universe, intrinsic operations, platform resolution.
 
 ### The Zipper + XParsec + Bindings Model
 
@@ -275,8 +275,8 @@ output_kind = "freestanding"  # or "console"
 
 ```
 mcp__serena-local__activate_project "Composer"      # Main compiler
-mcp__serena-local__activate_project "fsnative"      # FNCS implementation
-mcp__serena-local__activate_project "fsnative-spec"  # F# Native spec
+mcp__serena-local__activate_project "clef"           # CCS (Clef Compiler Services) implementation
+mcp__serena-local__activate_project "clef-lang-spec" # Clef language spec
 ```
 
 Use Serena tools (not bash grep/find) for code understanding. Use bash for git, build, and system commands.

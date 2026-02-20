@@ -218,3 +218,47 @@ type DULayout = {
     /// MLIR type of the payload (if HasPayload)
     PayloadType: MLIRType option
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLATFORM PIN MAPPING COEFFECT (FPGA targets only)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Pre-computed mapping from [<Pin>]/[<Pins>] attributes on record fields
+// to physical PinEndpoint data from the platform bindings. Observed by:
+//   1. HardwareModulePatterns — flat hw.module port generation
+//   2. XDCTransfer — XDC constraint file generation
+// Two observers, one truth, two residuals.
+
+/// Single pin constraint for XDC generation
+type PinConstraint = {
+    /// hw.module port name = PinEndpoint.LogicalName (e.g., "sw[0]")
+    PortName: string
+    /// Xilinx package pin (e.g., "A8")
+    PackagePin: string
+    /// I/O standard (e.g., "LVCMOS33")
+    IOStandard: string
+    /// Pin direction
+    Direction: string
+}
+
+/// Clock constraint for XDC generation
+type ClockConstraint = {
+    /// Port name (e.g., "sys_clk")
+    PortName: string
+    /// Package pin (e.g., "E3")
+    PackagePin: string
+    /// I/O standard
+    IOStandard: string
+    /// Frequency in Hz (e.g., 100_000_000L) — period = 1e9 / FrequencyHz
+    FrequencyHz: int64
+}
+
+/// Complete pin mapping for a HardwareModule Design
+type PlatformPinMapping = {
+    /// All I/O pin constraints (inputs + outputs)
+    Pins: PinConstraint list
+    /// Clock constraint
+    Clock: ClockConstraint
+    /// Vivado device string (e.g., "xc7a100tcsg324-1")
+    DevicePart: string
+}

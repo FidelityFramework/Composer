@@ -52,6 +52,9 @@ type TransferCoeffects = {
     /// Target platform — determines which MLIR dialects Patterns emit
     /// CPU → func/arith/scf, FPGA → hw/comb/seq (codata-dependent elision)
     TargetPlatform: Core.Types.Dialects.TargetPlatform
+    /// Pin mapping for FPGA targets (None for CPU/MCU)
+    /// Observed by HardwareModulePatterns (flat ports) and XDCTransfer (constraints)
+    PinMapping: PSGElaboration.Coeffects.PlatformPinMapping option
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

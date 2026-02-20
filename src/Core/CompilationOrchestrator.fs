@@ -176,7 +176,17 @@ let compileProject (options: CompilationOptions) : int =
                         printfn ""
                         match artifact with
                         | NativeBinary path -> printfn "Compilation successful: %s" path
-                        | Verilog path -> printfn "Verilog generated: %s" path
+                        | Verilog path ->
+                            printfn "Verilog generated: %s" path
+                            // Copy XDC constraints alongside .sv (FPGA targets only)
+                            match ctx.IntermediatesDir with
+                            | Some dir ->
+                                let xdcSrc = Path.Combine(dir, "constraints.xdc")
+                                if File.Exists(xdcSrc) then
+                                    let xdcDst = Path.ChangeExtension(path, ".xdc")
+                                    File.Copy(xdcSrc, xdcDst, true)
+                                    printfn "XDC constraints: %s" xdcDst
+                            | None -> ()
                         | IntermediateOnly fmt -> printfn "Produced %s intermediate" fmt)))
 
     printSummary()

@@ -78,6 +78,13 @@ let generate
             ssaAssignment.DeclarationRootLambdas flattenedGraph
     | None -> ()
 
+    // Compute FPGA pin mapping coeffect (FPGA targets only)
+    let pinMapping =
+        match targetPlatform with
+        | Core.Types.Dialects.TargetPlatform.FPGA ->
+            PSGElaboration.PlatformPinResolution.resolve flattenedGraph
+        | _ -> None
+
     // Build TransferCoeffects
     let coeffects : TransferCoeffects = {
         SSA = ssaAssignment
@@ -90,6 +97,7 @@ let generate
         CurryFlattening = curryFlatteningResult
         DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
         TargetPlatform = targetPlatform
+        PinMapping = pinMapping
     }
 
     // Execute Alex transfer (parallel nanopasses)
@@ -118,6 +126,18 @@ let generate
                 let finalPath = Path.Combine(dir, "10_output.mlir")
                 File.WriteAllText(finalPath, mlirText)
                 printfn "[Alex] Wrote final MLIR: 10_output.mlir"
+            | None -> ()
+
+            // XDC transfer — parallel residual from pin mapping coeffect (FPGA only)
+            match pinMapping with
+            | Some mapping ->
+                let xdcText = Alex.Traversal.XDCTransfer.transfer mapping
+                match intermediatesDir with
+                | Some dir ->
+                    let xdcPath = Path.Combine(dir, "constraints.xdc")
+                    File.WriteAllText(xdcPath, xdcText)
+                    printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                | None -> ()
             | None -> ()
 
             Result.Ok mlirText

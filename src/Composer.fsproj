@@ -56,6 +56,7 @@
       <!-- Platform Config (depends on PlatformTypes) -->
       <Compile Include="MiddleEnd/PSGElaboration/PlatformConfig.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PlatformBindingResolution.fs" />
+      <Compile Include="MiddleEnd/PSGElaboration/PlatformPinResolution.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PatternBindingAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/CoeffectValidation.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PreprocessingSerializer.fs" />
@@ -141,6 +142,7 @@
 
       <!-- Alex Traversal - MLIR Transfer via Zipper + XParsec (pull model) -->
       <Compile Include="MiddleEnd/Alex/Traversal/MLIRTransfer.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/XDCTransfer.fs" />
 
       <!-- Alex Pipeline Types -->
       <Compile Include="MiddleEnd/Alex/Pipeline/CompilationTypes.fs" />
