@@ -68,7 +68,7 @@ let pStringFromBuffer (nodeId: NodeId) (bufferSSA: SSA) (bufferType: MLIRType) :
 
         // Cast static memref to dynamic for function boundary
         // memref<Nxi8> -> memref<?xi8>
-        let stringType = TMemRef (TInt I8)
+        let stringType = TMemRef (TInt (IntWidth 8))
         let! castOp = pMemRefCast resultSSA bufferSSA bufferType stringType
         return ([castOp], TRValue { SSA = resultSSA; Type = stringType })
     }
@@ -104,8 +104,8 @@ let pStringFromPointerWithLength (nodeId: NodeId) (bufferSSA: SSA) (lengthSSA: S
         let memcpyResultSSA = ssas.[6]
 
         // 1. Allocate result buffer with runtime size (lengthSSA is index type from nativeint)
-        let resultTy = TMemRef (TInt I8)
-        let! allocOp = pAlloc resultBufferSSA lengthSSA (TInt I8)
+        let resultTy = TMemRef (TInt (IntWidth 8))
+        let! allocOp = pAlloc resultBufferSSA lengthSSA (TInt (IntWidth 8))
 
         // 2. Extract pointers from source buffer and result buffer
         let! extractSrcPtr = pExtractBasePtr srcPtrSSA bufferSSA bufferType
@@ -192,10 +192,10 @@ let pStringCharAt (nodeId: NodeId) (stringSSA: SSA) (indexSSA: SSA) (indexType: 
         let! castIdxOp = pIndexCastS idxIndexSSA indexSSA indexType TIndex
 
         // Load byte from string at index: memref.load %str[%idx] : memref<?xi8>
-        let! loadOp = pLoadFrom loadSSA stringSSA [idxIndexSSA] (TInt I8)
+        let! loadOp = pLoadFrom loadSSA stringSSA [idxIndexSSA] (TInt (IntWidth 8))
 
         // Extend i8 to char type: arith.extui
-        let! extOp = pExtUI resultSSA loadSSA (TInt I8) charTy
+        let! extOp = pExtUI resultSSA loadSSA (TInt (IntWidth 8)) charTy
 
         return ([castIdxOp; loadOp; extOp], TRValue { SSA = resultSSA; Type = charTy })
     }
@@ -246,8 +246,8 @@ let pStringContains (nodeId: NodeId) (stringSSA: SSA) (charSSA: SSA) (charType: 
         let pLoadFound = ssas.[18]  // memref.load foundBuf → i8
         let pResultBool = ssas.[19] // arith.cmpi ne → i1
 
-        let i8Ty  = TInt I8
-        let i1Ty  = TInt I1
+        let i8Ty  = TInt (IntWidth 8)
+        let i1Ty  = TInt (IntWidth 1)
         let foundBufTy = TMemRefStatic (1, i8Ty)
         let idxBufTy   = TMemRefStatic (1, TIndex)
 
@@ -361,8 +361,8 @@ let pStringConcat2 (nodeId: NodeId) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
         let addLenOp = ArithOp (AddI (combinedLenSSA, str1LenSSA, str2LenSSA, TIndex))
 
         // 4. Allocate result buffer with runtime size (index type, NO conversion!)
-        let resultTy = TMemRef (TInt I8)
-        let! allocOp = pAlloc resultBufferSSA combinedLenSSA (TInt I8)
+        let resultTy = TMemRef (TInt (IntWidth 8))
+        let! allocOp = pAlloc resultBufferSSA combinedLenSSA (TInt (IntWidth 8))
 
         // 5. Extract pointers from memrefs for memcpy (FFI boundary)
         let! extractStr1Ptr = pExtractBasePtr str1PtrSSA str1SSA str1Type

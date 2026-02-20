@@ -36,7 +36,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 | Some (valSSA, valType) ->
                     let value = { SSA = valSSA; Type = valType }
                     let totalBytes = 1 + mlirTypeSize valType
-                    let optionTy = TMemRefStatic(totalBytes, TInt I8)
+                    let optionTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
                     match tryMatchWithDiagnostics (pOptionSome node.Id value optionTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

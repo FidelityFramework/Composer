@@ -56,10 +56,13 @@ let pBuildRecord
         match platform with
         | Core.Types.Dialects.FPGA ->
             // FPGA: hw.struct_create
+            // Use actual field types from accumulated child values (ground truth),
+            // not parent-mapped structTy which may have i0 sentinels in nested structs
             let resultSSA = ssas.[0]
             let fieldVals = fieldValues |> List.map (fun (_, ssa, ty) -> (ssa, ty))
-            let! createOp = pHWStructCreate resultSSA fieldVals structTy
-            return ([createOp], TRValue { SSA = resultSSA; Type = structTy })
+            let actualStructTy = TStruct (fieldValues |> List.map (fun (name, _, ty) -> (name, ty)))
+            let! createOp = pHWStructCreate resultSSA fieldVals actualStructTy
+            return ([createOp], TRValue { SSA = resultSSA; Type = actualStructTy })
 
         | _ ->
             // CPU: alloca + pTypedInsertView per field
@@ -236,7 +239,7 @@ let pRecordFieldGet
                     let zeroSSA   = ssas.[2]
                     let resultSSA = ssas.[3]
                     let byteOffset = structFieldByteOffset fields fieldIdx
-                    let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize t), TInt I8)
+                    let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize t), TInt (IntWidth 8))
                     let! extractOps = pTypedExtractView resultSSA structSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
                     return (extractOps, TRValue { SSA = resultSSA; Type = fieldType })
 

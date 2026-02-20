@@ -90,7 +90,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 WitnessOutput.error $"Saturated call to {funcName}: some args not witnessed: {unwitnessedArgs}"
             else
                 let args = argsResult |> List.choose id
-                let retType = mapType node.Type ctx
+                let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
 
                 // Retrieve deferred InlineOps for partial app arguments
                 let deferredOps =
@@ -150,7 +150,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     WitnessOutput.error "Application: Some arguments not yet witnessed"
                 else
                     let args = argsResult |> List.choose id
-                    let retType = mapType node.Type ctx
+                    let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
 
                     let paramNames = extractParamNames defId ctx.Graph
                     match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -167,7 +167,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     WitnessOutput.error "Application: Some arguments not yet witnessed"
                 else
                     let args = argsResult |> List.choose id
-                    let retType = mapType node.Type ctx
+                    let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
                     match tryMatchWithDiagnostics (pDirectCall node.Id localName args retType None) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{localName}': {diagnostic}"
@@ -186,7 +186,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         WitnessOutput.error "Application: Some arguments not yet witnessed"
                     else
                         let args = argsResult |> List.choose id
-                        let retType = mapType node.Type ctx
+                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
 
                         match tryMatchWithDiagnostics (pApplicationCall node.Id funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

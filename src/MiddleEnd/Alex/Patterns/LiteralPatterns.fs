@@ -25,38 +25,43 @@ open Clef.Compiler.NativeTypedTree.NativeTypes
 // LITERAL PATTERNS
 // ═══════════════════════════════════════════════════════════
 
-/// Build literal: Match literal from PSG and emit constant MLIR
+/// Build literal: Match literal from PSG and emit constant MLIR.
+/// On FPGA, platform-word integer literals produce abstract types (IntWidth 0)
+/// which are immediately narrowed to concrete widths via interval analysis coeffect.
 let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (arch: Architecture) : PSGParser<MLIROp list * TransferResult> =
     parser {
+        let! state = getUserState
+        let platform = state.Coeffects.TargetPlatform
+
         match lit with
         | NativeLiteral.Unit ->
-            let ty = mapNTUKindToMLIRType arch NTUKind.NTUunit
+            let ty = mapNTUKindToMLIRType platform arch NTUKind.NTUunit
             let! op = pConstI ssa 0L ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Bool b ->
             let value = if b then 1L else 0L
-            let ty = mapNTUKindToMLIRType arch NTUKind.NTUbool
+            let ty = mapNTUKindToMLIRType platform arch NTUKind.NTUbool
             let! op = pConstI ssa value ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Int (n, kind) ->
-            let ty = mapNTUKindToMLIRType arch kind
+            let ty = mapNTUKindToMLIRType platform arch kind |> narrowForCurrent state
             let! op = pConstI ssa n ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.UInt (n, kind) ->
-            let ty = mapNTUKindToMLIRType arch kind
+            let ty = mapNTUKindToMLIRType platform arch kind |> narrowForCurrent state
             let! op = pConstI ssa (int64 n) ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Char c ->
-            let ty = mapNTUKindToMLIRType arch NTUKind.NTUchar
+            let ty = mapNTUKindToMLIRType platform arch NTUKind.NTUchar
             let! op = pConstI ssa (int64 c) ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Float (f, kind) ->
-            let ty = mapNTUKindToMLIRType arch kind
+            let ty = mapNTUKindToMLIRType platform arch kind
             let! op = pConstF ssa f ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
@@ -109,9 +114,9 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
         do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
 
         // Static type from global: memref<Nxi8> where N is byte length
-        let staticTy = TMemRefStatic (byteLength, TInt I8)
+        let staticTy = TMemRefStatic (byteLength, TInt (IntWidth 8))
         // Dynamic type (string): memref<?xi8>
-        let dynamicTy = TMemRef (TInt I8)
+        let dynamicTy = TMemRef (TInt (IntWidth 8))
 
         do! emitTrace "pBuildStringLiteral.types" (sprintf "staticTy=%A, dynamicTy=%A" staticTy dynamicTy)
 

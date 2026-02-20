@@ -28,7 +28,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
     | Some ((fields, copyFrom), _) ->
         // RecordExpr: field value nodes are already walked in post-order.
         // Recall each field value SSA from accumulator.
-        let structTy = mapType node.Type ctx
+        let structTy = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
 
         let fieldValues =
             fields |> List.choose (fun (fieldName, fieldNodeId) ->
@@ -62,11 +62,12 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
         | SemanticKind.TupleExpr elements when ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA ->
             // Map tuple type to TStruct with Item1, Item2, ... fields
             let structTy =
-                match node.Type with
-                | Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TTuple(elemTypes, _) ->
-                    let fields = elemTypes |> List.mapi (fun i e -> (sprintf "Item%d" (i + 1), mapType e ctx))
-                    TStruct fields
-                | _ -> mapType node.Type ctx
+                (match node.Type with
+                 | Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TTuple(elemTypes, _) ->
+                     let fields = elemTypes |> List.mapi (fun i e -> (sprintf "Item%d" (i + 1), mapType e ctx))
+                     TStruct fields
+                 | _ -> mapType node.Type ctx)
+                |> narrowType ctx.Coeffects node.Id
 
             // Recall each element's SSA from the accumulator (children already walked in post-order)
             let fieldValues =

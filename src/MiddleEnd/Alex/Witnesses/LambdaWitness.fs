@@ -88,7 +88,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             ctx.Accumulator.SSATypes <- Map.empty
 
             // Register parameter SSA types for this function scope
-            let argvType = TMemRef (TInt I8)
+            let argvType = TMemRef (TInt (IntWidth 8))
             MLIRAccumulator.registerSSAType (SSA.Arg 0) argvType ctx.Accumulator
 
             // Eagerly resolve type parameters from the Lambda's type signature
@@ -161,7 +161,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Build func.func @main wrapper (portable MLIR)
             // Parameters: argv as memref<?xi8> (dynamic-sized buffer)
-            let argvType = TMemRef (TInt I8)
+            let argvType = TMemRef (TInt (IntWidth 8))
             let funcParams = [(SSA.Arg 0, argvType)]
             let funcDef = FuncOp.FuncDef("main", funcParams, returnType, completeBody, Public)
 
@@ -209,15 +209,17 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | None -> sprintf "lambda_%d" nodeIdValue
 
             // Map parameters to MLIR types and build parameter list with SSAs
-            // Extract parameter SSAs monadically
+            // For FPGA, parameter types are abstract (IntWidth 0) and must be narrowed
+            // using the width inference coeffect before they become hw.module port declarations.
             let extractParamSSAs =
                 parser {
                     let rec extractParams ps =
                         parser {
                             match ps with
                             | [] -> return []
-                            | (paramName, paramType, paramNodeId) :: rest ->
-                                let mlirType = mapType paramType ctx
+                            | (_paramName, paramType, paramNodeId) :: rest ->
+                                let rawType = mapType paramType ctx
+                                let mlirType = narrowType ctx.Coeffects paramNodeId rawType
                                 let! paramSSA = getNodeSSA paramNodeId
                                 let! restParams = extractParams rest
                                 return (paramSSA, mlirType) :: restParams
@@ -289,7 +291,14 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun
             let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
-            let returnType = mapType innerReturnNativeType2 ctx
+            let rawReturnType = mapType innerReturnNativeType2 ctx
+            // Use actual body result type (ground truth from walk) when available.
+            // The mapped+narrowed type is a pre-walk approximation that may miss
+            // nested struct widths (e.g. TStruct fields inside a tuple TStruct).
+            let returnType =
+                match bodyResult with
+                | Some (_, actualTy) -> actualTy
+                | None -> narrowType ctx.Coeffects actualValueNode rawReturnType
 
             // Handle bodyResult based on return type
             let returnSSA =

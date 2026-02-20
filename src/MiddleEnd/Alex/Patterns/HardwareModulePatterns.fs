@@ -215,7 +215,7 @@ let buildMealyMachineModule (info: MealyMachineInfo) : MLIROp =
         @ [outputOp]
 
     let inputs =
-        [("clk", TSeqClock); ("rst", TInt I1)]
+        [("clk", TSeqClock); ("rst", TInt (IntWidth 1))]
         @ (match info.InputType with Some iTy -> [("inputs", iTy)] | None -> [])
     let outputs =
         match info.OutputType with
@@ -504,7 +504,7 @@ let buildFlatPortMealyModule
         @ [outputOp]
 
     let inputs =
-        [(pinMapping.Clock.PortName, TSeqClock); ("rst", TInt I1)]
+        [(pinMapping.Clock.PortName, TSeqClock); ("rst", TInt (IntWidth 1))]
         @ flatInputPorts
     let outputs =
         if flatOutputPins.IsEmpty then

@@ -13,6 +13,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.SCFElements  // pSCFIf, pSCFWhile, pSCFFor
 open Alex.Elements.CFElements   // pSwitch
 open Alex.Elements.CombElements // pCombICmp, pCombMux (FPGA combinational logic)
+open Alex.Elements.ArithElements // pTruncI, pExtSI (FPGA width harmonization)
 open Alex.Elements.MLIRAtomics  // pConstI (tag literal constants)
 open Alex.CodeGeneration.TypeMapping
 open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
@@ -91,6 +92,7 @@ let pBuildConditional (condSSA: SSA)
                       (thenOps: MLIROp list) (elseOps: MLIROp list option)
                       (thenValueNodeId: NodeId) (elseValueNodeIdOpt: NodeId option)
                       (result: (SSA * MLIRType) option)
+                      (nodeId: NodeId)
                       : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! targetPlatform = getTargetPlatform
@@ -99,11 +101,46 @@ let pBuildConditional (condSSA: SSA)
         | FPGA, Some (resultSSA, resultType) ->
             match elseValueNodeIdOpt with
             | Some elseValueNodeId ->
-                let! (thenSSA, _) = pRecallNode thenValueNodeId
-                let! (elseSSA, _) = pRecallNode elseValueNodeId
-                let! muxOp = pCombMux resultSSA condSSA thenSSA elseSSA resultType
-                let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ [muxOp]
-                return (allOps, TRValue { SSA = resultSSA; Type = resultType })
+                let! (thenSSA, thenTy) = pRecallNode thenValueNodeId
+                let! (elseSSA, elseTy) = pRecallNode elseValueNodeId
+
+                // Harmonize mux operand widths to resultType
+                // FPGA comb.mux requires all operands at matching bit widths.
+                let resBits = match resultType with | TInt (IntWidth b) -> b | _ -> 0
+                let thenBits = match thenTy with | TInt (IntWidth b) -> b | _ -> 0
+                let elseBits = match elseTy with | TInt (IntWidth b) -> b | _ -> 0
+                let needThenHarm = resBits > 0 && thenBits > 0 && thenBits <> resBits
+                let needElseHarm = resBits > 0 && elseBits > 0 && elseBits <> resBits
+
+                if needThenHarm || needElseHarm then
+                    let! allSSAs = getNodeSSAs nodeId
+                    // SSA layout: [0]=result, [1]=thenHarm, [2]=elseHarm, [3]=trunc
+                    let mutable harmOps = []
+                    let effThenSSA =
+                        if needThenHarm then
+                            let harmSSA = allSSAs.[1]
+                            if thenBits > resBits then
+                                harmOps <- MLIROp.ArithOp (ArithOp.TruncI (harmSSA, thenSSA, thenTy, resultType)) :: harmOps
+                            else
+                                harmOps <- MLIROp.ArithOp (ArithOp.ExtSI (harmSSA, thenSSA, thenTy, resultType)) :: harmOps
+                            harmSSA
+                        else thenSSA
+                    let effElseSSA =
+                        if needElseHarm then
+                            let harmSSA = allSSAs.[2]
+                            if elseBits > resBits then
+                                harmOps <- MLIROp.ArithOp (ArithOp.TruncI (harmSSA, elseSSA, elseTy, resultType)) :: harmOps
+                            else
+                                harmOps <- MLIROp.ArithOp (ArithOp.ExtSI (harmSSA, elseSSA, elseTy, resultType)) :: harmOps
+                            harmSSA
+                        else elseSSA
+                    let! muxOp = pCombMux resultSSA condSSA effThenSSA effElseSSA resultType
+                    let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ (List.rev harmOps) @ [muxOp]
+                    return (allOps, TRValue { SSA = resultSSA; Type = resultType })
+                else
+                    let! muxOp = pCombMux resultSSA condSSA thenSSA elseSSA resultType
+                    let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ [muxOp]
+                    return (allOps, TRValue { SSA = resultSSA; Type = resultType })
             | None ->
                 return! fail (Message "FPGA comb.mux requires both branches")
 
@@ -219,17 +256,20 @@ let pBuildMatchElimination
 
             let numArms = List.length arms
 
-            // Phase 1: Recall all arm value SSAs (recursive fold in parser monad)
-            let! armValueSSAs =
+            // Phase 1: Recall all arm value SSAs with their types (for width harmonization)
+            let! armValues =
                 let rec recallAll idx acc =
                     if idx >= numArms then preturn (List.rev acc)
                     else
                         let (_, armValueNodeId, _) = arms.[idx]
                         parser {
-                            let! (armSSA, _) = pRecallNode armValueNodeId
-                            return! recallAll (idx + 1) (armSSA :: acc)
+                            let! (armSSA, armTy) = pRecallNode armValueNodeId
+                            return! recallAll (idx + 1) ((armSSA, armTy) :: acc)
                         }
                 recallAll 0 []
+
+            let armValueSSAs = armValues |> List.map fst
+            let armValueTypes = armValues |> List.map snd
 
             // All arm ops inline (combinational — all evaluate unconditionally)
             let allArmOps = arms |> List.collect (fun (ops, _, _) -> ops)
@@ -244,8 +284,37 @@ let pBuildMatchElimination
                 //   [1 + 2*i]        = tagLit for arm i     (i in 0..numArms-2)
                 //   [1 + 2*i + 1]    = cmpSSA for arm i
                 //   [tagCmpEnd + j]  = intermediate mux SSA (j in 0..numArms-3)
+                //   [muxEnd + k]     = harmonized arm SSA   (k in 0..numArms-1)
                 //   outermost mux reuses resultSSA (index 0)
                 let tagCmpEnd = 1 + 2 * (numArms - 1)
+                let muxIntermediateEnd = tagCmpEnd + max 0 (numArms - 2)
+
+                // Phase 1.5: Harmonize arm values to resultType width
+                // FPGA comb.mux requires all operands at matching bit widths.
+                // Arm values (e.g. DU tag constants at i8) may differ from resultType (e.g. i3).
+                let resBits = match resultType with | TInt (IntWidth b) -> b | _ -> 0
+                let! (harmonizedSSAs, harmonizeOps) =
+                    let rec harmonize idx accSSAs accOps =
+                        if idx >= numArms then preturn (List.rev accSSAs, List.concat (List.rev accOps))
+                        else
+                            let armSSA = armValueSSAs.[idx]
+                            let armTy = armValueTypes.[idx]
+                            let armBits = match armTy with | TInt (IntWidth b) -> b | _ -> 0
+                            if resBits > 0 && armBits > 0 && armBits <> resBits then
+                                let harmSSA = allSSAs.[muxIntermediateEnd + idx]
+                                if armBits > resBits then
+                                    parser {
+                                        let! truncOp = pTruncI harmSSA armSSA armTy resultType
+                                        return! harmonize (idx + 1) (harmSSA :: accSSAs) ([truncOp] :: accOps)
+                                    }
+                                else
+                                    parser {
+                                        let! extOp = pExtSI harmSSA armSSA armTy resultType
+                                        return! harmonize (idx + 1) (harmSSA :: accSSAs) ([extOp] :: accOps)
+                                    }
+                            else
+                                harmonize (idx + 1) (armSSA :: accSSAs) ([] :: accOps)
+                    harmonize 0 [] []
 
                 // Phase 2: Tag comparisons (fold over non-last arms, composing Elements)
                 let! tagResults =
@@ -268,6 +337,7 @@ let pBuildMatchElimination
 
                 // Phase 3: Nested mux chain (foldBack from inside-out, composing Elements)
                 // Start with last arm's value as initial "else", wrap each previous arm with comb.mux
+                // Uses harmonized SSAs so all operands match resultType width.
                 let! (muxOps, _) =
                     let rec buildMuxChain armIdx currentElseSSA muxCount acc =
                         if armIdx < 0 then preturn (List.rev acc, currentElseSSA)
@@ -276,12 +346,12 @@ let pBuildMatchElimination
                                 if armIdx = 0 then resultSSA
                                 else allSSAs.[tagCmpEnd + muxCount]
                             parser {
-                                let! muxOp = pCombMux muxResultSSA cmpSSAs.[armIdx] armValueSSAs.[armIdx] currentElseSSA resultType
+                                let! muxOp = pCombMux muxResultSSA cmpSSAs.[armIdx] harmonizedSSAs.[armIdx] currentElseSSA resultType
                                 return! buildMuxChain (armIdx - 1) muxResultSSA (muxCount + 1) (muxOp :: acc)
                             }
-                    buildMuxChain (numArms - 2) armValueSSAs.[numArms - 1] 0 []
+                    buildMuxChain (numArms - 2) harmonizedSSAs.[numArms - 1] 0 []
 
-                let allOps = allArmOps @ tagOps @ muxOps
+                let allOps = allArmOps @ harmonizeOps @ tagOps @ muxOps
                 return (allOps, TRValue { SSA = resultSSA; Type = resultType })
 
         | _ ->
@@ -411,7 +481,7 @@ let pBuildMatchElimination
 
                 // Step 1: Extract tag from scrutinee
                 let! allSSAs = getNodeSSAs nodeId
-                let tagTy = TInt I8
+                let tagTy = TInt (IntWidth 8)
 
                 // Index 0 is reserved for the result SSA — tag extraction starts at index 1
                 let tagExtractOps, tagSSA, tagExtractEnd =
@@ -419,7 +489,7 @@ let pBuildMatchElimination
                     | TIndex ->
                         let indexZeroSSA = allSSAs.[1]
                         let tagSSA = allSSAs.[2]
-                        let memrefI8Ty = TMemRef (TInt I8)
+                        let memrefI8Ty = TMemRef (TInt (IntWidth 8))
                         let indexZeroOp = MLIROp.ArithOp (ArithOp.ConstI (indexZeroSSA, 0L, TIndex))
                         let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, scrutineeSSA, [indexZeroSSA], tagTy, memrefI8Ty))
                         [indexZeroOp; loadOp], tagSSA, 3
@@ -427,7 +497,7 @@ let pBuildMatchElimination
                         let castSSA = allSSAs.[1]
                         let zeroSSA = allSSAs.[2]
                         let tagSSA = allSSAs.[3]
-                        let memrefI8Ty = TMemRef (TInt I8)
+                        let memrefI8Ty = TMemRef (TInt (IntWidth 8))
                         let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, scrutineeType, memrefI8Ty))
                         let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
                         let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))

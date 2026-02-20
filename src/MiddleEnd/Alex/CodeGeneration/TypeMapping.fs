@@ -24,17 +24,9 @@ let maxPayloadBytes (ty1: MLIRType) (ty2: MLIRType) : int =
 /// Architecture-aware type size computation
 /// Uses platform word width for pointer-sized types (TIndex, TIndex, memrefs)
 let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
-    let wordBytes =
-        match platformWordWidth arch with
-        | I32 -> 4  // 32-bit platforms (ARM32, WASM32, etc.)
-        | I64 -> 8  // 64-bit platforms (x64, ARM64, WASM64, etc.)
-        | _ -> failwith "Unexpected platform word width for size calculation"
+    let wordBytes = intWidthBytes (platformWordWidth arch)
     match ty with
-    | TInt I1 -> 1
-    | TInt I8 -> 1
-    | TInt I16 -> 2
-    | TInt I32 -> 4
-    | TInt I64 -> 8
+    | TInt w -> intWidthBytes w
     | TFloat F32 -> 4
     | TFloat F64 -> 8
     | TIndex -> wordBytes            // Platform-sized
@@ -53,29 +45,36 @@ let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
 // NTUKind DIRECT MAPPING (for literals)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Map NTUKind directly to MLIRType with architecture awareness.
+/// Map NTUKind directly to MLIRType with platform and architecture awareness.
 /// Used for NativeLiteral where we have the kind without a full NativeType.
 ///
-/// PRINCIPLED DESIGN (January 2026):
-/// The NTUKind in a literal IS the type. Platform-dependent kinds
-/// (NTUnativeint, NTUint, etc.) resolve based on target architecture.
-let mapNTUKindToMLIRType (arch: Architecture) (kind: NTUKind) : MLIRType =
+/// PRINCIPLED DESIGN (February 2026 — DTS/Width Inference):
+/// The NTUKind in a literal IS the type. Fixed-width kinds (int8, int16, etc.)
+/// resolve to their declared width on all platforms. Platform-word kinds
+/// (int, uint — NTUWidth.Resolved WidthDimension.Register) resolve differently:
+///   - CPU: architecture register width (32 or 64 bits)
+///   - FPGA: IntWidth 0 (abstract — width comes from interval analysis coeffect)
+/// On FPGA there is no "register width." Every integer is exactly as wide as the
+/// design requires. Width is a design property, not a platform property.
+let mapNTUKindToMLIRType (platform: TargetPlatform) (arch: Architecture) (kind: NTUKind) : MLIRType =
     let wordWidth = platformWordWidth arch
     match kind with
-    // Fixed-width signed integers
-    | NTUKind.NTUint (NTUWidth.Fixed 8) -> TInt I8
-    | NTUKind.NTUint (NTUWidth.Fixed 16) -> TInt I16
-    | NTUKind.NTUint (NTUWidth.Fixed 32) -> TInt I32
-    | NTUKind.NTUint (NTUWidth.Fixed 64) -> TInt I64
+    // Fixed-width signed integers — same on all platforms
+    | NTUKind.NTUint (NTUWidth.Fixed 8) -> TInt (IntWidth 8)
+    | NTUKind.NTUint (NTUWidth.Fixed 16) -> TInt (IntWidth 16)
+    | NTUKind.NTUint (NTUWidth.Fixed 32) -> TInt (IntWidth 32)
+    | NTUKind.NTUint (NTUWidth.Fixed 64) -> TInt (IntWidth 64)
     // Fixed-width unsigned integers (same MLIR type, signedness is in ops)
-    | NTUKind.NTUuint (NTUWidth.Fixed 8) -> TInt I8
-    | NTUKind.NTUuint (NTUWidth.Fixed 16) -> TInt I16
-    | NTUKind.NTUuint (NTUWidth.Fixed 32) -> TInt I32
-    | NTUKind.NTUuint (NTUWidth.Fixed 64) -> TInt I64
-    // Platform-word integers - size depends on architecture
-    | NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register)      // int (platform word)
-    | NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register)     // uint (platform word)
-        -> TInt wordWidth
+    | NTUKind.NTUuint (NTUWidth.Fixed 8) -> TInt (IntWidth 8)
+    | NTUKind.NTUuint (NTUWidth.Fixed 16) -> TInt (IntWidth 16)
+    | NTUKind.NTUuint (NTUWidth.Fixed 32) -> TInt (IntWidth 32)
+    | NTUKind.NTUuint (NTUWidth.Fixed 64) -> TInt (IntWidth 64)
+    // Platform-word integers — width depends on target platform
+    | NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register)
+    | NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register) ->
+        match platform with
+        | FPGA -> TInt (IntWidth 0)  // Abstract: width from interval analysis, not architecture
+        | _ -> TInt wordWidth        // CPU/MCU: architecture register width
     // Native pointer-sized types - map to MLIR index for memref operations
     | NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Pointer)  // nativeint
     | NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Pointer) // unativeint
@@ -86,16 +85,16 @@ let mapNTUKindToMLIRType (arch: Architecture) (kind: NTUKind) : MLIRType =
     | NTUKind.NTUfloat (NTUWidth.Fixed 32) -> TFloat F32
     | NTUKind.NTUfloat (NTUWidth.Fixed 64) -> TFloat F64
     // Boolean
-    | NTUKind.NTUbool -> TInt I1
+    | NTUKind.NTUbool -> TInt (IntWidth 1)
     // Character (Unicode codepoint = i32)
-    | NTUKind.NTUchar -> TInt I32
+    | NTUKind.NTUchar -> TInt (IntWidth 32)
     // Unit
-    | NTUKind.NTUunit -> TInt I32  // Unit represented as i32 0
+    | NTUKind.NTUunit -> TInt (IntWidth 32)  // Unit represented as i32 0
     // Pointers
     | NTUKind.NTUptr | NTUKind.NTUfnptr -> TIndex
     // String as memref (portable MLIR type, not LLVM struct)
     // memref<?xi8> represents a dynamic-sized buffer with length tracked in descriptor
-    | NTUKind.NTUstring -> TMemRef (TInt I8)
+    | NTUKind.NTUstring -> TMemRef (TInt (IntWidth 8))
     // Composite/complex types - representation comes from platform tier, not here
     | kind -> failwithf "NTUKind %A requires platform-tier resolution, not scalar mapping" kind
 
@@ -128,18 +127,18 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         // for platform-dependent types like int (PlatformWord)
         match tyconLayout, tycon.NTUKind with
         // Zero-size unit type
-        | TypeLayout.Inline (0, 1), Some NTUKind.NTUunit -> TInt I32
+        | TypeLayout.Inline (0, 1), Some NTUKind.NTUunit -> TInt (IntWidth 32)
         // Boolean: 1-bit
-        | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt I1
+        | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt (IntWidth 1)
         // Fixed-width integers by NTUKind
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 8)) -> TInt I8
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 8)) -> TInt I8
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 16)) -> TInt I16
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 16)) -> TInt I16
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 32)) -> TInt I32
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 32)) -> TInt I32
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 64)) -> TInt I64
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 64)) -> TInt I64
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 8)) -> TInt (IntWidth 8)
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 8)) -> TInt (IntWidth 8)
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 16)) -> TInt (IntWidth 16)
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 16)) -> TInt (IntWidth 16)
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 32)) -> TInt (IntWidth 32)
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 32)) -> TInt (IntWidth 32)
+        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 64)) -> TInt (IntWidth 64)
+        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 64)) -> TInt (IntWidth 64)
         // Platform-word integers (int, uint) - size depends on architecture
         | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
         | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register))
@@ -158,16 +157,16 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 32)) -> TFloat F32
         | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 64)) -> TFloat F64
         // Char (Unicode codepoint)
-        | _, Some NTUKind.NTUchar -> TInt I32
+        | _, Some NTUKind.NTUchar -> TInt (IntWidth 32)
         // String as memref (portable MLIR type, not LLVM struct)
         // At F# level: string has .Pointer/.Length accessors (FNCS synthetic members)
         // At MLIR level: memref<?xi8> (dynamic buffer)
         // Descriptor (ptr+size) is MLIR's concern, not explicitly modeled here
-        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TMemRef (TInt I8)
+        | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TMemRef (TInt (IntWidth 8))
         // String with Opaque layout (memref transition - January 2026)
         // After FNCS memref transition, strings use TypeLayout.Opaque instead of FatPointer
         // Both layouts map to the same MLIR type: memref<?xi8>
-        | TypeLayout.Opaque, Some NTUKind.NTUstring -> TMemRef (TInt I8)
+        | TypeLayout.Opaque, Some NTUKind.NTUstring -> TMemRef (TInt (IntWidth 8))
         // SECOND: Name-based fallback for types without proper NTU metadata
         // Note: Arrays have FatPointer layout but no specific NTUKind, handled in fallback
         | _ ->
@@ -182,7 +181,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 | [innerTy] ->
                     let innerMlir = mapNativeTypeForArch arch innerTy
                     let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
-                    TMemRefStatic(totalBytes, TInt I8)
+                    TMemRefStatic(totalBytes, TInt (IntWidth 8))
                 | _ -> failwithf "option type requires exactly one type argument: %A" ty
             | "voption" ->
                 // ValueOption is a DU with 2 cases (ValueNone, ValueSome) - tag must be i8
@@ -190,7 +189,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 | [innerTy] ->
                     let innerMlir = mapNativeTypeForArch arch innerTy
                     let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
-                    TMemRefStatic(totalBytes, TInt I8)
+                    TMemRefStatic(totalBytes, TInt (IntWidth 8))
                 | _ -> failwithf "voption type requires exactly one type argument: %A" ty
             | "Result" ->
                 // Result<'T, 'E> is stored inline as a byte-level memref.
@@ -201,7 +200,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                     let okMlir  = mapNativeTypeForArch arch okTy
                     let errMlir = mapNativeTypeForArch arch errTy
                     let payloadBytes = max (mlirTypeSizeForArch arch okMlir) (mlirTypeSizeForArch arch errMlir)
-                    TMemRefStatic(1 + payloadBytes, TInt I8)
+                    TMemRefStatic(1 + payloadBytes, TInt (IntWidth 8))
                 | _ -> failwithf "result type requires exactly two type arguments: %A" ty
             | "list" ->
                 // PRD-13a: list<'T> is a pointer to cons cell (linked list)
@@ -218,20 +217,20 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                     match tyconLayout with
                     | TypeLayout.Inline (size, _align) when size > 0 ->
                         // Record with known layout — use computed size
-                        TMemRefStatic (size, TInt I8)
+                        TMemRefStatic (size, TInt (IntWidth 8))
                     | _ ->
                         // Record with Opaque/unknown layout (e.g. contains strings/fat pointers)
                         // Estimate: field count × word size as upper bound
                         let wordSize = match arch with X86_64 | ARM64 | RISCV64 -> 8 | _ -> 4
                         let estimatedSize = tycon.FieldCount * wordSize
-                        TMemRefStatic (estimatedSize, TInt I8)
+                        TMemRefStatic (estimatedSize, TInt (IntWidth 8))
                 else
                     match tyconLayout with
                     | TypeLayout.Inline (size, align) when size > 8 ->
                         // DU layout: FNCS provides size & align - type uses size, allocation uses align
-                        // Heterogeneous struct → TMemRefStatic (size, TInt I8)
+                        // Heterogeneous struct → TMemRefStatic (size, TInt (IntWidth 8))
                         // This is the CORRECT portable representation for WASM and other backends
-                        TMemRefStatic (size, TInt I8)
+                        TMemRefStatic (size, TInt (IntWidth 8))
                     | TypeLayout.Inline (_size, _align) when tycon.CaseCount > 0 ->
                         // Small enum DU: abstract tag type — platform elision decides concrete width
                         TTag tycon.CaseCount
@@ -245,7 +244,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                         if tycon.Name.ToLowerInvariant().Contains("string") then
                             // String without proper NTUKind - use memref but warn
                             printfn "WARNING: String type '%s' lacks NTUKind.NTUstring - fix FNCS intrinsic definition" tycon.Name
-                            TMemRef <| TInt I8
+                            TMemRef <| TInt (IntWidth 8)
                         else
                             // Unknown FatPointer type - fail loudly
                             failwithf "FatPointer type '%s' lacks proper NTUKind or name match - fix FNCS metadata" tycon.Name
@@ -276,7 +275,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         // Tuple: Product of element types - convert to byte-level memref
         let elemTypes = elements |> List.map (mapNativeTypeForArch arch)
         let totalSize = elemTypes |> List.sumBy (mlirTypeSizeForArch arch)
-        TMemRefStatic (totalSize, TInt I8)
+        TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     | NativeType.TVar tvar ->
         // Use Union-Find to resolve type variable chains
@@ -295,24 +294,24 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
     | NativeType.TLazy elemTy ->
         let elemMlir = mapNativeTypeForArch arch elemTy
         // Base layout: i1 + T + ptr - convert to byte-level memref
-        let totalSize = mlirTypeSizeForArch arch (TInt I1) + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
-        TMemRefStatic (totalSize, TInt I8)
+        let totalSize = mlirTypeSizeForArch arch (TInt (IntWidth 1)) + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
+        TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     // PRD-15: Seq<T> - FLAT CLOSURE: { state: i32, current: T, moveNext_ptr: ptr }
     // Captures are added dynamically at witness time, not in type mapping
     | NativeType.TSeq elemTy ->
         let elemMlir = mapNativeTypeForArch arch elemTy
         // Base layout: i32 + T + ptr - convert to byte-level memref
-        let totalSize = mlirTypeSizeForArch arch (TInt I32) + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
-        TMemRefStatic (totalSize, TInt I8)
+        let totalSize = mlirTypeSizeForArch arch (TInt (IntWidth 32)) + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
+        TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     // PRD-15/16: SeqEnumerator<T> - mutable iteration state over a seq
     // { seq_ptr: ptr, state: i32, current: T, hasValue: i1 }
     | NativeType.TSeqEnumerator elemTy ->
         let elemMlir = mapNativeTypeForArch arch elemTy
         // Layout: ptr + i32 + T + i1 - convert to byte-level memref
-        let totalSize = mlirTypeSizeForArch arch TIndex + mlirTypeSizeForArch arch (TInt I32) + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch (TInt I1)
-        TMemRefStatic (totalSize, TInt I8)
+        let totalSize = mlirTypeSizeForArch arch TIndex + mlirTypeSizeForArch arch (TInt (IntWidth 32)) + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch (TInt (IntWidth 1))
+        TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     // PRD-13a: Immutable collection types - all are reference types (pointer to nodes)
     | NativeType.TList _ -> TIndex  // Pointer to cons cell
@@ -324,7 +323,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
     | NativeType.TUnion (tycon, cases) ->
         // DU layout: (tag, payload) where payload accommodates all cases
         // Tag type: i8 for ≤256 cases, i16 for more
-        let tagType = if List.length cases <= 256 then TInt I8 else TInt I16
+        let tagType = if List.length cases <= 256 then TInt (IntWidth 8) else TInt (IntWidth 16)
 
         // Compute max payload size from case field types
         // Each case can have multiple fields (tuple payload) or single field
@@ -337,7 +336,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 | fields ->  // Multiple fields = tuple payload
                     let fieldTypes = fields |> List.map (fun (_, ty) -> mapNativeTypeForArch arch ty)
                     let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
-                    Some (TMemRefStatic(totalBytes, TInt I8)))
+                    Some (TMemRefStatic(totalBytes, TInt (IntWidth 8))))
 
         // Find the "largest" payload type for union storage
         // For now, use the first non-None case's type (proper size comparison would need layout info)
@@ -345,17 +344,17 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
             casePayloadTypes
             |> List.choose id
             |> List.tryHead
-            |> Option.defaultValue (TInt I8)  // Empty union fallback
+            |> Option.defaultValue (TInt (IntWidth 8))  // Empty union fallback
 
         // Convert to byte-level memref: tag + payload
         let totalSize = mlirTypeSizeForArch arch tagType + mlirTypeSizeForArch arch payloadType
-        TMemRefStatic (totalSize, TInt I8)
+        TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     | NativeType.TAnon(fields, _) ->
         // Anonymous records - convert to byte-level memref
         let fieldTypes = fields |> List.map (fun (_, ty) -> mapNativeTypeForArch arch ty)
         let totalSize = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
-        TMemRefStatic (totalSize, TInt I8)
+        TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     | NativeType.TMeasure _ ->
         failwith "Measure type should have been stripped - this is an FNCS issue"
@@ -395,16 +394,16 @@ let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (f
         // Layout: evaluated (I1) | value (elemTy) | thunk (TIndex)
         match fieldIndex with
         | 0 -> 0  // evaluated flag
-        | 1 -> mlirTypeSizeForArch arch (TInt I1)  // value after flag
-        | 2 -> mlirTypeSizeForArch arch (TInt I1) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // thunk after value
+        | 1 -> mlirTypeSizeForArch arch (TInt (IntWidth 1))  // value after flag
+        | 2 -> mlirTypeSizeForArch arch (TInt (IntWidth 1)) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // thunk after value
         | _ -> failwith $"Invalid field index {fieldIndex} for TLazy"
 
     | NativeType.TSeq elemTy ->
         // Layout: state (I32) | current (elemTy) | moveNext (TIndex)
         match fieldIndex with
         | 0 -> 0  // state
-        | 1 -> mlirTypeSizeForArch arch (TInt I32)  // current after state
-        | 2 -> mlirTypeSizeForArch arch (TInt I32) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // moveNext after current
+        | 1 -> mlirTypeSizeForArch arch (TInt (IntWidth 32))  // current after state
+        | 2 -> mlirTypeSizeForArch arch (TInt (IntWidth 32)) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // moveNext after current
         | _ -> failwith $"Invalid field index {fieldIndex} for TSeq"
 
     | NativeType.TSeqEnumerator elemTy ->
@@ -412,8 +411,8 @@ let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (f
         match fieldIndex with
         | 0 -> 0  // source
         | 1 -> mlirTypeSizeForArch arch TIndex  // index after source
-        | 2 -> mlirTypeSizeForArch arch TIndex + mlirTypeSizeForArch arch (TInt I32)  // current after index
-        | 3 -> mlirTypeSizeForArch arch TIndex + mlirTypeSizeForArch arch (TInt I32) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // hasValue after current
+        | 2 -> mlirTypeSizeForArch arch TIndex + mlirTypeSizeForArch arch (TInt (IntWidth 32))  // current after index
+        | 3 -> mlirTypeSizeForArch arch TIndex + mlirTypeSizeForArch arch (TInt (IntWidth 32)) + mlirTypeSizeForArch arch (mapNativeTypeForArch arch elemTy)  // hasValue after current
         | _ -> failwith $"Invalid field index {fieldIndex} for TSeqEnumerator"
 
     | NativeType.TUnion (_, cases) ->
@@ -422,7 +421,7 @@ let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (f
         | 0 -> 0  // tag at offset 0
         | 1 ->
             // Payload offset = tag size
-            let tagType = if List.length cases <= 256 then TInt I8 else TInt I16
+            let tagType = if List.length cases <= 256 then TInt (IntWidth 8) else TInt (IntWidth 16)
             mlirTypeSizeForArch arch tagType
         | _ -> failwith $"Invalid field index {fieldIndex} for TUnion"
 
@@ -480,7 +479,7 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
         // Tuples also need recursive mapping for nested records
         let elementTypes = elements |> List.map (mapNativeTypeWithGraphForArch arch graph)
         let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
-        TMemRefStatic(totalBytes, TInt I8)
+        TMemRefStatic(totalBytes, TInt (IntWidth 8))
     | NativeType.TAnon(fields, _) ->
         // Anonymous records → TStruct with named fields
         let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
@@ -489,7 +488,7 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
     | NativeType.TLazy elemTy ->
         let elemMlir = mapNativeTypeWithGraphForArch arch graph elemTy
         let totalBytes = 1 + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
-        TMemRefStatic(totalBytes, TInt I8)  // Flat: just code_ptr, captures added at witness
+        TMemRefStatic(totalBytes, TInt (IntWidth 8))  // Flat: just code_ptr, captures added at witness
     | _ ->
         // Non-record types: use standard mapping with architecture
         mapNativeTypeForArch arch ty
@@ -550,9 +549,27 @@ let rec resolveTypeParams (graph: SemanticGraph) (ty: NativeType) =
         elements |> List.iter (resolveTypeParams graph)
     | _ -> ()
 
+/// Map leaf NativeType to MLIRType with platform-aware width resolution.
+/// On FPGA, platform-word integers (NTUWidth.Resolved WidthDimension.Register) produce
+/// IntWidth 0 — an abstract sentinel meaning "width from interval analysis, not architecture."
+/// All other types (fixed-width integers, booleans, pointers, etc.) pass through unchanged.
+let private mapLeafTypeForPlatform (platform: TargetPlatform) (arch: Architecture) (ty: NativeType) : MLIRType =
+    match platform with
+    | FPGA ->
+        match ty with
+        | NativeType.TApp(tycon, _) ->
+            match tycon.NTUKind with
+            | Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
+            | Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register)) ->
+                TInt (IntWidth 0)  // Abstract: width from interval analysis
+            | _ -> mapNativeTypeForArch arch ty
+        | _ -> mapNativeTypeForArch arch ty
+    | _ -> mapNativeTypeForArch arch ty
+
 /// Platform-aware type mapping — the canonical entry point for target-dependent code.
 /// On FPGA, TTuple maps to TStruct with positional field names (first-class value).
 /// On CPU, TTuple maps to TMemRefStatic (byte blob for memory layout).
+/// On FPGA, platform-word integers produce IntWidth 0 (abstract — resolved by interval analysis).
 /// Recursive: nested tuples within tuple elements also get the platform treatment.
 let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : MLIRType =
     let recurse = mapNativeTypeForTarget platform arch graph
@@ -583,10 +600,10 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
                     match args with
                     | [innerTy] ->
                         let innerMlir = recurse innerTy
-                        TStruct [("tag", TInt I1); ("value", innerMlir)]
-                    | _ -> mapNativeTypeForArch arch ty
-                | _ -> mapNativeTypeForArch arch ty
-            | _ -> mapNativeTypeForArch arch ty
+                        TStruct [("tag", TInt (IntWidth 1)); ("value", innerMlir)]
+                    | _ -> mapLeafTypeForPlatform platform arch ty
+                | _ -> mapLeafTypeForPlatform platform arch ty
+            | _ -> mapLeafTypeForPlatform platform arch ty
     | NativeType.TTuple(elements, _) ->
         match platform with
         | FPGA ->
@@ -597,7 +614,7 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
             // CPU: tuples are flat byte blobs
             let elementTypes = elements |> List.map recurse
             let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
-            TMemRefStatic(totalBytes, TInt I8)
+            TMemRefStatic(totalBytes, TInt (IntWidth 8))
     | NativeType.TAnon(fields, _) ->
         // Anonymous records → TStruct with named fields
         let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy))
@@ -606,7 +623,7 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
         // Lazy<T> - flat closure
         let elemMlir = recurse elemTy
         let totalBytes = 1 + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
-        TMemRefStatic(totalBytes, TInt I8)
+        TMemRefStatic(totalBytes, TInt (IntWidth 8))
     | NativeType.TVar tvar ->
         // Resolve type variable through Union-Find and recurse through target-aware mapper
         match find tvar with
@@ -615,8 +632,8 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
             printfn "WARNING: Unbound type variable '%s' - using TIndex fallback" root.Name
             TIndex
     | _ ->
-        // Leaf types: use standard mapping with architecture
-        mapNativeTypeForArch arch ty
+        // Leaf types: platform-aware mapping (FPGA: IntWidth 0 for platform-word integers)
+        mapLeafTypeForPlatform platform arch ty
 
 /// BACKWARD COMPATIBLE: mapNativeTypeWithGraph without explicit architecture
 /// Defaults to X86_64 for host compilation.

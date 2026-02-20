@@ -135,13 +135,13 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
 
             let result =
                 if isExpressionValued then
-                    let resultType = mapType node.Type ctx
+                    let resultType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
                     match tryMatch (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ssas, _) when ssas.Length >= 1 -> Some (ssas.[0], resultType)
                     | _ -> None  // Fall back to void
                 else None
 
-            match tryMatchWithDiagnostics (pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            match tryMatchWithDiagnostics (pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, transferResult), _) ->
                 trace "[ControlFlowWitness] IfThenElse: Built conditional with %d ops" (List.length ops)
                 { InlineOps = ops; TopLevelOps = []; Result = transferResult }

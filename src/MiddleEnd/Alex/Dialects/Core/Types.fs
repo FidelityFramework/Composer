@@ -8,13 +8,18 @@ module Alex.Dialects.Core.Types
 // INTEGER AND FLOAT WIDTHS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Integer bit widths supported by MLIR
-type IntWidth =
-    | I1    // Boolean
-    | I8    // Byte
-    | I16   // Short
-    | I32   // Int
-    | I64   // Long
+/// Integer bit width — arbitrary precision.
+/// Width is a number, not an enum of CPU-blessed sizes.
+/// MLIR natively supports iN for any N. CIRCT hw dialect supports arbitrary widths.
+/// On FPGA, the width is exactly what the design needs — no more, no less.
+[<Struct>]
+type IntWidth = IntWidth of bits: int
+
+/// Extract the bit count from an IntWidth
+let inline intWidthBits (IntWidth bits) = bits
+
+/// Size in bytes for a given bit width (ceiling division by 8)
+let intWidthBytes (IntWidth bits) = (bits + 7) / 8
 
 /// Floating-point widths supported by MLIR
 type FloatWidth =
@@ -45,7 +50,7 @@ type MLIRType =
 /// Rank-1 memref descriptors are 5 words: {allocPtr, alignPtr, offset, size, stride}.
 let rec mlirTypeSize (ty: MLIRType) : int =
     match ty with
-    | TInt I1 | TInt I8 -> 1 | TInt I16 -> 2 | TInt I32 -> 4 | TInt I64 -> 8
+    | TInt w -> intWidthBytes w
     | TFloat F32 -> 4 | TFloat F64 -> 8
     | TFunc _ -> 16
     | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 40
@@ -76,12 +81,13 @@ type Architecture =
     | RISCV32
     | WASM32
 
-/// Get the platform word width for a target architecture
-/// This determines the size of int, nativeint, size_t, ptrdiff_t, etc.
+/// Get the platform word width for a target CPU architecture.
+/// This determines the size of int, nativeint, size_t, ptrdiff_t on CPU targets.
+/// NOT applicable to FPGA — FPGA widths come from the design, not from a CPU model.
 let platformWordWidth (arch: Architecture) : IntWidth =
     match arch with
-    | X86_64 | ARM64 | RISCV64 -> I64
-    | ARM32_Thumb | RISCV32 | WASM32 -> I32
+    | X86_64 | ARM64 | RISCV64 -> IntWidth 64
+    | ARM32_Thumb | RISCV32 | WASM32 -> IntWidth 32
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSA VALUES AND BLOCK REFERENCES

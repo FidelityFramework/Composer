@@ -46,12 +46,12 @@ let pOptionIsSome (nodeId: NodeId) (optionSSA: SSA) : PSGParser<MLIROp list * Tr
         let oneSSA = ssas.[2]
         let resultSSA = ssas.[3]
 
-        let tagTy = TInt I8
+        let tagTy = TInt (IntWidth 8)
         let! extractTagOps = pExtractValue tagSSA optionSSA 0 offsetSSA tagTy
         let! oneConstOp = pConstI oneSSA 1L tagTy
         let! cmpOp = pCmpI resultSSA ICmpPred.Eq tagSSA oneSSA tagTy
         let ops = extractTagOps @ [oneConstOp; cmpOp]
-        return (ops, TRValue { SSA = resultSSA; Type = TInt I1 })
+        return (ops, TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
     }
 
 /// Option.IsNone: extract tag, compare with 0
@@ -66,12 +66,12 @@ let pOptionIsNone (nodeId: NodeId) (optionSSA: SSA) : PSGParser<MLIROp list * Tr
         let zeroSSA = ssas.[2]
         let resultSSA = ssas.[3]
 
-        let tagTy = TInt I8
+        let tagTy = TInt (IntWidth 8)
         let! extractTagOps = pExtractValue tagSSA optionSSA 0 offsetSSA tagTy
         let! zeroConstOp = pConstI zeroSSA 0L tagTy
         let! cmpOp = pCmpI resultSSA ICmpPred.Eq tagSSA zeroSSA tagTy
         let ops = extractTagOps @ [zeroConstOp; cmpOp]
-        return (ops, TRValue { SSA = resultSSA; Type = TInt I1 })
+        return (ops, TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
     }
 
 /// Option.Get: extract value field (index 1)
@@ -114,12 +114,12 @@ let pListIsEmpty (nodeId: NodeId) (listSSA: SSA) : PSGParser<MLIROp list * Trans
         let zeroSSA = ssas.[2]
         let resultSSA = ssas.[3]
 
-        let tagTy = TInt I8
+        let tagTy = TInt (IntWidth 8)
         let! extractTagOps = pExtractValue tagSSA listSSA 0 offsetSSA tagTy
         let! zeroConstOp = pConstI zeroSSA 0L tagTy
         let! cmpOp = pCmpI resultSSA ICmpPred.Eq tagSSA zeroSSA tagTy
         let ops = extractTagOps @ [zeroConstOp; cmpOp]
-        return (ops, TRValue { SSA = resultSSA; Type = TInt I1 })
+        return (ops, TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
     }
 
 /// List.Head: extract first element (index 1)

@@ -106,7 +106,7 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
         do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
 
         // String type: memref<Nxi8> where N is byte length (static-sized memref for literals)
-        let stringTy = TMemRefStatic (byteLength, TInt I8)
+        let stringTy = TMemRefStatic (byteLength, TInt (IntWidth 8))
 
         do! emitTrace "pBuildStringLiteral.types" (sprintf "stringTy=%A" stringTy)
 
@@ -134,7 +134,7 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
 /// String is now memref<?xi8>, extract base pointer as index then cast to target type
 let pStringGetPtr (stringSSA: SSA) (ptrSSA: SSA) (ptrTy: MLIRType) : PSGParser<MLIROp list> =
     parser {
-        let memrefTy = TMemRef (TInt I8)
+        let memrefTy = TMemRef (TInt (IntWidth 8))
 
         // Check if we need to cast index → ptrTy
         match ptrTy with
@@ -157,7 +157,7 @@ let pStringGetLength (stringSSA: SSA) (lengthSSA: SSA) (lengthTy: MLIRType) : PS
         // memref.dim %memref, %c0 : memref<?xi8>
         // Need constant 0 for dimension index (0th dimension = length)
         let dimIndexSSA = SSA.V 999999  // Temporary SSA for constant
-        let memrefTy = TMemRef (TInt I8)
+        let memrefTy = TMemRef (TInt (IntWidth 8))
         let! constOp = pConstI dimIndexSSA 0L TIndex
         let! dimOp = pMemRefDim lengthSSA stringSSA dimIndexSSA memrefTy
         return [constOp; dimOp]

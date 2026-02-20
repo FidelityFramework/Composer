@@ -101,12 +101,38 @@ let platformWordType (state: PSGParserState) : MLIRType =
 
 /// Get the word width in bits for the target platform
 let platformWordBits (state: PSGParserState) : int =
-    match platformWordWidth state.Platform.TargetArch with
-    | I64 -> 64
-    | I32 -> 32
-    | I16 -> 16
-    | I8 -> 8
-    | I1 -> 1
+    intWidthBits (platformWordWidth state.Platform.TargetArch)
+
+/// Narrow an MLIRType using per-node width inference coeffects.
+/// TInt → NodeWidths lookup. TStruct → StructNodeWidths lookup.
+/// Returns type unchanged if no inference is available or target is not FPGA.
+/// SINGLE entry point for all width narrowing. No string keys. No type names.
+let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (nodeId: NodeId) (ty: MLIRType) : MLIRType =
+    match coeffects.WidthInference with
+    | None -> ty
+    | Some result ->
+        let id = NodeId.value nodeId
+        match ty with
+        | TInt (IntWidth 0) ->
+            match Map.tryFind id result.NodeWidths with
+            | Some inferred -> TInt (IntWidth inferred.Bits)
+            | None -> ty
+        | TInt _ -> ty  // Already has a concrete width, don't override
+        | TStruct fields ->
+            match Map.tryFind id result.StructNodeWidths with
+            | Some fieldWidths ->
+                let widthMap = Map.ofList fieldWidths
+                fields |> List.map (fun (name, fty) ->
+                    match fty, Map.tryFind name widthMap with
+                    | TInt (IntWidth 0), Some bits -> (name, TInt (IntWidth bits))
+                    | _ -> (name, fty))
+                |> TStruct
+            | None -> ty
+        | _ -> ty
+
+/// Narrow an MLIRType using the current node's inferred width (FPGA-aware).
+let narrowForCurrent (state: PSGParserState) (ty: MLIRType) : MLIRType =
+    narrowType state.Coeffects state.Current.Id ty
 
 /// Get the target architecture
 let targetArch (state: PSGParserState) : Architecture =
@@ -122,9 +148,10 @@ let nativeIntType (state: PSGParserState) : MLIRType =
     state.Platform.PlatformWordType
 
 /// Map NTUKind to MLIRType with platform awareness
-/// Delegates to TypeMapping but provides platform context from state
+/// Delegates to TypeMapping but provides platform + architecture context from state.
+/// On FPGA, platform-word integers produce IntWidth 0 (abstract — resolved by interval analysis).
 let mapNTUKindForPlatform (state: PSGParserState) (kind: NTUKind) : MLIRType =
-    Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType state.Platform.TargetArch kind
+    Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType state.Coeffects.TargetPlatform state.Platform.TargetArch kind
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSA COEFFECT EXTRACTION (monadic access to pre-computed SSAs)

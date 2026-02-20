@@ -11,14 +11,13 @@ open Alex.Dialects.Core.Types
 // TYPE SERIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Convert IntWidth to MLIR type string
-let intWidthToString (width: IntWidth) : string =
-    match width with
-    | I1 -> "i1"
-    | I8 -> "i8"
-    | I16 -> "i16"
-    | I32 -> "i32"
-    | I64 -> "i64"
+/// Convert IntWidth to MLIR type string.
+/// IntWidth 0 is a sentinel for "abstract width — must be resolved by interval analysis."
+/// If it reaches serialization, the compiler has a gap in width resolution.
+let intWidthToString (IntWidth bits) : string =
+    if bits = 0 then
+        eprintfn "[DTS-GAP] IntWidth 0 at serialization — will appear as i0 in output"
+    sprintf "i%d" bits
 
 /// Convert FloatWidth to MLIR type string
 let floatWidthToString (width: FloatWidth) : string =

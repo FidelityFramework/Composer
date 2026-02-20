@@ -85,10 +85,27 @@ let pDirectCall (nodeId: NodeId) (funcName: string) (args: (SSA * MLIRType) list
 // These patterns wrap arithmetic Elements to maintain Element/Pattern/Witness firewall.
 // Witnesses call patterns (not Elements directly), patterns extract SSAs monadically.
 
+/// Helper: dispatch FPGA combinational arithmetic operation
+let private pFpgaCombOp (operation: string) (resultSSA: SSA) (lhs: SSA) (rhs: SSA) (opTy: MLIRType) =
+    match operation with
+    | "add" -> pCombAdd resultSSA lhs rhs opTy
+    | "sub" -> pCombSub resultSSA lhs rhs opTy
+    | "mul" -> pCombMul resultSSA lhs rhs opTy
+    | "div" -> pCombDivS resultSSA lhs rhs opTy
+    | "rem" -> pCombMod resultSSA lhs rhs opTy
+    | "andi" -> pCombAnd resultSSA lhs rhs opTy
+    | "ori" -> pCombOr resultSSA lhs rhs opTy
+    | "xori" -> pCombXor resultSSA lhs rhs opTy
+    | "shli" -> pCombShl resultSSA lhs rhs opTy
+    | "shrui" -> pCombShrU resultSSA lhs rhs opTy
+    | "shrsi" -> pCombShrS resultSSA lhs rhs opTy
+    | "divu" -> pCombDivU resultSSA lhs rhs opTy
+    | _ -> fail (Message $"Unsupported FPGA arithmetic operation: {operation}")
+
 /// Generic binary arithmetic pattern wrapper (PULL model)
 /// Takes operation name and nodeId, pulls arguments from accumulator monadically.
 /// Pattern extracts what it needs via state - witnesses don't push parameters.
-/// SSA extracted from coeffects via nodeId: [0] = result
+/// SSA extracted from coeffects via nodeId: [0+] = extensions (if needed), then result
 /// AUTOMATICALLY loads from TMemRef arguments using pRecallArgWithLoad
 let pBinaryArithOp (nodeId: NodeId) (operation: string)
                    : PSGParser<MLIROp list * TransferResult> =
@@ -101,36 +118,74 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
         let! (lhsLoadOps, lhsSSA, lhsType) = pRecallArgWithLoad argIds.[0]
         let! (rhsLoadOps, rhsSSA, rhsType) = pRecallArgWithLoad argIds.[1]
 
-        // Extract result SSA from coeffects
+        // Extract SSA pool from coeffects (5 SSAs for Operators intrinsics)
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 1) $"pBinaryArithOp: Expected 1 SSA, got {ssas.Length}"
-        let resultSSA = ssas.[0]
 
         // Select Element based on target platform, semantic operation, and operand type
         // This is the codata-dependent elision point: same Pattern, different Elements
         let! targetPlatform = getTargetPlatform
-        let! op =
-            match targetPlatform with
-            | FPGA ->
-                // FPGA: combinational logic (comb dialect) — no float, integer only
-                match operation with
-                | "add" -> pCombAdd resultSSA lhsSSA rhsSSA lhsType
-                | "sub" -> pCombSub resultSSA lhsSSA rhsSSA lhsType
-                | "mul" -> pCombMul resultSSA lhsSSA rhsSSA lhsType
-                | "div" -> pCombDivS resultSSA lhsSSA rhsSSA lhsType
-                | "rem" -> pCombMod resultSSA lhsSSA rhsSSA lhsType
-                | "andi" -> pCombAnd resultSSA lhsSSA rhsSSA lhsType
-                | "ori" -> pCombOr resultSSA lhsSSA rhsSSA lhsType
-                | "xori" -> pCombXor resultSSA lhsSSA rhsSSA lhsType
-                | "shli" -> pCombShl resultSSA lhsSSA rhsSSA lhsType
-                | "shrui" -> pCombShrU resultSSA lhsSSA rhsSSA lhsType
-                | "shrsi" -> pCombShrS resultSSA lhsSSA rhsSSA lhsType
-                | "divu" -> pCombDivU resultSSA lhsSSA rhsSSA lhsType
-                | _ -> fail (Message $"Unsupported FPGA arithmetic operation: {operation}")
-            | _ ->
-                // CPU/MCU: standard MLIR arithmetic (arith dialect)
+        let! state = getUserState
+        match targetPlatform with
+        | FPGA ->
+            // FPGA: combinational logic (comb dialect)
+            // Determine operation width: max of operand widths and inferred result width
+            let lhsBits = match lhsType with TInt (IntWidth b) -> b | _ -> 0
+            let rhsBits = match rhsType with TInt (IntWidth b) -> b | _ -> 0
+            // Query the Application node's inferred result width via coeffect
+            let inferredResultTy = narrowForCurrent state (TInt (IntWidth 0))
+            let resBits = match inferredResultTy with TInt (IntWidth b) -> b | _ -> 0
+            // comb.* ops require all operands AND result at same width
+            let opBits = max (max lhsBits rhsBits) resBits
+            let opTy = if opBits > 0 then TInt (IntWidth opBits) else lhsType
+
+            // Emit extension ops for narrower operands (using spare SSAs from pool)
+            let needExtLhs = lhsBits > 0 && lhsBits < opBits
+            let needExtRhs = rhsBits > 0 && rhsBits < opBits
+            // Truncation needed when operation width exceeds inferred result width
+            // e.g. counter % maxCounterTicks: operands at i30, result interval → i29
+            let needTrunc = resBits > 0 && resBits < opBits
+
+            // Step 1: Emit extension ops, compute effective operand SSAs and comb result SSA
+            // SSA layout: [ext0?, ext1?, combResult, trunc?] — all within 5-SSA pool
+            let! (extOps, effLhs, effRhs, combResultSSA, nextSSAIdx) =
+                match needExtLhs, needExtRhs with
+                | true, true ->
+                    parser {
+                        let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
+                        let! extR = pExtSI ssas.[1] rhsSSA rhsType opTy
+                        return ([extL; extR], ssas.[0], ssas.[1], ssas.[2], 3)
+                    }
+                | true, false ->
+                    parser {
+                        let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
+                        return ([extL], ssas.[0], rhsSSA, ssas.[1], 2)
+                    }
+                | false, true ->
+                    parser {
+                        let! extR = pExtSI ssas.[0] rhsSSA rhsType opTy
+                        return ([extR], lhsSSA, ssas.[0], ssas.[1], 2)
+                    }
+                | false, false ->
+                    parser { return ([], lhsSSA, rhsSSA, ssas.[0], 1) }
+
+            // Step 2: Emit the comb operation
+            let! op = pFpgaCombOp operation combResultSSA effLhs effRhs opTy
+
+            // Step 3: Truncate if operation width exceeds inferred result width
+            if needTrunc then
+                let resTy = TInt (IntWidth resBits)
+                let truncSSA = ssas.[nextSSAIdx]
+                let! truncOp = pTruncI truncSSA combResultSSA opTy resTy
+                return (lhsLoadOps @ rhsLoadOps @ extOps @ [op; truncOp], TRValue { SSA = truncSSA; Type = resTy })
+            else
+                return (lhsLoadOps @ rhsLoadOps @ extOps @ [op], TRValue { SSA = combResultSSA; Type = opTy })
+
+        | _ ->
+            // CPU/MCU: standard MLIR arithmetic (arith dialect) — no extension needed
+            let resultSSA = ssas.[0]
+            let! op =
                 match operation, lhsType with
-                // Type-aware arithmetic: the pulled lhsType determines int vs float
                 | "add", TFloat _ -> pAddF resultSSA lhsSSA rhsSSA lhsType
                 | "add", _ -> pAddI resultSSA lhsSSA rhsSSA lhsType
                 | "sub", TFloat _ -> pSubF resultSSA lhsSSA rhsSSA lhsType
@@ -140,22 +195,16 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
                 | "div", TFloat _ -> pDivF resultSSA lhsSSA rhsSSA lhsType
                 | "div", _ -> pDivSI resultSSA lhsSSA rhsSSA lhsType
                 | "rem", _ -> pRemSI resultSSA lhsSSA rhsSSA lhsType
-                // Bitwise (always integer)
                 | "andi", _ -> pAndI resultSSA lhsSSA rhsSSA lhsType
                 | "ori", _ -> pOrI resultSSA lhsSSA rhsSSA lhsType
                 | "xori", _ -> pXorI resultSSA lhsSSA rhsSSA lhsType
                 | "shli", _ -> pShLI resultSSA lhsSSA rhsSSA lhsType
                 | "shrui", _ -> pShRUI resultSSA lhsSSA rhsSSA lhsType
                 | "shrsi", _ -> pShRSI resultSSA lhsSSA rhsSSA lhsType
-                // Unsigned integer arithmetic (NTUKind.NTUuint — resolved by pBinaryArithIntrinsic)
                 | "divu", _ -> pDivUI resultSSA lhsSSA rhsSSA lhsType
                 | "remu", _ -> pRemUI resultSSA lhsSSA rhsSSA lhsType
                 | _ -> fail (Message $"Unknown binary arithmetic operation: {operation} on {lhsType}")
-
-        // Infer result type from operand types
-        let resultType = lhsType  // Binary ops preserve operand type
-
-        return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = resultType })
+            return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = lhsType })
     }
 
 /// Generic comparison pattern wrapper (PULL model)
@@ -173,38 +222,73 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
         let! (lhsLoadOps, lhsSSA, lhsType) = pRecallArgWithLoad argIds.[0]
         let! (rhsLoadOps, rhsSSA, rhsType) = pRecallArgWithLoad argIds.[1]
 
-        // Extract result SSA from coeffects
+        // Extract SSA pool from coeffects (5 SSAs for Operators intrinsics)
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 1) $"pComparisonOp: Expected 1 SSA, got {ssas.Length}"
-        let resultSSA = ssas.[0]
 
         // Codata-dependent elision: TargetPlatform determines which Elements to invoke
         let! targetPlatform = getTargetPlatform
 
-        let! op =
-            match targetPlatform with
-            | FPGA ->
-                // FPGA: combinational comparison — integer only, no float
-                match lhsType with
-                | TFloat _ ->
-                    fail (Message $"FPGA does not support float comparison: {predName}")
-                | _ ->
-                    let icmpPred =
-                        match predName with
-                        | "eq"  -> ICmpPred.Eq
-                        | "ne"  -> ICmpPred.Ne
-                        | "lt"  -> ICmpPred.Slt
-                        | "le"  -> ICmpPred.Sle
-                        | "gt"  -> ICmpPred.Sgt
-                        | "ge"  -> ICmpPred.Sge
-                        | "ult" -> ICmpPred.Ult
-                        | "ule" -> ICmpPred.Ule
-                        | "ugt" -> ICmpPred.Ugt
-                        | "uge" -> ICmpPred.Uge
-                        | _ -> failwith $"Unknown FPGA comparison predicate: {predName}"
-                    pCombICmp resultSSA icmpPred lhsSSA rhsSSA lhsType
+        let! state = getUserState
+        match targetPlatform with
+        | FPGA ->
+            // FPGA: combinational comparison — operands must match width
+            let lhsBits = match lhsType with TInt (IntWidth b) -> b | _ -> 0
+            let rhsBits = match rhsType with TInt (IntWidth b) -> b | _ -> 0
+            // Comparison operands must match; result is always i1
+            let opBits = max lhsBits rhsBits
+            let opTy = if opBits > 0 then TInt (IntWidth opBits) else lhsType
+
+            match opTy with
+            | TFloat _ ->
+                return! fail (Message $"FPGA does not support float comparison: {predName}")
             | _ ->
-                // CPU: type-dependent dispatch (int vs float)
+                let icmpPred =
+                    match predName with
+                    | "eq"  -> ICmpPred.Eq
+                    | "ne"  -> ICmpPred.Ne
+                    | "lt"  -> ICmpPred.Slt
+                    | "le"  -> ICmpPred.Sle
+                    | "gt"  -> ICmpPred.Sgt
+                    | "ge"  -> ICmpPred.Sge
+                    | "ult" -> ICmpPred.Ult
+                    | "ule" -> ICmpPred.Ule
+                    | "ugt" -> ICmpPred.Ugt
+                    | "uge" -> ICmpPred.Uge
+                    | _ -> failwith $"Unknown FPGA comparison predicate: {predName}"
+
+                // Emit extension ops for narrower operands, then compare
+                let needExtLhs = lhsBits > 0 && lhsBits < opBits
+                let needExtRhs = rhsBits > 0 && rhsBits < opBits
+
+                let! (extOps, effLhs, effRhs, resultSSA) =
+                    match needExtLhs, needExtRhs with
+                    | true, true ->
+                        parser {
+                            let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
+                            let! extR = pExtSI ssas.[1] rhsSSA rhsType opTy
+                            return ([extL; extR], ssas.[0], ssas.[1], ssas.[2])
+                        }
+                    | true, false ->
+                        parser {
+                            let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
+                            return ([extL], ssas.[0], rhsSSA, ssas.[1])
+                        }
+                    | false, true ->
+                        parser {
+                            let! extR = pExtSI ssas.[0] rhsSSA rhsType opTy
+                            return ([extR], lhsSSA, ssas.[0], ssas.[1])
+                        }
+                    | false, false ->
+                        parser { return ([], lhsSSA, rhsSSA, ssas.[0]) }
+
+                let! op = pCombICmp resultSSA icmpPred effLhs effRhs opTy
+                return (lhsLoadOps @ rhsLoadOps @ extOps @ [op], TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
+
+        | _ ->
+            // CPU: type-dependent dispatch (int vs float)
+            let resultSSA = ssas.[0]
+            let! op =
                 match lhsType with
                 | TFloat _ ->
                     let fcmpPred =
@@ -222,20 +306,17 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
                         match predName with
                         | "eq"  -> ICmpPred.Eq
                         | "ne"  -> ICmpPred.Ne
-                        // Signed (NTUint — default)
                         | "lt"  -> ICmpPred.Slt
                         | "le"  -> ICmpPred.Sle
                         | "gt"  -> ICmpPred.Sgt
                         | "ge"  -> ICmpPred.Sge
-                        // Unsigned (NTUuint — resolved by pBinaryArithIntrinsic before reaching here)
                         | "ult" -> ICmpPred.Ult
                         | "ule" -> ICmpPred.Ule
                         | "ugt" -> ICmpPred.Ugt
                         | "uge" -> ICmpPred.Uge
                         | _ -> failwith $"Unknown int comparison predicate: {predName}"
                     pCmpI resultSSA icmpPred lhsSSA rhsSSA lhsType
-
-        return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = TInt I1 })  // Comparisons always return i1
+            return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
     }
 
 /// Unary NOT pattern (xori with constant 1) - PULL model
@@ -259,7 +340,7 @@ let pUnaryNot (nodeId: NodeId)
         let resultSSA = ssas.[1]
 
         // Emit constant 1 for boolean NOT
-        let constOp = MLIROp.ArithOp (ArithOp.ConstI (constSSA, 1L, TInt I1))
+        let constOp = MLIROp.ArithOp (ArithOp.ConstI (constSSA, 1L, TInt (IntWidth 1)))
         // Emit XOR operation
         let! xorOp = pXorI resultSSA operandSSA constSSA operandType
 

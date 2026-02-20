@@ -85,6 +85,15 @@ let generate
             PSGElaboration.PlatformPinResolution.resolve flattenedGraph
         | _ -> None
 
+    // Compute FPGA width inference coeffect (FPGA targets only)
+    let widthInference =
+        match targetPlatform with
+        | Core.Types.Dialects.TargetPlatform.FPGA ->
+            let result = PSGElaboration.IntervalAnalysis.analyze flattenedGraph
+            printfn "[IntervalAnalysis] Inferred widths for %d nodes, struct widths for %d nodes" result.NodeWidths.Count result.StructNodeWidths.Count
+            Some result
+        | _ -> None
+
     // Build TransferCoeffects
     let coeffects : TransferCoeffects = {
         SSA = ssaAssignment
@@ -98,6 +107,7 @@ let generate
         DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
         TargetPlatform = targetPlatform
         PinMapping = pinMapping
+        WidthInference = widthInference
     }
 
     // Execute Alex transfer (parallel nanopasses)

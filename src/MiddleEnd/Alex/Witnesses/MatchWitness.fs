@@ -97,7 +97,7 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
 
             let result =
                 if isExpressionValued then
-                    let resultType = mapType node.Type ctx
+                    let resultType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
                     match tryMatch (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ssas, _) when ssas.Length >= 1 -> Some (ssas.[0], resultType)
                     | _ -> None

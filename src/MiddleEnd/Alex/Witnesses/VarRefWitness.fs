@@ -39,13 +39,15 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 match bindingNode.Kind with
                 | SemanticKind.PatternBinding _ ->
                     // Parameter binding - SSA is in coeffects, not accumulator
-                    // Extract SSA monadically
+                    // Uses platform-aware mapping + per-node width narrowing from coeffects
                     let patternBindingPattern =
                         parser {
                             let! ssa = getNodeSSA bindingId
                             let! state = getUserState
+                            let platform = state.Coeffects.TargetPlatform
                             let arch = state.Coeffects.Platform.TargetArch
-                            let ty = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph bindingNode.Type
+                            let rawTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph bindingNode.Type
+                            let ty = Alex.XParsec.PSGCombinators.narrowType state.Coeffects bindingId rawTy
                             return ([], TRValue { SSA = ssa; Type = ty })
                         }
 

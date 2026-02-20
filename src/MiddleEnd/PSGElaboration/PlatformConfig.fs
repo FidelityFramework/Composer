@@ -60,8 +60,8 @@ type BindingResolution = {
 /// FNCS uses TypeLayout.PlatformWord; Alex resolves it here based on target.
 let platformWordType (arch: Architecture) : MLIRType =
     match arch with
-    | X86_64 | ARM64 | RISCV64 -> TInt I64  // 64-bit platforms
-    | ARM32_Thumb | RISCV32 | WASM32 -> TInt I32  // 32-bit platforms
+    | X86_64 | ARM64 | RISCV64 -> TInt (IntWidth 64)  // 64-bit platforms
+    | ARM32_Thumb | RISCV32 | WASM32 -> TInt (IntWidth 32)  // 32-bit platforms
 
 /// Resolve platform word integer width for a given architecture
 /// Delegates to the canonical definition in Alex.Dialects.Core.Types

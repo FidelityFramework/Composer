@@ -55,6 +55,9 @@ type TransferCoeffects = {
     /// Pin mapping for FPGA targets (None for CPU/MCU)
     /// Observed by HardwareModulePatterns (flat ports) and XDCTransfer (constraints)
     PinMapping: PSGElaboration.Coeffects.PlatformPinMapping option
+    /// Inferred value widths for FPGA targets (None for CPU)
+    /// Observed by TypeMapping for minimum-width MLIR type selection
+    WidthInference: PSGElaboration.IntervalAnalysis.WidthInferenceResult option
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

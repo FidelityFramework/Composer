@@ -24,6 +24,7 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.ScopeContext
+open Alex.XParsec.PSGCombinators  // narrowType
 open Alex.Patterns.HardwareModulePatterns
 
 // ═══════════════════════════════════════════════════════════
@@ -101,8 +102,9 @@ let private extractInitialStateValues (graph: SemanticGraph) (initNodeId: NodeId
 
 /// Extract Input and Output types from the step function's Lambda.
 /// Step : 'S -> 'S (1-param, Design<'S>) or Step : 'S -> I -> 'S * 'R (2-param, Design<'S,'R>)
-/// Returns (InputType option, OutputType option).
-let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: WitnessContext) : (MLIRType option * MLIRType option) =
+/// Returns (StateType option, InputType option, OutputType option).
+/// StateType comes from the step Lambda's first parameter (authoritative widths from Phase 5C feedback).
+let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: WitnessContext) : (MLIRType option * MLIRType option * MLIRType option) =
     // Resolve Step VarRef → Binding → Lambda
     match SemanticGraph.tryGetNode stepNodeId graph with
     | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
@@ -112,10 +114,20 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
             | [lambdaId] ->
                 match SemanticGraph.tryGetNode lambdaId graph with
                 | Some { Kind = SemanticKind.Lambda (params', bodyId, _, _, _) } ->
-                    // Extract InputType from second parameter (if present)
+                    // Extract StateType from first parameter, narrowed via coeffect
+                    // This has authoritative widths from interval analysis Phase 5C feedback
+                    let stateType =
+                        match params' with
+                        | (_, stateNativeType, stateParamNodeId) :: _ ->
+                            let raw = mapType stateNativeType ctx
+                            Some (narrowType ctx.Coeffects stateParamNodeId raw)
+                        | _ -> None
+                    // Extract InputType from second parameter (if present), narrowed via coeffect
                     let inputType =
                         match params' with
-                        | _ :: (_, inputNativeType, _) :: _ -> Some (mapType inputNativeType ctx)
+                        | _ :: (_, inputNativeType, inputParamNodeId) :: _ ->
+                            let raw = mapType inputNativeType ctx
+                            Some (narrowType ctx.Coeffects inputParamNodeId raw)
                         | _ -> None
                     // Extract OutputType from body expression's type
                     // If step returns (State, Output), the body type maps to TStruct [Item1; Item2]
@@ -123,15 +135,28 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                         match SemanticGraph.tryGetNode bodyId graph with
                         | Some bodyNode ->
                             let retType = mapType bodyNode.Type ctx
-                            match retType with
+                            // Find last value node for narrowing
+                            let rec findLastValue (nid: NodeId) : NodeId =
+                                match SemanticGraph.tryGetNode nid graph with
+                                | Some n ->
+                                    match n.Kind with
+                                    | SemanticKind.Sequential children ->
+                                        match List.tryLast children with
+                                        | Some lastId -> findLastValue lastId
+                                        | None -> nid
+                                    | _ -> nid
+                                | None -> nid
+                            let lastValueId = findLastValue bodyId
+                            let narrowedRetType = narrowType ctx.Coeffects lastValueId retType
+                            match narrowedRetType with
                             | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
                             | _ -> None  // Single return type — no separate output
                         | None -> None
-                    (inputType, outputType)
-                | _ -> (None, None)
-            | _ -> (None, None)
-        | None -> (None, None)
-    | _ -> (None, None)
+                    (stateType, inputType, outputType)
+                | _ -> (None, None, None)
+            | _ -> (None, None, None)
+        | None -> (None, None, None)
+    | _ -> (None, None, None)
 
 /// Determine qualified module name for the HardwareModule Binding
 let private qualifiedBindingName (graph: SemanticGraph) (node: SemanticNode) (bindingName: string) : string =
@@ -253,12 +278,23 @@ let private witnessHardwareModule
         | Some stepFuncName ->
 
         // ── 6. Extract State type info ──
-        // InitialState's type IS the State type
         match SemanticGraph.tryGetNode initNodeId ctx.Graph with
         | None ->
             WitnessOutput.error $"HardwareModule '{name}': InitialState node not found"
         | Some initNode ->
-            let stateType = mapType initNode.Type ctx
+
+            // ── 7. Extract State/Input/Output types from step Lambda ──
+            // State type comes from step Lambda's first parameter (authoritative widths
+            // from Phase 5C feedback), not from init node (which has literal-value widths).
+            let (stepStateType, inputType, outputType) = extractStepTypes ctx.Graph stepNodeId ctx
+
+            let stateType =
+                match stepStateType with
+                | Some sty -> sty
+                | None ->
+                    // Fallback: narrow from init node type
+                    let rawStateType = mapType initNode.Type ctx
+                    narrowType ctx.Coeffects initNodeId rawStateType
 
             // Verify state type is TStruct
             match stateType with
@@ -269,8 +305,8 @@ let private witnessHardwareModule
                     |> List.map (fun ((fieldName, fieldTy), (_, resetLit)) ->
                         (fieldName, fieldTy, resetLit))
 
-                // ── 7. Extract Input/Output types from step Lambda ──
-                let (inputType, outputType) = extractStepTypes ctx.Graph stepNodeId ctx
+                let narrowedInputType = inputType
+                let narrowedOutputType = outputType
 
                 // ── 8. Build Mealy machine hw.module ──
                 let moduleName = qualifiedBindingName ctx.Graph node name
@@ -279,8 +315,8 @@ let private witnessHardwareModule
                     StepFunctionName = stepFuncName
                     StateType = stateType
                     StateFields = stateFieldInfo
-                    InputType = inputType
-                    OutputType = outputType
+                    InputType = narrowedInputType
+                    OutputType = narrowedOutputType
                 }
 
                 let hwModuleOp =

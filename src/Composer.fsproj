@@ -59,6 +59,7 @@
       <Compile Include="MiddleEnd/PSGElaboration/PlatformPinResolution.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PatternBindingAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/CoeffectValidation.fs" />
+      <Compile Include="MiddleEnd/PSGElaboration/IntervalAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PreprocessingSerializer.fs" />
 
       <!-- Alex Traversal - PSGZipper: Pure Huet zipper for navigation -->

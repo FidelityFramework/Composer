@@ -97,7 +97,7 @@ let pAllocaImmutable (valueSSA: SSA) (valueType: MLIRType) (ssas: SSA list) : PS
         let allocaSSA = ssas.[1]
         let indexSSA = ssas.[2]
 
-        let constOneTy = TInt I64
+        let constOneTy = TInt (IntWidth 64)
         let! constOp = pConstI constOneSSA 1L constOneTy
         let! allocaOp = pAlloca allocaSSA 1 valueType None
         let! indexOp = pConstI indexSSA 0L TIndex  // Index 0 for 1-element memref
@@ -149,7 +149,7 @@ let pConvertType (srcSSA: SSA) (srcType: MLIRType) (dstType: MLIRType) (resultSS
 let pExtractDUTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
-        let tagTy = TInt I8  // DU tags are always i8
+        let tagTy = TInt (IntWidth 8)  // DU tags are always i8
 
         match duType with
         | TIndex ->
@@ -348,7 +348,7 @@ let pArenaCreate (nodeId: NodeId) (sizeBytes: int) : PSGParser<MLIROp list * Tra
 
         // Allocate arena memory block on stack as byte array
         // Arena IS the memref - no separate control struct in memref semantics
-        let elemType = TInt I8
+        let elemType = TInt (IntWidth 8)
         let! allocaOp = pAlloca resultSSA sizeBytes elemType None
         let memrefTy = TMemRefStatic (sizeBytes, elemType)
 
@@ -460,7 +460,7 @@ let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
         // Compute struct type from field types
         let fieldTypes = fields |> List.map (fun f -> f.Type)
         let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
-        let structTy = TMemRefStatic(totalBytes, TInt I8)
+        let structTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
         let! undefOp = pUndef ssas.[0] structTy
 
         let! insertOpLists =
@@ -492,7 +492,7 @@ let extractMemRefShape (ty: MLIRType) =
     | TMemRefStatic (count, elemType) -> (count, elemType)
     | TStruct fields ->
         let totalBytes = fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
-        (totalBytes, TInt I8)
+        (totalBytes, TInt (IntWidth 8))
     | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
 
 /// Allocate memory for a constructed value — queries escape analysis coeffect
@@ -528,7 +528,7 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
         let! allocOp = pAllocValue nodeId ssas.[0] ty
 
         // Insert tag at byte offset 0 via reinterpret_cast (same element type: i8→i8)
-        let tagTy = TInt I8  // DU tags are always i8
+        let tagTy = TInt (IntWidth 8)  // DU tags are always i8
         let! tagConstOp = pConstI ssas.[1] tag tagTy
         let! insertTagOps = pTypedInsert ssas.[0] ssas.[1] 0 ssas.[2] ssas.[3] tagTy ty
 
