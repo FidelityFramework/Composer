@@ -49,10 +49,11 @@ module SetWitness = Alex.Witnesses.SetWitness
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
 module MatchWitness = Alex.Witnesses.MatchWitness
 
-// Priority 4: Records, Memory & Lambda
+// Priority 4: Records, Memory, Lambda & Hardware
 module RecordWitness = Alex.Witnesses.RecordWitness
 module MemoryWitness = Alex.Witnesses.MemoryWitness
 module LambdaWitness = Alex.Witnesses.LambdaWitness
+module HardwareModuleWitness = Alex.Witnesses.HardwareModuleWitness
 
 // Priority 5: Advanced Features
 module LazyWitness = Alex.Witnesses.LazyWitness
@@ -87,6 +88,9 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         |> NanopassRegistry.register IntrinsicWitness.nanopass
         |> NanopassRegistry.register StructuralWitness.nanopass
         |> NanopassRegistry.register BindingWitness.nanopass
+        // ─── Target-gated (FPGA only — HardwareModule bindings are scope boundaries) ───
+        // Registered AFTER BindingWitness → prepend means it runs BEFORE BindingWitness
+        |> conditionalRegister (not isCPULike) HardwareModuleWitness.nanopass
         |> NanopassRegistry.register VarRefWitness.nanopass
 
         // ─── Codata-dependent (all platforms, elision varies inside) ───

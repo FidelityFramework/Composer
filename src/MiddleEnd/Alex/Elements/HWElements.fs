@@ -42,3 +42,10 @@ let internal pHWStructInject (result: SSA) (input: SSA) (fieldName: string) (new
     parser {
         return MLIROp.HWOp (HWOp.HWStructInject (result, input, fieldName, newValue, structTy))
     }
+
+/// hw.instance — instantiate a sub-module
+let internal pHWInstance (result: SSA) (instName: string) (moduleName: string)
+    (inputs: (string * SSA * MLIRType) list) (outputs: (string * MLIRType) list) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.HWOp (HWOp.HWInstance (result, instName, moduleName, inputs, outputs))
+    }

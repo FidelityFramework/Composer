@@ -39,10 +39,10 @@ let internal runTool (tool: string) (args: string) : Result<unit, string> =
     | ex ->
         Error (sprintf "%s failed: %s" tool ex.Message)
 
-/// Step 1: Optimize hw/comb/seq MLIR (canonicalize + CSE)
-/// Alex elides directly to hw/comb/seq — no SCF→CF→Handshake lowering needed.
+/// Step 1: Optimize hw/comb/seq MLIR
+/// Alex elides directly to hw/comb/seq — map residual arith ops to comb, then optimize.
 let optimizeHW (mlirPath: string) (optimizedPath: string) : Result<unit, string> =
-    let args = sprintf "%s --canonicalize --cse -o %s" mlirPath optimizedPath
+    let args = sprintf "%s --map-arith-to-comb --canonicalize --cse -o %s" mlirPath optimizedPath
     runTool circtOptPath args
 
 /// Step 2: Export hw/comb/seq to SystemVerilog via SV dialect

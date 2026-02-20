@@ -65,7 +65,7 @@ type ClosureLayoutJson = {
 type SSAAssignmentJson = {
     LambdaNames: (int * string) list
     Lambdas: LambdaInfoJson list
-    EntryPointLambdas: int list
+    DeclarationRootLambdas: (int * string) list
     NodeSSACount: int
     /// FULL SSA assignments - essential for debugging
     NodeSSAAssignments: NodeSSAAllocationJson list
@@ -288,7 +288,7 @@ let serializeSSAAssignment (ssa: SSAAssignment) (graph: SemanticGraph) : SSAAssi
     {
         LambdaNames = ssa.LambdaNames |> Map.toList
         Lambdas = lambdas
-        EntryPointLambdas = ssa.EntryPointLambdas |> Set.toList
+        DeclarationRootLambdas = ssa.DeclarationRootLambdas |> Map.toList |> List.map (fun (id, root) -> (id, sprintf "%A" root))
         NodeSSACount = Map.count ssa.NodeSSA
         NodeSSAAssignments = nodeSSAAssignments
         ClosureLayouts = closureLayouts
@@ -409,7 +409,7 @@ let serializeStringTable (strings: StringTable) : StringEntryJson list =
 let serialize
     (intermediatesDir: string)
     (ssaAssignment: SSAAssignment)
-    (entryPointLambdaIds: Set<int>)
+    (declRootLambdas: Map<int, Clef.Compiler.PSGSaturation.SemanticGraph.Types.DeclRoot>)
     (graph: SemanticGraph)
     : unit =
 
@@ -421,7 +421,7 @@ let serialize
         version = "1.0"
         description = "PSGElaboration coeffects (legacy - use serializeAll for full coeffects)"
         ssaAssignment = serializeSSAAssignment ssaAssignment graph
-        entryPointLambdaIds = entryPointLambdaIds |> Set.toList
+        declarationRootLambdas = declRootLambdas |> Map.toList |> List.map (fun (id, root) -> (id, sprintf "%A" root))
     |}
     
     let options = JsonSerializerOptions(WriteIndented = true)
@@ -437,7 +437,7 @@ let serializeAll
     (yieldStates: YieldStateCoeffect)
     (patternBindings: PatternBindingAnalysisResult)
     (strings: StringTable)
-    (entryPointLambdaIds: Set<int>)
+    (declRootLambdas: Map<int, Clef.Compiler.PSGSaturation.SemanticGraph.Types.DeclRoot>)
     (graph: SemanticGraph)
     : unit =
 
@@ -449,7 +449,7 @@ let serializeAll
         
         // SSA Assignment (existing)
         ssaAssignment = serializeSSAAssignment ssaAssignment graph
-        entryPointLambdaIds = entryPointLambdaIds |> Set.toList
+        declarationRootLambdas = declRootLambdas |> Map.toList |> List.map (fun (id, root) -> (id, sprintf "%A" root))
         
         // Mutability Analysis (new)
         mutability = serializeMutabilityAnalysis mutability

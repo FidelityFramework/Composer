@@ -72,11 +72,12 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 visitAllNodes combinator ctx paramNode ctx.GlobalVisited
             | None -> ()
 
-        // Check if this is an entry point Lambda
+        // Check if this is a declaration root Lambda
         let nodeIdValue = NodeId.value node.Id
-        let isEntryPoint = Set.contains nodeIdValue ctx.Coeffects.EntryPointLambdaIds
+        let declRootOpt = Map.tryFind nodeIdValue ctx.Coeffects.DeclarationRootLambdas
 
-        if isEntryPoint then
+        match declRootOpt with
+        | Some DeclRoot.EntryPoint ->
             // Entry point Lambda: generate func.func @main wrapper
 
             // ═══ SSATypes SCOPING ═══
@@ -167,8 +168,15 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Return empty - FuncDef already added to parent scope
             { InlineOps = []; TopLevelOps = []; Result = TRVoid }
-        else
-            // Non-entry-point Lambda: Generate FuncDef for module-level function
+
+        | Some DeclRoot.HardwareModule ->
+            // HardwareModule Lambda — future: hw.module with Design<S,R> extraction
+            // For now, HardwareModule bindings are NOT Lambdas (they're RecordExprs),
+            // so this branch should not be reached. If it is, return error.
+            WitnessOutput.error "HardwareModule Lambda not yet supported"
+
+        | None ->
+            // Non-root Lambda: Generate FuncDef for module-level function
             // Extract QUALIFIED function name from parent Binding + ModuleDef (if present)
             // Same logic as ApplicationWitness for qualified name resolution
             let funcName =

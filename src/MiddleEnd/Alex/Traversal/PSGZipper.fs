@@ -77,10 +77,10 @@ let create (graph: SemanticGraph) (focusId: NodeId) : PSGZipper option =
         }
     | None -> None
 
-/// Create a zipper at the first entry point
+/// Create a zipper at the first declaration root
 let fromEntryPoint (graph: SemanticGraph) : PSGZipper option =
-    match graph.EntryPoints with
-    | entryId :: _ -> create graph entryId
+    match graph.DeclarationRoots with
+    | (entryId, _) :: _ -> create graph entryId
     | [] -> None
 
 // ═══════════════════════════════════════════════════════════════════════════

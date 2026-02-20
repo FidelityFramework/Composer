@@ -37,6 +37,7 @@ type MLIRType =
     | TIndex                                // Index type
     | TUnit                                 // Unit type (represented as i32 0)
     | TStruct of (string * MLIRType) list   // Named struct type (record fields)
+    | TSeqClock                             // CIRCT !seq.clock type (clock signal for registers)
     | TError of string                      // Error type
 
 /// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct).
@@ -50,6 +51,7 @@ let rec mlirTypeSize (ty: MLIRType) : int =
     | TVector (_, elemTy) -> mlirTypeSize elemTy
     | TIndex -> 8
     | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
+    | TSeqClock -> 1
     | TUnit -> 0 | TError _ -> 0
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -293,7 +295,7 @@ type CombOp =
 /// CIRCT Sequential Logic Dialect (clocked state, registers)
 /// Maps to seq dialect — flip-flops and clocked elements for FPGA targets
 type SeqOp =
-    | SeqCompreg of SSA * SSA * SSA * SSA option * MLIRType    // result, input, clk, resetValue, type
+    | SeqCompreg of SSA * SSA * SSA * (SSA * SSA) option * MLIRType    // result, input, clk, (resetSignal, resetValue) option, type
 
 /// Top-level MLIR operation (all dialects)
 /// Single-phase execution with nested accumulators - no scope markers needed
@@ -355,4 +357,6 @@ and HWOp =
       // result, input, fieldName, structType
     | HWStructInject of SSA * SSA * string * SSA * MLIRType
       // result, input, fieldName, newValue, structType
-      // output port values
+    // Module instantiation (hw.instance)
+    | HWInstance of SSA * string * string * (string * SSA * MLIRType) list * (string * MLIRType) list
+      // result, instanceName, moduleName, inputs (portName*ssa*type), outputs (portName*type)

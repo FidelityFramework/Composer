@@ -46,6 +46,7 @@ let private isScopeBoundary (node: SemanticNode) : bool =
     | SemanticKind.Match _ -> true
     | SemanticKind.CaseElimination _ -> true
     | SemanticKind.TryWith _ -> true
+    | SemanticKind.Binding (_, _, _, Some DeclRoot.HardwareModule) -> true
     | _ -> false
 
 /// Debug tracing flag for visitAllNodes — set to true for detailed traversal logging

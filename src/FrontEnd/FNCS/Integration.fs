@@ -131,7 +131,7 @@ let isBinding (node: FNCSNode) : bool =
 /// Get binding info (name, isMutable, isRecursive) if present
 let bindingInfo (node: FNCSNode) : (string * bool * bool) option =
     match node.Kind with
-    | SemanticKind.Binding (name, isMutable, isRec, _isEntryPoint) -> Some (name, isMutable, isRec)
+    | SemanticKind.Binding (name, isMutable, isRec, _declRoot) -> Some (name, isMutable, isRec)
     | _ -> None
 
 /// Check if a node is a literal
@@ -267,5 +267,5 @@ let moduleInitBindings (classification: FNCSModuleClassification) : FNCSNodeId l
 let moduleDefinitions (classification: FNCSModuleClassification) : FNCSNodeId list =
     classification.Definitions
 
-let moduleEntryPoint (classification: FNCSModuleClassification) : FNCSNodeId option =
-    classification.EntryPoint
+let moduleDeclarationRoot (classification: FNCSModuleClassification) : (FNCSNodeId * DeclRoot) option =
+    classification.DeclarationRoot

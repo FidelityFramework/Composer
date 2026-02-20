@@ -188,42 +188,53 @@ let analyze (graph: SemanticGraph) : MutabilityAnalysisResult =
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Find entry point Lambda IDs from the semantic graph
-/// Entry point Bindings have Lambda children - those are the entry point Lambdas
-let findEntryPointLambdaIds (graph: SemanticGraph) : Set<int> =
-    graph.EntryPoints
-    |> List.collect (fun epId ->
+/// Find declaration root Lambda IDs from the semantic graph.
+/// Declaration root Bindings have Lambda children - those are the root Lambdas.
+/// Returns a map from Lambda NodeId value to its DeclRoot flavor.
+let findDeclarationRootLambdaIds (graph: SemanticGraph) : Map<int, DeclRoot> =
+    graph.DeclarationRoots
+    |> List.collect (fun (epId, rootKind) ->
         match SemanticGraph.tryGetNode epId graph with
         | Some node ->
             match node.Kind with
             | SemanticKind.Binding (_, _, _, _) ->
-                // Entry point Binding - its children include the Lambda
+                // Declaration root Binding - its children include the Lambda
                 node.Children
                 |> List.choose (fun childId ->
                     match SemanticGraph.tryGetNode childId graph with
                     | Some child when (match child.Kind with SemanticKind.Lambda _ -> true | _ -> false) ->
-                        Some (NodeId.value childId)
+                        Some (NodeId.value childId, rootKind)
                     | _ -> None)
             | SemanticKind.Lambda _ ->
-                // Entry point is directly a Lambda
-                [NodeId.value epId]
+                // Declaration root is directly a Lambda
+                [(NodeId.value epId, rootKind)]
             | SemanticKind.ModuleDef (_, memberIds) ->
-                // Check module members for main binding
+                // Check module members for root bindings
                 memberIds
                 |> List.collect (fun memberId ->
                     match SemanticGraph.tryGetNode memberId graph with
                     | Some memberNode ->
                         match memberNode.Kind with
-                        | SemanticKind.Binding (name, _, _, _) when name = "main" ->
+                        | SemanticKind.Binding (_, _, _, Some dr) ->
                             memberNode.Children
                             |> List.choose (fun childId ->
                                 match SemanticGraph.tryGetNode childId graph with
                                 | Some child ->
                                     match child.Kind with
-                                    | SemanticKind.Lambda _ -> Some (NodeId.value childId)
+                                    | SemanticKind.Lambda _ -> Some (NodeId.value childId, dr)
+                                    | _ -> None
+                                | None -> None)
+                        | SemanticKind.Binding (name, _, _, None) when name = "main" ->
+                            memberNode.Children
+                            |> List.choose (fun childId ->
+                                match SemanticGraph.tryGetNode childId graph with
+                                | Some child ->
+                                    match child.Kind with
+                                    | SemanticKind.Lambda _ -> Some (NodeId.value childId, DeclRoot.EntryPoint)
                                     | _ -> None
                                 | None -> None)
                         | _ -> []
                     | None -> [])
             | _ -> []
         | None -> [])
-    |> Set.ofList
+    |> Map.ofList

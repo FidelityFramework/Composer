@@ -43,6 +43,7 @@ let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
     | TMemRefScalar _ -> 5 * wordBytes  // Same descriptor layout for scalar memrefs
     | TVector (_, elemTy) -> mlirTypeSizeForArch arch elemTy
     | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSizeForArch arch ft)
+    | TSeqClock -> 1
     | TUnit -> 0
     | TError _ -> 0
 

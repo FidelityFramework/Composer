@@ -71,7 +71,7 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         | None ->
                             // Check if the child was witnessed but returned TRVoid
                             // This happens for entry point Lambdas (function definitions) and other module-level declarations
-                            if isEntry then
+                            if isEntry.IsSome then
                                 // Entry point binding - child is a function definition, not a value
                                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                             else

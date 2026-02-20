@@ -138,7 +138,7 @@ let findEntryPatternBindings (graph: SemanticGraph) : Map<int, PatternBinding li
     let mutable result = Map.empty
     
     // Entry points are typically Bindings containing Lambdas
-    for epId in graph.EntryPoints do
+    for (epId, _) in graph.DeclarationRoots do
         match SemanticGraph.tryGetNode epId graph with
         | Some node ->
             match node.Kind with

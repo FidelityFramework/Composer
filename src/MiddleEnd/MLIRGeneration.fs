@@ -75,7 +75,7 @@ let generate
     | Some dir ->
         PSGElaboration.PreprocessingSerializer.serializeAll
             dir ssaAssignment mutability yieldStates patternBindings strings
-            ssaAssignment.EntryPointLambdas flattenedGraph
+            ssaAssignment.DeclarationRootLambdas flattenedGraph
     | None -> ()
 
     // Build TransferCoeffects
@@ -88,21 +88,26 @@ let generate
         YieldStates = yieldStates
         EscapeAnalysis = escapeAnalysis
         CurryFlattening = curryFlatteningResult
-        EntryPointLambdaIds = ssaAssignment.EntryPointLambdas
+        DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
         TargetPlatform = targetPlatform
     }
 
     // Execute Alex transfer (parallel nanopasses)
-    match flattenedGraph.EntryPoints with
-    | [] -> Result.Error "No entry points found in PSG"
-    | entryId :: _ ->
+    match flattenedGraph.DeclarationRoots with
+    | [] -> Result.Error "No declaration roots found in PSG"
+    | (entryId, _) :: _ ->
         match transfer flattenedGraph entryId coeffects intermediatesDir with
         | Result.Ok (topLevelOps, _) ->
+            // Filter ops by target platform — FPGA output excludes CPU-only func.func ops
+            let platformOps =
+                match targetPlatform with
+                | Core.Types.Dialects.TargetPlatform.FPGA ->
+                    topLevelOps |> List.filter (fun op ->
+                        match op with MLIROp.FuncOp _ -> false | _ -> true)
+                | _ -> topLevelOps
+
             // Apply MLIR nanopasses (MLIR→MLIR transformations)
-            // This is the integration point for dual witness infrastructure:
-            // - PSG witnesses emit portable MLIR (memref, func.call)
-            // - MLIR nanopasses transform for backends (FFI conversion, DCont/Inet lowering)
-            let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses topLevelOps platformResolution intermediatesDir
+            let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses platformOps platformResolution intermediatesDir
 
             // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
             let mlirText = moduleToString "main" transformedOps

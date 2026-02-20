@@ -48,6 +48,7 @@ let rec typeToString (ty: MLIRType) : string =
     | TStruct fields ->
         // CPU: flatten to byte-level memref using the canonical size catamorphism
         sprintf "memref<%dxi8>" (mlirTypeSize (TStruct fields))
+    | TSeqClock -> "!seq.clock"
     | TError msg -> sprintf "<<ERROR: %s>>" msg
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -207,8 +208,8 @@ let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
         | other -> typeToString other
     match op with
     | HWModule (name, inputs, outputs, body) ->
-        let inputsStr = inputs |> List.map (fun (n, ty) -> sprintf "in %%%s: %s" n (typeToString ty)) |> String.concat ", "
-        let outputsStr = outputs |> List.map (fun (n, ty) -> sprintf "out %s: %s" n (typeToString ty)) |> String.concat ", "
+        let inputsStr = inputs |> List.map (fun (n, ty) -> sprintf "in %%%s: %s" n (hwStructTypeStr ty)) |> String.concat ", "
+        let outputsStr = outputs |> List.map (fun (n, ty) -> sprintf "out %s: %s" n (hwStructTypeStr ty)) |> String.concat ", "
         let portsStr =
             match inputs, outputs with
             | [], [] -> ""
@@ -216,13 +217,20 @@ let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
             | [], _ -> outputsStr
             | _, _ -> sprintf "%s, %s" inputsStr outputsStr
         let bodyStr = body |> List.map opToString |> String.concat "\n    "
-        sprintf "hw.module @%s(%s) {\n    %s\n}" name portsStr bodyStr
+        // hw.module uses named ports — replace %argN with port names (highest index first to avoid partial matches)
+        let bodyWithPorts =
+            inputs
+            |> List.indexed
+            |> List.rev
+            |> List.fold (fun (s: string) (i, (portName, _)) ->
+                s.Replace(sprintf "%%arg%d" i, sprintf "%%%s" portName)) bodyStr
+        sprintf "hw.module @%s(%s) {\n    %s\n}" name portsStr bodyWithPorts
     | HWOutput vals ->
         match vals with
         | [] -> "hw.output"
         | _ ->
             let valsStr = vals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
-            let typesStr = vals |> List.map (fun (_, ty) -> typeToString ty) |> String.concat ", "
+            let typesStr = vals |> List.map (fun (_, ty) -> hwStructTypeStr ty) |> String.concat ", "
             sprintf "hw.output %s : %s" valsStr typesStr
     | HWStructCreate (result, fieldVals, structTy) ->
         let valsStr = fieldVals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
@@ -234,15 +242,21 @@ let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
     | HWStructInject (result, input, fieldName, newValue, structTy) ->
         let tyStr = hwStructTypeStr structTy
         sprintf "%s = hw.struct_inject %s[\"%s\"], %s : %s" (ssaToString result) (ssaToString input) fieldName (ssaToString newValue) tyStr
+    | HWInstance (result, instName, moduleName, inputs, outputs) ->
+        // hw.instance "instName" @moduleName(portName: %ssa : type, ...) -> (outName: type, ...)
+        let inputsStr = inputs |> List.map (fun (pn, ssa, ty) -> sprintf "%s: %s: %s" pn (ssaToString ssa) (hwStructTypeStr ty)) |> String.concat ", "
+        let outputsStr = outputs |> List.map (fun (pn, ty) -> sprintf "%s: %s" pn (hwStructTypeStr ty)) |> String.concat ", "
+        sprintf "%s = hw.instance \"%s\" @%s(%s) -> (%s)" (ssaToString result) instName moduleName inputsStr outputsStr
 
 /// Serialize SeqOp to CIRCT MLIR text (seq dialect)
 let seqOpToString (op: SeqOp) : string =
     match op with
     | SeqCompreg (result, input, clk, resetOpt, ty) ->
         match resetOpt with
-        | Some resetVal ->
-            sprintf "%s = seq.compreg %s, %s reset %s : %s"
-                (ssaToString result) (ssaToString input) (ssaToString clk) (ssaToString resetVal) (typeToString ty)
+        | Some (resetSignal, resetValue) ->
+            sprintf "%s = seq.compreg %s, %s reset %s, %s : %s"
+                (ssaToString result) (ssaToString input) (ssaToString clk)
+                (ssaToString resetSignal) (ssaToString resetValue) (typeToString ty)
         | None ->
             sprintf "%s = seq.compreg %s, %s : %s"
                 (ssaToString result) (ssaToString input) (ssaToString clk) (typeToString ty)

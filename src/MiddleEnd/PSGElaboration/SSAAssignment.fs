@@ -919,8 +919,8 @@ type SSAAssignment = {
     NodeSSA: Map<int, NodeSSAAllocation>
     /// Map from Lambda NodeId.value to its function name
     LambdaNames: Map<int, string>
-    /// Set of entry point Lambda IDs
-    EntryPointLambdas: Set<int>
+    /// Map from declaration root Lambda IDs to their DeclRoot flavor
+    DeclarationRootLambdas: Map<int, DeclRoot>
     /// Closure layouts for Lambdas with captures (NodeId.value -> ClosureLayout)
     /// Empty for simple lambdas (no captures)
     ClosureLayouts: Map<int, ClosureLayout>
@@ -1106,33 +1106,37 @@ let rec private assignFunctionBody
                 scopeAfterChildren
 
 /// Collect all Lambdas in the graph and assign function names
-let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> =
+let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Map<int, DeclRoot> =
     let mutable lambdaCounter = 0
     let mutable lambdaNames = Map.empty
-    let mutable entryPoints = Set.empty
+    let mutable declRootLambdas : Map<int, DeclRoot> = Map.empty
 
-    // First, identify entry point lambdas
-    // Entry points may be ModuleDef nodes containing Binding nodes with isEntryPoint=true
-    for entryId in graph.EntryPoints do
+    // First, identify declaration root lambdas
+    // Roots may be ModuleDef nodes containing Binding nodes with declRoot.IsSome
+    for (entryId, rootKind) in graph.DeclarationRoots do
         match Map.tryFind entryId graph.Nodes with
         | Some node ->
             match node.Kind with
-            | SemanticKind.Binding(_, _, _, isEntryPoint) when isEntryPoint ->
+            | SemanticKind.Binding(_, _, _, dr) when dr.IsSome ->
                 // The binding's first child is typically the Lambda
                 match node.Children with
-                | lambdaId :: _ -> entryPoints <- Set.add (NodeId.value lambdaId) entryPoints
+                | lambdaId :: _ -> declRootLambdas <- Map.add (NodeId.value lambdaId) dr.Value declRootLambdas
                 | _ -> ()
             | SemanticKind.Lambda _ ->
-                entryPoints <- Set.add (NodeId.value entryId) entryPoints
+                declRootLambdas <- Map.add (NodeId.value entryId) rootKind declRootLambdas
             | SemanticKind.ModuleDef (_, memberIds) ->
-                // ModuleDef entry point - check members for entry point Binding
+                // ModuleDef root - check members for root Binding
                 for memberId in memberIds do
                     match Map.tryFind memberId graph.Nodes with
                     | Some memberNode ->
                         match memberNode.Kind with
-                        | SemanticKind.Binding(_, _, _, isEntryPoint) when isEntryPoint ->
+                        | SemanticKind.Binding(_, _, _, Some dr) ->
                             match memberNode.Children with
-                            | lambdaId :: _ -> entryPoints <- Set.add (NodeId.value lambdaId) entryPoints
+                            | lambdaId :: _ -> declRootLambdas <- Map.add (NodeId.value lambdaId) dr declRootLambdas
+                            | _ -> ()
+                        | SemanticKind.Binding(name, _, _, None) when name = "main" ->
+                            match memberNode.Children with
+                            | lambdaId :: _ -> declRootLambdas <- Map.add (NodeId.value lambdaId) DeclRoot.EntryPoint declRootLambdas
                             | _ -> ()
                         | _ -> ()
                     | None -> ()
@@ -1183,7 +1187,7 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> 
                 match lambdaNameOpt, parentBindingName with
                 | Some explicitName, Some parentName when explicitName = parentName -> explicitName
                 | _, _ ->
-                    if Set.contains nodeIdVal entryPoints then
+                    if Map.containsKey nodeIdVal declRootLambdas then
                         "main"
                     else
                         // Use already-computed parentBindingName
@@ -1210,7 +1214,7 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Set<int> 
             | None -> ()
         | _ -> ()
 
-    lambdaNames, entryPoints
+    lambdaNames, declRootLambdas
 
 /// Check if a Binding contains a Lambda (function definition vs value binding)
 let private isLambdaBinding (graph: SemanticGraph) (bindingNodeId: NodeId) : bool =
@@ -1230,17 +1234,17 @@ let private isLambdaBinding (graph: SemanticGraph) (bindingNodeId: NodeId) : boo
         | _ -> false
     | None -> false
 
-/// Find the main Lambda NodeId from entry points
-let private findMainLambdaId (graph: SemanticGraph) (entryPoints: Set<int>) : NodeId option =
-    // Entry points are either:
+/// Find the main Lambda NodeId from declaration roots
+let private findMainLambdaId (graph: SemanticGraph) (declRootLambdas: Map<int, DeclRoot>) : NodeId option =
+    // Declaration roots are either:
     // 1. ModuleDef containing Bindings (one of which is main)
     // 2. Direct Lambda node
-    graph.EntryPoints
-    |> List.tryPick (fun entryId ->
+    graph.DeclarationRoots
+    |> List.tryPick (fun (entryId, _) ->
         match Map.tryFind entryId graph.Nodes with
         | Some node ->
             match node.Kind with
-            | SemanticKind.Lambda _ when Set.contains (NodeId.value entryId) entryPoints ->
+            | SemanticKind.Lambda _ when Map.containsKey (NodeId.value entryId) declRootLambdas ->
                 Some entryId
             | SemanticKind.ModuleDef (_, memberIds) ->
                 // Find the main Lambda among module members
@@ -1248,10 +1252,10 @@ let private findMainLambdaId (graph: SemanticGraph) (entryPoints: Set<int>) : No
                     match Map.tryFind memberId graph.Nodes with
                     | Some memberNode ->
                         match memberNode.Kind with
-                        | SemanticKind.Binding (_, _, _, isEntryPoint) when isEntryPoint ->
+                        | SemanticKind.Binding (_, _, _, dr) when dr.IsSome ->
                             // Get the Lambda child of this binding
                             match memberNode.Children with
-                            | lambdaId :: _ when Set.contains (NodeId.value lambdaId) entryPoints ->
+                            | lambdaId :: _ when Map.containsKey (NodeId.value lambdaId) declRootLambdas ->
                                 Some lambdaId
                             | _ -> None
                         | _ -> None
@@ -1263,8 +1267,8 @@ let private findMainLambdaId (graph: SemanticGraph) (entryPoints: Set<int>) : No
 /// These need SSAs in main's scope because they're emitted in main's prologue
 let private findModuleLevelValueBindings (graph: SemanticGraph) (mainLambdaId: NodeId) : NodeId list =
     // Find the ModuleDef containing main
-    graph.EntryPoints
-    |> List.collect (fun entryId ->
+    graph.DeclarationRoots
+    |> List.collect (fun (entryId, _) ->
         match Map.tryFind entryId graph.Nodes with
         | Some node ->
             match node.Kind with
@@ -1299,7 +1303,7 @@ let private findModuleLevelValueBindings (graph: SemanticGraph) (mainLambdaId: N
 ///
 /// This prevents SSA collisions between module-level bindings and function bodies.
 let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) : SSAAssignment =
-    let lambdaNames, entryPoints = collectLambdas graph
+    let lambdaNames, declRootLambdas = collectLambdas graph
 
     let mutable allAssignments = Map.empty
     let mutableClosureLayouts = System.Collections.Generic.Dictionary<int, ClosureLayout>()
@@ -1316,7 +1320,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
     }
 
     // Find the main Lambda
-    let mainLambdaIdOpt = findMainLambdaId graph entryPoints
+    let mainLambdaIdOpt = findMainLambdaId graph declRootLambdas
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PASS 1: Module-level VALUE bindings (emitted in main's prologue)
@@ -1362,7 +1366,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
 
             if isTopLevel then
                 let nodeIdVal = NodeId.value node.Id
-                let isMain = Set.contains nodeIdVal entryPoints &&
+                let isMain = Map.containsKey nodeIdVal declRootLambdas &&
                              (mainLambdaIdOpt |> Option.map (fun id -> NodeId.value id = nodeIdVal) |> Option.defaultValue false)
 
                 // Main Lambda continues from module-level counter; others start fresh
@@ -1481,7 +1485,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
     {
         NodeSSA = allAssignments
         LambdaNames = lambdaNames
-        EntryPointLambdas = entryPoints
+        DeclarationRootLambdas = declRootLambdas
         ClosureLayouts = closureLayouts
         DULayouts = duLayouts
     }
@@ -1502,9 +1506,9 @@ let lookupSSAs (nodeId: NodeId) (assignment: SSAAssignment) : SSA list option =
 let lookupLambdaName (nodeId: NodeId) (assignment: SSAAssignment) : string option =
     Map.tryFind (NodeId.value nodeId) assignment.LambdaNames
 
-/// Check if a Lambda is an entry point
-let isEntryPoint (nodeId: NodeId) (assignment: SSAAssignment) : bool =
-    Set.contains (NodeId.value nodeId) assignment.EntryPointLambdas
+/// Check if a Lambda is a declaration root and return its flavor
+let tryGetDeclRoot (nodeId: NodeId) (assignment: SSAAssignment) : DeclRoot option =
+    Map.tryFind (NodeId.value nodeId) assignment.DeclarationRootLambdas
 
 /// Look up ClosureLayout for a Lambda with captures (coeffect lookup)
 /// Returns None for simple lambdas (no captures)

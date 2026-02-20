@@ -283,7 +283,7 @@ let pPlatformBinding : PSGParser<string> =
     }
 
 /// Match a Binding node
-let pBinding : PSGParser<string * bool * bool * bool> =
+let pBinding : PSGParser<string * bool * bool * DeclRoot option> =
     parser {
         let! node = getCurrentNode
         match node.Kind with
