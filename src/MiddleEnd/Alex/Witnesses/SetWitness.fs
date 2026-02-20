@@ -31,9 +31,9 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
         | "empty" ->
             let setType = mapType node.Type ctx
 
-            match tryMatch (pSetEmpty node.Id setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None -> WitnessOutput.error "Set.empty pattern emission failed"
+            match tryMatchWithDiagnostics (pSetEmpty node.Id setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error diagnostic -> WitnessOutput.error $"Set.empty: {diagnostic}"
 
         | "isEmpty" ->
             WitnessOutput.error "Set.isEmpty: Baker decomposes to structural check"
@@ -45,9 +45,9 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (setSSA, _) ->
                     let elemType = mapType node.Type ctx
 
-                    match tryMatch (pSetValue node.Id setSSA elemType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Set.value pattern emission failed"
+                    match tryMatchWithDiagnostics (pSetValue node.Id setSSA elemType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Set.value: {diagnostic}"
                 | None -> WitnessOutput.error "Set.value: Set not yet witnessed"
             | _ -> WitnessOutput.error $"Set.value: Expected 1 child, got {node.Children.Length}"
 
@@ -58,9 +58,9 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (setSSA, _) ->
                     let subtreeType = mapType node.Type ctx
 
-                    match tryMatch (pSetLeft node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Set.left pattern emission failed"
+                    match tryMatchWithDiagnostics (pSetLeft node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Set.left: {diagnostic}"
                 | None -> WitnessOutput.error "Set.left: Set not yet witnessed"
             | _ -> WitnessOutput.error $"Set.left: Expected 1 child, got {node.Children.Length}"
 
@@ -71,9 +71,9 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (setSSA, _) ->
                     let subtreeType = mapType node.Type ctx
 
-                    match tryMatch (pSetRight node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Set.right pattern emission failed"
+                    match tryMatchWithDiagnostics (pSetRight node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Set.right: {diagnostic}"
                 | None -> WitnessOutput.error "Set.right: Set not yet witnessed"
             | _ -> WitnessOutput.error $"Set.right: Expected 1 child, got {node.Children.Length}"
 
@@ -84,9 +84,9 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (setSSA, _) ->
                     let heightType = mapType node.Type ctx
 
-                    match tryMatch (pSetHeight node.Id setSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Set.height pattern emission failed"
+                    match tryMatchWithDiagnostics (pSetHeight node.Id setSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Set.height: {diagnostic}"
                 | None -> WitnessOutput.error "Set.height: Set not yet witnessed"
             | _ -> WitnessOutput.error $"Set.height: Expected 1 child, got {node.Children.Length}"
 
@@ -103,9 +103,9 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     let right = { SSA = rightSSA; Type = rightType }
                     let setType = mapType node.Type ctx
 
-                    match tryMatch (pSetAdd node.Id element left right setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Set.node pattern emission failed"
+                    match tryMatchWithDiagnostics (pSetAdd node.Id element left right setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Set.node: {diagnostic}"
                 | _ -> WitnessOutput.error "Set.node: One or more children not yet witnessed"
             | _ -> WitnessOutput.error $"Set.node: Expected 4 children, got {node.Children.Length}"
 

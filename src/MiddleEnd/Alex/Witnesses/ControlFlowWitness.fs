@@ -112,9 +112,11 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
             trace "[ControlFlowWitness] IfThenElse: ERROR - Condition node %A not found" (NodeId.value condId)
 
         // Recall the condition result (now available from current scope visitation)
-        match MLIRAccumulator.recallNode condId ctx.Accumulator with
+        // Use findLastValueNode to handle Sequential conditions (e.g., TupleGet + boolean ops)
+        let condValueNodeId = findLastValueNode condId ctx.Graph
+        match MLIRAccumulator.recallNode condValueNodeId ctx.Accumulator with
         | None ->
-            trace "[ControlFlowWitness] IfThenElse: ERROR - Condition %A witnessed but no result" (NodeId.value condId)
+            trace "[ControlFlowWitness] IfThenElse: ERROR - Condition %A (value node %A) witnessed but no result" (NodeId.value condId) (NodeId.value condValueNodeId)
             WitnessOutput.error "IfThenElse: Condition witnessed but no result"
         | Some (condSSA, _) ->
             // Walk branches — always scope-isolated for op collection.
@@ -139,12 +141,12 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                     | _ -> None  // Fall back to void
                 else None
 
-            match tryMatch (pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, transferResult), _) ->
+            match tryMatchWithDiagnostics (pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, transferResult), _) ->
                 trace "[ControlFlowWitness] IfThenElse: Built conditional with %d ops" (List.length ops)
                 { InlineOps = ops; TopLevelOps = []; Result = transferResult }
-            | None ->
-                WitnessOutput.error "IfThenElse: conditional elision failed"
+            | Result.Error diagnostic ->
+                WitnessOutput.error $"IfThenElse: {diagnostic}"
 
     | None ->
         match tryMatch pWhileLoop ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -162,21 +164,21 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
             | Some (condSSA, _) ->
                 trace "[ControlFlowWitness] WhileLoop: Building scf.while with condition SSA %A" condSSA
                 // Build scf.condition and scf.yield terminators
-                match tryMatch (pSCFCondition condSSA []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some (condTerminator, _) ->
+                match tryMatchWithDiagnostics (pSCFCondition condSSA []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok (condTerminator, _) ->
                     let condOpsWithTerminator = condOps @ [condTerminator]
 
-                    match tryMatch (pSCFYield []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (yieldTerminator, _) ->
+                    match tryMatchWithDiagnostics (pSCFYield []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok (yieldTerminator, _) ->
                         let bodyOpsWithTerminator = bodyOps @ [yieldTerminator]
 
-                        match tryMatch (pBuildWhileLoop condOpsWithTerminator bodyOpsWithTerminator) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Some (ops, _) ->
+                        match tryMatchWithDiagnostics (pBuildWhileLoop condOpsWithTerminator bodyOpsWithTerminator) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok (ops, _) ->
                             trace "[ControlFlowWitness] WhileLoop: Successfully built scf.while"
                             { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
-                        | None -> WitnessOutput.error "WhileLoop pattern emission failed"
-                    | None -> WitnessOutput.error "WhileLoop: pSCFYield failed"
-                | None -> WitnessOutput.error "WhileLoop: pSCFCondition failed"
+                        | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop: {diagnostic}"
+                    | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop yield: {diagnostic}"
+                | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop condition: {diagnostic}"
 
         | None ->
             match tryMatch pForLoop ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

@@ -49,9 +49,10 @@ module SetWitness = Alex.Witnesses.SetWitness
 module ControlFlowWitness = Alex.Witnesses.ControlFlowWitness
 module MatchWitness = Alex.Witnesses.MatchWitness
 
-// Priority 4: Records, Memory, Lambda & Hardware
+// Priority 4: Records, Memory, DU, Lambda & Hardware
 module RecordWitness = Alex.Witnesses.RecordWitness
 module MemoryWitness = Alex.Witnesses.MemoryWitness
+module DUWitness = Alex.Witnesses.DUWitness
 module LambdaWitness = Alex.Witnesses.LambdaWitness
 module HardwareModuleWitness = Alex.Witnesses.HardwareModuleWitness
 
@@ -88,9 +89,6 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         |> NanopassRegistry.register IntrinsicWitness.nanopass
         |> NanopassRegistry.register StructuralWitness.nanopass
         |> NanopassRegistry.register BindingWitness.nanopass
-        // ─── Target-gated (FPGA only — HardwareModule bindings are scope boundaries) ───
-        // Registered AFTER BindingWitness → prepend means it runs BEFORE BindingWitness
-        |> conditionalRegister (not isCPULike) HardwareModuleWitness.nanopass
         |> NanopassRegistry.register VarRefWitness.nanopass
 
         // ─── Codata-dependent (all platforms, elision varies inside) ───
@@ -103,6 +101,9 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         |> conditionalRegister isCPULike StringIntrinsicWitness.nanopass
         |> conditionalRegister isCPULike PlatformWitness.nanopass
         |> conditionalRegister isCPULike MemoryWitness.nanopass
+
+        // ─── DU operations (all platforms — codata-dependent dispatch inside patterns) ───
+        |> NanopassRegistry.register DUWitness.nanopass
 
         // ─── Records (all platforms, must be AFTER MemoryWitness — register prepends) ───
         |> NanopassRegistry.register RecordWitness.nanopass  // Prepends → runs BEFORE MemoryWitness
@@ -149,9 +150,22 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
     // Build nanopass list with thunks that access the lazy combinator
     and allNanopasses : Lazy<Nanopass list> =
         lazy (
-            // Leaf witnesses (don't need combinator access)
-            leafRegistry.Nanopasses @
-            // Scope witnesses (receive combinator thunk for recursion)
+            // FPGA-only: HardwareModuleWitness must run BEFORE BindingWitness
+            // (both match Binding nodes — HW witness is more specific)
+            let hwNanopass =
+                if not isCPULike then
+                    [ HardwareModuleWitness.createNanopass (fun () -> lazyCombinator.Value) ]
+                else []
+
+            // Insert HW witness before BindingWitness in the leaf list
+            let leaves =
+                leafRegistry.Nanopasses
+                |> List.collect (fun np ->
+                    if np.Name = "Binding" then hwNanopass @ [np]
+                    else [np])
+
+            // Append scope witnesses (receive combinator thunk for recursion)
+            leaves @
             [
                 LambdaWitness.createNanopass (fun () -> lazyCombinator.Value)
                 ControlFlowWitness.createNanopass (fun () -> lazyCombinator.Value)

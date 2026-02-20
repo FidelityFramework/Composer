@@ -31,9 +31,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
         | "empty" ->
             let mapTy = mapType node.Type ctx
 
-            match tryMatch (pMapEmpty node.Id mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None -> WitnessOutput.error "Map.empty pattern emission failed"
+            match tryMatchWithDiagnostics (pMapEmpty node.Id mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error diagnostic -> WitnessOutput.error $"Map.empty: {diagnostic}"
 
         | "isEmpty" ->
             WitnessOutput.error "Map.isEmpty: Baker decomposes to structural check"
@@ -45,9 +45,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (mapSSA, _) ->
                     let keyType = mapType node.Type ctx
 
-                    match tryMatch (pMapKey node.Id mapSSA keyType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Map.key pattern emission failed"
+                    match tryMatchWithDiagnostics (pMapKey node.Id mapSSA keyType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Map.key: {diagnostic}"
                 | None -> WitnessOutput.error "Map.key: Map not yet witnessed"
             | _ -> WitnessOutput.error $"Map.key: Expected 1 child, got {node.Children.Length}"
 
@@ -58,9 +58,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (mapSSA, _) ->
                     let valueType = mapType node.Type ctx
 
-                    match tryMatch (pMapValue node.Id mapSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Map.value pattern emission failed"
+                    match tryMatchWithDiagnostics (pMapValue node.Id mapSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Map.value: {diagnostic}"
                 | None -> WitnessOutput.error "Map.value: Map not yet witnessed"
             | _ -> WitnessOutput.error $"Map.value: Expected 1 child, got {node.Children.Length}"
 
@@ -71,9 +71,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (mapSSA, _) ->
                     let subtreeType = mapType node.Type ctx
 
-                    match tryMatch (pMapLeft node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Map.left pattern emission failed"
+                    match tryMatchWithDiagnostics (pMapLeft node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Map.left: {diagnostic}"
                 | None -> WitnessOutput.error "Map.left: Map not yet witnessed"
             | _ -> WitnessOutput.error $"Map.left: Expected 1 child, got {node.Children.Length}"
 
@@ -84,9 +84,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (mapSSA, _) ->
                     let subtreeType = mapType node.Type ctx
 
-                    match tryMatch (pMapRight node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Map.right pattern emission failed"
+                    match tryMatchWithDiagnostics (pMapRight node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Map.right: {diagnostic}"
                 | None -> WitnessOutput.error "Map.right: Map not yet witnessed"
             | _ -> WitnessOutput.error $"Map.right: Expected 1 child, got {node.Children.Length}"
 
@@ -97,9 +97,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | Some (mapSSA, _) ->
                     let heightType = mapType node.Type ctx
 
-                    match tryMatch (pMapHeight node.Id mapSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Map.height pattern emission failed"
+                    match tryMatchWithDiagnostics (pMapHeight node.Id mapSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Map.height: {diagnostic}"
                 | None -> WitnessOutput.error "Map.height: Map not yet witnessed"
             | _ -> WitnessOutput.error $"Map.height: Expected 1 child, got {node.Children.Length}"
 
@@ -118,9 +118,9 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     let right = { SSA = rightSSA; Type = rightType }
                     let mapTy = mapType node.Type ctx
 
-                    match tryMatch (pMapAdd node.Id key value left right mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Map.node pattern emission failed"
+                    match tryMatchWithDiagnostics (pMapAdd node.Id key value left right mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Map.node: {diagnostic}"
                 | _ -> WitnessOutput.error "Map.node: One or more children not yet witnessed"
             | _ -> WitnessOutput.error $"Map.node: Expected 5 children, got {node.Children.Length}"
 

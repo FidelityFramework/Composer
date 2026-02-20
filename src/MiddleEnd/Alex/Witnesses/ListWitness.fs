@@ -31,18 +31,18 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
         | "empty" ->
             let listType = mapType node.Type ctx
 
-            match tryMatch (pListEmpty node.Id listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None -> WitnessOutput.error "List.empty pattern emission failed"
+            match tryMatchWithDiagnostics (pListEmpty node.Id listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error diagnostic -> WitnessOutput.error $"List.empty: {diagnostic}"
 
         | "isEmpty" ->
             match node.Children with
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (listSSA, _) ->
-                    match tryMatch (pListIsEmpty node.Id listSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "List.isEmpty pattern emission failed"
+                    match tryMatchWithDiagnostics (pListIsEmpty node.Id listSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"List.isEmpty: {diagnostic}"
                 | None -> WitnessOutput.error "List.isEmpty: List not yet witnessed"
             | _ -> WitnessOutput.error $"List.isEmpty: Expected 1 child, got {node.Children.Length}"
 
@@ -53,9 +53,9 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                 | Some (listSSA, _) ->
                     let elementType = mapType node.Type ctx
 
-                    match tryMatch (pListHead node.Id listSSA elementType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "List.head pattern emission failed"
+                    match tryMatchWithDiagnostics (pListHead node.Id listSSA elementType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"List.head: {diagnostic}"
                 | None -> WitnessOutput.error "List.head: List not yet witnessed"
             | _ -> WitnessOutput.error $"List.head: Expected 1 child, got {node.Children.Length}"
 
@@ -66,9 +66,9 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                 | Some (listSSA, _) ->
                     let tailType = mapType node.Type ctx
 
-                    match tryMatch (pListTail node.Id listSSA tailType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "List.tail pattern emission failed"
+                    match tryMatchWithDiagnostics (pListTail node.Id listSSA tailType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"List.tail: {diagnostic}"
                 | None -> WitnessOutput.error "List.tail: List not yet witnessed"
             | _ -> WitnessOutput.error $"List.tail: Expected 1 child, got {node.Children.Length}"
 
@@ -81,9 +81,9 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                     let tail = { SSA = tailSSA; Type = tailType }
                     let listType = mapType node.Type ctx
 
-                    match tryMatch (pListCons node.Id head tail listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "List.cons pattern emission failed"
+                    match tryMatchWithDiagnostics (pListCons node.Id head tail listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"List.cons: {diagnostic}"
                 | _ -> WitnessOutput.error "List.cons: Head or tail not yet witnessed"
             | _ -> WitnessOutput.error $"List.cons: Expected 2 children, got {node.Children.Length}"
 

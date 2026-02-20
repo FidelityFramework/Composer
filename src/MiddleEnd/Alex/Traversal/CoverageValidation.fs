@@ -31,10 +31,13 @@ let validateCoverage
         |> Seq.toList
 
     // Find unwitnessed nodes (reachable but not visited)
+    // TypeDef nodes are compile-time type definitions — they never produce MLIR ops
+    // on any platform. Skip them to avoid false positives.
     let unwitnessedNodes =
         reachableNodes
         |> List.filter (fun node ->
-            not (Set.contains node.Id allVisited))
+            not (Set.contains node.Id allVisited) &&
+            match node.Kind with SemanticKind.TypeDef _ -> false | _ -> true)
 
     // Generate error diagnostics for each unwitnessed node
     unwitnessedNodes

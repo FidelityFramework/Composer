@@ -77,9 +77,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     satInfo.AllArgNodes
                     |> List.collect (fun argId -> MLIRAccumulator.getDeferredInlineOps argId ctx.Accumulator)
 
-                match tryMatch (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some ((ops, result), _) -> { InlineOps = deferredOps @ ops; TopLevelOps = []; Result = result }
-                | None -> WitnessOutput.error $"Saturated call to {funcName}: pattern emission failed"
+                match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = deferredOps @ ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"Saturated call '{funcName}': {diagnostic}"
         | None ->
         match Map.tryFind node.Id curryResult.PartialApplications with
         | Some _ ->
@@ -131,9 +131,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let args = argsResult |> List.choose id
                     let retType = mapType node.Type ctx
 
-                    match tryMatch (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Direct function call pattern emission failed"
+                    match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{funcName}': {diagnostic}"
 
             | SemanticKind.VarRef (localName, None) ->
                 // Unresolved VarRef — try direct call with local name
@@ -146,9 +146,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 else
                     let args = argsResult |> List.choose id
                     let retType = mapType node.Type ctx
-                    match tryMatch (pDirectCall node.Id localName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Direct function call pattern emission failed"
+                    match tryMatchWithDiagnostics (pDirectCall node.Id localName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{localName}': {diagnostic}"
 
             | _ ->
                 // Function is an SSA value (indirect call)
@@ -166,9 +166,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         let args = argsResult |> List.choose id
                         let retType = mapType node.Type ctx
 
-                        match tryMatch (pApplicationCall node.Id funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                        | None -> WitnessOutput.error "Application pattern emission failed"
+                        match tryMatchWithDiagnostics (pApplicationCall node.Id funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error diagnostic -> WitnessOutput.error $"Indirect call: {diagnostic}"
         | None ->
             WitnessOutput.error $"Application: Could not resolve function node {funcId}"
     | None ->

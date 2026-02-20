@@ -55,10 +55,11 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
     | SemanticKind.TupleExpr _ ->
-        // Tuple expression - structural container for tuple elements
-        // Children already witnessed in post-order. Tuple is virtual (not materialized).
-        // TupleGet nodes index into the element list to recall individual element SSAs.
-        { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+        // Tuple expression: on FPGA, tuples are values (hw.struct_create) — let RecordWitness handle.
+        // On CPU, tuples are virtual containers — TupleGet accesses elements directly.
+        match ctx.Coeffects.TargetPlatform with
+        | Core.Types.Dialects.FPGA -> WitnessOutput.skip
+        | _ -> { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
     | SemanticKind.TupleGet (tupleId, index) ->
         // Tuple element extraction - recall the indexed element's SSA from the accumulator

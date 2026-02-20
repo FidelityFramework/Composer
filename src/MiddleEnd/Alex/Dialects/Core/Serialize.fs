@@ -49,6 +49,13 @@ let rec typeToString (ty: MLIRType) : string =
         // CPU: flatten to byte-level memref using the canonical size catamorphism
         sprintf "memref<%dxi8>" (mlirTypeSize (TStruct fields))
     | TSeqClock -> "!seq.clock"
+    | TTag caseCount ->
+        // Default serialization: smallest power-of-2 integer that fits the case count
+        // Platform-specific serializers (hw dialect) may override with exact bit widths
+        if caseCount <= 2 then "i1"
+        elif caseCount <= 256 then "i8"
+        elif caseCount <= 65536 then "i16"
+        else "i32"
     | TError msg -> sprintf "<<ERROR: %s>>" msg
 
 // ═══════════════════════════════════════════════════════════════════════════

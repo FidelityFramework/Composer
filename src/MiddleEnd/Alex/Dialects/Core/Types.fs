@@ -38,6 +38,7 @@ type MLIRType =
     | TUnit                                 // Unit type (represented as i32 0)
     | TStruct of (string * MLIRType) list   // Named struct type (record fields)
     | TSeqClock                             // CIRCT !seq.clock type (clock signal for registers)
+    | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
     | TError of string                      // Error type
 
 /// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct).
@@ -52,6 +53,7 @@ let rec mlirTypeSize (ty: MLIRType) : int =
     | TIndex -> 8
     | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
     | TSeqClock -> 1
+    | TTag _ -> 1  // Tag is at least 1 byte; platform elision determines actual width
     | TUnit -> 0 | TError _ -> 0
 
 // ═══════════════════════════════════════════════════════════════════════════

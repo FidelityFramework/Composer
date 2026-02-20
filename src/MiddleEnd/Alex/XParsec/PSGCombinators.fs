@@ -729,15 +729,30 @@ let tryMatch (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode)
     | Ok success -> Some (success.Parsed, zipper)
     | Error _ -> None
 
+/// Extract human-readable messages from XParsec error tree
+let private extractMessages (errors: XParsec.ErrorType<char, PSGParserState>) : string list =
+    let rec collect acc = function
+        | XParsec.ErrorType.Message m -> m :: acc
+        | XParsec.ErrorType.Nested (parent, children) ->
+            let acc = collect acc parent
+            children |> List.fold (fun a child -> collect a child.Errors) acc
+        | XParsec.ErrorType.EndOfInput -> "end of input" :: acc
+        | other -> (sprintf "%A" other) :: acc
+    collect [] errors |> List.rev
+
 /// Try to match a pattern with diagnostic error capture
 /// Returns Result with detailed error information on failure
-/// Use this for debugging pattern match failures
+/// Extracts Message strings from the XParsec error tree for readable diagnostics
 let tryMatchWithDiagnostics (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode) (zipper: PSGZipper) (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (accumulator: Alex.Traversal.TransferTypes.MLIRAccumulator) =
     match runParser parser graph node zipper coeffects accumulator with
     | Ok success -> Result.Ok (success.Parsed, zipper)
     | Error err ->
-        // XParsec error contains position, expected, and messages
-        let errorMsg = sprintf "Pattern match failed at position %d. Error: %A" err.Position.Index err
+        let messages = extractMessages err.Errors
+        let errorMsg =
+            match messages with
+            | [] -> sprintf "Pattern failed (no message) at position %d" err.Position.Index
+            | [single] -> single
+            | multiple -> multiple |> String.concat " → "
         Result.Error errorMsg
 
 /// Create initial parser state from zipper
@@ -839,5 +854,8 @@ let rec findLastValueNode nodeId graph =
             match List.tryLast childIds with
             | Some lastChild -> findLastValueNode lastChild graph
             | None -> nodeId  // Empty sequential - return self (caller will handle TRVoid)
-        | _ -> nodeId  // Non-Sequential node is the actual value node
-    | None -> nodeId  // Node not found - return original (error will occur downstream)
+        | SemanticKind.TypeAnnotation (wrappedId, _) ->
+            // TypeAnnotation is transparent - unwrap to the actual value node
+            findLastValueNode wrappedId graph
+        | _ -> nodeId  // Non-transparent node is the actual value node
+    | None -> nodeId  // Node not found - return original (error will occur downstream)  // Node not found - return original (error will occur downstream)

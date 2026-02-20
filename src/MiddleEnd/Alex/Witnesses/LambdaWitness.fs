@@ -310,13 +310,13 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Delegate function wrapping to Pattern — coeffect determines func.func vs hw.module
             let paramNames = params' |> List.map (fun (name, _, _) -> name)
-            match tryMatch (pFunctionDef funcName mlirParams (Some paramNames) returnType bodyOps returnSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some (funcDefOp, _) ->
+            match tryMatchWithDiagnostics (pFunctionDef funcName mlirParams (Some paramNames) returnType bodyOps returnSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }
-            | None ->
-                WitnessOutput.error (sprintf "Function definition '%s' pattern failed" funcName)
+            | Result.Error diagnostic ->
+                WitnessOutput.error $"Function '{funcName}': {diagnostic}"
 
     | None -> WitnessOutput.skip
 

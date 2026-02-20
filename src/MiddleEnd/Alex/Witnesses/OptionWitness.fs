@@ -38,27 +38,27 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     let totalBytes = 1 + mlirTypeSize valType
                     let optionTy = TMemRefStatic(totalBytes, TInt I8)
 
-                    match tryMatch (pOptionSome node.Id value optionTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Option.Some pattern emission failed"
+                    match tryMatchWithDiagnostics (pOptionSome node.Id value optionTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Option.Some: {diagnostic}"
                 | None -> WitnessOutput.error "Option.Some: Value not yet witnessed"
             | _ -> WitnessOutput.error $"Option.Some: Expected 1 child, got {node.Children.Length}"
 
         | "None" ->
             let optionType = mapType node.Type ctx
 
-            match tryMatch (pOptionNone node.Id optionType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None -> WitnessOutput.error "Option.None pattern emission failed"
+            match tryMatchWithDiagnostics (pOptionNone node.Id optionType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error diagnostic -> WitnessOutput.error $"Option.None: {diagnostic}"
 
         | "isSome" ->
             match node.Children with
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    match tryMatch (pOptionIsSome node.Id optSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Option.isSome pattern emission failed"
+                    match tryMatchWithDiagnostics (pOptionIsSome node.Id optSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Option.isSome: {diagnostic}"
                 | None -> WitnessOutput.error "Option.isSome: Option not yet witnessed"
             | _ -> WitnessOutput.error $"Option.isSome: Expected 1 child, got {node.Children.Length}"
 
@@ -67,9 +67,9 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    match tryMatch (pOptionIsNone node.Id optSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Option.isNone pattern emission failed"
+                    match tryMatchWithDiagnostics (pOptionIsNone node.Id optSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Option.isNone: {diagnostic}"
                 | None -> WitnessOutput.error "Option.isNone: Option not yet witnessed"
             | _ -> WitnessOutput.error $"Option.isNone: Expected 1 child, got {node.Children.Length}"
 
@@ -80,9 +80,9 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 | Some (optSSA, _) ->
                     let valueType = TIndex  // Fallback type
 
-                    match tryMatch (pOptionGet node.Id optSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "Option.get pattern emission failed"
+                    match tryMatchWithDiagnostics (pOptionGet node.Id optSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"Option.get: {diagnostic}"
                 | None -> WitnessOutput.error "Option.get: Option not yet witnessed"
             | _ -> WitnessOutput.error $"Option.get: Expected 1 child, got {node.Children.Length}"
 

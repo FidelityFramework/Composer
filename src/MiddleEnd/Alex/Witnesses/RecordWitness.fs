@@ -11,6 +11,7 @@
 module Alex.Witnesses.RecordWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -43,18 +44,47 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 // Copy-and-update: recall original record SSA, delegate to pBuildRecordCopyWith
                 match MLIRAccumulator.recallNode origId ctx.Accumulator with
                 | Some (origSSA, _origTy) ->
-                    match tryMatch (pBuildRecordCopyWith node.Id structTy origSSA fieldValues) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error "RecordExpr copy-with: pBuildRecordCopyWith pattern failed"
+                    match tryMatchWithDiagnostics (pBuildRecordCopyWith node.Id structTy origSSA fieldValues) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"RecordExpr copy-with: {diagnostic}"
                 | None ->
                     WitnessOutput.error "RecordExpr copy-with: Original record not in accumulator"
             | None ->
                 // Full construction: all field values provided
-                match tryMatch (pBuildRecord node.Id structTy fieldValues) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                | None -> WitnessOutput.error "RecordExpr: pBuildRecord pattern failed"
+                match tryMatchWithDiagnostics (pBuildRecord node.Id structTy fieldValues) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"RecordExpr: {diagnostic}"
 
     | None ->
+        // Try TupleExpr on FPGA — tuples are first-class values (hw.struct_create)
+        // StructuralWitness skips TupleExpr on FPGA so we handle it here.
+        match node.Kind with
+        | SemanticKind.TupleExpr elements when ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA ->
+            // Map tuple type to TStruct with Item1, Item2, ... fields
+            let structTy =
+                match node.Type with
+                | Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TTuple(elemTypes, _) ->
+                    let fields = elemTypes |> List.mapi (fun i e -> (sprintf "Item%d" (i + 1), mapType e ctx))
+                    TStruct fields
+                | _ -> mapType node.Type ctx
+
+            // Recall each element's SSA from the accumulator (children already walked in post-order)
+            let fieldValues =
+                elements |> List.mapi (fun i elemId ->
+                    let fieldName = sprintf "Item%d" (i + 1)
+                    match MLIRAccumulator.recallNode elemId ctx.Accumulator with
+                    | Some (ssa, ty) -> Some (fieldName, ssa, ty)
+                    | None -> None)
+
+            let resolved = fieldValues |> List.choose id
+            if resolved.Length <> elements.Length then
+                WitnessOutput.error $"TupleExpr: Only {resolved.Length} of {elements.Length} element values witnessed"
+            else
+                match tryMatchWithDiagnostics (pBuildRecord node.Id structTy resolved) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"TupleExpr: {diagnostic}"
+        | _ ->
+
         // Try FieldGet on TStruct
         match tryMatch pFieldGet ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Some ((structId, fieldName), _) ->
@@ -63,9 +93,9 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 match structTy with
                 | TStruct _ ->
                     // TStruct field access — handle here
-                    match tryMatch (pRecordFieldGet node.Id structSSA fieldName structTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error $"RecordFieldGet: pRecordFieldGet failed for field '{fieldName}'"
+                    match tryMatchWithDiagnostics (pRecordFieldGet node.Id structSSA fieldName structTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"RecordFieldGet: {diagnostic}"
                 | _ ->
                     // Not TStruct — skip, let MemoryWitness handle (strings, closures, DUs)
                     WitnessOutput.skip

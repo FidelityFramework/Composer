@@ -103,12 +103,12 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                     | _ -> None
                 else None
 
-            // Step 4: Delegate to pattern for elision
-            match tryMatch (pBuildMatchElimination scrutineeSSA scrutineeMLIRType scrutineeId armResults result node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, transferResult), _) ->
+            // Step 4: Delegate to pattern for elision — diagnostic error flow preserved
+            match tryMatchWithDiagnostics (pBuildMatchElimination scrutineeSSA scrutineeMLIRType scrutineeId armResults result node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, transferResult), _) ->
                 { InlineOps = ops; TopLevelOps = []; Result = transferResult }
-            | None ->
-                WitnessOutput.error "CaseElimination: match elimination pattern failed"
+            | Result.Error diagnostic ->
+                WitnessOutput.error $"CaseElimination: {diagnostic}"
 
     | None -> WitnessOutput.skip
 

@@ -52,9 +52,9 @@ let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                     return! pBuildLazyStruct valueTy codePtrTy codePtr captures ssas arch
             }
 
-        match tryMatch lazyExprPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-        | None -> WitnessOutput.error "LazyExpr pattern emission failed"
+        match tryMatchWithDiagnostics lazyExprPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error diagnostic -> WitnessOutput.error $"LazyExpr: {diagnostic}"
 
     | None ->
         // Try LazyForce pattern
@@ -82,9 +82,9 @@ let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                             return! pBuildLazyForce lazySSA lazyTy resultSSA resultTy intermediateSsas arch
                 }
 
-            match tryMatch lazyForcePattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None -> WitnessOutput.error "LazyForce pattern emission failed"
+            match tryMatchWithDiagnostics lazyForcePattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error diagnostic -> WitnessOutput.error $"LazyForce: {diagnostic}"
 
         | None -> WitnessOutput.skip
 

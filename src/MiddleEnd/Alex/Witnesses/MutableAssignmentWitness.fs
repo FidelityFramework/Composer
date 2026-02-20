@@ -37,12 +37,12 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
         | Some (memrefSSA, (TMemRef elemType | TMemRefStatic (_, elemType))), Some (valueSSA, _) ->
             // Emit memref.store to update mutable variable
             let (NodeId nodeIdInt) = node.Id
-            match tryMatch (pStoreMutableVariable nodeIdInt memrefSSA valueSSA elemType)
+            match tryMatchWithDiagnostics (pStoreMutableVariable nodeIdInt memrefSSA valueSSA elemType)
                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) ->
+            | Result.Ok ((ops, result), _) ->
                 { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None ->
-                WitnessOutput.error "Mutable assignment: Store pattern emission failed"
+            | Result.Error diagnostic ->
+                WitnessOutput.error $"Mutable assignment: {diagnostic}"
         | Some (_, ty), Some _ ->
             WitnessOutput.error $"Mutable assignment: Target is not a mutable variable (type: {ty})"
         | Some _, None ->

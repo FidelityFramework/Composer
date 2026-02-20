@@ -12,7 +12,8 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.SCFElements  // pSCFIf, pSCFWhile, pSCFFor
 open Alex.Elements.CFElements   // pSwitch
-open Alex.Elements.CombElements // pCombMux (FPGA combinational mux)
+open Alex.Elements.CombElements // pCombICmp, pCombMux (FPGA combinational logic)
+open Alex.Elements.MLIRAtomics  // pConstI (tag literal constants)
 open Alex.CodeGeneration.TypeMapping
 open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Core.Types.Dialects                        // TargetPlatform (codata-dependent elision)
@@ -208,7 +209,80 @@ let pBuildMatchElimination
 
         match targetPlatform with
         | FPGA ->
-            return! fail (Message "FPGA match elimination requires comb.mux chain (future)")
+            // FPGA DU match: all arms combinational (inline), nested comb.mux selects result.
+            // The scrutinee (TTag type) IS the tag — no memory extraction needed.
+            // Catamorphism: fold over arms → tag comparisons, then foldBack → mux chain.
+            match result with
+            | None ->
+                return! fail (Message "FPGA: void match not supported (hardware requires a result)")
+            | Some (resultSSA, resultType) ->
+
+            let numArms = List.length arms
+
+            // Phase 1: Recall all arm value SSAs (recursive fold in parser monad)
+            let! armValueSSAs =
+                let rec recallAll idx acc =
+                    if idx >= numArms then preturn (List.rev acc)
+                    else
+                        let (_, armValueNodeId, _) = arms.[idx]
+                        parser {
+                            let! (armSSA, _) = pRecallNode armValueNodeId
+                            return! recallAll (idx + 1) (armSSA :: acc)
+                        }
+                recallAll 0 []
+
+            // All arm ops inline (combinational — all evaluate unconditionally)
+            let allArmOps = arms |> List.collect (fun (ops, _, _) -> ops)
+
+            if numArms = 1 then
+                return (allArmOps, TRValue { SSA = armValueSSAs.[0]; Type = resultType })
+            else
+                let! allSSAs = getNodeSSAs nodeId
+
+                // SSA layout (functional indexing — no mutable counter):
+                //   [0]              = resultSSA
+                //   [1 + 2*i]        = tagLit for arm i     (i in 0..numArms-2)
+                //   [1 + 2*i + 1]    = cmpSSA for arm i
+                //   [tagCmpEnd + j]  = intermediate mux SSA (j in 0..numArms-3)
+                //   outermost mux reuses resultSSA (index 0)
+                let tagCmpEnd = 1 + 2 * (numArms - 1)
+
+                // Phase 2: Tag comparisons (fold over non-last arms, composing Elements)
+                let! tagResults =
+                    let rec buildComparisons armIdx acc =
+                        if armIdx >= numArms - 1 then preturn (List.rev acc)
+                        else
+                            let (_, _, arm) = arms.[armIdx]
+                            let tagIndex = getArmTagIndex armIdx arm.Pattern
+                            let tagLitSSA = allSSAs.[1 + 2 * armIdx]
+                            let cmpSSA = allSSAs.[1 + 2 * armIdx + 1]
+                            parser {
+                                let! tagLitOp = pConstI tagLitSSA (int64 tagIndex) scrutineeType
+                                let! cmpOp = pCombICmp cmpSSA ICmpPred.Eq scrutineeSSA tagLitSSA scrutineeType
+                                return! buildComparisons (armIdx + 1) ((tagLitOp, cmpOp, cmpSSA) :: acc)
+                            }
+                    buildComparisons 0 []
+
+                let tagOps = tagResults |> List.collect (fun (litOp, cmpOp, _) -> [litOp; cmpOp])
+                let cmpSSAs = tagResults |> List.map (fun (_, _, cmpSSA) -> cmpSSA)
+
+                // Phase 3: Nested mux chain (foldBack from inside-out, composing Elements)
+                // Start with last arm's value as initial "else", wrap each previous arm with comb.mux
+                let! (muxOps, _) =
+                    let rec buildMuxChain armIdx currentElseSSA muxCount acc =
+                        if armIdx < 0 then preturn (List.rev acc, currentElseSSA)
+                        else
+                            let muxResultSSA =
+                                if armIdx = 0 then resultSSA
+                                else allSSAs.[tagCmpEnd + muxCount]
+                            parser {
+                                let! muxOp = pCombMux muxResultSSA cmpSSAs.[armIdx] armValueSSAs.[armIdx] currentElseSSA resultType
+                                return! buildMuxChain (armIdx - 1) muxResultSSA (muxCount + 1) (muxOp :: acc)
+                            }
+                    buildMuxChain (numArms - 2) armValueSSAs.[numArms - 1] 0 []
+
+                let allOps = allArmOps @ tagOps @ muxOps
+                return (allOps, TRValue { SSA = resultSSA; Type = resultType })
 
         | _ ->
             let numArms = List.length arms

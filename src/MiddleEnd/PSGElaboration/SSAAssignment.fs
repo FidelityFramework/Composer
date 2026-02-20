@@ -1130,6 +1130,8 @@ let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Map<int, 
                     match Map.tryFind memberId graph.Nodes with
                     | Some memberNode ->
                         match memberNode.Kind with
+                        | SemanticKind.Binding(_, _, _, Some DeclRoot.HardwareModule) ->
+                            ()  // HardwareModule bindings are structural metadata, not Lambda entry points
                         | SemanticKind.Binding(_, _, _, Some dr) ->
                             match memberNode.Children with
                             | lambdaId :: _ -> declRootLambdas <- Map.add (NodeId.value lambdaId) dr declRootLambdas
@@ -1302,6 +1304,31 @@ let private findModuleLevelValueBindings (graph: SemanticGraph) (mainLambdaId: N
 /// Pass 2: Each Lambda body gets its own scope with counter starting at 0
 ///
 /// This prevents SSA collisions between module-level bindings and function bodies.
+/// Find ALL module-level VALUE bindings from ALL ModuleDefs (no main Lambda required).
+/// Used for FPGA and other targets where there is no "main" entry point Lambda.
+/// Excludes Lambda bindings (functions) and HardwareModule bindings (FPGA metadata).
+let private findAllModuleLevelValueBindings (graph: SemanticGraph) : NodeId list =
+    // Scan ALL ModuleDef nodes in the graph, not just DeclarationRoots.
+    // On FPGA, platform modules (Prelude, Behavior) contain module-level constants
+    // that are referenced via VarRef from the HardwareModule's step function.
+    graph.Nodes
+    |> Map.toList
+    |> List.collect (fun (_, node) ->
+        match node.Kind with
+        | SemanticKind.ModuleDef (_, memberIds) ->
+            memberIds
+            |> List.filter (fun memberId ->
+                match Map.tryFind memberId graph.Nodes with
+                | Some memberNode ->
+                    match memberNode.Kind with
+                    | SemanticKind.Binding (_, _, _, Some DeclRoot.HardwareModule) ->
+                        false  // Skip HardwareModule bindings (structural metadata)
+                    | SemanticKind.Binding _ ->
+                        not (isLambdaBinding graph memberId)  // Include value bindings, exclude functions
+                    | _ -> false
+                | None -> false)
+        | _ -> [])
+
 let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) : SSAAssignment =
     let lambdaNames, declRootLambdas = collectLambdas graph
 
@@ -1329,7 +1356,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
     let moduleLevelValueBindings =
         match mainLambdaIdOpt with
         | Some mainId -> findModuleLevelValueBindings graph mainId
-        | None -> []
+        | None -> findAllModuleLevelValueBindings graph
 
     // Assign SSAs to module-level value bindings
     // These will use %v0, %v1, ... and main's body continues from there
@@ -1370,7 +1397,13 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
                              (mainLambdaIdOpt |> Option.map (fun id -> NodeId.value id = nodeIdVal) |> Option.defaultValue false)
 
                 // Main Lambda continues from module-level counter; others start fresh
-                let initialCounter = if isMain then moduleLevelCounter else 0
+                // FPGA FIX (February 2026): When there's no main Lambda, ALL top-level Lambdas
+                // start from module-level counter. Module-level constants are VarRef-followed
+                // into Lambda bodies during FPGA walk, so their SSAs must not collide.
+                let initialCounter =
+                    if isMain then moduleLevelCounter
+                    elif Option.isNone mainLambdaIdOpt then moduleLevelCounter
+                    else 0
                 let initialScope = { FunctionScope.empty with Counter = initialCounter }
 
                 // Assign SSAs to parameter PatternBindings (Arg 0, Arg 1, etc.)

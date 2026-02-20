@@ -96,6 +96,7 @@
 
       <!-- Alex Elision Patterns - Composable MLIR templates (public, XParsec-based) -->
       <Compile Include="MiddleEnd/Alex/Patterns/MemoryPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/DUPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/RecordPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/HardwareModulePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MemRefPatterns.fs" />
@@ -121,6 +122,7 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/ControlFlowWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MatchWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/RecordWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/DUWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/StructuralWitness.fs" />

@@ -87,12 +87,12 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                 match elemTypeOpt with
                                 | Some elemType ->
                                     let (NodeId nodeIdInt) = node.Id
-                                    match tryMatch (pLoadMutableVariable nodeIdInt ssa elemType)
+                                    match tryMatchWithDiagnostics (pLoadMutableVariable nodeIdInt ssa elemType)
                                                   ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                                    | Some ((ops, result), _) ->
+                                    | Result.Ok ((ops, result), _) ->
                                         { InlineOps = ops; TopLevelOps = []; Result = result }
-                                    | None ->
-                                        WitnessOutput.error $"VarRef '{name}': Mutable variable load failed"
+                                    | Result.Error diagnostic ->
+                                        WitnessOutput.error $"VarRef '{name}': {diagnostic}"
                                 | None ->
                                     WitnessOutput.error $"VarRef '{name}': Mutable cell has unexpected type {ty}"
                             else

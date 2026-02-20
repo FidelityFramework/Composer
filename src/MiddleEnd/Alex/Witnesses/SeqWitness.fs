@@ -98,9 +98,9 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     return! pBuildSeqStruct currentTy codePtrTy codePtr captureVals internalState ssas arch
             }
 
-        match tryMatch seqPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-        | None -> WitnessOutput.error "SeqExpr pattern emission failed"
+        match tryMatchWithDiagnostics seqPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error diagnostic -> WitnessOutput.error $"SeqExpr: {diagnostic}"
 
     | None ->
         match tryMatch pForEach ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -110,9 +110,9 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | Some (collectionSSA, _) ->
                 let arch = ctx.Coeffects.Platform.TargetArch
                 let bodyOps = []
-                match tryMatch (pBuildForEachLoop collectionSSA bodyOps arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                | None -> WitnessOutput.error "ForEach pattern emission failed"
+                match tryMatchWithDiagnostics (pBuildForEachLoop collectionSSA bodyOps arch) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"ForEach: {diagnostic}"
 
         | None -> WitnessOutput.skip
 

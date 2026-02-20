@@ -54,12 +54,12 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         match MLIRAccumulator.recallNode valueId ctx.Accumulator with
                         | Some (initSSA, elemType) ->
                             let (NodeId nodeIdInt) = node.Id
-                            match tryMatch (pBuildMutableBinding nodeIdInt elemType initSSA)
+                            match tryMatchWithDiagnostics (pBuildMutableBinding nodeIdInt elemType initSSA)
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                            | Some ((ops, result), _) ->
+                            | Result.Ok ((ops, result), _) ->
                                 { InlineOps = ops; TopLevelOps = []; Result = result }
-                            | None ->
-                                WitnessOutput.error $"Mutable binding '{name}': Pattern emission failed"
+                            | Result.Error diagnostic ->
+                                WitnessOutput.error $"Mutable binding '{name}': {diagnostic}"
                         | None ->
                             WitnessOutput.error $"Mutable binding '{name}': Initial value not yet witnessed"
                     else
