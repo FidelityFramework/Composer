@@ -70,13 +70,22 @@ let private bitsForSigned (lo: int64) (hi: int64) : int =
     let magnitude = max (abs lo) (abs hi)
     (bitsForUnsigned magnitude) + 1  // +1 for sign bit
 
-/// Compute minimum bits from an interval
+/// Compute minimum bits from an interval.
+/// MLIR integers are signed (two's complement). For non-negative intervals [0, max],
+/// bitsForUnsigned gives N bits where the MSB is always set (by definition). That MSB
+/// would look negative in signed iN, so we add +1 for the sign bit.
+/// Exception: 1-bit values (booleans, [0,1]) stay at i1 — MLIR's standard boolean encoding.
+/// Examples: [0, 500] → 9 unsigned + 1 = i10. [0, 1] → 1 bit (no change).
 let private bitsFromInterval (interval: ValueInterval) : int * bool =
     if interval.Min >= 0L then
-        // Unsigned: [0, max]
-        (bitsForUnsigned interval.Max, false)
+        let unsignedBits = bitsForUnsigned interval.Max
+        // For any max > 1, the MSB is set in unsigned representation, making
+        // the value look negative in signed iN. Add sign bit to prevent this.
+        // Skip for 1-bit (boolean) values — i1 is MLIR's boolean convention.
+        let bits = if unsignedBits > 1 then unsignedBits + 1 else unsignedBits
+        (bits, false)
     else
-        // Signed: [min, max]
+        // Signed: [min, max] — bitsForSigned already includes sign bit
         (bitsForSigned interval.Min interval.Max, true)
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -120,9 +129,14 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
     /// Try to get interval for a node (already computed)
     let tryGetInterval (NodeId id) = Map.tryFind id intervals
 
-    /// Record an interval for a node
+    /// Record an interval for a node; tracks whether any value actually changed
+    let mutable intervalsChanged = false
     let recordInterval (NodeId id) (interval: ValueInterval) =
-        intervals <- Map.add id interval intervals
+        match Map.tryFind id intervals with
+        | Some existing when existing = interval -> ()
+        | _ ->
+            intervals <- Map.add id interval intervals
+            intervalsChanged <- true
 
     // Phase 1: Walk all nodes, compute intervals bottom-up
     // We do two passes: first constants/leaves, then operations that depend on them
@@ -253,6 +267,7 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
     while mainChanged && mainIter < 20 do
         mainChanged <- false
         mainIter <- mainIter + 1
+        intervalsChanged <- false
         let prevIntervalCount = intervals.Count
         let prevStruct = structFingerprint ()
 
@@ -310,26 +325,48 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                     | None -> ()
                 | None -> ()
 
+            | SemanticKind.Sequential children ->
+                match List.tryLast children with
+                | Some lastId ->
+                    match tryGetInterval lastId with
+                    | Some interval -> recordInterval nodeId interval
+                    | None -> ()
+                | None -> ()
+
             | _ -> ()
 
         // ── B: IfThenElse propagation ──
-        // Union of branches with known intervals. Partial knowledge is safe
-        // for clamp/bound patterns (if x < 100 then 100 elif x > 2000 then 2000 else x → [100, 2000]).
+        // Union of branches with known intervals, widened across iterations.
+        // No write-once guard: branches may resolve in later iterations,
+        // requiring the union to widen (e.g. [100,100] → [100,500] as 'candidate' resolves).
+        // recordInterval's change-tracking ensures convergence detection works correctly.
         for KeyValue(nodeId, node) in graph.Nodes do
             if not node.IsReachable then () else
-            let (NodeId id) = nodeId
-            if Map.containsKey id intervals then () else
             match node.Kind with
             | SemanticKind.IfThenElse (_condId, thenId, Some elseId) ->
-                match tryGetInterval thenId, tryGetInterval elseId with
-                | Some thenIv, Some elseIv ->
-                    recordInterval nodeId { Min = min thenIv.Min elseIv.Min; Max = max thenIv.Max elseIv.Max }
-                | Some thenIv, None -> recordInterval nodeId thenIv
-                | None, Some elseIv -> recordInterval nodeId elseIv
-                | None, None -> ()
+                let branchIntervals = [ tryGetInterval thenId; tryGetInterval elseId ] |> List.choose id
+                if not branchIntervals.IsEmpty then
+                    let branchUnion = {
+                        Min = branchIntervals |> List.map (fun iv -> iv.Min) |> List.min
+                        Max = branchIntervals |> List.map (fun iv -> iv.Max) |> List.max }
+                    // Merge with existing: only widen, never narrow
+                    let merged =
+                        match tryGetInterval nodeId with
+                        | Some existing ->
+                            { Min = min existing.Min branchUnion.Min
+                              Max = max existing.Max branchUnion.Max }
+                        | None -> branchUnion
+                    recordInterval nodeId merged
             | SemanticKind.IfThenElse (_condId, thenId, None) ->
                 match tryGetInterval thenId with
-                | Some interval -> recordInterval nodeId interval
+                | Some thenIv ->
+                    let merged =
+                        match tryGetInterval nodeId with
+                        | Some existing ->
+                            { Min = min existing.Min thenIv.Min
+                              Max = max existing.Max thenIv.Max }
+                        | None -> thenIv
+                    recordInterval nodeId merged
                 | None -> ()
             | _ -> ()
 
@@ -582,7 +619,7 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
 
         let newIntervalCount = intervals.Count
         let newStruct = structFingerprint ()
-        mainChanged <- newIntervalCount > prevIntervalCount || newStruct <> prevStruct
+        mainChanged <- intervalsChanged || newIntervalCount > prevIntervalCount || newStruct <> prevStruct
 
     // Converged: %d iterations, %d intervals, %d struct entries
     ignore (mainIter, intervals.Count, structNodeWidths.Count)
