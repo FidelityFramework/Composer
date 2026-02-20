@@ -52,6 +52,22 @@ let private isScopeBoundary (node: SemanticNode) : bool =
 /// Debug tracing flag for visitAllNodes — set to true for detailed traversal logging
 let mutable private traceTraversal = false
 
+/// Check if a binding is a function definition (first child is a Lambda).
+/// Used on FPGA to distinguish function bindings (compiled once as hw.module)
+/// from value bindings (re-emitted per hw.module scope).
+let private isFunctionBinding (bindingId: NodeId) (graph: SemanticGraph) : bool =
+    match SemanticGraph.tryGetNode bindingId graph with
+    | Some bindingNode ->
+        match bindingNode.Kind with
+        | SemanticKind.Binding _ ->
+            bindingNode.Children
+            |> List.tryHead
+            |> Option.bind (fun cid -> SemanticGraph.tryGetNode cid graph)
+            |> Option.map (fun cn -> match cn.Kind with SemanticKind.Lambda _ -> true | _ -> false)
+            |> Option.defaultValue false
+        | _ -> false
+    | None -> false
+
 /// Visit all nodes in post-order (children before parents)
 /// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
 /// Post-order ensures children's SSA bindings are available when parent witnesses
@@ -59,15 +75,18 @@ let rec visitAllNodes
     (witness: WitnessContext -> SemanticNode -> WitnessOutput)
     (visitedCtx: WitnessContext)
     (currentNode: SemanticNode)
-    (visited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across all nanopasses)
+    (visited: ref<Set<NodeId>>)  // Traversal visited set (global on CPU, per-function on FPGA)
     : unit =
 
-    // Check if already visited
+    // Check if already visited in this traversal scope
     if Set.contains currentNode.Id !visited then
         ()
     else
-        // Mark as visited
+        // Mark as visited in traversal scope
         visited := Set.add currentNode.Id !visited
+        // Also track in global visited for coverage validation
+        // (On CPU these are the same ref; on FPGA the local set is separate)
+        visitedCtx.GlobalVisited := Set.add currentNode.Id !(visitedCtx.GlobalVisited)
 
         // Focus zipper on this node
         match PSGZipper.focusOn currentNode.Id visitedCtx.Zipper with
@@ -91,10 +110,21 @@ let rec visitAllNodes
 
             // POST-ORDER Phase 2: Visit VarRef binding targets (reference edges)
             // VarRef nodes reference Bindings that may not be in child structure - visit those too
+            //
+            // FPGA scoping: On FPGA, `visited` is per-function (local). Value bindings from
+            // other modules are NOT in the local set, so they're naturally re-emitted in each
+            // hw.module scope. Function bindings (Lambdas) are compiled once — check globalVisited
+            // to prevent duplicate hw.module emission.
             match currentNode.Kind with
             | SemanticKind.VarRef (_, Some bindingId) ->
-                if not (Set.contains bindingId !visited) then
-                    match SemanticGraph.tryGetNode bindingId visitedCtx.Graph with
+                let alreadyHandled =
+                    Set.contains bindingId !visited
+                    || // FPGA: function bindings are compiled once globally
+                       (focusedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA
+                        && Set.contains bindingId !(focusedCtx.GlobalVisited)
+                        && isFunctionBinding bindingId focusedCtx.Graph)
+                if not alreadyHandled then
+                    match SemanticGraph.tryGetNode bindingId focusedCtx.Graph with
                     | Some bindingNode -> visitAllNodes witness focusedCtx bindingNode visited
                     | None -> ()
             | _ -> ()
@@ -174,6 +204,7 @@ let runNanopass
                     RootScopeContext = rootScope  // Root scope for TopLevelOps (same as ScopeContext at top-level)
                     Zipper = initialZipper
                     GlobalVisited = globalVisited  // GLOBAL visited set
+                    TraversalVisited = globalVisited  // Same as global for single-nanopass path
                 }
                 // Visit this reachable node (post-order) with GLOBAL visited set
                 visitAllNodes nanopass.Witness nodeCtx node globalVisited
@@ -286,6 +317,7 @@ let runAllNanopasses
                         RootScopeContext = rootScope
                         Zipper = initialZipper
                         GlobalVisited = globalVisited
+                        TraversalVisited = globalVisited  // Default: same as global; LambdaWitness overrides on FPGA
                     }
                     visitAllNodes combinedWitness nodeCtx node globalVisited
             | _ -> ()

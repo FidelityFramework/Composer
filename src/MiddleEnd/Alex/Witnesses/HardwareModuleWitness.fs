@@ -58,18 +58,20 @@ let private extractDesignFields (graph: SemanticGraph) (bindingNode: SemanticNod
 let private findDesignField (fieldName: string) (fields: (string * NodeId) list) : NodeId option =
     fields |> List.tryFind (fun (n, _) -> n = fieldName) |> Option.map snd
 
-/// Extract InitialState field values as (fieldName, literalValue) pairs.
+/// Extract InitialState field values as (fieldName, NativeLiteral) pairs.
+/// Preserves the full NativeLiteral (including NTUKind width) through the lowering path.
 /// The InitialState is itself a RecordExpr with literal field values.
-let private extractInitialStateValues (graph: SemanticGraph) (initNodeId: NodeId) : (string * int64) list option =
-    // Resolve a field value to a compile-time integer constant.
+let private extractInitialStateValues (graph: SemanticGraph) (initNodeId: NodeId) : (string * NativeLiteral) list option =
+    // Resolve a field value to a compile-time literal constant.
     // Handles: direct literals, VarRef → Binding → Literal, TypeAnnotation wrappers.
-    let rec resolveToLiteral (nodeId: NodeId) : int64 option =
+    let rec resolveToLiteral (nodeId: NodeId) : NativeLiteral option =
         match SemanticGraph.tryGetNode nodeId graph with
         | Some node ->
             match node.Kind with
-            | SemanticKind.Literal (NativeLiteral.Int (v, _)) -> Some v
-            | SemanticKind.Literal (NativeLiteral.Bool true) -> Some 1L
-            | SemanticKind.Literal (NativeLiteral.Bool false) -> Some 0L
+            | SemanticKind.Literal lit ->
+                match lit with
+                | NativeLiteral.Int _ | NativeLiteral.UInt _ | NativeLiteral.Bool _ -> Some lit
+                | _ -> None  // Only integer/bool literals valid for FPGA reset values
             | SemanticKind.VarRef (_, Some bindingId) ->
                 // Follow VarRef → Binding → value child
                 match SemanticGraph.tryGetNode bindingId graph with
@@ -96,6 +98,40 @@ let private extractInitialStateValues (graph: SemanticGraph) (initNodeId: NodeId
                 None
         | _ -> None
     | None -> None
+
+/// Extract Input and Output types from the step function's Lambda.
+/// Step : 'S -> 'S (1-param, Design<'S>) or Step : 'S -> I -> 'S * 'R (2-param, Design<'S,'R>)
+/// Returns (InputType option, OutputType option).
+let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: WitnessContext) : (MLIRType option * MLIRType option) =
+    // Resolve Step VarRef → Binding → Lambda
+    match SemanticGraph.tryGetNode stepNodeId graph with
+    | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
+        match SemanticGraph.tryGetNode defId graph with
+        | Some defNode ->
+            match defNode.Children with
+            | [lambdaId] ->
+                match SemanticGraph.tryGetNode lambdaId graph with
+                | Some { Kind = SemanticKind.Lambda (params', bodyId, _, _, _) } ->
+                    // Extract InputType from second parameter (if present)
+                    let inputType =
+                        match params' with
+                        | _ :: (_, inputNativeType, _) :: _ -> Some (mapType inputNativeType ctx)
+                        | _ -> None
+                    // Extract OutputType from body expression's type
+                    // If step returns (State, Output), the body type maps to TStruct [Item1; Item2]
+                    let outputType =
+                        match SemanticGraph.tryGetNode bodyId graph with
+                        | Some bodyNode ->
+                            let retType = mapType bodyNode.Type ctx
+                            match retType with
+                            | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
+                            | _ -> None  // Single return type — no separate output
+                        | None -> None
+                    (inputType, outputType)
+                | _ -> (None, None)
+            | _ -> (None, None)
+        | None -> (None, None)
+    | _ -> (None, None)
 
 /// Determine qualified module name for the HardwareModule Binding
 let private qualifiedBindingName (graph: SemanticGraph) (node: SemanticNode) (bindingName: string) : string =
@@ -201,10 +237,10 @@ let private witnessHardwareModule
         let combinator = getCombinator()
         match resolveStepBindingTarget ctx.Graph stepNodeId with
         | Some stepBindingNode ->
-            visitAllNodes combinator ctx stepBindingNode ctx.GlobalVisited
+            visitAllNodes combinator ctx stepBindingNode ctx.TraversalVisited
         | None -> ()
 
-        // ── 4. Extract InitialState reset values ──
+        // ── 4. Extract InitialState reset values (preserves NativeLiteral width) ──
         match extractInitialStateValues ctx.Graph initNodeId with
         | None ->
             WitnessOutput.error $"HardwareModule '{name}': InitialState fields must be integer/bool literals"
@@ -227,19 +263,24 @@ let private witnessHardwareModule
             // Verify state type is TStruct
             match stateType with
             | TStruct stateFields ->
-                // Match state fields with reset values
+                // Match state fields with reset values (NativeLiteral preserved)
                 let stateFieldInfo =
                     List.zip stateFields resetValues
-                    |> List.map (fun ((fieldName, fieldTy), (_, resetVal)) ->
-                        (fieldName, fieldTy, resetVal))
+                    |> List.map (fun ((fieldName, fieldTy), (_, resetLit)) ->
+                        (fieldName, fieldTy, resetLit))
 
-                // ── 7. Build Mealy machine hw.module ──
+                // ── 7. Extract Input/Output types from step Lambda ──
+                let (inputType, outputType) = extractStepTypes ctx.Graph stepNodeId ctx
+
+                // ── 8. Build Mealy machine hw.module ──
                 let moduleName = qualifiedBindingName ctx.Graph node name
                 let info : MealyMachineInfo = {
                     ModuleName = moduleName
                     StepFunctionName = stepFuncName
                     StateType = stateType
                     StateFields = stateFieldInfo
+                    InputType = inputType
+                    OutputType = outputType
                 }
 
                 let hwModuleOp = buildMealyMachineModule info

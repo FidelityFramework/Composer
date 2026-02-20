@@ -67,7 +67,7 @@ let private witnessBranchScope (rootId: NodeId) (ctx: WitnessContext) (combinato
                                 Zipper = branchZipper
                                 ScopeContext = branchScope }
             // Use GLOBAL visited set - nodes visited once, emit into branch scope
-            visitAllNodes combinator branchCtx branchNode ctx.GlobalVisited
+            visitAllNodes combinator branchCtx branchNode ctx.TraversalVisited
 
             let branchOps = ScopeContext.getOps !branchScope
             trace "[ControlFlowWitness] witnessBranchScope: Completed visitation of node %A - extracted %d ops from child scope"
@@ -107,7 +107,7 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
         match SemanticGraph.tryGetNode condId ctx.Graph with
         | Some condNode ->
             // Visit condition in CURRENT scope - ops accumulate into parent, not isolated child
-            visitAllNodes combinator ctx condNode ctx.GlobalVisited
+            visitAllNodes combinator ctx condNode ctx.TraversalVisited
         | None ->
             trace "[ControlFlowWitness] IfThenElse: ERROR - Condition node %A not found" (NodeId.value condId)
 

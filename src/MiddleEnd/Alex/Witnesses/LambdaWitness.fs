@@ -70,7 +70,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             match SemanticGraph.tryGetNode paramNodeId ctx.Graph with
             | Some paramNode ->
                 // Visit parameter with sub-graph combinator (will hit StructuralWitness)
-                visitAllNodes combinator ctx paramNode ctx.GlobalVisited
+                visitAllNodes combinator ctx paramNode ctx.TraversalVisited
             | None -> ()
 
         // Check if this is a declaration root Lambda
@@ -105,7 +105,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
                     let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef }
-                    visitAllNodes combinator bodyCtx bodyNode ctx.GlobalVisited
+                    visitAllNodes combinator bodyCtx bodyNode ctx.TraversalVisited
                 | None -> ()
             | None -> ()
 
@@ -254,13 +254,25 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
             let bodyScopeRef = ref bodyScope
 
+            // FPGA: Per-function visited set for hw.module scope isolation.
+            // Each hw.module has its own SSA region — value bindings are naturally
+            // re-emitted in each module that uses them. Function bindings (Lambdas)
+            // are checked against globalVisited to prevent duplicate hw.module emission.
+            // Seed with parameter node IDs (already visited globally) to avoid redundant re-visits.
+            let bodyVisited =
+                if ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA then
+                    let paramIds = params' |> List.fold (fun s (_, _, pid) -> Set.add pid s) Set.empty
+                    ref paramIds
+                else
+                    ctx.GlobalVisited
+
             // Witness body nodes with child scope context
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
                 match focusOn bodyId ctx.Zipper with
                 | Some bodyZipper ->
-                    let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef }
-                    visitAllNodes combinator bodyCtx bodyNode ctx.GlobalVisited
+                    let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef; TraversalVisited = bodyVisited }
+                    visitAllNodes combinator bodyCtx bodyNode bodyVisited
                 | None -> ()
             | None -> ()
 

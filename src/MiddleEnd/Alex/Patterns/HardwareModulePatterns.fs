@@ -1,22 +1,27 @@
-/// HardwareModulePatterns - Mealy machine extraction for FPGA [<HardwareModule>] bindings
+/// HardwareModulePatterns - Mealy machine builder for FPGA [<HardwareModule>] bindings
 ///
-/// Builds hw.module with seq.compreg registers + hw.instance of the step function.
-/// The step function is already emitted as a separate hw.module by LambdaWitness.
+/// Models the full Mealy machine: (State × Input) → (State × Output)
+///   - State feeds back through seq.compreg registers
+///   - Input comes from top-level input ports (Design<'S,'R> with step: 'S -> I -> 'S * 'R)
+///   - Output goes to top-level output ports
+///   - Step function is instantiated via hw.instance (already emitted by LambdaWitness)
 ///
 /// Design<'State, 'Report> record is compile-time metadata:
-///   InitialState → register reset values (seq.compreg reset argument)
+///   InitialState → register reset values (NativeLiteral preserves source width)
 ///   Step         → VarRef to function → hw.instance instantiation
-///   Clock        → clock port (in %clk: i1)
+///   Clock        → clock port (in %clk: !seq.clock)
 ///
-/// Target MLIR:
-///   hw.module @name(in %clk: i1, out result: <stateType>) {
-///     %reg0 = seq.compreg %next0, %clk reset %init0 : type
-///     ...
+/// Target MLIR (full Mealy):
+///   hw.module @name(in %clk: !seq.clock, in %rst: i1, in %inputs: <inputType>,
+///                   out outputs: <outputType>) {
+///     %init0 = arith.constant <resetVal> : <fieldType>
+///     %reg0 = seq.compreg %next0, %clk reset %rst, %init0 : <fieldType>
 ///     %state = hw.struct_create (%reg0, ...) : <stateType>
-///     %next_state = hw.instance "step" @step_func(%state) -> (result: <stateType>)
-///     %next0 = hw.struct_extract %next_state["field0"] : <stateType>
-///     ...
-///     hw.output %state : <stateType>
+///     %result = hw.instance "step_inst" @step(state: %state, inputs: %inputs)
+///     %nextState = hw.struct_extract %result["Item1"] : <resultType>
+///     %outputs = hw.struct_extract %result["Item2"] : <resultType>
+///     %next0 = hw.struct_extract %nextState["field0"] : <stateType>
+///     hw.output %outputs : <outputType>
 ///   }
 module Alex.Patterns.HardwareModulePatterns
 
@@ -29,29 +34,6 @@ open Alex.Dialects.Core.Types
 // PSG METADATA EXTRACTION (compile-time, no MLIR emission)
 // ═══════════════════════════════════════════════════════════
 
-/// Extract literal integer value from a PSG Literal node (for register reset values)
-let private extractLiteralInt (graph: SemanticGraph) (nodeId: NodeId) : int64 option =
-    match SemanticGraph.tryGetNode nodeId graph with
-    | Some node ->
-        match node.Kind with
-        | SemanticKind.Literal (NativeLiteral.Int (value, _)) -> Some value
-        | SemanticKind.Literal (NativeLiteral.Bool true) -> Some 1L
-        | SemanticKind.Literal (NativeLiteral.Bool false) -> Some 0L
-        | _ -> None
-    | None -> None
-
-/// Extract field values from a RecordExpr as (fieldName, literalValue) pairs
-/// Returns None for fields with non-literal initial values
-let private extractRecordLiterals (graph: SemanticGraph) (fields: (string * NodeId) list) : (string * int64) list option =
-    let results =
-        fields |> List.map (fun (name, nodeId) ->
-            match extractLiteralInt graph nodeId with
-            | Some v -> Some (name, v)
-            | None -> None)
-    if results |> List.forall Option.isSome then
-        Some (results |> List.map Option.get)
-    else
-        None
 
 /// Resolve a VarRef to the qualified function name it references
 /// Traverses VarRef → definition Binding → parent ModuleDef for qualification
@@ -85,7 +67,8 @@ let resolveStepFunctionName (graph: SemanticGraph) (stepNodeId: NodeId) : string
 // MEALY MACHINE BUILDER
 // ═══════════════════════════════════════════════════════════
 
-/// Information extracted from a Design<S,R> record
+/// Information extracted from a Design<S,R> record — models a Mealy machine:
+/// (State × Input) → (State × Output)
 type MealyMachineInfo = {
     /// Qualified name for the hw.module (e.g., "HelloFPGA.counter")
     ModuleName: string
@@ -93,45 +76,77 @@ type MealyMachineInfo = {
     StepFunctionName: string
     /// State type as TStruct
     StateType: MLIRType
-    /// State field info: (fieldName, mlirType, resetValue)
-    StateFields: (string * MLIRType * int64) list
+    /// State field info: (fieldName, mlirType, resetValue) — NativeLiteral preserves source width
+    StateFields: (string * MLIRType * NativeLiteral) list
+    /// Input type (from step function's second parameter). None for Design<'S>, Some for Design<'S,'R>.
+    InputType: MLIRType option
+    /// Output type (from step function's return tuple Item2). None for Design<'S>, Some for Design<'S,'R>.
+    OutputType: MLIRType option
 }
+
+/// Extract the raw int64 value from a NativeLiteral for ArithOp.ConstI emission.
+/// The type width is carried separately by the MLIRType in the state field tuple.
+let private literalToInt64 (lit: NativeLiteral) : int64 =
+    match lit with
+    | NativeLiteral.Int (v, _) -> v
+    | NativeLiteral.UInt (v, _) -> int64 v
+    | NativeLiteral.Bool true -> 1L
+    | NativeLiteral.Bool false -> 0L
+    | _ -> failwith $"Unsupported NativeLiteral for FPGA reset value: {lit}"
 
 /// Build the Mealy machine hw.module from extracted Design info.
 /// Returns the complete hw.module op.
+///
+/// Models the full Mealy machine: (State × Input) → (State × Output)
+///   - State feeds back through seq.compreg registers
+///   - Input comes from top-level input ports (when InputType is Some)
+///   - Output goes to top-level output ports (when OutputType is Some)
+///   - Step function is instantiated via hw.instance
 ///
 /// The body uses programmatic SSA allocation (V 0, V 1, ...) since
 /// the hw.module body is entirely synthesized — not from PSG node traversal.
 let buildMealyMachineModule (info: MealyMachineInfo) : MLIROp =
     let n = info.StateFields.Length
+    let hasInputs = info.InputType.IsSome
+    let hasOutputs = info.OutputType.IsSome
     let mutable ssaCounter = 0
     let nextSSA () =
         let ssa = V ssaCounter
         ssaCounter <- ssaCounter + 1
         ssa
 
-    // Clock port SSA (first input), reset port SSA (second input)
+    // Input port SSAs: clk (Arg 0), rst (Arg 1), inputs (Arg 2 if present)
     let clkSSA = SSA.Arg 0
     let rstSSA = SSA.Arg 1
+    let inputsSSA = if hasInputs then Some (SSA.Arg 2) else None
 
     // ── Phase 1: Reset value constants ──
     let resetOps, resetSSAs =
         info.StateFields
-        |> List.map (fun (_, fieldTy, resetVal) ->
+        |> List.map (fun (_, fieldTy, resetLit) ->
             let ssa = nextSSA()
-            let op = MLIROp.ArithOp (ArithOp.ConstI (ssa, resetVal, fieldTy))
+            let op = MLIROp.ArithOp (ArithOp.ConstI (ssa, literalToInt64 resetLit, fieldTy))
             (op, ssa))
         |> List.unzip
 
     // ── Phase 2: State registers (seq.compreg) ──
-    // Forward-declare next-state SSAs (will be assigned in Phase 4)
+    // Forward-declare next-state SSAs (will be assigned after step instance)
     // In CIRCT hw.module, ops use graph semantics — forward references are valid
-    let nextStateBaseSSA = ssaCounter + n  // Skip past register SSAs
+    //
+    // SSA layout after registers:
+    //   stateSSA, instanceSSA, [stateExtractSSAs...], [outputExtractSSA if needed]
+    let postRegOpsCount =
+        1  // struct_create (state)
+        + 1  // hw.instance
+        + (if hasOutputs then 1 else 0)  // struct_extract for state from result tuple
+        + n  // struct_extract per state field
+    // nextStateBaseSSA: where the state field extracts start (for register feedback)
+    let nextStateBaseSSA = ssaCounter + n + 1 + 1 + (if hasOutputs then 2 else 0)  // skip regs + struct_create + instance + optional (Item1 + Item2) extracts
     let regOps, regSSAs =
         info.StateFields
         |> List.mapi (fun i (_, fieldTy, _) ->
             let regSSA = nextSSA()
-            let nextSSARef = V (nextStateBaseSSA + 2 + i)  // Forward ref to struct_extract results (skip struct_create + instance)
+            let nextSSARef = V (nextStateBaseSSA + i)  // Forward ref to struct_extract of next-state field
             let op = MLIROp.SeqOp (SeqOp.SeqCompreg (regSSA, nextSSARef, clkSSA, Some (rstSSA, resetSSAs.[i]), fieldTy))
             (op, regSSA))
         |> List.unzip
@@ -142,26 +157,51 @@ let buildMealyMachineModule (info: MealyMachineInfo) : MLIROp =
     let structCreateOp = MLIROp.HWOp (HWOp.HWStructCreate (stateSSA, stateFieldVals, info.StateType))
 
     // ── Phase 4: Instantiate step function ──
-    let nextStateSSA = nextSSA()
+    let instanceSSA = nextSSA()
+    let stepInputs =
+        match inputsSSA, info.InputType with
+        | Some iSSA, Some iTy -> [("state", stateSSA, info.StateType); ("inputs", iSSA, iTy)]
+        | _ -> [("s", stateSSA, info.StateType)]
+
+    // Step function return type: (State × Output) if OutputType present, else just State
+    let stepResultType =
+        match info.OutputType with
+        | Some outTy -> TStruct [("Item1", info.StateType); ("Item2", outTy)]
+        | None -> info.StateType
     let instanceOp = MLIROp.HWOp (HWOp.HWInstance (
-        nextStateSSA,
+        instanceSSA,
         "step_inst",
         info.StepFunctionName,
-        // Step function input: the current state struct
-        [("s", stateSSA, info.StateType)],
-        // Step function output: the next state struct
-        [("result", info.StateType)]
+        stepInputs,
+        [("result", stepResultType)]
     ))
 
-    // ── Phase 5: Extract next-state fields for register feedback ──
+    // ── Phase 5: Decompose step result ──
+    // If OutputType present: result is (State, Output) struct — extract both
+    // If no OutputType: result IS the next state directly
+    let nextStateSSA, outputSSA, decomposeOps =
+        match info.OutputType with
+        | Some outTy ->
+            let nsSA = nextSSA()
+            let nsOp = MLIROp.HWOp (HWOp.HWStructExtract (nsSA, instanceSSA, "Item1", stepResultType))
+            let oSSA = nextSSA()
+            let oOp = MLIROp.HWOp (HWOp.HWStructExtract (oSSA, instanceSSA, "Item2", stepResultType))
+            (nsSA, Some oSSA, [nsOp; oOp])
+        | None ->
+            (instanceSSA, None, [])
+
+    // ── Phase 6: Extract next-state fields for register feedback ──
     let extractOps =
         info.StateFields
         |> List.map (fun (fieldName, _, _) ->
             let extractSSA = nextSSA()
             MLIROp.HWOp (HWOp.HWStructExtract (extractSSA, nextStateSSA, fieldName, info.StateType)))
 
-    // ── Phase 6: hw.output (expose current state as output) ──
-    let outputOp = MLIROp.HWOp (HWOp.HWOutput [(stateSSA, info.StateType)])
+    // ── Phase 7: hw.output ──
+    let outputOp =
+        match outputSSA, info.OutputType with
+        | Some oSSA, Some outTy -> MLIROp.HWOp (HWOp.HWOutput [(oSSA, outTy)])
+        | _ -> MLIROp.HWOp (HWOp.HWOutput [(stateSSA, info.StateType)])
 
     // ── Assemble hw.module ──
     let bodyOps =
@@ -169,10 +209,16 @@ let buildMealyMachineModule (info: MealyMachineInfo) : MLIROp =
         @ regOps
         @ [structCreateOp]
         @ [instanceOp]
+        @ decomposeOps
         @ extractOps
         @ [outputOp]
 
-    let inputs = [("clk", TSeqClock); ("rst", TInt I1)]
-    let outputs = [("result", info.StateType)]
+    let inputs =
+        [("clk", TSeqClock); ("rst", TInt I1)]
+        @ (match info.InputType with Some iTy -> [("inputs", iTy)] | None -> [])
+    let outputs =
+        match info.OutputType with
+        | Some outTy -> [("outputs", outTy)]
+        | None -> [("result", info.StateType)]
 
     MLIROp.HWOp (HWOp.HWModule (info.ModuleName, inputs, outputs, bodyOps))

@@ -38,7 +38,7 @@ let private witnessBranchScope (rootId: NodeId) (ctx: WitnessContext) (combinato
             let branchCtx = { ctx with
                                 Zipper = branchZipper
                                 ScopeContext = branchScope }
-            visitAllNodes combinator branchCtx branchNode ctx.GlobalVisited
+            visitAllNodes combinator branchCtx branchNode ctx.TraversalVisited
         | None -> ()
     | None -> ()
     ScopeContext.getOps !branchScope
@@ -56,7 +56,7 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
         // Step 1: Visit scrutinee in CURRENT scope (like ControlFlowWitness condition)
         match SemanticGraph.tryGetNode scrutineeId ctx.Graph with
         | Some scrutineeNode ->
-            visitAllNodes combinator ctx scrutineeNode ctx.GlobalVisited
+            visitAllNodes combinator ctx scrutineeNode ctx.TraversalVisited
         | None -> ()
 
         // Recall scrutinee result
@@ -72,7 +72,7 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                     for bindingId in arm.Bindings do
                         match SemanticGraph.tryGetNode bindingId ctx.Graph with
                         | Some bindingNode ->
-                            visitAllNodes combinator ctx bindingNode ctx.GlobalVisited
+                            visitAllNodes combinator ctx bindingNode ctx.TraversalVisited
                         | None -> ()
 
                     // Visit guard if present
@@ -80,7 +80,7 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                     | Some guardId ->
                         match SemanticGraph.tryGetNode guardId ctx.Graph with
                         | Some guardNode ->
-                            visitAllNodes combinator ctx guardNode ctx.GlobalVisited
+                            visitAllNodes combinator ctx guardNode ctx.TraversalVisited
                         | None -> ()
                     | None -> ()
 
