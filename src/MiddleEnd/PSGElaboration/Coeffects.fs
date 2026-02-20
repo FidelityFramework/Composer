@@ -253,12 +253,29 @@ type ClockConstraint = {
     FrequencyHz: int64
 }
 
+/// Reset constraint — platform infrastructure parallel to ClockConstraint.
+/// External: physical pin on the board. Internal: compiler generates POR circuit.
+type ResetConstraint = {
+    /// Port name (e.g., "rst")
+    PortName: string
+    /// True = external pin (XDC constraint needed). False = internal POR (no port).
+    IsExternal: bool
+    /// Package pin (only meaningful when IsExternal = true)
+    PackagePin: string
+    /// I/O standard (only meaningful when IsExternal = true)
+    IOStandard: string
+    /// True = reset is active-high. False = active-low (inverter needed).
+    ActiveHigh: bool
+}
+
 /// Complete pin mapping for a HardwareModule Design
 type PlatformPinMapping = {
     /// All I/O pin constraints (inputs + outputs)
     Pins: PinConstraint list
     /// Clock constraint
     Clock: ClockConstraint
+    /// Reset constraint (None → no reset endpoint declared, same as internal POR)
+    Reset: ResetConstraint option
     /// Platform device string (e.g., "xc7a100tcsg324-1" for Xilinx)
     DevicePart: string
     /// Record field name → pin logical names (from [<Pin>]/[<Pins>] attributes)

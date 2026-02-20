@@ -11,11 +11,14 @@
 ///   Step         → VarRef to function → hw.instance instantiation
 ///   Clock        → clock port (in %clk: !seq.clock)
 ///
-/// Target MLIR (full Mealy):
-///   hw.module @name(in %clk: !seq.clock, in %rst: i1, in %inputs: <inputType>,
+/// Target MLIR (full Mealy — internal POR, no external rst port):
+///   hw.module @name(in %clk: !seq.clock, in %inputs: <inputType>,
 ///                   out outputs: <outputType>) {
+///     %por_one = arith.constant 1 : i1
+///     %por_reg = seq.compreg %por_one, %clk : i1         // INIT=0, goes to 1
+///     %por_rst = comb.xor %por_reg, %por_one : i1        // active first cycle
 ///     %init0 = arith.constant <resetVal> : <fieldType>
-///     %reg0 = seq.compreg %next0, %clk reset %rst, %init0 : <fieldType>
+///     %reg0 = seq.compreg %next0, %clk reset %por_rst, %init0 : <fieldType>
 ///     %state = hw.struct_create (%reg0, ...) : <stateType>
 ///     %result = hw.instance "step_inst" @step(state: %state, inputs: %inputs)
 ///     %nextState = hw.struct_extract %result["Item1"] : <resultType>
@@ -318,9 +321,31 @@ let buildFlatPortMealyModule
             (ports, ports.Length)
         | _ -> ([], 0)
 
-    // Port SSAs: clk (Arg 0), rst (Arg 1), flat inputs (Arg 2, 3, ...)
+    // ── Reset infrastructure ──
+    // External: rst is a top-level port (Arg 1). Flat inputs start at Arg 2.
+    // Internal POR: no rst port. Generate POR circuit. Flat inputs start at Arg 1.
+    let resetIsExternal =
+        match pinMapping.Reset with
+        | Some r -> r.IsExternal
+        | None -> false
+
     let clkSSA = SSA.Arg 0
-    let rstSSA = SSA.Arg 1
+    let inputArgBase = if resetIsExternal then 2 else 1
+
+    // For internal POR: generate a 1-bit register that starts at 0 (Xilinx INIT default),
+    // transitions to 1 on first clock edge. Reset active = NOT por_reg = por_reg XOR 1.
+    // 3 ops: arith.constant 1, seq.compreg, comb.xor
+    let porOps, rstSSA =
+        if resetIsExternal then
+            ([], SSA.Arg 1)
+        else
+            let porOneSSA = nextSSA()
+            let porOneOp = MLIROp.ArithOp (ArithOp.ConstI (porOneSSA, 1L, TInt (IntWidth 1)))
+            let porRegSSA = nextSSA()
+            let porRegOp = MLIROp.SeqOp (SeqOp.SeqCompreg (porRegSSA, porOneSSA, clkSSA, None, TInt (IntWidth 1)))
+            let porRstSSA = nextSSA()
+            let porRstOp = MLIROp.CombOp (CombOp.CombXor (porRstSSA, porRegSSA, porOneSSA, TInt (IntWidth 1)))
+            ([porOneOp; porRegOp; porRstOp], porRstSSA)
 
     // ── Phase 1: Reset value constants ──
     let resetOps, resetSSAs =
@@ -398,7 +423,7 @@ let buildFlatPortMealyModule
     let inputPackOps, inputStructSSA =
         match info.InputType with
         | Some (TStruct fields as inputType) ->
-            let mutable argIdx = 2  // after clk, rst
+            let mutable argIdx = inputArgBase  // after clk (+ rst if external)
             let mutable packOps = []
             let fieldSSAs =
                 fields |> List.map (fun (fieldName, fieldTy) ->
@@ -430,7 +455,7 @@ let buildFlatPortMealyModule
             let structSSA = nextSSA()
             let createOp = MLIROp.HWOp (HWOp.HWStructCreate (structSSA, fieldSSAs, inputType))
             (packOps @ [createOp], structSSA)
-        | _ -> ([], SSA.Arg 2)
+        | _ -> ([], SSA.Arg inputArgBase)
 
     // ── Phase 4: Build current state struct ──
     let stateSSA = nextSSA()
@@ -493,7 +518,8 @@ let buildFlatPortMealyModule
 
     // ── Assemble hw.module ──
     let bodyOps =
-        resetOps
+        porOps
+        @ resetOps
         @ regOps
         @ inputPackOps
         @ [structCreateOp]
@@ -503,8 +529,14 @@ let buildFlatPortMealyModule
         @ extractOps
         @ [outputOp]
 
+    let rstPortName =
+        match pinMapping.Reset with
+        | Some r -> r.PortName
+        | None -> "rst"
+
     let inputs =
-        [(pinMapping.Clock.PortName, TSeqClock); ("rst", TInt (IntWidth 1))]
+        [(pinMapping.Clock.PortName, TSeqClock)]
+        @ (if resetIsExternal then [(rstPortName, TInt (IntWidth 1))] else [])
         @ flatInputPorts
     let outputs =
         if flatOutputPins.IsEmpty then

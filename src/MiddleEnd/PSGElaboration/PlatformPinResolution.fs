@@ -131,6 +131,26 @@ let private extractClockEndpoint (graph: SemanticGraph) (fields: (string * NodeI
         }
     | _ -> None
 
+/// Extract ResetConstraint from a ResetEndpoint RecordExpr's fields.
+let private extractResetEndpoint (graph: SemanticGraph) (fields: (string * NodeId) list) : ResetConstraint option =
+    let name        = fieldValue "Name"        fields |> Option.bind (resolveToString graph)
+    let kind        = fieldValue "Kind"        fields |> Option.bind (resolveToString graph)
+    let packagePin  = fieldValue "PackagePin"  fields |> Option.bind (resolveToString graph)
+    let standard    = fieldValue "Standard"    fields |> Option.bind (resolveToString graph)
+    let activeLevel = fieldValue "ActiveLevel" fields |> Option.bind (resolveToString graph)
+
+    match name, kind with
+    | Some n, Some k ->
+        let isExternal = k = "External"
+        Some {
+            PortName    = normalizePortName n
+            IsExternal  = isExternal
+            PackagePin  = packagePin  |> Option.defaultValue "NONE"
+            IOStandard  = standard    |> Option.defaultValue "LVCMOS33"
+            ActiveHigh  = (activeLevel |> Option.defaultValue "High") = "High"
+        }
+    | _ -> None
+
 /// Extract Vivado device part string from PlatformDescriptor fields.
 /// Format: xc7a100tcsg324-1 (lowercase device + lowercase package + speedGrade)
 let private extractDevicePart (graph: SemanticGraph) (fields: (string * NodeId) list) : string option =
@@ -147,6 +167,7 @@ let private extractDevicePart (graph: SemanticGraph) (fields: (string * NodeId) 
 let private collectPlatformBindings (graph: SemanticGraph) =
     let mutable pins = []
     let mutable clocks = []
+    let mutable resets = []
     let mutable deviceParts = []
 
     for KeyValue(_, node) in graph.Nodes do
@@ -174,6 +195,16 @@ let private collectPlatformBindings (graph: SemanticGraph) =
                         | None -> ()
                     | None -> ()
                 | _ -> ()
+            | Some "ResetEndpoint" ->
+                match node.Children with
+                | [childId] ->
+                    match extractRecordFields graph childId with
+                    | Some fields ->
+                        match extractResetEndpoint graph fields with
+                        | Some rst -> resets <- rst :: resets
+                        | None -> ()
+                    | None -> ()
+                | _ -> ()
             | Some "PlatformDescriptor" ->
                 match node.Children with
                 | [childId] ->
@@ -187,7 +218,7 @@ let private collectPlatformBindings (graph: SemanticGraph) =
             | _ -> ()
         | _ -> ()
 
-    (pins, clocks, deviceParts)
+    (pins, clocks, resets, deviceParts)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DESIGN TYPE PIN ATTRIBUTE EXTRACTION
@@ -229,7 +260,7 @@ let resolve (graph: SemanticGraph) : PlatformPinMapping option =
     if Map.isEmpty designPinAttrs then None
     else
 
-    let (pinEndpoints, clockEndpoints, deviceParts) = collectPlatformBindings graph
+    let (pinEndpoints, clockEndpoints, resetEndpoints, deviceParts) = collectPlatformBindings graph
 
     // Build lookup from logical name → PinConstraint
     let pinLookup =
@@ -249,6 +280,7 @@ let resolve (graph: SemanticGraph) : PlatformPinMapping option =
         Some {
             Pins = designPins
             Clock = clk
+            Reset = List.tryHead resetEndpoints
             DevicePart = dev
             FieldPinAttrs = designPinAttrs
         }

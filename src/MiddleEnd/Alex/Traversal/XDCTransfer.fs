@@ -31,6 +31,15 @@ let transfer (mapping: PlatformPinMapping) : string =
     sb.AppendLine(sprintf "create_clock -add -name %s -period %.3f [get_ports {%s}]" clk.PortName periodNs clk.PortName) |> ignore
     sb.AppendLine() |> ignore
 
+    // Reset constraint (external only — internal POR has no top-level port)
+    match mapping.Reset with
+    | Some rst when rst.IsExternal ->
+        sb.AppendLine("# Reset") |> ignore
+        sb.AppendLine(sprintf "set_property PACKAGE_PIN %s [get_ports {%s}]" rst.PackagePin rst.PortName) |> ignore
+        sb.AppendLine(sprintf "set_property IOSTANDARD %s [get_ports {%s}]" rst.IOStandard rst.PortName) |> ignore
+        sb.AppendLine() |> ignore
+    | _ -> ()
+
     // Group pins by direction
     let inputPins  = mapping.Pins |> List.filter (fun p -> p.Direction = "Input")
     let outputPins = mapping.Pins |> List.filter (fun p -> p.Direction = "Output")
