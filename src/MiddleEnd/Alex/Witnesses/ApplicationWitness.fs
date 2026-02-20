@@ -29,6 +29,26 @@ let private resolveFunctionNode funcId graph =
         | _ -> Some funcNode
     | None -> None
 
+/// Extract parameter names from a Binding's Lambda child (for hw.instance port names)
+/// Navigates: Binding → Lambda chain → parameter name list
+let private extractParamNames (bindingId: NodeId) (graph: SemanticGraph) : string list option =
+    match SemanticGraph.tryGetNode bindingId graph with
+    | Some bindingNode ->
+        // Find Lambda child of Binding
+        let lambdaChild =
+            bindingNode.Children
+            |> List.tryPick (fun childId ->
+                match SemanticGraph.tryGetNode childId graph with
+                | Some child ->
+                    match child.Kind with
+                    | SemanticKind.Lambda (params', _, _, _, _) -> Some params'
+                    | _ -> None
+                | None -> None)
+        match lambdaChild with
+        | Some params' -> Some (params' |> List.map (fun (name, _, _) -> name))
+        | None -> None
+    | None -> None
+
 /// Witness application nodes - emits function calls (non-intrinsic only)
 let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     match tryMatch pApplication ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -77,7 +97,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     satInfo.AllArgNodes
                     |> List.collect (fun argId -> MLIRAccumulator.getDeferredInlineOps argId ctx.Accumulator)
 
-                match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                let paramNames = extractParamNames satInfo.TargetBindingId ctx.Graph
+                match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Result.Ok ((ops, result), _) -> { InlineOps = deferredOps @ ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"Saturated call '{funcName}': {diagnostic}"
         | None ->
@@ -131,7 +152,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let args = argsResult |> List.choose id
                     let retType = mapType node.Type ctx
 
-                    match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    let paramNames = extractParamNames defId ctx.Graph
+                    match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{funcName}': {diagnostic}"
 
@@ -146,7 +168,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 else
                     let args = argsResult |> List.choose id
                     let retType = mapType node.Type ctx
-                    match tryMatchWithDiagnostics (pDirectCall node.Id localName args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    match tryMatchWithDiagnostics (pDirectCall node.Id localName args retType None) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{localName}': {diagnostic}"
 

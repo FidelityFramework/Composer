@@ -362,3 +362,6 @@ and HWOp =
     // Module instantiation (hw.instance)
     | HWInstance of SSA * string * string * (string * SSA * MLIRType) list * (string * MLIRType) list
       // result, instanceName, moduleName, inputs (portName*ssa*type), outputs (portName*type)
+    // Aggregate constant (hw.aggregate_constant) — zero-initialize structs
+    | HWAggregateConstant of SSA * MLIRType
+      // result, structType (all fields zero-initialized)

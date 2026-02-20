@@ -13,6 +13,7 @@ open Alex.Dialects.Core.Types
 open Core.Types.Dialects         // TargetPlatform
 open Alex.Traversal.TransferTypes
 open Alex.Elements.MLIRAtomics  // pConstI
+open Alex.Elements.HWElements  // pHWAggregateConstant
 open Alex.Patterns.MemoryPatterns  // pDUCase, pExtractDUTag, pExtractDUPayload
 
 // ═══════════════════════════════════════════════════════════
@@ -27,10 +28,16 @@ let pBuildDUConstruct (nodeId: NodeId) (tag: int64) (payload: Val list) (duTy: M
         | FPGA ->
             match payload with
             | [] ->
-                // Enum DU on FPGA: just a tag constant. Type is TTag which serializes to correct width.
                 let! ssa = getNodeSSA nodeId
-                let! op = pConstI ssa tag duTy
-                return ([op], TRValue { SSA = ssa; Type = duTy })
+                match duTy with
+                | TStruct _ ->
+                    // Struct DU on FPGA (e.g. ValueNone): zero-initialized aggregate constant
+                    let! op = pHWAggregateConstant ssa duTy
+                    return ([op], TRValue { SSA = ssa; Type = duTy })
+                | _ ->
+                    // Enum DU on FPGA: just a tag constant. Type is TTag which serializes to correct width.
+                    let! op = pConstI ssa tag duTy
+                    return ([op], TRValue { SSA = ssa; Type = duTy })
             | _ ->
                 return! fail (Message "FPGA DU with payload not yet supported")
         | _ ->

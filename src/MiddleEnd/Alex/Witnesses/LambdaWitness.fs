@@ -22,6 +22,7 @@ open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
+open Alex.CodeGeneration.TypeMapping  // For resolveTypeParams
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
@@ -90,6 +91,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let argvType = TMemRef (TInt I8)
             MLIRAccumulator.registerSSAType (SSA.Arg 0) argvType ctx.Accumulator
 
+            // Eagerly resolve type parameters from the Lambda's type signature
+            // so inner expression types resolve correctly through Union-Find
+            resolveTypeParams ctx.Graph node.Type
+
             // Create child scope for function body (principled accumulation)
             let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
             let bodyScopeRef = ref bodyScope
@@ -117,10 +122,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun
-            let arch = ctx.Coeffects.Platform.TargetArch
             let innerReturnNativeType = unrollReturnType (List.length params') node.Type
-            let expectedReturnType =
-                Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch ctx.Graph innerReturnNativeType
+            let expectedReturnType = mapType innerReturnNativeType ctx
 
             // Handle bodyResult based on return type
             let returnSSA, returnType =
@@ -206,8 +209,6 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | None -> sprintf "lambda_%d" nodeIdValue
 
             // Map parameters to MLIR types and build parameter list with SSAs
-            let arch = ctx.Coeffects.Platform.TargetArch
-
             // Extract parameter SSAs monadically
             let extractParamSSAs =
                 parser {
@@ -216,7 +217,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                             match ps with
                             | [] -> return []
                             | (paramName, paramType, paramNodeId) :: rest ->
-                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch ctx.Graph paramType
+                                let mlirType = mapType paramType ctx
                                 let! paramSSA = getNodeSSA paramNodeId
                                 let! restParams = extractParams rest
                                 return (paramSSA, mlirType) :: restParams
@@ -246,6 +247,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             for (paramSSA, mlirType) in mlirParams do
                 MLIRAccumulator.registerSSAType paramSSA mlirType ctx.Accumulator
 
+            // Eagerly resolve type parameters from the Lambda's type signature
+            resolveTypeParams ctx.Graph node.Type
+
             // Create child scope for function body (principled accumulation)
             let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
             let bodyScopeRef = ref bodyScope
@@ -273,8 +277,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun
             let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
-            let returnType =
-                Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch ctx.Graph innerReturnNativeType2
+            let returnType = mapType innerReturnNativeType2 ctx
 
             // Handle bodyResult based on return type
             let returnSSA =

@@ -49,3 +49,9 @@ let internal pHWInstance (result: SSA) (instName: string) (moduleName: string)
     parser {
         return MLIROp.HWOp (HWOp.HWInstance (result, instName, moduleName, inputs, outputs))
     }
+
+/// hw.aggregate_constant — zero-initialized struct constant
+let internal pHWAggregateConstant (result: SSA) (structTy: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.HWOp (HWOp.HWAggregateConstant (result, structTy))
+    }

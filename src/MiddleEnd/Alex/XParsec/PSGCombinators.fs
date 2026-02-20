@@ -24,6 +24,7 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Traversal.PSGZipper
 open Alex.Dialects.Core.Types
 open PSGElaboration.PlatformConfig
+open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PSG PARSER STATE
@@ -171,6 +172,12 @@ let getPlatform : PSGParser<PlatformResolutionResult> =
 /// Patterns use this to select which Elements to invoke (codata-dependent elision)
 let getTargetPlatform : PSGParser<Core.Types.Dialects.TargetPlatform> =
     getUserState |>> (fun state -> state.Coeffects.TargetPlatform)
+
+/// Combinator-layer type mapping — delegates to mapNativeTypeForTarget.
+/// Extracts platform, architecture, and graph from PSGParserState.
+let pMapType (ty: NativeType) : PSGParser<MLIRType> =
+    getUserState |>> fun state ->
+        mapNativeTypeForTarget state.Coeffects.TargetPlatform state.Coeffects.Platform.TargetArch state.Graph ty
 
 /// Set current node in state
 let setCurrentNode (node: SemanticNode) : PSGParser<unit> =

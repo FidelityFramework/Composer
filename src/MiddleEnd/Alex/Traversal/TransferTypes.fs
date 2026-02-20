@@ -424,17 +424,10 @@ let requireSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
 let targetArch (ctx: WitnessContext) : Architecture =
     ctx.Coeffects.Platform.TargetArch
 
-/// CANONICAL TYPE MAPPING - the ONLY way to map NativeType to MLIRType
-/// Uses graph-aware mapping that correctly handles records by looking up
-/// field types from TypeDef nodes. ALL type mapping should go through this.
-/// On FPGA, TTuple maps to TStruct (first-class value) instead of TMemRefStatic (byte blob).
+/// Witness-layer type mapping — delegates to mapNativeTypeForTarget.
+/// Extracts platform, architecture, and graph from WitnessContext.
 let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
-    let arch = ctx.Coeffects.Platform.TargetArch
-    match ctx.Coeffects.TargetPlatform, ty with
-    | Core.Types.Dialects.FPGA, NativeType.TTuple(elements, _) ->
-        let fields = elements |> List.mapi (fun i e -> (sprintf "Item%d" (i + 1), mapNativeTypeWithGraphForArch arch ctx.Graph e))
-        TStruct fields
-    | _ -> mapNativeTypeWithGraphForArch arch ctx.Graph ty
+    mapNativeTypeForTarget ctx.Coeffects.TargetPlatform ctx.Coeffects.Platform.TargetArch ctx.Graph ty
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =

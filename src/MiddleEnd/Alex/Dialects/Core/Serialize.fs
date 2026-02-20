@@ -46,7 +46,8 @@ let rec typeToString (ty: MLIRType) : string =
     | TIndex -> "index"
     | TUnit -> "i32"  // Unit represented as i32 (value 0)
     | TStruct fields ->
-        // CPU: flatten to byte-level memref using the canonical size catamorphism
+        // TStruct serializes as !hw.struct for CIRCT (FPGA) or memref for CPU.
+        // This default path is CPU; hwTypeToString handles the FPGA case.
         sprintf "memref<%dxi8>" (mlirTypeSize (TStruct fields))
     | TSeqClock -> "!seq.clock"
     | TTag caseCount ->
@@ -57,6 +58,15 @@ let rec typeToString (ty: MLIRType) : string =
         elif caseCount <= 65536 then "i16"
         else "i32"
     | TError msg -> sprintf "<<ERROR: %s>>" msg
+
+/// FPGA-aware type serialization: TStruct → !hw.struct<...>, all others → typeToString
+/// Used by comb.* and other CIRCT ops that carry struct types on FPGA.
+let rec hwTypeToString (ty: MLIRType) : string =
+    match ty with
+    | TStruct fields ->
+        let fs = fields |> List.map (fun (n, t) -> sprintf "%s: %s" n (hwTypeToString t))
+        sprintf "!hw.struct<%s>" (String.concat ", " fs)
+    | _ -> typeToString ty
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSA SERIALIZATION
@@ -171,52 +181,47 @@ let arithOpToString (op: ArithOp) : string =
         sprintf "%s = arith.shrsi %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
 
 /// Serialize CombOp to CIRCT MLIR text (comb dialect)
+/// Uses hwTypeToString: comb.* ops only appear on FPGA where TStruct → !hw.struct
 let combOpToString (op: CombOp) : string =
     match op with
     | CombAdd (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.add %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.add %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombSub (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.sub %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.sub %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombMul (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.mul %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.mul %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombDivS (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.divs %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.divs %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombDivU (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.divu %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.divu %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombMod (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.mods %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.mods %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombAnd (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.and %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.and %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombOr (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.or %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.or %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombXor (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.xor %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.xor %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombShl (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.shl %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.shl %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombShrU (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.shru %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.shru %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombShrS (result, lhs, rhs, ty) ->
-        sprintf "%s = comb.shrs %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.shrs %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombICmp (result, pred, lhs, rhs, ty) ->
-        sprintf "%s = comb.icmp %s %s, %s : %s" (ssaToString result) (icmpPredToString pred) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+        sprintf "%s = comb.icmp %s %s, %s : %s" (ssaToString result) (icmpPredToString pred) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombMux (result, cond, trueVal, falseVal, ty) ->
-        sprintf "%s = comb.mux %s, %s, %s : %s" (ssaToString result) (ssaToString cond) (ssaToString trueVal) (ssaToString falseVal) (typeToString ty)
+        sprintf "%s = comb.mux %s, %s, %s : %s" (ssaToString result) (ssaToString cond) (ssaToString trueVal) (ssaToString falseVal) (hwTypeToString ty)
 
 /// Serialize HWOp to CIRCT MLIR text (hw dialect)
 /// Note: HWModule body serialization delegates to opToString (defined later),
 /// which handles all MLIROp cases. A non-CIRCT op in an hw.module body is a
 /// pipeline error — it means a CPU-dialect op leaked into FPGA output.
 let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
-    let hwStructTypeStr (ty: MLIRType) =
-        match ty with
-        | TStruct fields ->
-            let fs = fields |> List.map (fun (n, t) -> sprintf "%s: %s" n (typeToString t))
-            sprintf "!hw.struct<%s>" (String.concat ", " fs)
-        | other -> typeToString other
     match op with
     | HWModule (name, inputs, outputs, body) ->
-        let inputsStr = inputs |> List.map (fun (n, ty) -> sprintf "in %%%s: %s" n (hwStructTypeStr ty)) |> String.concat ", "
-        let outputsStr = outputs |> List.map (fun (n, ty) -> sprintf "out %s: %s" n (hwStructTypeStr ty)) |> String.concat ", "
+        let inputsStr = inputs |> List.map (fun (n, ty) -> sprintf "in %%%s: %s" n (hwTypeToString ty)) |> String.concat ", "
+        let outputsStr = outputs |> List.map (fun (n, ty) -> sprintf "out %s: %s" n (hwTypeToString ty)) |> String.concat ", "
         let portsStr =
             match inputs, outputs with
             | [], [] -> ""
@@ -237,23 +242,36 @@ let hwOpToString (opToString: MLIROp -> string) (op: HWOp) : string =
         | [] -> "hw.output"
         | _ ->
             let valsStr = vals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
-            let typesStr = vals |> List.map (fun (_, ty) -> hwStructTypeStr ty) |> String.concat ", "
+            let typesStr = vals |> List.map (fun (_, ty) -> hwTypeToString ty) |> String.concat ", "
             sprintf "hw.output %s : %s" valsStr typesStr
     | HWStructCreate (result, fieldVals, structTy) ->
         let valsStr = fieldVals |> List.map (fun (ssa, _) -> ssaToString ssa) |> String.concat ", "
-        let tyStr = hwStructTypeStr structTy
+        let tyStr = hwTypeToString structTy
         sprintf "%s = hw.struct_create (%s) : %s" (ssaToString result) valsStr tyStr
     | HWStructExtract (result, input, fieldName, structTy) ->
-        let tyStr = hwStructTypeStr structTy
+        let tyStr = hwTypeToString structTy
         sprintf "%s = hw.struct_extract %s[\"%s\"] : %s" (ssaToString result) (ssaToString input) fieldName tyStr
     | HWStructInject (result, input, fieldName, newValue, structTy) ->
-        let tyStr = hwStructTypeStr structTy
+        let tyStr = hwTypeToString structTy
         sprintf "%s = hw.struct_inject %s[\"%s\"], %s : %s" (ssaToString result) (ssaToString input) fieldName (ssaToString newValue) tyStr
     | HWInstance (result, instName, moduleName, inputs, outputs) ->
         // hw.instance "instName" @moduleName(portName: %ssa : type, ...) -> (outName: type, ...)
-        let inputsStr = inputs |> List.map (fun (pn, ssa, ty) -> sprintf "%s: %s: %s" pn (ssaToString ssa) (hwStructTypeStr ty)) |> String.concat ", "
-        let outputsStr = outputs |> List.map (fun (pn, ty) -> sprintf "%s: %s" pn (hwStructTypeStr ty)) |> String.concat ", "
+        let inputsStr = inputs |> List.map (fun (pn, ssa, ty) -> sprintf "%s: %s: %s" pn (ssaToString ssa) (hwTypeToString ty)) |> String.concat ", "
+        let outputsStr = outputs |> List.map (fun (pn, ty) -> sprintf "%s: %s" pn (hwTypeToString ty)) |> String.concat ", "
         sprintf "%s = hw.instance \"%s\" @%s(%s) -> (%s)" (ssaToString result) instName moduleName inputsStr outputsStr
+    | HWAggregateConstant (result, structTy) ->
+        let rec zeroLiteral (ty: MLIRType) : string =
+            match ty with
+            | TStruct fields ->
+                let inner = fields |> List.map (fun (_, ft) -> zeroLiteral ft) |> String.concat ", "
+                sprintf "[%s]" inner
+            | _ -> sprintf "0 : %s" (hwTypeToString ty)
+        sprintf "%s = hw.aggregate_constant [%s] : %s"
+            (ssaToString result)
+            (match structTy with
+             | TStruct fields -> fields |> List.map (fun (_, ft) -> zeroLiteral ft) |> String.concat ", "
+             | _ -> zeroLiteral structTy)
+            (hwTypeToString structTy)
 
 /// Serialize SeqOp to CIRCT MLIR text (seq dialect)
 let seqOpToString (op: SeqOp) : string =

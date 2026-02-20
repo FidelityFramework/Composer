@@ -47,6 +47,7 @@ let pApplicationCall (nodeId: NodeId) (funcSSA: SSA) (args: (SSA * MLIRType) lis
 /// Uses func.call (portable) instead of llvm.call (backend-specific)
 /// SSA extracted from coeffects via nodeId: [0] = result, [1..N] = potential type compatibility casts
 let pDirectCall (nodeId: NodeId) (funcName: string) (args: (SSA * MLIRType) list) (retType: MLIRType)
+                (paramNames: string list option)
                 : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
@@ -56,19 +57,26 @@ let pDirectCall (nodeId: NodeId) (funcName: string) (args: (SSA * MLIRType) list
         let castSSAs = ssas |> List.skip 1  // SSAs for potential casts
 
         // Argument preparation: pass arguments directly to function call
-        // NOTE: Prior versions had unconditional static→dynamic memref casts here.
-        // After Bug 1 fix (Feb 2026), string literals already return TMemRef (dynamic)
-        // in pBuildStringLiteral, so the cast is no longer needed at call boundaries.
-        // DU/record/tuple args are TMemRefStatic and should stay static — their
-        // function parameters expect static types.
         let processCasts (remainingArgs: (SSA * MLIRType) list) (_castSSAs: SSA list) =
             let vals = remainingArgs |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
             ([], vals)
 
         let (castOps, finalVals) = processCasts args castSSAs
 
-        let! callOp = pFuncCall (Some resultSSA) funcName finalVals retType
-        return (castOps @ [callOp], TRValue { SSA = resultSSA; Type = retType })
+        let! targetPlatform = getTargetPlatform
+        match targetPlatform with
+        | FPGA ->
+            // FPGA: hw.instance (spatial instantiation) instead of func.call (temporal)
+            let names = paramNames |> Option.defaultValue (args |> List.mapi (fun i _ -> sprintf "in%d" i))
+            let inputs = List.map2 (fun pname (v: Val) -> (pname, v.SSA, v.Type)) names finalVals
+            let outputs = [("result", retType)]
+            let instName = funcName.Replace(".", "_") + "_inst"
+            let! instanceOp = Alex.Elements.HWElements.pHWInstance resultSSA instName funcName inputs outputs
+            return (castOps @ [instanceOp], TRValue { SSA = resultSSA; Type = retType })
+        | _ ->
+            // CPU: func.call (temporal function call)
+            let! callOp = pFuncCall (Some resultSSA) funcName finalVals retType
+            return (castOps @ [callOp], TRValue { SSA = resultSSA; Type = retType })
     }
 
 // ═══════════════════════════════════════════════════════════

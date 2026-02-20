@@ -11,6 +11,7 @@ open Clef.Compiler.NativeTypedTree.UnionFind
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
+open Core.Types.Dialects
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE SIZE COMPUTATION (for DU slot sizing)
@@ -491,6 +492,130 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
         TMemRefStatic(totalBytes, TInt I8)  // Flat: just code_ptr, captures added at witness
     | _ ->
         // Non-record types: use standard mapping with architecture
+        mapNativeTypeForArch arch ty
+
+/// Collect unique unbound type variables from a NativeType, in order of first appearance.
+/// Follows Union-Find chains to find root TVars that are Unbound.
+let rec private collectUnboundTVars (seen: Set<int>) (ty: NativeType) : (TypeParam * Set<int>) list =
+    match ty with
+    | NativeType.TVar tvar ->
+        match find tvar with
+        | (root, None) when not (Set.contains root.Id seen) ->
+            [(root, Set.add root.Id seen)]
+        | _ -> []
+    | NativeType.TApp(_, args) ->
+        args |> List.fold (fun acc arg ->
+            let currentSeen = match acc with [] -> seen | _ -> snd (List.last acc)
+            let results = collectUnboundTVars currentSeen arg
+            acc @ results) []
+    | NativeType.TFun(a, b) ->
+        let aVars = collectUnboundTVars seen a
+        let bSeen = match aVars with [] -> seen | _ -> snd (List.last aVars)
+        aVars @ collectUnboundTVars bSeen b
+    | NativeType.TTuple(elements, _) ->
+        elements |> List.fold (fun acc elem ->
+            let currentSeen = match acc with [] -> seen | _ -> snd (List.last acc)
+            acc @ collectUnboundTVars currentSeen elem) []
+    | _ -> []
+
+/// When a TApp carries type arguments but the TypeDef's fields contain unbound TVars,
+/// bind them in the Union-Find so downstream type mapping resolves correctly.
+/// This compensates for clef not propagating type arguments to expression-level nodes.
+let private bindTypeArgsToFieldTVars (fields: (string * NativeType) list) (args: NativeType list) =
+    if args.IsEmpty then ()
+    else
+        let unboundTVars =
+            fields
+            |> List.collect (fun (_, fieldTy) -> collectUnboundTVars Set.empty fieldTy)
+            |> List.map fst
+        // Bind positionally: first unique unbound TVar → first type arg, etc.
+        for i in 0 .. min (unboundTVars.Length - 1) (args.Length - 1) do
+            unboundTVars.[i].Parent <- TypeParamState.Bound args.[i]
+
+/// Eagerly walk a NativeType to bind type parameters from TApp type arguments.
+/// Call this on function signatures BEFORE traversing body nodes, so inner expression
+/// types resolve correctly through the Union-Find.
+let rec resolveTypeParams (graph: SemanticGraph) (ty: NativeType) =
+    match ty with
+    | NativeType.TApp(tycon, args) ->
+        if not args.IsEmpty then
+            match SemanticGraph.tryGetRecordFields tycon.Name graph with
+            | Some fields -> bindTypeArgsToFieldTVars fields args
+            | None -> ()
+        args |> List.iter (resolveTypeParams graph)
+    | NativeType.TFun(a, b) ->
+        resolveTypeParams graph a
+        resolveTypeParams graph b
+    | NativeType.TTuple(elements, _) ->
+        elements |> List.iter (resolveTypeParams graph)
+    | _ -> ()
+
+/// Platform-aware type mapping — the canonical entry point for target-dependent code.
+/// On FPGA, TTuple maps to TStruct with positional field names (first-class value).
+/// On CPU, TTuple maps to TMemRefStatic (byte blob for memory layout).
+/// Recursive: nested tuples within tuple elements also get the platform treatment.
+let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : MLIRType =
+    let recurse = mapNativeTypeForTarget platform arch graph
+    match ty with
+    | NativeType.TApp(tycon, args) when tycon.FieldCount > 0 ->
+        // Record type: look up field types from TypeDef → TStruct with named fields
+        match SemanticGraph.tryGetRecordFields tycon.Name graph with
+        | Some fields ->
+            // Bind type arguments to unbound TVars in fields (compensates for clef gap)
+            bindTypeArgsToFieldTVars fields args
+            let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy))
+            TStruct mlirFields
+        | None ->
+            failwithf "Record type '%s' not found in TypeDef nodes - FNCS must create TypeDef for records" tycon.Name
+    | NativeType.TApp(tycon, args) ->
+        // Non-record TApp (FieldCount = 0) - check if it might be a record by name lookup
+        match SemanticGraph.tryGetRecordFields tycon.Name graph with
+        | Some fields ->
+            bindTypeArgsToFieldTVars fields args
+            let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy))
+            TStruct mlirFields
+        | None ->
+            // FPGA: option/voption → hw.struct with tag + value
+            match platform with
+            | FPGA ->
+                match tycon.Name with
+                | "option" | "voption" ->
+                    match args with
+                    | [innerTy] ->
+                        let innerMlir = recurse innerTy
+                        TStruct [("tag", TInt I1); ("value", innerMlir)]
+                    | _ -> mapNativeTypeForArch arch ty
+                | _ -> mapNativeTypeForArch arch ty
+            | _ -> mapNativeTypeForArch arch ty
+    | NativeType.TTuple(elements, _) ->
+        match platform with
+        | FPGA ->
+            // FPGA: tuples become hw.struct with positional field names
+            let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), recurse e)
+            TStruct fields
+        | _ ->
+            // CPU: tuples are flat byte blobs
+            let elementTypes = elements |> List.map recurse
+            let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
+            TMemRefStatic(totalBytes, TInt I8)
+    | NativeType.TAnon(fields, _) ->
+        // Anonymous records → TStruct with named fields
+        let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy))
+        TStruct mlirFields
+    | NativeType.TLazy elemTy ->
+        // Lazy<T> - flat closure
+        let elemMlir = recurse elemTy
+        let totalBytes = 1 + mlirTypeSizeForArch arch elemMlir + mlirTypeSizeForArch arch TIndex
+        TMemRefStatic(totalBytes, TInt I8)
+    | NativeType.TVar tvar ->
+        // Resolve type variable through Union-Find and recurse through target-aware mapper
+        match find tvar with
+        | (_, Some boundTy) -> recurse boundTy
+        | (root, None) ->
+            printfn "WARNING: Unbound type variable '%s' - using TIndex fallback" root.Name
+            TIndex
+    | _ ->
+        // Leaf types: use standard mapping with architecture
         mapNativeTypeForArch arch ty
 
 /// BACKWARD COMPATIBLE: mapNativeTypeWithGraph without explicit architecture
