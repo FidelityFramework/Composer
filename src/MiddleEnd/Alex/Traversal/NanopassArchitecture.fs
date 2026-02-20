@@ -316,6 +316,8 @@ let runAllNanopasses
             for nodeId in classification.Definitions do
                 if isHardwareModuleBinding nodeId then
                     processRoot nodeId
+            // ModuleDef node itself (structural container, for coverage validation)
+            processRoot moduleDefId
         else
             // CPU/MCU: Process all definitions in source order
             // Module-init first (prologue bindings)
