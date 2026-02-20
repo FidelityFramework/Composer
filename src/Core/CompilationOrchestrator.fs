@@ -172,22 +172,35 @@ let compileProject (options: CompilationOptions) : int =
                         EmitIntermediateOnly = options.EmitLLVMOnly
                     }
                     backEnd.Compile mlirText backEndCtx
-                    |> Result.map (fun artifact ->
+                    |> Result.bind (fun artifact ->
                         printfn ""
                         match artifact with
-                        | NativeBinary path -> printfn "Compilation successful: %s" path
+                        | NativeBinary path ->
+                            printfn "Compilation successful: %s" path
+                            Ok ()
                         | Verilog path ->
                             printfn "Verilog generated: %s" path
-                            // Copy XDC constraints alongside .sv (FPGA targets only)
+                            // Copy XDC constraints alongside .sv, then verify consistency
                             match ctx.IntermediatesDir with
                             | Some dir ->
                                 let xdcSrc = Path.Combine(dir, "constraints.xdc")
-                                if File.Exists(xdcSrc) then
+                                if File.Exists xdcSrc then
                                     let xdcDst = Path.ChangeExtension(path, ".xdc")
                                     File.Copy(xdcSrc, xdcDst, true)
                                     printfn "XDC constraints: %s" xdcDst
-                            | None -> ()
-                        | IntermediateOnly fmt -> printfn "Produced %s intermediate" fmt)))
+                                    // Closed-loop: verify HDL ports match constraint ports
+                                    match BackEnd.ArtifactVerification.verifyArtifacts path xdcDst with
+                                    | Ok summary ->
+                                        printfn "%s" summary
+                                        Ok ()
+                                    | Error diag ->
+                                        Error diag
+                                else
+                                    Ok ()
+                            | None -> Ok ()
+                        | IntermediateOnly fmt ->
+                            printfn "Produced %s intermediate" fmt
+                            Ok ())))
 
     printSummary()
     match result with

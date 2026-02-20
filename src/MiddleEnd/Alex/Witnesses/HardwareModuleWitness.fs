@@ -283,7 +283,12 @@ let private witnessHardwareModule
                     OutputType = outputType
                 }
 
-                let hwModuleOp = buildMealyMachineModule info
+                let hwModuleOp =
+                    match ctx.Coeffects.PinMapping with
+                    | Some pinMapping ->
+                        buildFlatPortMealyModule info pinMapping pinMapping.FieldPinAttrs
+                    | None ->
+                        buildMealyMachineModule info
 
                 // Add hw.module to root scope (top-level declaration)
                 let updatedRootScope = ScopeContext.addOp hwModuleOp !ctx.RootScopeContext

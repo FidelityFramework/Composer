@@ -163,6 +163,9 @@
 
       <Compile Include="BackEnd/CIRCT/Pipeline.fs" />
 
+      <!-- BackEnd - Artifact Verification (closed-loop HDL/constraint consistency) -->
+      <Compile Include="BackEnd/ArtifactVerification.fs" />
+
       <!-- Core - Pipeline Resolution (AFTER backends, BEFORE orchestrator) -->
       <Compile Include="Core/PlatformPipeline.fs" />
       <!-- Core - Top-level Compilation Orchestration (AFTER all components) -->

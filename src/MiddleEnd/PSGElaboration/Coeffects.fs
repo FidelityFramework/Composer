@@ -259,6 +259,9 @@ type PlatformPinMapping = {
     Pins: PinConstraint list
     /// Clock constraint
     Clock: ClockConstraint
-    /// Vivado device string (e.g., "xc7a100tcsg324-1")
+    /// Platform device string (e.g., "xc7a100tcsg324-1" for Xilinx)
     DevicePart: string
+    /// Record field name → pin logical names (from [<Pin>]/[<Pins>] attributes)
+    /// Used by HardwareModulePatterns for struct ↔ flat port mapping
+    FieldPinAttrs: Map<string, string list>
 }

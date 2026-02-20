@@ -29,6 +29,7 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Clef.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
+open PSGElaboration.Coeffects
 
 // ═══════════════════════════════════════════════════════════
 // PSG METADATA EXTRACTION (compile-time, no MLIR emission)
@@ -220,5 +221,297 @@ let buildMealyMachineModule (info: MealyMachineInfo) : MLIROp =
         match info.OutputType with
         | Some outTy -> [("outputs", outTy)]
         | None -> [("result", info.StateType)]
+
+    MLIROp.HWOp (HWOp.HWModule (info.ModuleName, inputs, outputs, bodyOps))
+
+// ═══════════════════════════════════════════════════════════
+// FLAT-PORT MEALY MACHINE BUILDER (Top-level FPGA module)
+// ═══════════════════════════════════════════════════════════
+
+/// Recursively extract pin-mapped signals from an output struct.
+/// For each leaf field with a pin attribute, emits hw.struct_extract ops
+/// and collects (sanitizedPinName, SSA, type) for flat output ports.
+/// Fields without pin attributes are skipped (synthesis will optimize them away).
+let private flattenOutputStruct
+    (pinAttrs: Map<string, string list>)
+    (parentSSA: SSA)
+    (parentType: MLIRType)
+    (nextSSA: unit -> SSA)
+    : (string * SSA * MLIRType) list * MLIROp list =
+    let mutable pins = []
+    let mutable ops = []
+
+    let rec walk (pSSA: SSA) (pType: MLIRType) =
+        match pType with
+        | TStruct fields ->
+            for (fieldName, fieldTy) in fields do
+                match Map.tryFind fieldName pinAttrs with
+                | Some pinNames ->
+                    let extractSSA = nextSSA()
+                    ops <- ops @ [MLIROp.HWOp (HWOp.HWStructExtract (extractSSA, pSSA, fieldName, pType))]
+                    match pinNames with
+                    | [single] ->
+                        pins <- pins @ [(single, extractSSA, fieldTy)]
+                    | multiple ->
+                        // Multi-pin field (e.g., [<Pins("r","g","b")>]): extract tuple elements
+                        match fieldTy with
+                        | TStruct tupleFields ->
+                            for (pinName, (elemField, elemTy)) in List.zip multiple tupleFields do
+                                let elemSSA = nextSSA()
+                                ops <- ops @ [MLIROp.HWOp (HWOp.HWStructExtract (elemSSA, extractSSA, elemField, fieldTy))]
+                                pins <- pins @ [(pinName, elemSSA, elemTy)]
+                        | _ ->
+                            // Single value assigned to first pin name
+                            pins <- pins @ [((List.head multiple), extractSSA, fieldTy)]
+                | None ->
+                    // No direct pin attr — recurse into sub-structs that may contain pins
+                    match fieldTy with
+                    | TStruct _ ->
+                        let extractSSA = nextSSA()
+                        ops <- ops @ [MLIROp.HWOp (HWOp.HWStructExtract (extractSSA, pSSA, fieldName, pType))]
+                        walk extractSSA fieldTy
+                    | _ -> ()
+        | _ -> ()
+
+    walk parentSSA parentType
+    (pins, ops)
+
+/// Build a flat-port Mealy machine hw.module for the FPGA top-level.
+/// Observes PlatformPinMapping coeffect to expand struct-typed input/output ports
+/// into individual ports matching physical pin logical names.
+///
+/// The step function's inner hw.module keeps struct ports — only the top-level
+/// module gets flat ports. This is the residual of observing pin coeffects.
+let buildFlatPortMealyModule
+    (info: MealyMachineInfo)
+    (pinMapping: PlatformPinMapping)
+    (pinAttrs: Map<string, string list>)
+    : MLIROp =
+
+    let n = info.StateFields.Length
+    let hasOutputs = info.OutputType.IsSome
+    let mutable ssaCounter = 0
+    let nextSSA () =
+        let ssa = V ssaCounter
+        ssaCounter <- ssaCounter + 1
+        ssa
+
+    // ── Compute flat input ports ──
+    // Walk input struct fields, map each to its pin logical name via FieldPinAttributes
+    let flatInputPorts, inputArgCount =
+        match info.InputType with
+        | Some (TStruct fields) ->
+            let ports =
+                fields |> List.collect (fun (fieldName, fieldTy) ->
+                    match Map.tryFind fieldName pinAttrs with
+                    | Some [pinName] -> [(pinName, fieldTy)]
+                    | Some pinNames ->
+                        // Multi-pin input field
+                        match fieldTy with
+                        | TStruct tupleFields ->
+                            List.zip pinNames tupleFields
+                            |> List.map (fun (pn, (_, eTy)) -> (pn, eTy))
+                        | _ -> [((List.head pinNames), fieldTy)]
+                    | None ->
+                        // No pin attr — use field name as-is (shouldn't happen for pin-mapped types)
+                        [(fieldName, fieldTy)])
+            (ports, ports.Length)
+        | _ -> ([], 0)
+
+    // Port SSAs: clk (Arg 0), rst (Arg 1), flat inputs (Arg 2, 3, ...)
+    let clkSSA = SSA.Arg 0
+    let rstSSA = SSA.Arg 1
+
+    // ── Phase 1: Reset value constants ──
+    let resetOps, resetSSAs =
+        info.StateFields
+        |> List.map (fun (_, fieldTy, resetLit) ->
+            let ssa = nextSSA()
+            let op = MLIROp.ArithOp (ArithOp.ConstI (ssa, literalToInt64 resetLit, fieldTy))
+            (op, ssa))
+        |> List.unzip
+
+    // ── Phase 2: State registers ──
+    // Forward-reference calculation must account for flat input packing ops
+    let inputPackOpsCount =
+        match info.InputType with
+        | Some (TStruct fields) ->
+            // Multi-pin fields need a struct_create for the tuple, plus one for the outer struct
+            let multiPinPacks =
+                fields |> List.sumBy (fun (fieldName, _) ->
+                    match Map.tryFind fieldName pinAttrs with
+                    | Some pins when pins.Length > 1 -> 1  // struct_create for tuple
+                    | _ -> 0)
+            1 + multiPinPacks  // 1 for the input struct + multi-pin tuple packs
+        | _ -> 0
+
+    // nextStateBaseSSA: after regs + pack ops + struct_create(state) + instance + decompose + output extract
+    let nextStateBaseSSA =
+        ssaCounter + n  // skip registers
+        + inputPackOpsCount  // input packing
+        + 1  // struct_create (state)
+        + 1  // hw.instance
+        + (if hasOutputs then 2 else 0)  // Item1 + Item2 extract
+        // Then: output flatten ops (variable count) — we handle this with a post-fixup
+
+    // We need to know the exact SSA offset for register feedback.
+    // Problem: output flatten op count is variable (depends on type structure).
+    // Solution: Use two-pass — first compute output flatten count, then build.
+
+    // Count output flatten ops
+    let outputFlattenOpCount =
+        match info.OutputType with
+        | Some outTy ->
+            // Count ops that flattenOutputStruct would emit
+            let rec countOps (ty: MLIRType) =
+                match ty with
+                | TStruct fields ->
+                    fields |> List.sumBy (fun (fieldName, fieldTy) ->
+                        match Map.tryFind fieldName pinAttrs with
+                        | Some pinNames ->
+                            1 + (if pinNames.Length > 1 then
+                                    match fieldTy with TStruct tf -> tf.Length | _ -> 0
+                                 else 0)
+                        | None ->
+                            match fieldTy with
+                            | TStruct _ -> 1 + countOps fieldTy
+                            | _ -> 0)
+                | _ -> 0
+            countOps outTy
+        | None -> 0
+
+    let actualNextStateBase =
+        ssaCounter + n + inputPackOpsCount + 1 + 1
+        + (if hasOutputs then 2 else 0)
+        + outputFlattenOpCount
+
+    let regOps, regSSAs =
+        info.StateFields
+        |> List.mapi (fun i (_, fieldTy, _) ->
+            let regSSA = nextSSA()
+            let nextSSARef = V (actualNextStateBase + i)
+            let op = MLIROp.SeqOp (SeqOp.SeqCompreg (regSSA, nextSSARef, clkSSA, Some (rstSSA, resetSSAs.[i]), fieldTy))
+            (op, regSSA))
+        |> List.unzip
+
+    // ── Phase 3: Pack flat input ports → input struct ──
+    let inputPackOps, inputStructSSA =
+        match info.InputType with
+        | Some (TStruct fields as inputType) ->
+            let mutable argIdx = 2  // after clk, rst
+            let mutable packOps = []
+            let fieldSSAs =
+                fields |> List.map (fun (fieldName, fieldTy) ->
+                    match Map.tryFind fieldName pinAttrs with
+                    | Some [_] ->
+                        let ssa = SSA.Arg argIdx
+                        argIdx <- argIdx + 1
+                        (ssa, fieldTy)
+                    | Some pinNames when pinNames.Length > 1 ->
+                        // Multi-pin: collect individual args, pack into tuple struct
+                        match fieldTy with
+                        | TStruct tupleFields ->
+                            let elemSSAs =
+                                tupleFields |> List.map (fun (_, eTy) ->
+                                    let ssa = SSA.Arg argIdx
+                                    argIdx <- argIdx + 1
+                                    (ssa, eTy))
+                            let tupleSSA = nextSSA()
+                            packOps <- packOps @ [MLIROp.HWOp (HWOp.HWStructCreate (tupleSSA, elemSSAs, fieldTy))]
+                            (tupleSSA, fieldTy)
+                        | _ ->
+                            let ssa = SSA.Arg argIdx
+                            argIdx <- argIdx + 1
+                            (ssa, fieldTy)
+                    | _ ->
+                        let ssa = SSA.Arg argIdx
+                        argIdx <- argIdx + 1
+                        (ssa, fieldTy))
+            let structSSA = nextSSA()
+            let createOp = MLIROp.HWOp (HWOp.HWStructCreate (structSSA, fieldSSAs, inputType))
+            (packOps @ [createOp], structSSA)
+        | _ -> ([], SSA.Arg 2)
+
+    // ── Phase 4: Build current state struct ──
+    let stateSSA = nextSSA()
+    let stateFieldVals = List.zip regSSAs (info.StateFields |> List.map (fun (_, ty, _) -> ty))
+    let structCreateOp = MLIROp.HWOp (HWOp.HWStructCreate (stateSSA, stateFieldVals, info.StateType))
+
+    // ── Phase 5: Instantiate step function ──
+    let instanceSSA = nextSSA()
+    let stepInputs =
+        match info.InputType with
+        | Some iTy -> [("state", stateSSA, info.StateType); ("inputs", inputStructSSA, iTy)]
+        | _ -> [("s", stateSSA, info.StateType)]
+
+    let stepResultType =
+        match info.OutputType with
+        | Some outTy -> TStruct [("Item1", info.StateType); ("Item2", outTy)]
+        | None -> info.StateType
+    let instanceOp = MLIROp.HWOp (HWOp.HWInstance (
+        instanceSSA,
+        "step_inst",
+        info.StepFunctionName,
+        stepInputs,
+        [("result", stepResultType)]
+    ))
+
+    // ── Phase 6: Decompose step result ──
+    let nextStateSSA, outputStructSSA, decomposeOps =
+        match info.OutputType with
+        | Some outTy ->
+            let nsSA = nextSSA()
+            let nsOp = MLIROp.HWOp (HWOp.HWStructExtract (nsSA, instanceSSA, "Item1", stepResultType))
+            let oSSA = nextSSA()
+            let oOp = MLIROp.HWOp (HWOp.HWStructExtract (oSSA, instanceSSA, "Item2", stepResultType))
+            (nsSA, Some oSSA, [nsOp; oOp])
+        | None ->
+            (instanceSSA, None, [])
+
+    // ── Phase 7: Flatten output struct → individual pin signals ──
+    let flatOutputPins, flattenOps =
+        match outputStructSSA, info.OutputType with
+        | Some oSSA, Some outTy ->
+            flattenOutputStruct pinAttrs oSSA outTy nextSSA
+        | _ -> ([], [])
+
+    // ── Phase 8: Extract next-state fields for register feedback ──
+    let extractOps =
+        info.StateFields
+        |> List.map (fun (fieldName, _, _) ->
+            let extractSSA = nextSSA()
+            MLIROp.HWOp (HWOp.HWStructExtract (extractSSA, nextStateSSA, fieldName, info.StateType)))
+
+    // ── Phase 9: hw.output (flat pin signals) ──
+    let outputOp =
+        if flatOutputPins.IsEmpty then
+            match outputStructSSA, info.OutputType with
+            | Some oSSA, Some outTy -> MLIROp.HWOp (HWOp.HWOutput [(oSSA, outTy)])
+            | _ -> MLIROp.HWOp (HWOp.HWOutput [(stateSSA, info.StateType)])
+        else
+            MLIROp.HWOp (HWOp.HWOutput (flatOutputPins |> List.map (fun (_, ssa, ty) -> (ssa, ty))))
+
+    // ── Assemble hw.module ──
+    let bodyOps =
+        resetOps
+        @ regOps
+        @ inputPackOps
+        @ [structCreateOp]
+        @ [instanceOp]
+        @ decomposeOps
+        @ flattenOps
+        @ extractOps
+        @ [outputOp]
+
+    let inputs =
+        [(pinMapping.Clock.PortName, TSeqClock); ("rst", TInt I1)]
+        @ flatInputPorts
+    let outputs =
+        if flatOutputPins.IsEmpty then
+            match info.OutputType with
+            | Some outTy -> [("outputs", outTy)]
+            | None -> [("result", info.StateType)]
+        else
+            flatOutputPins |> List.map (fun (name, _, ty) -> (name, ty))
 
     MLIROp.HWOp (HWOp.HWModule (info.ModuleName, inputs, outputs, bodyOps))

@@ -45,9 +45,35 @@ let optimizeHW (mlirPath: string) (optimizedPath: string) : Result<unit, string>
     let args = sprintf "%s --map-arith-to-comb --canonicalize --cse -o %s" mlirPath optimizedPath
     runTool circtOptPath args
 
+/// Run an external tool, capturing stdout to a file
+let internal runToolToFile (tool: string) (args: string) (outputPath: string) : Result<unit, string> =
+    try
+        let proc = new System.Diagnostics.Process()
+        proc.StartInfo.FileName <- tool
+        proc.StartInfo.Arguments <- args
+        proc.StartInfo.UseShellExecute <- false
+        proc.StartInfo.RedirectStandardOutput <- true
+        proc.StartInfo.RedirectStandardError <- true
+        proc.Start() |> ignore
+        let stdout = proc.StandardOutput.ReadToEnd()
+        let stderr = proc.StandardError.ReadToEnd()
+        proc.WaitForExit()
+
+        if proc.ExitCode <> 0 then
+            Error (sprintf "%s failed (exit %d): %s" tool proc.ExitCode stderr)
+        else
+            File.WriteAllText(outputPath, stdout)
+            Ok ()
+    with
+    | :? System.ComponentModel.Win32Exception ->
+        Error (sprintf "%s not found. Ensure it is on PATH or set CIRCT_OPT_PATH." tool)
+    | ex ->
+        Error (sprintf "%s failed: %s" tool ex.Message)
+
 /// Step 2: Export hw/comb/seq to SystemVerilog via SV dialect
+/// --export-verilog writes SystemVerilog to stdout; -o /dev/null suppresses MLIR residual
 let exportToVerilog (hwPath: string) (svPath: string) : Result<unit, string> =
     let args =
-        sprintf "%s --lower-seq-to-sv --lower-hw-to-sv --export-verilog -o %s"
-            hwPath svPath
-    runTool circtOptPath args
+        sprintf "%s --lower-seq-to-sv --lower-hw-to-sv --export-verilog -o /dev/null"
+            hwPath
+    runToolToFile circtOptPath args svPath

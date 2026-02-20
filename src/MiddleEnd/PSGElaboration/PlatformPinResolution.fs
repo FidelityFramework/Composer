@@ -88,6 +88,11 @@ let private extractRecordFields (graph: SemanticGraph) (nodeId: NodeId) : (strin
 let private fieldValue (name: string) (fields: (string * NodeId) list) : NodeId option =
     fields |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd
 
+/// Normalize a pin logical name to a valid MLIR/Verilog identifier.
+/// Applied once here in the coeffect — observers see the final name.
+let private normalizePortName (name: string) =
+    name.Replace("[", "_").Replace("]", "")
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM BINDING EXTRACTION
 // ═══════════════════════════════════════════════════════════════════════════
@@ -102,7 +107,7 @@ let private extractPinEndpoint (graph: SemanticGraph) (fields: (string * NodeId)
     match logicalName, packagePin with
     | Some ln, Some pp ->
         Some {
-            PortName   = ln
+            PortName   = normalizePortName ln
             PackagePin = pp
             IOStandard = standard  |> Option.defaultValue "LVCMOS33"
             Direction  = direction |> Option.defaultValue "InOut"
@@ -119,7 +124,7 @@ let private extractClockEndpoint (graph: SemanticGraph) (fields: (string * NodeI
     match name, packagePin, frequencyHz with
     | Some n, Some pp, Some freq ->
         Some {
-            PortName    = n
+            PortName    = normalizePortName n
             PackagePin  = pp
             IOStandard  = standard |> Option.defaultValue "LVCMOS33"
             FrequencyHz = freq
@@ -199,7 +204,7 @@ let private extractDesignPinAttributes (graph: SemanticGraph) : Map<string, stri
         | NativeType.TApp (tycon, args) ->
             // Collect own FieldPinAttributes
             for KeyValue(k, v) in tycon.FieldPinAttributes do
-                allAttrs <- Map.add k v allAttrs
+                allAttrs <- Map.add k (v |> List.map normalizePortName) allAttrs
             // Recurse into type arguments
             for arg in args do collectFromType arg
         | NativeType.TTuple (types, _) ->
@@ -245,5 +250,6 @@ let resolve (graph: SemanticGraph) : PlatformPinMapping option =
             Pins = designPins
             Clock = clk
             DevicePart = dev
+            FieldPinAttrs = designPinAttrs
         }
     | _ -> None
