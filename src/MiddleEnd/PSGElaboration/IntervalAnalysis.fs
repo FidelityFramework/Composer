@@ -474,10 +474,9 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                             seedWithMax rhsId lhs.Max
                         | None, Some rhs ->
                             seedWithMax lhsId rhs.Max
-                        | Some lhs, Some rhs ->
-                            let maxMax = max lhs.Max rhs.Max
-                            seedWithMax lhsId maxMax
-                            seedWithMax rhsId maxMax
+                        | Some _lhs, Some _rhs ->
+                            () // Both already have intervals — don't widen.
+                               // Operand bit-width harmonization is a separate post-convergence pass.
                         | None, None -> ()
                     | _ -> ()
                 | _ -> ()
