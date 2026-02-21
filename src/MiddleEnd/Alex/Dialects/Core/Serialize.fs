@@ -13,10 +13,14 @@ open Alex.Dialects.Core.Types
 
 /// Convert IntWidth to MLIR type string.
 /// IntWidth 0 is a sentinel for "abstract width — must be resolved by interval analysis."
-/// If it reaches serialization, the compiler has a gap in width resolution.
+/// If it reaches serialization, width inference has failed — this is a hard error.
 let intWidthToString (IntWidth bits) : string =
     if bits = 0 then
-        eprintfn "[DTS-GAP] IntWidth 0 at serialization — will appear as i0 in output"
+        failwith
+            "Width inference failure: IntWidth 0 reached MLIR serialization. \
+             A hardware integer has no resolvable bit width. This means a struct field \
+             or variable was never assigned a concrete value (e.g. ValueNone branch of \
+             a ValueOption where the inner type's fields have no observable interval)."
     sprintf "i%d" bits
 
 /// Convert FloatWidth to MLIR type string

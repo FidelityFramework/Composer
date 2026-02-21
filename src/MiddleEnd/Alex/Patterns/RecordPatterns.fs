@@ -60,7 +60,15 @@ let pBuildRecord
             // not parent-mapped structTy which may have i0 sentinels in nested structs
             let resultSSA = ssas.[0]
             let fieldVals = fieldValues |> List.map (fun (_, ssa, ty) -> (ssa, ty))
-            let actualStructTy = TStruct (fieldValues |> List.map (fun (name, _, ty) -> (name, ty)))
+            let actualStructTy =
+                TStruct (fieldValues |> List.map (fun (name, _, ty) ->
+                    match ty with
+                    | TInt (IntWidth 0) ->
+                        failwithf
+                            "error FPGA0001: Record field '%s' has unresolvable bit width (IntWidth 0).\n\
+                             Width inference found no value range for this field.\n\
+                             Add a width annotation to the type, e.g.: %s: int<32>" name name
+                    | _ -> (name, ty)))
             let! createOp = pHWStructCreate resultSSA fieldVals actualStructTy
             return ([createOp], TRValue { SSA = resultSSA; Type = actualStructTy })
 

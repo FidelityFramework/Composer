@@ -53,40 +53,64 @@ type WidthInferenceResult = {
 // BIT WIDTH COMPUTATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Compute minimum bits for an unsigned range [0, max]
-let private bitsForUnsigned (max: int64) : int =
-    if max <= 0L then 1
-    elif max = 1L then 1
+/// Minimum unsigned bits to represent value v ≥ 0.
+/// ceil(log2(v+1)), with floor cases: 0→1, 1→1.
+let private unsignedBitsFor (v: int64) : int =
+    if v <= 1L then 1
     else
         let mutable bits = 0
-        let mutable v = max
-        while v > 0L do
+        let mutable x = v
+        while x > 0L do
             bits <- bits + 1
-            v <- v >>> 1
+            x <- x >>> 1
         bits
 
-/// Compute minimum bits for a signed range [min, max]
-let private bitsForSigned (lo: int64) (hi: int64) : int =
-    let magnitude = max (abs lo) (abs hi)
-    (bitsForUnsigned magnitude) + 1  // +1 for sign bit
-
-/// Compute minimum bits from an interval.
-/// MLIR integers are signed (two's complement). For non-negative intervals [0, max],
-/// bitsForUnsigned gives N bits where the MSB is always set (by definition). That MSB
-/// would look negative in signed iN, so we add +1 for the sign bit.
-/// Exception: 1-bit values (booleans, [0,1]) stay at i1 — MLIR's standard boolean encoding.
-/// Examples: [0, 500] → 9 unsigned + 1 = i10. [0, 1] → 1 bit (no change).
-let private bitsFromInterval (interval: ValueInterval) : int * bool =
-    if interval.Min >= 0L then
-        let unsignedBits = bitsForUnsigned interval.Max
-        // For any max > 1, the MSB is set in unsigned representation, making
-        // the value look negative in signed iN. Add sign bit to prevent this.
-        // Skip for 1-bit (boolean) values — i1 is MLIR's boolean convention.
-        let bits = if unsignedBits > 1 then unsignedBits + 1 else unsignedBits
-        (bits, false)
+/// Minimum two's complement signed bits for range [lo, hi].
+///
+/// Two's complement iN represents [-2^(N-1), 2^(N-1)-1].
+/// Key: the negative side holds one more value than the positive side.
+///   i1:  [-1, 0]  (boolean convention: 0/1 maps to i1)
+///   i8:  [-128, 127]
+///   i10: [-512, 511]
+///
+/// For non-negative [0, max]:
+///   max ≤ 1         → i1 (boolean)
+///   max > 1         → i(unsignedBitsFor(max) + 1) — sign bit keeps MSB non-negative
+///
+/// For mixed/negative ranges:
+///   Positive side needs N where 2^(N-1)-1 ≥ hi   → N = unsignedBitsFor(hi) + 1
+///   Negative side needs N where 2^(N-1)   ≥ |lo| → N = unsignedBitsFor(|lo| - 1) + 1
+///   (The -1 accounts for two's complement asymmetry: -128 fits in i8 because 2^7 = 128)
+///   Take the max of both sides.
+///
+/// Round-trip stable with maxPositiveForBits:
+///   bitsFromInterval [0, maxPositiveForBits(N)] = N for all N ≥ 1.
+let private minSignedBits (lo: int64) (hi: int64) : int =
+    if lo >= 0L && hi <= 1L then 1  // boolean
+    elif lo >= 0L then
+        unsignedBitsFor hi + 1
+    elif hi < 0L then
+        // All negative: need N where -2^(N-1) ≤ lo, i.e. 2^(N-1) ≥ |lo|
+        unsignedBitsFor (abs lo - 1L) + 1
     else
-        // Signed: [min, max] — bitsForSigned already includes sign bit
-        (bitsForSigned interval.Min interval.Max, true)
+        // Mixed: both sides contribute
+        let posBits = unsignedBitsFor hi + 1
+        let negBits = unsignedBitsFor (abs lo - 1L) + 1
+        max posBits negBits
+
+/// Maximum positive value representable in N signed two's complement bits.
+/// Inverse of minSignedBits for non-negative intervals: maxPositiveForBits(minSignedBits(0, v)) ≥ v.
+///   i1: 1 (boolean). iN (N>1): 2^(N-1) - 1.
+let private maxPositiveForBits (bits: int) : int64 =
+    if bits <= 1 then 1L
+    else (1L <<< (bits - 1)) - 1L
+
+/// Compute minimum signed two's complement bits from an interval.
+/// Returns (bits, isSigned) where isSigned indicates negative values in the range.
+let private bitsFromInterval (interval: ValueInterval) : int * bool =
+    let bits = minSignedBits interval.Min interval.Max
+    let isSigned = interval.Min < 0L
+    (bits, isSigned)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERVAL ARITHMETIC
@@ -303,8 +327,9 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                             | _ -> ()
                         | IntrinsicModule.Operators, "op_Modulus", [_lhsId; rhsId] ->
                             match tryGetInterval rhsId with
-                            | Some rhs when rhs.Min = rhs.Max && rhs.Min > 0L ->
-                                recordInterval nodeId (modInterval { Min = 0L; Max = 0L } rhs.Min)
+                            | Some rhs when rhs.Min > 0L ->
+                                // x % y where y ∈ [ymin, ymax], ymin > 0 → result ∈ [0, ymax - 1]
+                                recordInterval nodeId (modInterval { Min = 0L; Max = 0L } rhs.Max)
                             | _ -> ()
                         | _ -> ()
                     | SemanticKind.Intrinsic info when info.Category = IntrinsicCategory.Comparison ->
@@ -331,6 +356,11 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                     match tryGetInterval lastId with
                     | Some interval -> recordInterval nodeId interval
                     | None -> ()
+                | None -> ()
+
+            | SemanticKind.TypeAnnotation (wrappedId, _) ->
+                match tryGetInterval wrappedId with
+                | Some interval -> recordInterval nodeId interval
                 | None -> ()
 
             | _ -> ()
@@ -435,6 +465,30 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                         structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
                     | None ->
                         structNodeWidths <- Map.add id fieldWidthList structNodeWidths
+            | SemanticKind.TupleExpr elementIds ->
+                // Tuples become TStruct [("Item1", ...); ("Item2", ...)] in MLIR.
+                // Propagate element intervals as tuple-level struct field widths.
+                let tupleFieldWidths =
+                    elementIds |> List.mapi (fun i elemId ->
+                        let itemName = sprintf "Item%d" (i + 1)
+                        match tryGetInterval elemId with
+                        | Some interval ->
+                            let (bits, _) = bitsFromInterval interval
+                            Some (itemName, max 1 bits)
+                        | None -> None)
+                let resolved = tupleFieldWidths |> List.choose id
+                if resolved.Length > 0 then
+                    let (NodeId tupleId) = nodeId
+                    match Map.tryFind tupleId structNodeWidths with
+                    | None -> structNodeWidths <- Map.add tupleId resolved structNodeWidths
+                    | Some existing ->
+                        let existingMap = Map.ofList existing
+                        let mergedMap =
+                            resolved |> List.fold (fun acc (n, bits) ->
+                                match Map.tryFind n acc with
+                                | Some old -> Map.add n (max old bits) acc
+                                | None -> Map.add n bits acc) existingMap
+                        structNodeWidths <- Map.add tupleId (Map.toList mergedMap) structNodeWidths
             | _ -> ()
 
         // ── F: Struct width through Binding/VarRef (transparent propagation) ──
@@ -482,6 +536,41 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                         structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
                     | _ -> ()
                 | None -> ()
+            | SemanticKind.TypeAnnotation (wrappedId, _) ->
+                let (NodeId wrappedIdVal) = wrappedId
+                match Map.tryFind wrappedIdVal structNodeWidths with
+                | Some fieldWidths ->
+                    match Map.tryFind id structNodeWidths with
+                    | None -> structNodeWidths <- Map.add id fieldWidths structNodeWidths
+                    | Some existing when existing <> fieldWidths ->
+                        let existingMap = Map.ofList existing
+                        let mergedMap =
+                            fieldWidths |> List.fold (fun acc (n, bits) ->
+                                match Map.tryFind n acc with
+                                | Some old -> Map.add n (max old bits) acc
+                                | None -> Map.add n bits acc) existingMap
+                        structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
+                    | _ -> ()
+                | None -> ()
+            | SemanticKind.Sequential children ->
+                match List.tryLast children with
+                | Some lastId ->
+                    let (NodeId lastIdVal) = lastId
+                    match Map.tryFind lastIdVal structNodeWidths with
+                    | Some fieldWidths ->
+                        match Map.tryFind id structNodeWidths with
+                        | None -> structNodeWidths <- Map.add id fieldWidths structNodeWidths
+                        | Some existing when existing <> fieldWidths ->
+                            let existingMap = Map.ofList existing
+                            let mergedMap =
+                                fieldWidths |> List.fold (fun acc (n, bits) ->
+                                    match Map.tryFind n acc with
+                                    | Some old -> Map.add n (max old bits) acc
+                                    | None -> Map.add n bits acc) existingMap
+                            structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
+                        | _ -> ()
+                    | None -> ()
+                | None -> ()
             | _ -> ()
 
         // ── G: FieldGet → scalar intervals (via structNodeWidths) ──
@@ -501,7 +590,8 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                 | Some fieldWidths ->
                     match fieldWidths |> List.tryFind (fun (n, _) -> n = fieldName) with
                     | Some (_, bits) ->
-                        recordInterval nodeId { Min = 0L; Max = (1L <<< bits) - 1L }
+                        let maxVal = maxPositiveForBits bits
+                        recordInterval nodeId { Min = 0L; Max = maxVal }
                     | None -> ()
                 | None -> ()
             | _ -> ()

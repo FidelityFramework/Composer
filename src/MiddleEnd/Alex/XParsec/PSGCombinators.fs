@@ -116,18 +116,40 @@ let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (node
         | TInt (IntWidth 0) ->
             match Map.tryFind id result.NodeWidths with
             | Some inferred -> TInt (IntWidth inferred.Bits)
-            | None -> ty
+            | None ->
+                // Width inference fell through — same contract as HM "add a type annotation"
+                failwithf
+                    "error FPGA0001: Width inference could not resolve bit width for node %d.\n\
+                     The value has no observable range (no constants, operations, or DU cases bound it).\n\
+                     Add a width annotation to the declaration, e.g.: myField: int<32>\n\
+                     Or ensure the value is assigned from an expression with a known range." id
         | TInt _ -> ty  // Already has a concrete width, don't override
         | TStruct fields ->
-            match Map.tryFind id result.StructNodeWidths with
-            | Some fieldWidths ->
-                let widthMap = Map.ofList fieldWidths
-                fields |> List.map (fun (name, fty) ->
-                    match fty, Map.tryFind name widthMap with
-                    | TInt (IntWidth 0), Some bits -> (name, TInt (IntWidth bits))
-                    | _ -> (name, fty))
-                |> TStruct
-            | None -> ty
+            let narrowedFields =
+                match Map.tryFind id result.StructNodeWidths with
+                | Some fieldWidths ->
+                    let widthMap = Map.ofList fieldWidths
+                    fields |> List.map (fun (name, fty) ->
+                        match fty with
+                        | TInt (IntWidth 0) ->
+                            match Map.tryFind name widthMap with
+                            | Some bits -> (name, TInt (IntWidth bits))
+                            | None ->
+                                failwithf
+                                    "error FPGA0001: Width inference could not resolve bit width for \
+                                     struct field '%s' (node %d).\n\
+                                     Add a width annotation, e.g.: %s: int<32>" name id name
+                        | _ -> (name, fty))
+                | None ->
+                    fields |> List.map (fun (name, fty) ->
+                        match fty with
+                        | TInt (IntWidth 0) ->
+                            failwithf
+                                "error FPGA0001: Width inference could not resolve bit width for \
+                                 struct field '%s' (node %d). No struct width entry exists.\n\
+                                 Add a width annotation, e.g.: %s: int<32>" name id name
+                        | _ -> (name, fty))
+            TStruct narrowedFields
         | _ -> ty
 
 /// Narrow an MLIRType using the current node's inferred width (FPGA-aware).

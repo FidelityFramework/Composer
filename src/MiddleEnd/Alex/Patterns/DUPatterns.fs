@@ -31,9 +31,12 @@ let pBuildDUConstruct (nodeId: NodeId) (tag: int64) (payload: Val list) (duTy: M
                 let! ssa = getNodeSSA nodeId
                 match duTy with
                 | TStruct _ ->
-                    // Struct DU on FPGA (e.g. ValueNone): zero-initialized aggregate constant
-                    let! op = pHWAggregateConstant ssa duTy
-                    return ([op], TRValue { SSA = ssa; Type = duTy })
+                    // Struct DU on FPGA (e.g. ValueNone): zero-initialized aggregate constant.
+                    // Dead data — tag guarantees value bits are never read.
+                    // Clamp any unresolved IntWidth 0 to IntWidth 1 (minimum hw register width).
+                    let clampedTy = clampZeroWidths duTy
+                    let! op = pHWAggregateConstant ssa clampedTy
+                    return ([op], TRValue { SSA = ssa; Type = clampedTy })
                 | _ ->
                     // Enum DU on FPGA: just a tag constant. Type is TTag which serializes to correct width.
                     let! op = pConstI ssa tag duTy

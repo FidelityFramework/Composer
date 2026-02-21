@@ -152,7 +152,47 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                             | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
                             | _ -> None  // Single return type — no separate output
                         | None -> None
-                    (stateType, inputType, outputType)
+
+                    // ── Port width unification ──
+                    // The step function returns (State, Output). The return State must agree
+                    // with the parameter State on field widths. Take MAX per field to ensure
+                    // hw.module ports and hw.instance operands use identical types.
+                    let unifiedStateType =
+                        match stateType with
+                        | Some (TStruct paramFields) ->
+                            // Get the return state type from the body
+                            let returnStateOpt =
+                                match SemanticGraph.tryGetNode bodyId graph with
+                                | Some bodyNode ->
+                                    let retType = mapType bodyNode.Type ctx
+                                    let rec findLast (nid: NodeId) =
+                                        match SemanticGraph.tryGetNode nid graph with
+                                        | Some n ->
+                                            match n.Kind with
+                                            | SemanticKind.Sequential cs ->
+                                                match List.tryLast cs with Some l -> findLast l | None -> nid
+                                            | _ -> nid
+                                        | None -> nid
+                                    let lastId = findLast bodyId
+                                    let narrowed = narrowType ctx.Coeffects lastId retType
+                                    match narrowed with
+                                    | TStruct (("Item1", TStruct retFields) :: _) -> Some retFields
+                                    | _ -> None
+                                | None -> None
+                            match returnStateOpt with
+                            | Some retFields when retFields.Length = paramFields.Length ->
+                                let unified =
+                                    List.zip paramFields retFields
+                                    |> List.map (fun ((name, paramFty), (_, retFty)) ->
+                                        match paramFty, retFty with
+                                        | TInt (IntWidth a), TInt (IntWidth b) when a > 0 && b > 0 ->
+                                            (name, TInt (IntWidth (max a b)))
+                                        | _ -> (name, paramFty))
+                                Some (TStruct unified)
+                            | _ -> stateType
+                        | _ -> stateType
+
+                    (unifiedStateType, inputType, outputType)
                 | _ -> (None, None, None)
             | _ -> (None, None, None)
         | None -> (None, None, None)
@@ -306,7 +346,9 @@ let private witnessHardwareModule
                         (fieldName, fieldTy, resetLit))
 
                 let narrowedInputType = inputType
-                let narrowedOutputType = outputType
+                // Clamp any remaining IntWidth 0 in nested output structs (e.g. ValueNone
+                // inner fields where no value flows — dead data, minimum 1-bit hw width).
+                let narrowedOutputType = outputType |> Option.map clampZeroWidths
 
                 // ── 8. Build Mealy machine hw.module ──
                 let moduleName = qualifiedBindingName ctx.Graph node name

@@ -90,7 +90,7 @@ let generate
         match targetPlatform with
         | Core.Types.Dialects.TargetPlatform.FPGA ->
             let result = PSGElaboration.IntervalAnalysis.analyze flattenedGraph
-            printfn "[IntervalAnalysis] Inferred widths for %d nodes, struct widths for %d nodes" result.NodeWidths.Count result.StructNodeWidths.Count
+            ignore result  // Width inference result wired through coeffects
             Some result
         | _ -> None
 
