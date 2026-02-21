@@ -132,15 +132,38 @@ let private mulIntervals (a: ValueInterval) (b: ValueInterval) : ValueInterval =
     ]
     { Min = List.min products; Max = List.max products }
 
-let private divInterval (a: ValueInterval) (k: int64) : ValueInterval =
-    if k = 0L then a  // guard against div-by-zero; leave unchanged
-    elif k > 0L then { Min = a.Min / k; Max = a.Max / k }
-    else { Min = a.Max / k; Max = a.Min / k }  // negative divisor flips
+/// Division of two intervals. Four-corner analysis for non-zero-crossing divisors.
+let private divIntervals (a: ValueInterval) (b: ValueInterval) : ValueInterval =
+    if b.Min <= 0L && b.Max >= 0L then a  // divisor spans zero: can't bound
+    else
+        let corners = [
+            a.Min / b.Min; a.Min / b.Max
+            a.Max / b.Min; a.Max / b.Max ]
+        { Min = List.min corners; Max = List.max corners }
 
 let private modInterval (_a: ValueInterval) (k: int64) : ValueInterval =
     // x % K always in [0, K-1] for positive K (F# semantics for natural values)
     if k > 0L then { Min = 0L; Max = k - 1L }
     else { Min = 0L; Max = abs k - 1L }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRUCT FIELD MAXIMA — Pure combinators for merge-by-name-take-max
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Merge two struct field max-value lists: take max per field, union on names.
+/// This is the algebraic join operation for the struct width lattice.
+let private mergeFieldMaxima (existing: (string * int64) list) (incoming: (string * int64) list)
+                             : (string * int64) list =
+    if incoming.IsEmpty then existing
+    elif existing.IsEmpty then incoming
+    else
+        let existingMap = Map.ofList existing
+        incoming
+        |> List.fold (fun acc (name, maxVal) ->
+            match Map.tryFind name acc with
+            | Some old -> Map.add name (max old maxVal) acc
+            | None -> Map.add name maxVal acc) existingMap
+        |> Map.toList
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ANALYSIS
@@ -153,12 +176,17 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
     /// Try to get interval for a node (already computed)
     let tryGetInterval (NodeId id) = Map.tryFind id intervals
 
-    /// Record an interval for a node; tracks whether any value actually changed
+    /// Record an interval for a node; MERGES (widens) with any existing interval.
+    /// This guarantees monotonic convergence: intervals only grow, never shrink.
     let mutable intervalsChanged = false
     let recordInterval (NodeId id) (interval: ValueInterval) =
         match Map.tryFind id intervals with
-        | Some existing when existing = interval -> ()
-        | _ ->
+        | Some existing ->
+            let merged = { Min = min existing.Min interval.Min; Max = max existing.Max interval.Max }
+            if merged <> existing then
+                intervals <- Map.add id merged intervals
+                intervalsChanged <- true
+        | None ->
             intervals <- Map.add id interval intervals
             intervalsChanged <- true
 
@@ -278,13 +306,33 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
     // All scalar and struct phases iterate together until stable.
     // This handles nested function calls (step → applyCadenceButtons → clampPeriod),
     // struct width propagation through Bindings/VarRefs, and Mealy machine feedback.
-    let mutable structNodeWidths : Map<int, (string * int) list> = Map.empty
+    // Struct field max values: (fieldName, maxValue) during convergence.
+    // Converted to (fieldName, bits) only at the end — no lossy round-trip.
+    let mutable structFieldMaxima : Map<int, (string * int64) list> = Map.empty
+
+    /// Propagate incoming field maxima into structFieldMaxima for a node.
+    /// Pure merge via mergeFieldMaxima; only writes if the result changes.
+    let propagateFieldMaxima (id: int) (incoming: (string * int64) list) =
+        if incoming.IsEmpty then () else
+        match Map.tryFind id structFieldMaxima with
+        | Some existing ->
+            let merged = mergeFieldMaxima existing incoming
+            if merged <> existing then
+                structFieldMaxima <- Map.add id merged structFieldMaxima
+        | None ->
+            structFieldMaxima <- Map.add id incoming structFieldMaxima
+
+    /// Propagate from one node to another (transparent wrapper pattern).
+    let propagateFieldMaximaFrom (sourceId: int) (targetId: int) =
+        match Map.tryFind sourceId structFieldMaxima with
+        | Some fields -> propagateFieldMaxima targetId fields
+        | None -> ()
 
     let structFingerprint () =
-        let count = structNodeWidths.Count
-        let totalBits = structNodeWidths |> Map.fold (fun acc _ fields ->
-            fields |> List.fold (fun a (_, bits) -> a + bits) acc) 0
-        (count, totalBits)
+        let count = structFieldMaxima.Count
+        let totalMaxima = structFieldMaxima |> Map.fold (fun acc _ fields ->
+            fields |> List.fold (fun a (_, v) -> a + v) acc) 0L
+        (count, totalMaxima)
 
     let mutable mainChanged = true
     let mutable mainIter = 0
@@ -296,10 +344,10 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
         let prevStruct = structFingerprint ()
 
         // ── A: Scalar operations (arithmetic, comparison, VarRef, Binding) ──
+        // No write-once guard: recordInterval merges (widens), so recomputation
+        // is safe and necessary when operand intervals widen across iterations.
         for KeyValue(nodeId, node) in graph.Nodes do
             if not node.IsReachable then () else
-            let (NodeId id) = nodeId
-            if Map.containsKey id intervals then () else
 
             match node.Kind with
             | SemanticKind.Application (funcNodeId, argNodeIds) ->
@@ -320,10 +368,10 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                             match tryGetInterval lhsId, tryGetInterval rhsId with
                             | Some lhs, Some rhs -> recordInterval nodeId (mulIntervals lhs rhs)
                             | _ -> ()
-                        | IntrinsicModule.Operators, "op_Division", [_lhsId; rhsId] ->
-                            match tryGetInterval _lhsId, tryGetInterval rhsId with
-                            | Some lhs, Some rhs when rhs.Min = rhs.Max && rhs.Min <> 0L ->
-                                recordInterval nodeId (divInterval lhs rhs.Min)
+                        | IntrinsicModule.Operators, "op_Division", [lhsId; rhsId] ->
+                            match tryGetInterval lhsId, tryGetInterval rhsId with
+                            | Some lhs, Some rhs when rhs.Min > 0L || rhs.Max < 0L ->
+                                recordInterval nodeId (divIntervals lhs rhs)
                             | _ -> ()
                         | IntrinsicModule.Operators, "op_Modulus", [_lhsId; rhsId] ->
                             match tryGetInterval rhsId with
@@ -400,6 +448,41 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                 | None -> ()
             | _ -> ()
 
+        // ── B2: Comparison-derived interval seeding ──
+        // MUST run outside the write-once guard: comparison result nodes already
+        // have [0,1] from Phase 1B (bool type), so Phase A's guarded loop skips them.
+        // Both comparison operands need the same bit width in hardware.
+        // Seed/widen both to the max of either range, and propagate to definitions
+        // so all VarRefs of the same Binding see the widened interval.
+        for KeyValue(_, node) in graph.Nodes do
+            if not node.IsReachable then () else
+            match node.Kind with
+            | SemanticKind.Application (funcNodeId, argNodeIds) ->
+                match Map.tryFind funcNodeId graph.Nodes with
+                | Some { Kind = SemanticKind.Intrinsic info } when info.Category = IntrinsicCategory.Comparison ->
+                    let seedWithMax (targetId: NodeId) (maxVal: int64) =
+                        recordInterval targetId { Min = 0L; Max = maxVal }
+                        // Also seed the definition if target is a VarRef
+                        match Map.tryFind targetId graph.Nodes with
+                        | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
+                            recordInterval defId { Min = 0L; Max = maxVal }
+                        | _ -> ()
+                    match argNodeIds with
+                    | [lhsId; rhsId] ->
+                        match tryGetInterval lhsId, tryGetInterval rhsId with
+                        | Some lhs, None ->
+                            seedWithMax rhsId lhs.Max
+                        | None, Some rhs ->
+                            seedWithMax lhsId rhs.Max
+                        | Some lhs, Some rhs ->
+                            let maxMax = max lhs.Max rhs.Max
+                            seedWithMax lhsId maxMax
+                            seedWithMax rhsId maxMax
+                        | None, None -> ()
+                    | _ -> ()
+                | _ -> ()
+            | _ -> ()
+
         // ── C: Scalar interprocedural (arg → param) ──
         for KeyValue(_, node) in graph.Nodes do
             if not node.IsReachable then () else
@@ -426,8 +509,6 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
         // ── D: Scalar return propagation (body → call site) ──
         for KeyValue(nodeId, node) in graph.Nodes do
             if not node.IsReachable then () else
-            let (NodeId appIdVal) = nodeId
-            if Map.containsKey appIdVal intervals then () else
             match node.Kind with
             | SemanticKind.Application (funcNodeId, _) ->
                 match resolveLambdaBodyId funcNodeId with
@@ -439,158 +520,92 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                 | None -> ()
             | _ -> ()
 
-        // ── E: RecordExpr → structNodeWidths ──
+        // ── E: RecordExpr/TupleExpr → structFieldMaxima (store max values, not bits) ──
         for KeyValue(nodeId, node) in graph.Nodes do
             if not node.IsReachable then () else
+            let (NodeId id) = nodeId
             match node.Kind with
             | SemanticKind.RecordExpr (fields, _) ->
-                let fieldWidthList =
+                let fieldMaxima =
                     fields |> List.choose (fun (fieldName, valueId) ->
                         match tryGetInterval valueId with
-                        | Some interval ->
-                            let (bits, _) = bitsFromInterval interval
-                            Some (fieldName, max 1 bits)
+                        | Some interval -> Some (fieldName, max 0L interval.Max)
                         | None -> None)
-                let (NodeId id) = nodeId
-                if fieldWidthList.Length > 0 then
-                    match Map.tryFind id structNodeWidths with
-                    | Some existing ->
-                        // Merge by name: take max per field, add new fields
-                        let existingMap = Map.ofList existing
-                        let mergedMap =
-                            fieldWidthList |> List.fold (fun acc (n, bits) ->
-                                match Map.tryFind n acc with
-                                | Some old -> Map.add n (max old bits) acc
-                                | None -> Map.add n bits acc) existingMap
-                        structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
-                    | None ->
-                        structNodeWidths <- Map.add id fieldWidthList structNodeWidths
+                propagateFieldMaxima id fieldMaxima
             | SemanticKind.TupleExpr elementIds ->
-                // Tuples become TStruct [("Item1", ...); ("Item2", ...)] in MLIR.
-                // Propagate element intervals as tuple-level struct field widths.
-                let tupleFieldWidths =
+                let tupleMaxima =
                     elementIds |> List.mapi (fun i elemId ->
                         let itemName = sprintf "Item%d" (i + 1)
                         match tryGetInterval elemId with
-                        | Some interval ->
-                            let (bits, _) = bitsFromInterval interval
-                            Some (itemName, max 1 bits)
+                        | Some interval -> Some (itemName, max 0L interval.Max)
                         | None -> None)
-                let resolved = tupleFieldWidths |> List.choose id
-                if resolved.Length > 0 then
-                    let (NodeId tupleId) = nodeId
-                    match Map.tryFind tupleId structNodeWidths with
-                    | None -> structNodeWidths <- Map.add tupleId resolved structNodeWidths
-                    | Some existing ->
-                        let existingMap = Map.ofList existing
-                        let mergedMap =
-                            resolved |> List.fold (fun acc (n, bits) ->
-                                match Map.tryFind n acc with
-                                | Some old -> Map.add n (max old bits) acc
-                                | None -> Map.add n bits acc) existingMap
-                        structNodeWidths <- Map.add tupleId (Map.toList mergedMap) structNodeWidths
+                    |> List.choose (fun x -> x)
+                propagateFieldMaxima id tupleMaxima
             | _ -> ()
 
-        // ── F: Struct width through Binding/VarRef (transparent propagation) ──
-        // Bindings and VarRefs are transparent to struct widths — they inherit
-        // from their value (Binding → last child) or definition (VarRef → defId).
-        // This lets FieldGet on `let s = nextState(...)` resolve via Binding → Application.
+        // ── F: Struct field maxima through transparent wrappers ──
+        // Binding, VarRef, TypeAnnotation, Sequential, IfThenElse — propagate
+        // struct field maxima from source to wrapper node via mergeFieldMaxima.
         for KeyValue(nodeId, node) in graph.Nodes do
             if not node.IsReachable then () else
-            let (NodeId id) = nodeId
+            let (NodeId nid) = nodeId
             match node.Kind with
             | SemanticKind.Binding _ ->
                 match List.tryLast node.Children with
-                | Some valueId ->
-                    let (NodeId valId) = valueId
-                    match Map.tryFind valId structNodeWidths with
-                    | Some fieldWidths ->
-                        match Map.tryFind id structNodeWidths with
-                        | Some existing ->
-                            let existingMap = Map.ofList existing
-                            let mergedMap =
-                                fieldWidths |> List.fold (fun acc (n, bits) ->
-                                    match Map.tryFind n acc with
-                                    | Some old -> Map.add n (max old bits) acc
-                                    | None -> Map.add n bits acc) existingMap
-                            let merged = Map.toList mergedMap
-                            if merged <> existing then
-                                structNodeWidths <- Map.add id merged structNodeWidths
-                        | None ->
-                            structNodeWidths <- Map.add id fieldWidths structNodeWidths
-                    | None -> ()
+                | Some (NodeId valId) -> propagateFieldMaximaFrom valId nid
                 | None -> ()
-            | SemanticKind.VarRef (_, Some defId) ->
-                let (NodeId defIdVal) = defId
-                match Map.tryFind defIdVal structNodeWidths with
-                | Some fieldWidths ->
-                    match Map.tryFind id structNodeWidths with
-                    | None -> structNodeWidths <- Map.add id fieldWidths structNodeWidths
-                    | Some existing when existing <> fieldWidths ->
-                        let existingMap = Map.ofList existing
-                        let mergedMap =
-                            fieldWidths |> List.fold (fun acc (n, bits) ->
-                                match Map.tryFind n acc with
-                                | Some old -> Map.add n (max old bits) acc
-                                | None -> Map.add n bits acc) existingMap
-                        structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
-                    | _ -> ()
-                | None -> ()
-            | SemanticKind.TypeAnnotation (wrappedId, _) ->
-                let (NodeId wrappedIdVal) = wrappedId
-                match Map.tryFind wrappedIdVal structNodeWidths with
-                | Some fieldWidths ->
-                    match Map.tryFind id structNodeWidths with
-                    | None -> structNodeWidths <- Map.add id fieldWidths structNodeWidths
-                    | Some existing when existing <> fieldWidths ->
-                        let existingMap = Map.ofList existing
-                        let mergedMap =
-                            fieldWidths |> List.fold (fun acc (n, bits) ->
-                                match Map.tryFind n acc with
-                                | Some old -> Map.add n (max old bits) acc
-                                | None -> Map.add n bits acc) existingMap
-                        structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
-                    | _ -> ()
-                | None -> ()
+            | SemanticKind.VarRef (_, Some (NodeId defIdVal)) ->
+                propagateFieldMaximaFrom defIdVal nid
+            | SemanticKind.TypeAnnotation ((NodeId wrappedIdVal), _) ->
+                propagateFieldMaximaFrom wrappedIdVal nid
             | SemanticKind.Sequential children ->
                 match List.tryLast children with
-                | Some lastId ->
-                    let (NodeId lastIdVal) = lastId
-                    match Map.tryFind lastIdVal structNodeWidths with
-                    | Some fieldWidths ->
-                        match Map.tryFind id structNodeWidths with
-                        | None -> structNodeWidths <- Map.add id fieldWidths structNodeWidths
-                        | Some existing when existing <> fieldWidths ->
-                            let existingMap = Map.ofList existing
-                            let mergedMap =
-                                fieldWidths |> List.fold (fun acc (n, bits) ->
-                                    match Map.tryFind n acc with
-                                    | Some old -> Map.add n (max old bits) acc
-                                    | None -> Map.add n bits acc) existingMap
-                            structNodeWidths <- Map.add id (Map.toList mergedMap) structNodeWidths
-                        | _ -> ()
-                    | None -> ()
+                | Some (NodeId lastIdVal) -> propagateFieldMaximaFrom lastIdVal nid
                 | None -> ()
+            | SemanticKind.IfThenElse (_condId, thenId, elseIdOpt) ->
+                // Union struct field maxima from both branches
+                let (NodeId thenIdVal) = thenId
+                let branchIds = thenIdVal :: (elseIdOpt |> Option.map (fun (NodeId eid) -> eid) |> Option.toList)
+                let merged =
+                    branchIds |> List.fold (fun acc bid ->
+                        match Map.tryFind bid structFieldMaxima with
+                        | Some fields -> mergeFieldMaxima acc fields
+                        | None -> acc) []
+                propagateFieldMaxima nid merged
             | _ -> ()
 
-        // ── G: FieldGet → scalar intervals (via structNodeWidths) ──
+        // ── G: FieldGet/TupleGet → scalar intervals (via structFieldMaxima) ──
+        // Uses stored max values directly — no lossy bits→interval round-trip.
+        // No write-once guard: struct field maxima may widen across iterations.
         for KeyValue(nodeId, node) in graph.Nodes do
             if not node.IsReachable then () else
-            let (NodeId id) = nodeId
-            if Map.containsKey id intervals then () else
             match node.Kind with
             | SemanticKind.FieldGet (objId, fieldName) ->
-                // Resolve: VarRef → defId (PatternBinding), else use objId directly
                 let resolvedId =
                     match Map.tryFind objId graph.Nodes with
                     | Some { Kind = SemanticKind.VarRef (_, Some defId) } -> defId
                     | _ -> objId
                 let (NodeId resId) = resolvedId
-                match Map.tryFind resId structNodeWidths with
-                | Some fieldWidths ->
-                    match fieldWidths |> List.tryFind (fun (n, _) -> n = fieldName) with
-                    | Some (_, bits) ->
-                        let maxVal = maxPositiveForBits bits
+                match Map.tryFind resId structFieldMaxima with
+                | Some fieldMaxima ->
+                    match fieldMaxima |> List.tryFind (fun (n, _) -> n = fieldName) with
+                    | Some (_, maxVal) ->
+                        recordInterval nodeId { Min = 0L; Max = maxVal }
+                    | None -> ()
+                | None -> ()
+            | SemanticKind.TupleGet (tupleId, index) ->
+                // Tuple destructuring: extract scalar interval from tuple's struct field maxima.
+                // Phase E stores tuple element maxima as "Item1", "Item2", etc.
+                let resolvedId =
+                    match Map.tryFind tupleId graph.Nodes with
+                    | Some { Kind = SemanticKind.VarRef (_, Some defId) } -> defId
+                    | _ -> tupleId
+                let (NodeId resId) = resolvedId
+                let itemName = sprintf "Item%d" (index + 1)
+                match Map.tryFind resId structFieldMaxima with
+                | Some fieldMaxima ->
+                    match fieldMaxima |> List.tryFind (fun (n, _) -> n = itemName) with
+                    | Some (_, maxVal) ->
                         recordInterval nodeId { Min = 0L; Max = maxVal }
                     | None -> ()
                 | None -> ()
@@ -606,23 +621,8 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                     let paramNodeIds = params' |> List.map (fun (_, _, pid) -> pid)
                     let pairCount = min (List.length argNodeIds) (List.length paramNodeIds)
                     let pairs = List.zip (List.truncate pairCount argNodeIds) (List.truncate pairCount paramNodeIds)
-                    for (argId, paramId) in pairs do
-                        let (NodeId argIdVal) = argId
-                        let (NodeId paramIdVal) = paramId
-                        match Map.tryFind argIdVal structNodeWidths with
-                        | Some argFieldWidths ->
-                            match Map.tryFind paramIdVal structNodeWidths with
-                            | Some existing ->
-                                let existingMap = Map.ofList existing
-                                let mergedMap =
-                                    argFieldWidths |> List.fold (fun acc (n, bits) ->
-                                        match Map.tryFind n acc with
-                                        | Some old -> Map.add n (max old bits) acc
-                                        | None -> Map.add n bits acc) existingMap
-                                structNodeWidths <- Map.add paramIdVal (Map.toList mergedMap) structNodeWidths
-                            | None ->
-                                structNodeWidths <- Map.add paramIdVal argFieldWidths structNodeWidths
-                        | None -> ()
+                    for (NodeId argIdVal, NodeId paramIdVal) in pairs do
+                        propagateFieldMaximaFrom argIdVal paramIdVal
                 | None -> ()
             | _ -> ()
 
@@ -633,29 +633,15 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
             | SemanticKind.Application (funcNodeId, _) ->
                 match resolveLambdaBodyId funcNodeId with
                 | Some bodyId ->
-                    let lastValueId = findLastValue bodyId
-                    let (NodeId lastIdVal) = lastValueId
+                    let (NodeId lastIdVal) = findLastValue bodyId
                     let (NodeId appIdVal) = nodeId
-                    match Map.tryFind lastIdVal structNodeWidths with
-                    | Some returnFieldWidths ->
-                        match Map.tryFind appIdVal structNodeWidths with
-                        | Some existing ->
-                            let existingMap = Map.ofList existing
-                            let mergedMap =
-                                returnFieldWidths |> List.fold (fun acc (n, bits) ->
-                                    match Map.tryFind n acc with
-                                    | Some old -> Map.add n (max old bits) acc
-                                    | None -> Map.add n bits acc) existingMap
-                            structNodeWidths <- Map.add appIdVal (Map.toList mergedMap) structNodeWidths
-                        | None ->
-                            structNodeWidths <- Map.add appIdVal returnFieldWidths structNodeWidths
-                    | None -> ()
+                    propagateFieldMaximaFrom lastIdVal appIdVal
                 | None -> ()
             | _ -> ()
 
         // ── J: Lambda feedback (return → parameter) ──
         // For Mealy machines: step(state, inputs) → (newState, outputs)
-        // Propagate return struct field widths back to matching parameters.
+        // Propagate return struct field maxima back to matching parameters.
         for KeyValue(_, node) in graph.Nodes do
             if not node.IsReachable then () else
             match node.Kind with
@@ -663,46 +649,32 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                 let lastNodeId = findLastValue bodyId
                 let (NodeId lastIdVal) = lastNodeId
 
-                let tryPropagateToParam (fieldWidths: (string * int) list) =
-                    if fieldWidths.IsEmpty then () else
-                    let widthMap = Map.ofList fieldWidths
+                let tryPropagateToParam (fieldMaxima: (string * int64) list) =
+                    if fieldMaxima.IsEmpty then () else
                     for (_, paramType, paramNodeId) in params' do
                         match paramType with
                         | NativeType.TApp(tycon, _) when tycon.FieldCount > 0 &&
-                                                         fieldWidths.Length <= tycon.FieldCount ->
+                                                         fieldMaxima.Length <= tycon.FieldCount ->
                             let (NodeId paramIdVal) = paramNodeId
-                            match Map.tryFind paramIdVal structNodeWidths with
-                            | Some existing ->
-                                let merged =
-                                    existing |> List.map (fun (n, bits) ->
-                                        match Map.tryFind n widthMap with
-                                        | Some newBits -> (n, max bits newBits)
-                                        | None -> (n, bits))
-                                let existingNames = existing |> List.map fst |> Set.ofList
-                                let additions = fieldWidths |> List.filter (fun (n, _) -> not (Set.contains n existingNames))
-                                structNodeWidths <- Map.add paramIdVal (merged @ additions) structNodeWidths
-                            | None ->
-                                structNodeWidths <- Map.add paramIdVal fieldWidths structNodeWidths
+                            propagateFieldMaxima paramIdVal fieldMaxima
                         | _ -> ()
 
                 // Case A: Direct — return struct matches a parameter
-                match Map.tryFind lastIdVal structNodeWidths with
-                | Some returnFieldWidths -> tryPropagateToParam returnFieldWidths
+                match Map.tryFind lastIdVal structFieldMaxima with
+                | Some returnMaxima -> tryPropagateToParam returnMaxima
                 | None -> ()
 
                 // Case B: Decompose TupleExpr/RecordExpr components
                 match Map.tryFind lastNodeId graph.Nodes with
                 | Some { Kind = SemanticKind.RecordExpr (fields, _) } ->
-                    for (_, fieldValueId) in fields do
-                        let (NodeId fieldValId) = fieldValueId
-                        match Map.tryFind fieldValId structNodeWidths with
-                        | Some innerFieldWidths -> tryPropagateToParam innerFieldWidths
+                    for (_, NodeId fieldValId) in fields do
+                        match Map.tryFind fieldValId structFieldMaxima with
+                        | Some inner -> tryPropagateToParam inner
                         | None -> ()
                 | Some { Kind = SemanticKind.TupleExpr elementIds } ->
-                    for elemId in elementIds do
-                        let (NodeId elemIdVal) = elemId
-                        match Map.tryFind elemIdVal structNodeWidths with
-                        | Some innerFieldWidths -> tryPropagateToParam innerFieldWidths
+                    for (NodeId elemIdVal) in elementIds do
+                        match Map.tryFind elemIdVal structFieldMaxima with
+                        | Some inner -> tryPropagateToParam inner
                         | None -> ()
                 | _ -> ()
             | _ -> ()
@@ -711,8 +683,14 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
         let newStruct = structFingerprint ()
         mainChanged <- intervalsChanged || newIntervalCount > prevIntervalCount || newStruct <> prevStruct
 
-    // Converged: %d iterations, %d intervals, %d struct entries
-    ignore (mainIter, intervals.Count, structNodeWidths.Count)
+    // Converged — convert struct field maxima to bits (once, no round-trip)
+    ignore (mainIter, intervals.Count, structFieldMaxima.Count)
+
+    let structNodeWidths =
+        structFieldMaxima |> Map.map (fun _ fields ->
+            fields |> List.map (fun (name, maxVal) ->
+                let (bits, _) = bitsFromInterval { Min = 0L; Max = maxVal }
+                (name, max 1 bits)))
 
     // ═══════════════════════════════════════════════════════════════════════════
     // OPERAND WIDTH HARMONIZATION
@@ -739,13 +717,13 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                     | SemanticKind.Intrinsic info when info.Category = IntrinsicCategory.Arithmetic
                                                     || info.Category = IntrinsicCategory.Comparison ->
                         let argWidths =
-                            argNodeIds |> List.choose (fun (NodeId id) ->
-                                Map.tryFind id nodeWidths |> Option.map (fun w -> (id, w)))
+                            argNodeIds |> List.choose (fun (NodeId aid) ->
+                                Map.tryFind aid nodeWidths |> Option.map (fun w -> (aid, w)))
                         if argWidths.Length > 0 then
                             let maxBits = argWidths |> List.map (fun (_, w) -> w.Bits) |> List.max
-                            for (id, w) in argWidths do
+                            for (aid, w) in argWidths do
                                 if w.Bits < maxBits then
-                                    nodeWidths <- Map.add id { w with Bits = maxBits } nodeWidths
+                                    nodeWidths <- Map.add aid { w with Bits = maxBits } nodeWidths
                                     harmChanged <- true
                     | _ -> ()
                 | None -> ()
