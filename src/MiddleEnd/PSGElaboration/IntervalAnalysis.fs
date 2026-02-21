@@ -474,9 +474,14 @@ let analyze (graph: SemanticGraph) : WidthInferenceResult =
                             seedWithMax rhsId lhs.Max
                         | None, Some rhs ->
                             seedWithMax lhsId rhs.Max
-                        | Some _lhs, Some _rhs ->
-                            () // Both already have intervals — don't widen.
-                               // Operand bit-width harmonization is a separate post-convergence pass.
+                        | Some lhs, Some rhs ->
+                            // Widen the NARROWER non-constant operand to the wider one's max.
+                            // Point intervals (Min = Max) are constants — never widen them.
+                            // This ensures counters reach their thresholds without poisoning constants.
+                            if rhs.Max > lhs.Max && lhs.Min <> lhs.Max then
+                                seedWithMax lhsId rhs.Max
+                            elif lhs.Max > rhs.Max && rhs.Min <> rhs.Max then
+                                seedWithMax rhsId lhs.Max
                         | None, None -> ()
                     | _ -> ()
                 | _ -> ()
