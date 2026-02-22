@@ -169,6 +169,8 @@
 
       <!-- Core - Pipeline Resolution (AFTER backends, BEFORE orchestrator) -->
       <Compile Include="Core/PlatformPipeline.fs" />
+      <!-- CLI Output (colored diagnostics — before orchestrator so it can emit) -->
+      <Compile Include="CLI/Output.fs" />
       <!-- Core - Top-level Compilation Orchestration (AFTER all components) -->
       <Compile Include="Core/CompilationOrchestrator.fs" />
 
@@ -189,6 +191,8 @@
     <PackageReference Include="IcedTasks" Version="0.11.7" />
     <!-- FNCS: F# Native Compiler Services (native type universe) -->
     <ProjectReference Include="../../clef/src/Compiler/Clef.Compiler.Service.fsproj" />
+    <!-- TUI foundation (Color/Style types now, full TUI later) -->
+    <ProjectReference Include="../../Thuja/src/Thuja/Thuja.fsproj" />
     <PackageReference Include="XParsec" Version="0.3.0" />
     <PackageReference Include="Argu" Version="6.1.1" />
     <PackageReference Include="FSharp.SystemTextJson" Version="1.2.42" />

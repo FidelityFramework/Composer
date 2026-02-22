@@ -29,6 +29,7 @@ type CompileArgs =
     | [<AltCommandLine("-T")>] Timing
     | Emit_MLIR
     | Emit_LLVM
+    | [<AltCommandLine("--warnaserror")>] Warn_As_Error
 
     interface IArgParserTemplate with
         member this.Usage =
@@ -41,6 +42,7 @@ type CompileArgs =
             | Timing -> "Show timing for each compilation phase"
             | Emit_MLIR -> "Emit MLIR and stop (don't generate executable)"
             | Emit_LLVM -> "Emit LLVM IR and stop (don't generate executable)"
+            | Warn_As_Error -> "Treat warnings as errors"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compile Command Handler
@@ -74,6 +76,7 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
         EmitLLVMOnly = args.Contains(Emit_LLVM)
         Verbose = args.Contains(Verbose)
         ShowTiming = args.Contains(Timing)
+        TreatWarningsAsErrors = args.Contains(Warn_As_Error)
     }
 
     // THE single entry point for compilation

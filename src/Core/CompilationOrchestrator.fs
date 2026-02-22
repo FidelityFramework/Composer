@@ -30,6 +30,7 @@ type CompilationOptions = {
     EmitLLVMOnly: bool
     Verbose: bool
     ShowTiming: bool
+    TreatWarningsAsErrors: bool
 }
 
 type CompilationContext = {
@@ -48,6 +49,26 @@ type CompilationContext = {
 let private runFrontEnd (projectPath: string) : Result<ProjectCheckResult, string> =
     timePhase "FrontEnd" "F# → PSG (Type Checking & Semantic Graph)" (fun () ->
         FrontEnd.ProjectLoader.load projectPath)
+
+/// Diagnostic gate — emits all diagnostics with colored formatting, short-circuits on errors.
+/// Tiered model: unreachable diagnostics are demoted to info by effective severity.
+/// When warnaserror is set, warnings (from reachable code) promote to errors.
+let private requireCleanDiagnostics (warnaserror: bool) (project: ProjectCheckResult) : Result<ProjectCheckResult, string> =
+    let projectDir = Some project.Options.ProjectDirectory
+    let diagnostics = project.CheckResult.Diagnostics
+
+    // Emit all diagnostics with colored formatting
+    let (errors, warnings, infos) = CLI.Output.emitAllDiagnostics projectDir diagnostics
+    CLI.Output.emitSummary errors warnings infos
+
+    // Short-circuit: errors always stop compilation (only reachable errors — unreachable demoted)
+    if ProjectChecker.hasErrors project then
+        Error (ProjectChecker.getErrorMessages project |> String.concat "\n")
+    // Monadic lift: warnaserror promotes warnings to Result.Error (only reachable warnings)
+    elif warnaserror && ProjectChecker.hasWarnings project then
+        Error (ProjectChecker.getWarningMessages project |> String.concat "\n")
+    else
+        Ok project
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 2: MiddleEnd (Alex + PSGElaboration)
@@ -139,6 +160,7 @@ let compileProject (options: CompilationOptions) : int =
     let result =
         // Phase 1: FrontEnd - Compile F# to PSG
         runFrontEnd options.ProjectPath
+        |> Result.bind (requireCleanDiagnostics options.TreatWarningsAsErrors)
         |> Result.bind (fun project ->
             let ctx = setupContext options project
 
