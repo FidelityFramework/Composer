@@ -126,7 +126,8 @@ let generate
             | Some dir ->
                 let finalPath = Path.Combine(dir, "10_output.mlir")
                 File.WriteAllText(finalPath, mlirText)
-                printfn "[Alex] Wrote final MLIR: 10_output.mlir"
+                if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                    printfn "[Alex] Wrote final MLIR: 10_output.mlir"
             | None -> ()
 
             // XDC transfer — parallel residual from pin mapping coeffect (FPGA only)
@@ -137,7 +138,8 @@ let generate
                 | Some dir ->
                     let xdcPath = Path.Combine(dir, "constraints.xdc")
                     File.WriteAllText(xdcPath, xdcText)
-                    printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                    if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                        printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
                 | None -> ()
             | None -> ()
 

@@ -165,7 +165,8 @@ let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (
         let mlirText = Alex.Dialects.Core.Serialize.moduleToString "main" afterDecls
         let filePath = System.IO.Path.Combine(dir, "08_after_declaration_collection.mlir")
         System.IO.File.WriteAllText(filePath, mlirText)
-        printfn "[Alex] Wrote nanopass intermediate: 08_after_declaration_collection.mlir"
+        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+            printfn "[Alex] Wrote nanopass intermediate: 08_after_declaration_collection.mlir"
     | None -> ()
 
     // Future passes will be composed here:

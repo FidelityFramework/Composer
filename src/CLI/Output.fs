@@ -81,11 +81,18 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics
 /// Colored: location, severity label, diagnostic code.
 /// Plain: message body.
 /// Dim: [unreachable] tag.
-let emitDiagnostic (projectDir: string option) (diag: Diagnostic) =
+let emitDiagnostic (warnaserror: bool) (projectDir: string option) (diag: Diagnostic) =
     let effectiveSev = Diagnostic.effectiveSeverity diag
 
+    // When warnaserror is set, elevate reachable warnings to errors in display
+    let displaySev =
+        if warnaserror && effectiveSev = NativeDiagnosticSeverity.Warning then
+            NativeDiagnosticSeverity.Error
+        else
+            effectiveSev
+
     let sevLabel, sevColor =
-        match effectiveSev with
+        match displaySev with
         | NativeDiagnosticSeverity.Error   -> "error", errorColor
         | NativeDiagnosticSeverity.Warning -> "warning", warningColor
         | NativeDiagnosticSeverity.Info    -> "info", infoColor
@@ -101,17 +108,23 @@ let emitDiagnostic (projectDir: string option) (diag: Diagnostic) =
     eprintfn "%s: %s %s: %s%s" location (c sevColor sevLabel) (c sevColor diag.Code) diag.Message reachTag
 
 /// Emit all diagnostics grouped by effective severity.
-/// Returns (errors, warnings, infos) counts.
-let emitAllDiagnostics (projectDir: string option) (diagnostics: Diagnostic list) =
+/// When warnaserror is set, reachable warnings are elevated to errors in both display and counts.
+/// Returns (errors, warnings, infos) counts reflecting the elevation.
+let emitAllDiagnostics (warnaserror: bool) (projectDir: string option) (diagnostics: Diagnostic list) =
     let errors = diagnostics |> List.filter (fun d -> Diagnostic.effectiveSeverity d = NativeDiagnosticSeverity.Error)
     let warnings = diagnostics |> List.filter (fun d -> Diagnostic.effectiveSeverity d = NativeDiagnosticSeverity.Warning)
     let infos = diagnostics |> List.filter (fun d -> Diagnostic.effectiveSeverity d = NativeDiagnosticSeverity.Info)
 
-    for d in errors do emitDiagnostic projectDir d
-    for d in warnings do emitDiagnostic projectDir d
-    for d in infos do emitDiagnostic projectDir d
+    // Emit in severity order: errors first, then warnings (elevated if warnaserror), then info
+    for d in errors do emitDiagnostic warnaserror projectDir d
+    for d in warnings do emitDiagnostic warnaserror projectDir d
+    for d in infos do emitDiagnostic warnaserror projectDir d
 
-    (List.length errors, List.length warnings, List.length infos)
+    // Return counts reflecting elevation
+    if warnaserror then
+        (List.length errors + List.length warnings, 0, List.length infos)
+    else
+        (List.length errors, List.length warnings, List.length infos)
 
 /// Emit a summary line after diagnostics.
 let emitSummary (errors: int) (warnings: int) (infos: int) =

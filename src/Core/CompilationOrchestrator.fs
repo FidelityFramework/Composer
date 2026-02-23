@@ -57,16 +57,13 @@ let private requireCleanDiagnostics (warnaserror: bool) (project: ProjectCheckRe
     let projectDir = Some project.Options.ProjectDirectory
     let diagnostics = project.CheckResult.Diagnostics
 
-    // Emit all diagnostics with colored formatting
-    let (errors, warnings, infos) = CLI.Output.emitAllDiagnostics projectDir diagnostics
+    // Emit all diagnostics with colored formatting (warnaserror elevates warnings to errors)
+    let (errors, warnings, infos) = CLI.Output.emitAllDiagnostics warnaserror projectDir diagnostics
     CLI.Output.emitSummary errors warnings infos
 
-    // Short-circuit: errors always stop compilation (only reachable errors — unreachable demoted)
-    if ProjectChecker.hasErrors project then
-        Error (ProjectChecker.getErrorMessages project |> String.concat "\n")
-    // Monadic lift: warnaserror promotes warnings to Result.Error (only reachable warnings)
-    elif warnaserror && ProjectChecker.hasWarnings project then
-        Error (ProjectChecker.getWarningMessages project |> String.concat "\n")
+    // Short-circuit on errors (includes elevated warnings when warnaserror is set)
+    if errors > 0 then
+        Error (sprintf "Compilation failed with %d error(s)" errors)
     else
         Ok project
 
@@ -137,7 +134,9 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
 let compileProject (options: CompilationOptions) : int =
     // Setup
     setEnabled options.ShowTiming
-    if options.Verbose then enableVerboseMode()
+    if options.Verbose then
+        enableVerboseMode()
+        enableVerbose()
 
     let version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()
                   |> Option.ofObj

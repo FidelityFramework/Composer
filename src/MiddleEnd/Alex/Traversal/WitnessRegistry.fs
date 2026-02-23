@@ -174,11 +174,6 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         )
 
     let finalRegistry = { leafRegistry with Nanopasses = allNanopasses.Value }
-
-    printfn "[WitnessRegistry] Final registry has %d nanopasses: %s"
-        (List.length finalRegistry.Nanopasses)
-        (finalRegistry.Nanopasses |> List.map (fun np -> np.Name) |> String.concat ", ")
-
     globalRegistry <- finalRegistry
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -147,7 +147,8 @@ let private serializePhaseResult (intermediatesDir: string) (phaseName: string) 
 
     let json = JsonSerializer.Serialize(summary, JsonSerializerOptions(WriteIndented = true))
     File.WriteAllText(filePath, json)
-    printfn "[Alex] Wrote nanopass result: %s" fileName
+    if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+        printfn "[Alex] Wrote nanopass result: %s" fileName
 
 /// Main entry point: Run all nanopasses in single-phase post-order traversal
 let executeNanopasses
@@ -171,7 +172,8 @@ let executeNanopasses
         // SINGLE-PHASE EXECUTION: All witnesses in one post-order traversal
         // ═════════════════════════════════════════════════════════════════════════
 
-        printfn "[Alex] Single-phase execution: %d registered nanopasses" (List.length registry.Nanopasses)
+        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+            printfn "[Alex] Single-phase execution: %d registered nanopasses" (List.length registry.Nanopasses)
 
         // Run all nanopasses together in single traversal
         runNanopassesSequentialShared registry.Nanopasses graph coeffects sharedAcc globalVisited
@@ -208,12 +210,13 @@ let executeNanopasses
 
             let totalOps = MLIRAccumulator.totalOperations sharedAcc
             let allOpsCount = List.length sharedAcc.AllOps
-            printfn "[Alex] Coverage: %d/%d witnessed (%.1f%%), %d ops in %d stream items"
-                stats.WitnessedNodes
-                stats.ReachableNodes
-                stats.CoveragePercentage
-                totalOps
-                allOpsCount
+            if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                printfn "[Alex] Coverage: %d/%d witnessed (%.1f%%), %d ops in %d stream items"
+                    stats.WitnessedNodes
+                    stats.ReachableNodes
+                    stats.CoveragePercentage
+                    totalOps
+                    allOpsCount
         | None -> ()
 
         sharedAcc

@@ -1499,11 +1499,6 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
                 | _ -> true)
         |> List.map (fun (_, node) -> NodeId.value node.Id, node.Kind)
 
-    if not (List.isEmpty unassignedNodes) then
-        printfn "[SSA VALIDATION] Found %d unassigned value-producing nodes:" (List.length unassignedNodes)
-        for (id, kind) in unassignedNodes |> List.take (min 10 (List.length unassignedNodes)) do
-            printfn "  Node %d: %A" id kind
-
     // Convert mutable dictionaries to immutable maps
     let closureLayouts = 
         mutableClosureLayouts
