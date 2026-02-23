@@ -16,9 +16,12 @@ open Thuja.Styles
 // ANSI Bridge — Thuja.Color → SGR escape sequences
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Color support: on by default, disabled by NO_COLOR env var (https://no-color.org/)
-let private useColor =
+/// Color support: on by default, disabled by --no-color flag or NO_COLOR env var (https://no-color.org/)
+let mutable private useColor =
     Environment.GetEnvironmentVariable("NO_COLOR") |> isNull
+
+/// Disable colored output (called from CLI when --no-color is passed)
+let disableColor () = useColor <- false
 
 /// Convert a Thuja Color to its ANSI SGR foreground code
 let private fg (color: Color) =

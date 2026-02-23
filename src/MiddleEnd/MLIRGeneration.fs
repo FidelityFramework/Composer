@@ -33,22 +33,13 @@ let generate
     (intermediatesDir: string option)
     : Result<string, string> =
 
-    // Parse platform info from FNCS context
-    let (os, arch) =
-        match platformCtx.PlatformId with
-        | id when id.Contains("Linux") && id.Contains("x86_64") -> (Linux, X86_64)
-        | id when id.Contains("Linux") && id.Contains("ARM64") -> (Linux, ARM64)
-        | id when id.Contains("Windows") && id.Contains("x86_64") -> (Windows, X86_64)
-        | id when id.Contains("MacOS") && id.Contains("x86_64") -> (MacOS, X86_64)
-        | id when id.Contains("MacOS") && id.Contains("ARM64") -> (MacOS, ARM64)
-        | _ -> (Linux, X86_64)
+    // Resolve OS and architecture from PlatformContext binding metadata.
+    // Authoritative when RuntimeModel is present; falls back to PlatformId string parsing.
+    let (os, arch) = PSGElaboration.PlatformConfig.resolveOSArch platformCtx
 
-    let runtimeMode =
-        match deploymentMode with
-        | Core.Types.Dialects.DeploymentMode.Freestanding -> PSGElaboration.PlatformConfig.Freestanding
-        | Core.Types.Dialects.DeploymentMode.Console -> PSGElaboration.PlatformConfig.Console
-        | Core.Types.Dialects.DeploymentMode.Library -> PSGElaboration.PlatformConfig.Console
-        | Core.Types.Dialects.DeploymentMode.Embedded -> PSGElaboration.PlatformConfig.Freestanding
+    // Resolve runtime mode from binding metadata (RuntimeModel coeffect).
+    // Falls back to DeploymentMode mapping for legacy bindings without [platform].
+    let runtimeMode = PSGElaboration.PlatformConfig.resolveRuntimeMode platformCtx deploymentMode
 
     // Phase 0: Flatten curried lambdas (graph normalization BEFORE coeffect analysis)
     // Merges Lambda(a) → Lambda(b) → body into Lambda(a,b) → body

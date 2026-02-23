@@ -14,7 +14,7 @@ open Alex.Patterns.PlatformPatterns
 open XParsec.Combinators  // <|>
 
 let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    let combined = pSysWriteIntrinsic <|> pSysReadIntrinsic
+    let combined = pSysWriteIntrinsic <|> pSysReadIntrinsic <|> pSysReadlineIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
     | None -> WitnessOutput.skip

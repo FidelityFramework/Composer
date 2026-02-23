@@ -213,25 +213,47 @@ type PlatformModel = {
     NeedsStartWrapper: bool
 }
 
+/// Resolve OS and architecture from PlatformContext.
+/// Uses PlatformId to determine OS/arch. The PlatformId now comes from
+/// binding metadata (arch field) when available, or path-string inference for legacy.
+let resolveOSArch (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext) : OSFamily * Architecture =
+    match ctx.PlatformId with
+    | id when id.Contains("x86_64") || id.Contains("x86-64") -> (Linux, X86_64)
+    | id when id.Contains("arm_cortex_m7") || id.Contains("arm_cortex_m33") || id.Contains("arm32") -> (Linux, ARM32_Thumb)
+    | id when id.Contains("ARM64") || id.Contains("aarch64") -> (Linux, ARM64)
+    | id when id.Contains("riscv64") -> (Linux, RISCV64)
+    | id when id.Contains("riscv32") -> (Linux, RISCV32)
+    | _ -> (Linux, X86_64)
+
+/// Resolve runtime mode from PlatformContext binding metadata.
+/// When RuntimeModel is present (from [platform] section), it is authoritative.
+/// Falls back to DeploymentMode mapping for legacy bindings.
+let resolveRuntimeMode
+    (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext)
+    (deploymentMode: Core.Types.Dialects.DeploymentMode)
+    : RuntimeMode =
+    match ctx.RuntimeModel with
+    | Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Libc -> Console
+    | Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Freestanding -> Freestanding
+    | Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Bare -> Freestanding
+    | Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.ROCm -> Console
+    | Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.XDNA -> Console
+    | None ->
+        // Legacy fallback: infer from DeploymentMode
+        match deploymentMode with
+        | Core.Types.Dialects.DeploymentMode.Freestanding -> Freestanding
+        | Core.Types.Dialects.DeploymentMode.Console -> Console
+        | Core.Types.Dialects.DeploymentMode.Library -> Console
+        | Core.Types.Dialects.DeploymentMode.Embedded -> Freestanding
+
 /// Build PlatformResolutionResult from FNCS PlatformContext
 let fromPlatformContext (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext) (mode: RuntimeMode) : PlatformResolutionResult =
-    // Parse platform ID to extract OS and architecture
-    // Format is typically "Linux_x86_64", "Windows_ARM64", etc.
-    let (os, arch) =
-        match ctx.PlatformId with
-        | id when id.Contains("Linux") && id.Contains("x86_64") -> (Linux, X86_64)
-        | id when id.Contains("Linux") && id.Contains("ARM64") -> (Linux, ARM64)
-        | id when id.Contains("Windows") && id.Contains("x86_64") -> (Windows, X86_64)
-        | id when id.Contains("MacOS") && id.Contains("x86_64") -> (MacOS, X86_64)
-        | id when id.Contains("MacOS") && id.Contains("ARM64") -> (MacOS, ARM64)
-        | _ -> (Linux, X86_64)  // Default fallback
-
+    let (os, arch) = resolveOSArch ctx
     {
         TargetOS = os
         TargetArch = arch
         RuntimeMode = mode
         PlatformWordType = platformWordType arch
-        // TODO: Populate Bindings from actual platform binding resolution
-        Bindings = Map.empty  // Will be populated by binding resolution pass
+        Bindings = Map.empty
         NeedsStartWrapper = (mode = Freestanding)
     }

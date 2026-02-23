@@ -174,6 +174,12 @@ type FuncVisibility =
 // MLIR OPERATIONS (for type-safe MLIR construction)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Dimension parameter for memref.subview: compile-time constant or runtime SSA value
+[<RequireQualifiedAccess>]
+type SubViewParam =
+    | Static of int64
+    | Dynamic of SSA
+
 /// MemRef dialect operations (standard MLIR memory operations)
 type MemRefOp =
     | Load of SSA * SSA * SSA list * MLIRType * MLIRType               // result, memref, indices, elemType, memrefType
@@ -181,7 +187,9 @@ type MemRefOp =
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment (stack, compile-time size)
     | Alloc of SSA * SSA * MLIRType                                    // result, sizeSSA, elementType (heap, runtime size)
     | AllocStatic of SSA * MLIRType * int option                        // result, memrefType, alignment (heap, compile-time size)
-    | SubView of SSA * SSA * SSA list * MLIRType                       // result, source, offsets, resultType
+    | SubView of SSA * SSA * SSA list * MLIRType                       // result, source, offsets, resultType (legacy element access)
+    | SubViewSlice of SSA * SSA * SSA list * SubViewParam list * SubViewParam list * MLIRType  // result, source, offsets, sizes, strides, sourceType (proper MLIR 3-group, strided result)
+    | SubViewCopy of SSA * SSA * SSA list * SubViewParam list * SubViewParam list * SSA * MLIRType  // result, source, offsets, sizes, strides, sizeIndexSSA, sourceType (subview → alloc → copy: fresh contiguous buffer)
     | ExtractBasePtr of SSA * SSA * MLIRType                           // result, memref, memrefType → !llvm.ptr (for FFI)
     | GetGlobal of SSA * string * MLIRType                             // result, globalName, memrefType
     | Dim of SSA * SSA * SSA * MLIRType                                // result, memref, dimIndex, memrefType (returns index)

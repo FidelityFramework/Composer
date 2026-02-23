@@ -770,3 +770,111 @@ let pArenaAllocIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (_, sizeSSA, _) = pRecallArgWithLoad argIds.[1]
         return! pArenaAlloc node.Id arenaSSA sizeSSA arenaType
     }
+
+// ═══════════════════════════════════════════════════════════
+// ARRAY INTRINSIC PARSERS
+// ═══════════════════════════════════════════════════════════
+
+/// Array.zeroCreate<'T> intrinsic — allocate zeroed array
+/// int -> 'T[]  (size -> memref<?xelemType>)
+///
+/// SSA layout (1 SSA):
+///   [0] = resultSSA (memref.alloc result)
+let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
+        do! ensure (info.Operation = "zeroCreate") "Not Array.zeroCreate"
+        do! ensure (argIds.Length >= 1) "Array.zeroCreate: Expected 1 arg"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 2) $"pArrayZeroCreate: Expected 2 SSAs, got {ssas.Length}"
+        let resultSSA = ssas.[0]
+        let sizeIndexSSA = ssas.[1]
+
+        // Recall the size argument (may be i64, need index for memref.alloc)
+        let! (_, sizeSSA, sizeType) = pRecallArgWithLoad argIds.[0]
+
+        // Cast size to index type (memref.alloc requires index)
+        let! castOp = pIndexCastS sizeIndexSSA sizeSSA sizeType TIndex
+
+        // Element type from the result type (Array<byte> → memref<?xi8>)
+        let! state = getUserState
+        let elemType =
+            match state.Current.Type with
+            | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "array" ->
+                mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph innerTy
+            | _ -> TInt (IntWidth 8)  // Default to byte for Array.zeroCreate<byte>
+
+        let! allocOp = pAlloc resultSSA sizeIndexSSA elemType
+        let resultType = TMemRef elemType
+        return ([castOp; allocOp], TRValue { SSA = resultSSA; Type = resultType })
+    }
+
+/// Array.set intrinsic — store element at index
+/// 'T[] -> int -> 'T -> unit  (array -> index -> value -> unit)
+///
+/// SSA layout (1 SSA):
+///   [0] = indexCastSSA (index.casts for memref index)
+let pArraySetIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
+        do! ensure (info.Operation = "set") "Not Array.set"
+        do! ensure (argIds.Length >= 3) "Array.set: Expected 3 args"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 1) $"pArraySet: Expected 1 SSA, got {ssas.Length}"
+        let indexCastSSA = ssas.[0]
+
+        let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
+        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
+        let! (_, valueSSA, _) = pRecallArgWithLoad argIds.[2]
+
+        // Cast index to index type (memref.store requires index-typed indices)
+        let! castOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
+
+        // Element type from the array type (NOT current node type which is unit)
+        let elemType =
+            match arrayType with
+            | TMemRef t -> t
+            | TMemRefStatic (_, t) -> t
+            | _ -> TInt (IntWidth 8)  // Default to byte
+
+        // Direct memref.store (no SubView needed)
+        let! storeOp = pStore valueSSA arraySSA [indexCastSSA] elemType arrayType
+        return ([castOp; storeOp], TRVoid)
+    }
+
+/// Array.sub intrinsic — extract subarray (offset + length)
+/// 'T[] -> int -> int -> 'T[]  (source -> startIndex -> count -> result)
+///
+/// Creates a contiguous copy of source[offset..offset+count].
+/// SubViewCopy: subview → alloc → copy (fresh buffer for correct FFI pointer extraction).
+///
+/// SSA layout (3 SSAs):
+///   [0] = resultSSA (fresh contiguous alloc)
+///   [1] = offsetIndexSSA (index.casts for offset)
+///   [2] = countIndexSSA (index.casts for count)
+let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
+        do! ensure (info.Operation = "sub") "Not Array.sub"
+        do! ensure (argIds.Length >= 3) "Array.sub: Expected 3 args"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 3) $"pArraySub: Expected 3 SSAs, got {ssas.Length}"
+        let resultSSA = ssas.[0]
+        let offsetIndexSSA = ssas.[1]
+        let countIndexSSA = ssas.[2]
+
+        let! (_, sourceSSA, sourceType) = pRecallArgWithLoad argIds.[0]
+        let! (_, offsetSSA, offsetType) = pRecallArgWithLoad argIds.[1]
+        let! (_, countSSA, countType) = pRecallArgWithLoad argIds.[2]
+
+        // Cast offset and count to index type (memref.subview requires index)
+        let! offsetCastOp = pIndexCastS offsetIndexSSA offsetSSA offsetType TIndex
+        let! countCastOp = pIndexCastS countIndexSSA countSSA countType TIndex
+
+        // SubViewCopy: subview + alloc + copy → fresh contiguous buffer
+        let subviewCopyOp = MLIROp.MemRefOp (MemRefOp.SubViewCopy (resultSSA, sourceSSA, [offsetIndexSSA], [SubViewParam.Dynamic countIndexSSA], [SubViewParam.Static 1L], countIndexSSA, sourceType))
+        return ([offsetCastOp; countCastOp; subviewCopyOp], TRValue { SSA = resultSSA; Type = sourceType })
+    }

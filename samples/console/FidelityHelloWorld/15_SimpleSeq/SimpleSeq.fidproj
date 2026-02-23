@@ -6,7 +6,7 @@ authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
 [compilation]
-target = "native"
+target = "cpu"
 
 [dependencies]
 platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64" }

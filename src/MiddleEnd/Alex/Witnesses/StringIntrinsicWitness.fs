@@ -17,7 +17,7 @@ let private witnessStringIntrinsic (ctx: WitnessContext) (node: SemanticNode) : 
     let combined =
         pStringLengthIntrinsic <|> pStringCharAtIntrinsic
         <|> pStringConcat2Intrinsic <|> pStringContainsIntrinsic
-        <|> pNativeStrFromPointerIntrinsic
+        <|> pNativeStrFromPointerIntrinsic <|> pStringFromBytesIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
     | None -> WitnessOutput.skip

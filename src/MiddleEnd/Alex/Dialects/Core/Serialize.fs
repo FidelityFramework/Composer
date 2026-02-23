@@ -329,6 +329,77 @@ let memrefOpToString (op: MemRefOp) : string =
         let offsetsStr = offsets |> List.map ssaToString |> String.concat ", "
         sprintf "%s = memref.subview %s[%s] : %s"
             (ssaToString result) (ssaToString source) offsetsStr (typeToString resultType)
+    | MemRefOp.SubViewSlice (result, source, offsets, sizes, strides, sourceType) ->
+        // Proper MLIR memref.subview with 3 bracket groups: [offsets] [sizes] [strides]
+        // Result has strided layout — callers must copy to contiguous buffer for FFI use.
+        let fmtParam = function
+            | SubViewParam.Static n -> string n
+            | SubViewParam.Dynamic s -> ssaToString s
+        let offsetsStr = offsets |> List.map ssaToString |> String.concat ", "
+        let sizesStr = sizes |> List.map fmtParam |> String.concat ", "
+        let stridesStr = strides |> List.map fmtParam |> String.concat ", "
+        let elemType =
+            match sourceType with
+            | TMemRef t | TMemRefStatic (_, t) | TMemRefScalar t -> t
+            | t -> t
+        let elemStr = typeToString elemType
+        let sizeStr =
+            match sizes with
+            | [SubViewParam.Static n] -> string n
+            | _ -> "?"
+        let strideStr =
+            match strides with
+            | [SubViewParam.Static n] -> string n
+            | _ -> "?"
+        let stridedTypeStr = sprintf "memref<%sx%s, strided<[%s], offset: ?>>" sizeStr elemStr strideStr
+        sprintf "%s = memref.subview %s[%s] [%s] [%s] : %s to %s"
+            (ssaToString result) (ssaToString source) offsetsStr sizesStr stridesStr
+            (typeToString sourceType) stridedTypeStr
+    | MemRefOp.SubViewCopy (result, source, offsets, sizes, strides, sizeIndexSSA, sourceType) ->
+        // SubView + Alloc + Copy: create a fresh contiguous buffer from a slice.
+        // This is needed because memref.extract_aligned_pointer_as_index on a subview
+        // gives the BASE pointer, not the data pointer. Copying to a fresh alloc fixes this.
+        let fmtParam = function
+            | SubViewParam.Static n -> string n
+            | SubViewParam.Dynamic s -> ssaToString s
+        let offsetsStr = offsets |> List.map ssaToString |> String.concat ", "
+        let sizesStr = sizes |> List.map fmtParam |> String.concat ", "
+        let stridesStr = strides |> List.map fmtParam |> String.concat ", "
+        let elemType =
+            match sourceType with
+            | TMemRef t | TMemRefStatic (_, t) | TMemRefScalar t -> t
+            | t -> t
+        let elemStr = typeToString elemType
+        let sizeStr =
+            match sizes with
+            | [SubViewParam.Static n] -> string n
+            | _ -> "?"
+        let strideStr =
+            match strides with
+            | [SubViewParam.Static n] -> string n
+            | _ -> "?"
+        let stridedTypeStr = sprintf "memref<%sx%s, strided<[%s], offset: ?>>" sizeStr elemStr strideStr
+        let plainTypeStr = sprintf "memref<?x%s>" elemStr
+        let intermSSA = ssaToString result + "_sv"
+        // 1. SubView: create strided view into source
+        let subviewLine = sprintf "%s = memref.subview %s[%s] [%s] [%s] : %s to %s"
+                            intermSSA (ssaToString source) offsetsStr sizesStr stridesStr
+                            (typeToString sourceType) stridedTypeStr
+        // 2. Alloc: fresh contiguous buffer
+        let allocLine = sprintf "%s = memref.alloc(%s) : %s"
+                            (ssaToString result) (ssaToString sizeIndexSSA) plainTypeStr
+        // 3. Copy via scf.for loop (avoids memref.copy → memrefCopy runtime dependency)
+        let resultName = ssaToString result
+        let c0Name = resultName + "_c0"
+        let c1Name = resultName + "_c1"
+        let ivName = resultName + "_iv"
+        let ldName = resultName + "_ld"
+        let c0Line = sprintf "%s = arith.constant 0 : index" c0Name
+        let c1Line = sprintf "%s = arith.constant 1 : index" c1Name
+        let loadLine = sprintf "%s = memref.load %s[%s] : %s" ldName intermSSA ivName stridedTypeStr
+        let storeLine = sprintf "memref.store %s, %s[%s] : %s" ldName resultName ivName plainTypeStr
+        let forLoop = sprintf "scf.for %s = %s to %s step %s {\n      %s\n      %s\n    }" ivName c0Name (ssaToString sizeIndexSSA) c1Name loadLine storeLine
+        sprintf "%s\n    %s\n    %s\n    %s\n    %s" subviewLine allocLine c0Line c1Line forLoop
     | MemRefOp.ExtractBasePtr (result, memref, ty) ->
         // Extract pointer as platform word (index type) - PORTABLE!
         // This replaces the old LLVM-specific unrealized_conversion_cast

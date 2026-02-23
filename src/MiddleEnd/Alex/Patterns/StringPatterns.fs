@@ -476,3 +476,16 @@ let pNativeStrFromPointerIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (ops, result) = pStringFromPointerWithLength node.Id bufferSSA lengthSSA bufferType fusedOffsetOpt
         return (fusionOps @ lengthLoadOps @ ops, result)
     }
+
+/// String.fromBytes intrinsic — convert byte[] to string
+/// Both byte[] and string are memref<?xi8>, so this is a zero-cost identity.
+/// The witness simply returns the input memref as-is.
+let pStringFromBytesIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
+        do! ensure (info.Operation = "fromBytes") "Not String.fromBytes"
+        do! ensure (argIds.Length >= 1) "String.fromBytes: Expected 1 arg"
+        let! (_, bytesSSA, bytesType) = pRecallArgWithLoad argIds.[0]
+        // Identity: byte[] and string are both memref<?xi8>
+        return ([], TRValue { SSA = bytesSSA; Type = bytesType })
+    }

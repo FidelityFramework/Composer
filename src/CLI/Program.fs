@@ -30,6 +30,7 @@ type CompileArgs =
     | Emit_MLIR
     | Emit_LLVM
     | [<AltCommandLine("--warnaserror")>] Warn_As_Error
+    | No_Color
 
     interface IArgParserTemplate with
         member this.Usage =
@@ -43,6 +44,7 @@ type CompileArgs =
             | Emit_MLIR -> "Emit MLIR and stop (don't generate executable)"
             | Emit_LLVM -> "Emit LLVM IR and stop (don't generate executable)"
             | Warn_As_Error -> "Treat warnings as errors"
+            | No_Color -> "Disable colored output"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compile Command Handler
@@ -50,6 +52,8 @@ type CompileArgs =
 
 /// Execute compile command - delegates to orchestrator
 let private executeCompile (args: ParseResults<CompileArgs>) : int =
+    if args.Contains(No_Color) then CLI.Output.disableColor()
+
     // Find project path
     let projectPath =
         match args.TryGetResult(Project) with

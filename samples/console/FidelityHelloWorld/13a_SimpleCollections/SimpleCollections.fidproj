@@ -6,7 +6,7 @@ authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
 [compilation]
-target = "console"
+target = "cpu"
 
 [dependencies]
 # Types and operations are FNCS intrinsics - no external library needed
