@@ -1,71 +1,32 @@
 # Composer Compiler - Claude Context
 
-## Active Assignment: Alex XParsec Remediation (January 2026)
+## Alex Architecture
 
-**STATUS:** Planning Complete, Ready for Implementation
-**PRIORITY:** This is THE ONLY active assignment.
+The Element/Pattern/Witness model with XParsec throughout:
 
-### Context Window Protocol
-
-**START of every context window:**
-1. Read checklist: `mcp__serena-local__read_memory` → `alex_remediation_checklist_2026jan`
-2. Read plan: `/home/hhh/.claude/plans/elegant-marinating-summit.md`
-3. Read core memories: `alex_element_pattern_witness_architecture`, `xparsec_correct_usage_pattern`, `alex_xparsec_throughout_architecture`, `codata_photographer_principle`
-4. Review canonical example: `src/Alex/Witnesses/LazyWitness.fs` (38 lines)
-5. Check progress in checklist
-
-**END of every context window:**
-1. Update checklist (✅/🔄)
-2. Document blockers in "Session Notes"
-3. `mcp__serena-local__edit_memory` to persist progress
-
-### Assignment Details
-
-**Goal:** Refactor Alex to leverage XParsec throughout Element/Pattern/Witness architecture
-
-**Targets:** 56% code reduction (8K→3.5K lines), 90% witness reduction (5.7K→600), 100% direct MLIR op elimination (564→0)
-
-**Canonical Example:** `src/Alex/Witnesses/LazyWitness.fs` — ALL witnesses follow this ~20-line pattern
-
-**Tracking:** Checklist in Serena memory `alex_remediation_checklist_2026jan`, plan at path above
-
-### Golden Rules
-1. NO code changes without reading plan and checklist first
-2. LazyWitness.fs is the template for all witnesses
-3. XParsec throughout — Elements, Patterns, AND Witnesses
-4. Codata principle — witnesses observe and return, never build or compute
-5. Gap emergence — if transform logic needed, return `TRError` and fix in FNCS
-6. Incremental validation — compile + test after EACH witness
-7. **NEVER create git commits** — that is the user's responsibility
-
-### Alex Architecture
 ```
 Elements/    (module internal)  →  Atomic MLIR ops with XParsec state threading
 Patterns/    (public)           →  Composable elision templates (~50 lines each)
 Witnesses/   (public)           →  Thin observers (~20 lines each)
 ```
+
 Elements are `module internal` — witnesses physically cannot import them.
+
+### Golden Rules
+1. Codata principle — witnesses observe and return, never build or compute
+2. Gap emergence — if transform logic needed, return `TRError` and fix in CCS
+3. **NEVER create git commits** — that is the user's responsibility
 
 ---
 
 ## Architectural Principles
-
-### Consult Serena Memories Before Acting
-
-At any architectural decision point, read relevant memories FIRST:
-- `architecture_principles`, `negative_examples` — Core constraints and real mistakes
-- `fncs_architecture`, `fncs_functional_decomposition_principle` — FNCS design
-- `alex_zipper_architecture` — Zipper + XParsec + Bindings model
-- `baker_component` — Type resolution (Phase 4), SRTP
-- `native_binding_architecture` — Platform bindings flow
-- `compose_from_standing_art_principle` — Extend recent patterns, don't reinvent
 
 ### The Cardinal Rule: Fix Upstream
 
 **Never patch where symptoms appear.** This is a multi-stage compiler pipeline. Trace upstream to find the root cause:
 
 ```
-Native Binary ← LLVM ← MLIR ← Alex/Zipper ← Nanopasses ← PSG ← FCS ← FNCS ← F# Source
+Native Binary ← LLVM ← MLIR ← Alex/Zipper ← Nanopasses ← PSG ← FCS ← CCS ← Clef Source
 ```
 
 Fix at the EARLIEST pipeline stage where the defect exists. Before any fix, answer:
@@ -80,12 +41,12 @@ If #3 or #4 is "yes", STOP. You're about to violate layer separation.
 
 | Layer | Does | Does NOT |
 |-------|------|----------|
-| **FNCS** | Define native types (NTUKind) and intrinsic ops | Generate code or know targets |
+| **CCS** | Define native types (NTUKind) and intrinsic ops | Generate code or know targets |
 | **FCS** | Parse, type-check, resolve symbols | Transform or generate code |
 | **PSG Builder** | Construct semantic graph from FCS | Make targeting decisions |
 | **Nanopasses** | Enrich PSG with edges/classifications | Generate MLIR or know targets |
 | **Alex/Zipper** | Traverse PSG, emit MLIR via bindings | Pattern-match on symbol names |
-| **Bindings** | Platform-specific MLIR generation | Know about F# syntax |
+| **Bindings** | Platform-specific MLIR generation | Know about Clef syntax |
 
 ### Compose from Standing Art
 
@@ -96,7 +57,7 @@ New features MUST compose from recently established patterns, not invent paralle
 ## Pipeline Overview
 
 ```
-F# Source → FCS → PSG (Nanopass Pipeline) → Alex/Zipper → MLIR → LLVM → Native Binary
+Clef Source → CCS → PSG (Nanopass Pipeline) → Alex/Zipper → MLIR → LLVM → Native Binary
 ```
 
 ### PSG Nanopass Pipeline
@@ -123,7 +84,7 @@ Key: Soft-delete reachability (never hard-delete — zipper needs full structure
   - `Pipeline/` — Orchestration, lowering, optimization
   - `Bindings/` — Platform-aware code generation
   - `CodeGeneration/` — Type mapping, MLIR builders
-- **CCS Intrinsics** (external: `~/repos/clef/src/Compiler/NativeTypedTree/Expressions/`) — NTUKind type universe, intrinsic operations, platform resolution.
+- **CCS** (external: `~/repos/clef/src/Compiler/NativeTypedTree/Expressions/`) — NTUKind type universe, intrinsic operations, platform resolution.
 
 ### The Zipper + XParsec + Bindings Model
 
@@ -142,9 +103,9 @@ Zipper.create(psg, entryNode) → fold over structure → at each node: XParsec 
 
 ## Negative Examples (Real Mistakes)
 
-1. **Symbol-name matching in codegen** — `match symbolName with "Console.Write" -> ...` couples codegen to namespaces. Use PSG node types and FNCS intrinsic markers instead.
+1. **Symbol-name matching in codegen** — `match symbolName with "Console.Write" -> ...` couples codegen to namespaces. Use PSG node types and CCS intrinsic markers instead.
 
-2. **Unmarked intrinsics** — Operations must be defined in FNCS `Intrinsics.fs` to be recognized. If it's not there, Alex can't generate code for it.
+2. **Unmarked intrinsics** — Operations must be defined in CCS `Intrinsics.fs` to be recognized. If it's not there, Alex can't generate code for it.
 
 3. **Nanopass logic in codegen** — Don't import nanopass modules or build indices during MLIR generation. Nanopasses run before; codegen consumes the enriched PSG.
 
@@ -156,7 +117,7 @@ Zipper.create(psg, entryNode) → fold over structure → at each node: XParsec 
 
 7. **Mixing nanopass scopes** — Pipe operators (`|>`) use `ReducePipeOperators`. SRTP is separate. Don't mix.
 
-8. **BCL/runtime dependencies** — Types and operations are FNCS intrinsics (compiler-level), not library code.
+8. **BCL/runtime dependencies** — Types and operations are CCS intrinsics (compiler-level), not library code.
 
 ---
 
@@ -169,7 +130,7 @@ Zipper.create(psg, entryNode) → fold over structure → at each node: XParsec 
 | Nanopass Framework | `~/repos/nanopass-framework-scheme` | Nanopass architecture (see `doc/user-guide.pdf`) |
 | Triton CPU | `~/triton-cpu` | MLIR dialect patterns, optimization |
 | MLIR Haskell Bindings | `~/repos/mlir-hs` | Alternative MLIR binding approach |
-| Alloy | `~/repos/Alloy` | HISTORICAL — absorbed into FNCS Jan 2026 |
+| Alloy | `~/repos/Alloy` | HISTORICAL — absorbed into CCS Jan 2026 |
 | Composer Docs | `/docs/` | PRIMARY architecture docs |
 | SpeakEZ Blog | `~/repos/SpeakEZ/hugo/content/blog` | Design philosophy |
 
@@ -178,7 +139,7 @@ Zipper.create(psg, entryNode) → fold over structure → at each node: XParsec 
 | Document | Purpose |
 |----------|---------|
 | `Architecture_Canonical.md` | AUTHORITATIVE: Two-layer model, platform bindings, nanopass pipeline |
-| `FNCS_Architecture.md` | F# Native Compiler Services |
+| `CCS_Architecture.md` | Clef Compiler Services |
 | `PSG_Nanopass_Architecture.md` | True nanopass pipeline, typed tree overlay, SRTP |
 | `TypedTree_Zipper_Design.md` | Zipper for FSharpExpr/PSG correlation |
 | `XParsec_PSG_Architecture.md` | XParsec integration with Zipper |
