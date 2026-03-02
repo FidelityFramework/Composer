@@ -72,6 +72,35 @@ let private resolveIntrinsic
         | _ -> None  // Not a platform-resolvable intrinsic
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FIDELITYEXTERN RESOLUTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Try to resolve an Application's target function to a [<FidelityExtern>] binding.
+/// Follows the reference chain: funcNodeId → VarRef → definition Binding → metadata.
+/// Returns (library, symbol) if the Binding carries FidelityExtern metadata.
+let private tryResolveExternCall (graph: SemanticGraph) (funcNodeId: NodeId) : (string * string) option =
+    let rec followToBinding (nodeId: NodeId) : SemanticNode option =
+        match Map.tryFind nodeId graph.Nodes with
+        | Some node ->
+            match node.Kind with
+            | SemanticKind.TypeAnnotation (innerFuncId, _) ->
+                followToBinding innerFuncId
+            | SemanticKind.VarRef (_, Some definitionId) ->
+                Map.tryFind definitionId graph.Nodes
+            | SemanticKind.Binding _ -> Some node
+            | _ -> None
+        | None -> None
+
+    match followToBinding funcNodeId with
+    | Some bindingNode ->
+        match Map.tryFind "FidelityExtern.Library" bindingNode.Metadata,
+              Map.tryFind "FidelityExtern.Symbol" bindingNode.Metadata with
+        | Some (MetadataValue.String library), Some (MetadataValue.String symbol) ->
+            Some (library, symbol)
+        | _ -> None
+    | None -> None
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN ANALYSIS ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -110,6 +139,7 @@ let analyze
             let (NodeId nodeIdInt) = nodeId
             match node.Kind with
             | SemanticKind.Application (funcNodeId, _) ->
+                // First: try intrinsic resolution (Sys.write, Sys.read, etc.)
                 match resolveFunc funcNodeId with
                 | Some intrinsicInfo ->
                     match resolveIntrinsic mode os intrinsicInfo with
@@ -122,7 +152,17 @@ let analyze
                             Resolved = resolved
                         })
                     | None -> None
-                | None -> None
+                | None ->
+                    // Second: try [<FidelityExtern>] resolution
+                    match tryResolveExternCall graph funcNodeId with
+                    | Some (library, symbol) ->
+                        Some (nodeIdInt, {
+                            NodeId = nodeIdInt
+                            EntryPoint = symbol
+                            Mode = mode
+                            Resolved = ExternCall (library, symbol)
+                        })
+                    | None -> None
             | _ -> None)
         |> Map.ofSeq
 

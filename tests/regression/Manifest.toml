@@ -83,7 +83,7 @@ binary = "targets/addnumbers_interactive"
 stdin_file = "AddNumbersInteractive.stdin"
 expected_output = """
 === Interactive Number Addition ===
-Enter any numeric form: integers (42) or decimals (3.14)
+Enter any numeric form: integers (42) or decimals (3.14159265)
 
 Enter first number: Enter second number: 42 + 3.14 = 45.14
 """
