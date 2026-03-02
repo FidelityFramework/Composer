@@ -28,7 +28,8 @@ let compileToNative
     (llvmPath: string)
     (outputPath: string)
     (targetTriple: string)
-    (deploymentMode: DeploymentMode) : Result<unit, string> =
+    (deploymentMode: DeploymentMode)
+    (externLibraries: Set<string>) : Result<unit, string> =
     try
         let objPath = Path.ChangeExtension(llvmPath, ".o")
 
@@ -48,17 +49,26 @@ let compileToNative
             Error (sprintf "llc failed: %s" llcError)
         else
             // Step 2: clang to link into executable
+            // Library flags are data-driven from binding resolution (ExternLibraries)
+            let libraryFlags =
+                externLibraries
+                |> Set.toList
+                |> List.map (sprintf "-l%s")
+                |> String.concat " "
+
             let clangArgs =
                 match deploymentMode with
                 | Console ->
                     // Use -no-pie to avoid relocation issues with LLVM-generated code
-                    // Include webview dependencies: webkit2gtk and gtk3
-                    sprintf "-O0 -no-pie %s -o %s -lc -lwebkit2gtk-4.0 -lgtk-3 -lgobject-2.0 -lglib-2.0" objPath outputPath
+                    // Console mode always links libc; additional libraries come from ExternLibraries
+                    let libs = if externLibraries.IsEmpty then "-lc" else libraryFlags
+                    sprintf "-O0 -no-pie %s -o %s %s" objPath outputPath libs
                 | Freestanding | Embedded ->
                     // Use _start as entry point - it handles argc/argv and calls exit syscall
                     sprintf "-O0 %s -o %s -nostdlib -static -ffreestanding -Wl,-e,_start" objPath outputPath
                 | Library ->
-                    sprintf "-O0 -shared %s -o %s" objPath outputPath
+                    let libs = if externLibraries.IsEmpty then "" else " " + libraryFlags
+                    sprintf "-O0 -shared %s -o %s%s" objPath outputPath libs
 
             let clangProcess = new System.Diagnostics.Process()
             clangProcess.StartInfo.FileName <- "clang"

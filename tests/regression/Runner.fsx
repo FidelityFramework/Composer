@@ -3,12 +3,12 @@
 // Usage: dotnet fsi Runner.fsx [options]
 //
 #r "/home/hhh/repos/Composer/src/bin/Debug/net10.0/XParsec.dll"
-#r "/home/hhh/repos/Fidelity.Toml/src/bin/Debug/net10.0/Fidelity.Toml.dll"
+#r "/home/hhh/repos/Fidelity.Data/src/Fidelity.Data/bin/Debug/net10.0/Fidelity.Data.dll"
 
 open System
 open System.IO
 open System.Diagnostics
-open Fidelity.Toml
+open Fidelity.Data.TOML
 
 // =============================================================================
 // Types
@@ -137,27 +137,27 @@ let createDiffSummary (expected: string) (actual: string) maxLines =
 
 let loadManifest manifestPath =
     let toml =
-        match File.ReadAllText manifestPath |> Fidelity.Toml.Toml.parse with
+        match File.ReadAllText manifestPath |> Fidelity.Data.TOML.Toml.parse with
         | Ok doc -> doc
         | Error e -> failwith $"Failed to parse manifest: {e}"
     let manifestDir = Path.GetDirectoryName(manifestPath)
 
     let getString key table =
         match Map.tryFind key table with
-        | Some (Fidelity.Toml.TomlValue.String s) -> s
+        | Some (Fidelity.Data.TOML.TomlValue.String s) -> s
         | _ -> ""
     let getInt key def table =
         match Map.tryFind key table with
-        | Some (Fidelity.Toml.TomlValue.Integer i) -> int i
+        | Some (Fidelity.Data.TOML.TomlValue.Integer i) -> int i
         | _ -> def
     let getBool key def table =
         match Map.tryFind key table with
-        | Some (Fidelity.Toml.TomlValue.Boolean b) -> b
+        | Some (Fidelity.Data.TOML.TomlValue.Boolean b) -> b
         | _ -> def
 
     let config =
         match Map.tryFind "config" toml with
-        | Some (Fidelity.Toml.TomlValue.Table t) ->
+        | Some (Fidelity.Data.TOML.TomlValue.Table t) ->
             { SamplesRoot = Path.GetFullPath(Path.Combine(manifestDir, getString "samples_root" t))
               CompilerPath = Path.GetFullPath(Path.Combine(manifestDir, getString "compiler" t))
               DefaultTimeoutSeconds = getInt "default_timeout_seconds" 30 t }
@@ -165,9 +165,9 @@ let loadManifest manifestPath =
 
     let samples =
         match Map.tryFind "samples" toml with
-        | Some (Fidelity.Toml.TomlValue.Array items) ->
+        | Some (Fidelity.Data.TOML.TomlValue.Array items) ->
             items |> List.choose (function
-                | Fidelity.Toml.TomlValue.Table t ->
+                | Fidelity.Data.TOML.TomlValue.Table t ->
                     Some {
                         Name = getString "name" t
                         ProjectFile = getString "project" t

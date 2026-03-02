@@ -38,6 +38,10 @@ type ResolvedBinding =
     | LibcCall of funcName: string
     /// Inline assembly (for special operations)
     | InlineAsm of asm: string * constraints: string
+    /// Call to external library function via [<FidelityExtern>] binding
+    /// library: shared library name (e.g., "wayland-client", "c")
+    /// symbol: C function symbol name (e.g., "wl_display_connect")
+    | ExternCall of library: string * symbol: string
 
 /// Resolution result for a single intrinsic node
 type BindingResolution = {
@@ -85,6 +89,9 @@ type PlatformResolutionResult = {
     PlatformWordType: MLIRType
     /// All resolved bindings keyed by PSG node ID
     Bindings: Map<int, BindingResolution>
+    /// Accumulated external library dependencies for linker flags
+    /// e.g., {"c"; "wayland-client"} → -lc -lwayland-client
+    ExternLibraries: Set<string>
     /// Whether _start wrapper is needed (freestanding mode)
     NeedsStartWrapper: bool
 }
@@ -160,58 +167,9 @@ let empty (mode: RuntimeMode) (os: OSFamily) (arch: Architecture) : PlatformReso
         TargetArch = arch
         PlatformWordType = platformWordType arch
         Bindings = Map.empty
+        ExternLibraries = Set.empty
         NeedsStartWrapper = (mode = Freestanding)
     }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PLATFORM MODEL (Quotation-Based Architecture, following Farscape pattern)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Platform operation recognized from PSG (analogous to Farscape's MemoryOperation)
-type PlatformOperation =
-    | SysWrite of fd: int * buffer: SSA * count: SSA
-    | SysRead of fd: int * buffer: SSA * count: SSA
-    | SysExit of code: SSA
-    | SysNanosleep of req: SSA * rem: SSA
-    | SysClockGetTime
-
-/// Platform model for quotation-based binding (analogous to Farscape's MemoryModel)
-/// This follows the Farscape pattern: quotations + active patterns + recognize function
-type PlatformModel = {
-    /// Target operating system
-    TargetOS: OSFamily
-
-    /// Target architecture
-    TargetArch: Architecture
-
-    /// Runtime mode (freestanding or console)
-    RuntimeMode: RuntimeMode
-
-    /// Platform word type (i64 on 64-bit, i32 on 32-bit)
-    PlatformWordType: MLIRType
-
-    /// Platform descriptor quotation from Fidelity.Platform
-    /// Contains type layouts, calling conventions, memory regions
-    PlatformDescriptor: Microsoft.FSharp.Quotations.Expr<obj>
-
-    /// Syscall convention quotation from Fidelity.Platform
-    /// Contains register assignments, calling convention
-    SyscallConvention: Microsoft.FSharp.Quotations.Expr<obj>
-
-    /// Syscall number table quotation from Fidelity.Platform
-    /// Maps operation names to syscall numbers
-    SyscallNumbers: Microsoft.FSharp.Quotations.Expr<Map<string, int>>
-
-    /// Recognition function (PSG graph + node → platform operation)
-    /// Analogous to Farscape's MemoryModel.Recognize
-    /// Takes both graph (for traversal) and node (to recognize)
-    Recognize: Clef.Compiler.PSGSaturation.SemanticGraph.Types.SemanticGraph ->
-               Clef.Compiler.PSGSaturation.SemanticGraph.Types.SemanticNode ->
-               PlatformOperation option
-
-    /// Whether _start wrapper is needed (freestanding mode)
-    NeedsStartWrapper: bool
-}
 
 /// Resolve OS and architecture from PlatformContext.
 /// Uses PlatformId to determine OS/arch. The PlatformId now comes from
@@ -255,5 +213,6 @@ let fromPlatformContext (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.Platform
         RuntimeMode = mode
         PlatformWordType = platformWordType arch
         Bindings = Map.empty
+        ExternLibraries = Set.empty
         NeedsStartWrapper = (mode = Freestanding)
     }

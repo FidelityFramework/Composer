@@ -21,6 +21,25 @@ open Alex.Elements.ArithElements
 open Alex.Elements.MemRefElements
 open Alex.Elements.IndexElements
 open Alex.Elements.MLIRAtomics
+open PSGElaboration.PlatformConfig
+
+// ═══════════════════════════════════════════════════════════
+// RESOLVED BINDING LOOKUP
+// ═══════════════════════════════════════════════════════════
+
+/// Resolve the target function name for a platform call from pre-computed coeffects.
+/// For LibcCall/ExternCall, returns the target function name.
+/// For Syscall/InlineAsm, falls back to the provided default (inline asm is future work).
+let private resolveCallTarget (nodeId: NodeId) (defaultName: string) (platform: PlatformResolutionResult) : string =
+    let (NodeId nodeIdInt) = nodeId
+    match Map.tryFind nodeIdInt platform.Bindings with
+    | Some binding ->
+        match binding.Resolved with
+        | LibcCall funcName -> funcName
+        | ExternCall (_, symbol) -> symbol
+        | Syscall _ -> defaultName   // TODO: emit inline asm for freestanding
+        | InlineAsm _ -> defaultName // TODO: emit llvm.inline_asm
+    | None -> defaultName
 
 // ═══════════════════════════════════════════════════════════
 // PLATFORM I/O SYSCALLS
@@ -85,16 +104,19 @@ let pSysWrite (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTy
         // Cast count to platform word for syscall
         let! countCastOp = pIndexCastS count_i64 count_index TIndex platformWordTy
 
-        // Syscall with extracted i64 pointer and length
+        // Resolve target function name from pre-computed binding coeffects
+        let callTarget = resolveCallTarget nodeId "write" state.Platform
+
+        // Call with extracted i64 pointer and length
         let vals = [
             { SSA = fdSSA; Type = platformWordTy }
             { SSA = buf_ptr_i64; Type = platformWordTy }  // ALWAYS i64 after extraction
             { SSA = count_i64; Type = platformWordTy }    // Length from memref.dim
         ]
-        let! writeCall = pFuncCall (Some resultSSA) "write" vals platformWordTy
+        let! writeCall = pFuncCall (Some resultSSA) callTarget vals platformWordTy
 
         // External function — emit declaration alongside call
-        let! writeDecl = pFuncDecl "write" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+        let! writeDecl = pFuncDecl callTarget [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
 
         return ([writeDecl; extractOp; castOp; dimConstOp; dimOp; countCastOp; writeCall], TRValue { SSA = resultSSA; Type = platformWordTy })
     }
@@ -149,16 +171,19 @@ let pSysRead (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTyp
         // Cast capacity to platform word for syscall
         let! capacityCastOp = pIndexCastS capacity_i64 capacity_index TIndex platformWordTy
 
-        // Syscall with extracted i64 pointer and capacity
+        // Resolve target function name from pre-computed binding coeffects
+        let callTarget = resolveCallTarget nodeId "read" state.Platform
+
+        // Call with extracted i64 pointer and capacity
         let vals = [
             { SSA = fdSSA; Type = platformWordTy }
             { SSA = buf_ptr_i64; Type = platformWordTy }  // ALWAYS i64 after extraction
             { SSA = capacity_i64; Type = platformWordTy } // Capacity from memref.dim
         ]
-        let! readCall = pFuncCall (Some resultSSA) "read" vals platformWordTy
+        let! readCall = pFuncCall (Some resultSSA) callTarget vals platformWordTy
 
         // External function — emit declaration alongside call
-        let! readDecl = pFuncDecl "read" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+        let! readDecl = pFuncDecl callTarget [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
 
         return ([readDecl; extractOp; castOp; dimConstOp; dimOp; capacityCastOp; readCall], TRValue { SSA = resultSSA; Type = platformWordTy })
     }
@@ -203,6 +228,9 @@ let pSysReadline (nodeId: NodeId) (fdSSA: SSA) : PSGParser<MLIROp list * Transfe
         let platformWordTy = state.Platform.PlatformWordType
         let bufferType = TMemRef (TInt (IntWidth 8))
 
+        // Resolve target function name from pre-computed binding coeffects
+        let callTarget = resolveCallTarget nodeId "read" state.Platform
+
         // 1. Allocate 1024-byte read buffer on heap
         let! sizeOp = pConstI sizeConst 1024L TIndex
         let! allocOp = pAlloc bufferSSA sizeConst (TInt (IntWidth 8))
@@ -220,8 +248,8 @@ let pSysReadline (nodeId: NodeId) (fdSSA: SSA) : PSGParser<MLIROp list * Transfe
             { SSA = buf_ptr_word; Type = platformWordTy }
             { SSA = capacity_const; Type = platformWordTy }
         ]
-        let! readCall = pFuncCall (Some bytesReadSSA) "read" readArgs platformWordTy
-        let! readDecl = pFuncDecl "read" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+        let! readCall = pFuncCall (Some bytesReadSSA) callTarget readArgs platformWordTy
+        let! readDecl = pFuncDecl callTarget [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
 
         // 5. Convert bytes read to index, subtract 1 for newline
         let! castBytesOp = pIndexCastS bytesReadIdx bytesReadSSA platformWordTy TIndex

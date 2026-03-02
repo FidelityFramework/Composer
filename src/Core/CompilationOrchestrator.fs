@@ -71,7 +71,7 @@ let private requireCleanDiagnostics (warnaserror: bool) (project: ProjectCheckRe
 // Phase 2: MiddleEnd (Alex + PSGElaboration)
 // ═══════════════════════════════════════════════════════════════════════════
 
-let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<string, string> =
+let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<string * Set<string>, string> =
     timePhase "MiddleEnd" "MLIR Generation" (fun () ->
         // Get platform context from FNCS
         match Core.FNCS.Integration.platformContext project.CheckResult with
@@ -174,7 +174,7 @@ let compileProject (options: CompilationOptions) : int =
 
             // Phase 2: MiddleEnd - Generate MLIR from PSG (target-agnostic)
             runMiddleEnd project ctx
-            |> Result.bind (fun mlirText ->
+            |> Result.bind (fun (mlirText, externLibraries) ->
                 // Write MLIR to intermediates (if enabled)
                 if ctx.IntermediatesDir.IsSome then
                     let mlirPath = Path.Combine(ctx.IntermediatesDir.Value, artifactFilename ArtifactId.Mlir)
@@ -191,6 +191,7 @@ let compileProject (options: CompilationOptions) : int =
                         TargetTripleOverride = options.TargetTriple
                         DeploymentMode = ctx.DeploymentMode
                         EmitIntermediateOnly = options.EmitLLVMOnly
+                        ExternLibraries = externLibraries
                     }
                     backEnd.Compile mlirText backEndCtx
                     |> Result.bind (fun artifact ->

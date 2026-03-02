@@ -36,7 +36,7 @@ let addNumbers (a: Number) (b: Number) : Number =
 // Demo entry point
 let runDemo () : int =
     Console.writeln "=== Interactive Number Addition ==="
-    Console.writeln "Enter any numeric form: integers (42) or decimals (3.14)"
+    Console.writeln "Enter any numeric form: integers (42) or decimals (3.14159265)"
     Console.writeln ""
 
     // Get first number from user

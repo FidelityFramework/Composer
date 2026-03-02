@@ -25,13 +25,15 @@ open Alex.Traversal.MLIRTransfer
 
 /// Generate MLIR from PSG
 /// This is the single entry point for the MiddleEnd
+/// Returns (mlirText, externLibraries) on success.
+/// ExternLibraries is the set of shared libraries needed by resolved bindings.
 let generate
     (graph: SemanticGraph)
     (platformCtx: PlatformContext)
     (deploymentMode: Core.Types.Dialects.DeploymentMode)
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
-    : Result<string, string> =
+    : Result<string * Set<string>, string> =
 
     // Resolve OS and architecture from PlatformContext binding metadata.
     // Authoritative when RuntimeModel is present; falls back to PlatformId string parsing.
@@ -143,5 +145,5 @@ let generate
                 | None -> ()
             | None -> ()
 
-            Result.Ok mlirText
+            Result.Ok (mlirText, platformResolution.ExternLibraries)
         | Result.Error msg -> Result.Error msg

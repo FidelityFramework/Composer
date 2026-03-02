@@ -88,24 +88,40 @@ let analyze
     // This is the authoritative source for what PlatformWord means on this target
     let wordType = platformWordType arch
 
-    // Walk graph, find all Intrinsic nodes that need platform resolution
+    // Walk graph, find Application nodes that call platform intrinsics.
+    // Bindings are keyed by the Application node ID (the call site),
+    // since witnesses process Application nodes during traversal.
+    let resolveFunc (funcNodeId: NodeId) : IntrinsicInfo option =
+        match Map.tryFind funcNodeId graph.Nodes with
+        | Some funcNode ->
+            match funcNode.Kind with
+            | SemanticKind.TypeAnnotation (innerFuncId, _) ->
+                match Map.tryFind innerFuncId graph.Nodes with
+                | Some { Kind = SemanticKind.Intrinsic info } when isPlatformIntrinsic info -> Some info
+                | _ -> None
+            | SemanticKind.Intrinsic info when isPlatformIntrinsic info -> Some info
+            | _ -> None
+        | None -> None
+
     let bindings =
         graph.Nodes
         |> Map.toSeq
         |> Seq.choose (fun (nodeId, node) ->
-            // Extract int value from NodeId wrapper
             let (NodeId nodeIdInt) = nodeId
             match node.Kind with
-            | SemanticKind.Intrinsic intrinsicInfo when isPlatformIntrinsic intrinsicInfo ->
-                match resolveIntrinsic mode os intrinsicInfo with
-                | Some resolved ->
-                    let entryPoint = sprintf "%s.%s" (string intrinsicInfo.Module) intrinsicInfo.Operation
-                    Some (nodeIdInt, {
-                        NodeId = nodeIdInt
-                        EntryPoint = entryPoint
-                        Mode = mode
-                        Resolved = resolved
-                    })
+            | SemanticKind.Application (funcNodeId, _) ->
+                match resolveFunc funcNodeId with
+                | Some intrinsicInfo ->
+                    match resolveIntrinsic mode os intrinsicInfo with
+                    | Some resolved ->
+                        let entryPoint = sprintf "%s.%s" (string intrinsicInfo.Module) intrinsicInfo.Operation
+                        Some (nodeIdInt, {
+                            NodeId = nodeIdInt
+                            EntryPoint = entryPoint
+                            Mode = mode
+                            Resolved = resolved
+                        })
+                    | None -> None
                 | None -> None
             | _ -> None)
         |> Map.ofSeq
@@ -114,12 +130,24 @@ let analyze
     // Entry point elaboration is a PSG-level concern, not code generation
     let needsStart = (mode = Freestanding)
 
+    // Accumulate external library dependencies from resolved bindings
+    let externLibs =
+        bindings
+        |> Map.toSeq
+        |> Seq.choose (fun (_, binding) ->
+            match binding.Resolved with
+            | LibcCall _ -> Some "c"
+            | ExternCall (library, _) -> Some library
+            | Syscall _ | InlineAsm _ -> None)
+        |> Set.ofSeq
+
     {
         RuntimeMode = mode
         TargetOS = os
         TargetArch = arch
         PlatformWordType = wordType
         Bindings = bindings
+        ExternLibraries = externLibs
         NeedsStartWrapper = needsStart
     }
 

@@ -23,6 +23,9 @@ type BackEndContext = {
     DeploymentMode: Dialects.DeploymentMode
     /// Stop after intermediate generation (e.g., --emit-llvm for LLVM, Verilog-only for CIRCT)
     EmitIntermediateOnly: bool
+    /// External library dependencies accumulated during binding resolution.
+    /// Used to generate data-driven linker flags (e.g., {"c"; "wayland-client"} → -lc -lwayland-client)
+    ExternLibraries: Set<string>
 }
 
 /// A backend is a function value that compiles MLIR text to a target artifact.

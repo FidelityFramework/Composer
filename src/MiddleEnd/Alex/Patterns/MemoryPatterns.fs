@@ -844,6 +844,39 @@ let pArraySetIntrinsic : PSGParser<MLIROp list * TransferResult> =
         return ([castOp; storeOp], TRVoid)
     }
 
+/// Array.get intrinsic — load element at index
+/// 'T[] -> int -> 'T  (array -> index -> element)
+///
+/// SSA layout (2 SSAs):
+///   [0] = indexCastSSA (index.casts for memref index)
+///   [1] = resultSSA (memref.load result)
+let pArrayGetIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
+        do! ensure (info.Operation = "get") "Not Array.get"
+        do! ensure (argIds.Length >= 2) "Array.get: Expected 2 args"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 2) $"pArrayGet: Expected 2 SSAs, got {ssas.Length}"
+        let indexCastSSA = ssas.[0]
+        let resultSSA = ssas.[1]
+
+        let! (_, arraySSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
+
+        // Cast index to index type (memref.load requires index-typed indices)
+        let! castOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
+
+        // Result type from the current node's type
+        let! state = getUserState
+        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
+
+        // Direct memref.load at cast index
+        let! loadOp = pLoad resultSSA arraySSA [indexCastSSA]
+
+        return ([castOp; loadOp], TRValue { SSA = resultSSA; Type = resultType })
+    }
+
 /// Array.sub intrinsic — extract subarray (offset + length)
 /// 'T[] -> int -> int -> 'T[]  (source -> startIndex -> count -> result)
 ///
