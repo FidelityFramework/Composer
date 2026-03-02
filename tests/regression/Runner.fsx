@@ -69,16 +69,24 @@ let runProcess cmd args workDir (stdin: string option) (timeoutMs: int) : Proces
 
         proc.Start() |> ignore
 
-        // Write stdin if provided
+        // Write stdin line-by-line to properly handle multi-prompt interactive programs.
+        // Writing all at once causes the first read() to consume the entire pipe buffer.
         match stdin with
         | Some input ->
-            proc.StandardInput.Write(input)
+            let lines = input.TrimEnd([|'\n'; '\r'|]).Split('\n')
+            for i in 0 .. lines.Length - 1 do
+                proc.StandardInput.WriteLine(lines.[i].TrimEnd('\r'))
+                proc.StandardInput.Flush()
+                if i < lines.Length - 1 then
+                    System.Threading.Thread.Sleep(50)
             proc.StandardInput.Close()
         | None -> ()
 
-        // Read stdout/stderr (must read before WaitForExit to avoid deadlock)
+        // Read stderr async to avoid pipe buffer deadlock
+        // (compiler can produce large stderr output from type mismatch warnings)
+        let stderrTask = proc.StandardError.ReadToEndAsync()
         let stdout = proc.StandardOutput.ReadToEnd()
-        let stderr = proc.StandardError.ReadToEnd()
+        let stderr = stderrTask.Result
 
         if proc.WaitForExit(timeoutMs) then
             sw.Stop()
@@ -91,8 +99,9 @@ let runProcess cmd args workDir (stdin: string option) (timeoutMs: int) : Proces
         sw.Stop()
         (Failed ex, sw.ElapsedMilliseconds)
 
-let compileSample compilerPath projectDir projectFile timeoutMs =
-    let (result, ms) = runProcess compilerPath $"compile {projectFile} -k" projectDir None timeoutMs
+let compileSample compilerPath projectDir projectFile binaryName timeoutMs =
+    let outputPath = Path.Combine(projectDir, binaryName)
+    let (result, ms) = runProcess compilerPath $"compile {projectFile} -o {outputPath} -k --no-color" projectDir None timeoutMs
     match result with
     | Completed (0, _, _) -> CompileSuccess ms
     | Completed (code, stdout, stderr) -> CompileFailed (code, stdout, stderr, ms)
@@ -255,7 +264,7 @@ let compileSamplePhase config sample =
     else
         let sampleDir = Path.Combine(config.SamplesRoot, sample.Name)
         let timeoutMs = sample.TimeoutSeconds * 1000
-        let compileResult = compileSample config.CompilerPath sampleDir sample.ProjectFile timeoutMs
+        let compileResult = compileSample config.CompilerPath sampleDir sample.ProjectFile sample.BinaryName timeoutMs
         let binaryPath =
             match compileResult with
             | CompileSuccess _ -> Some (Path.Combine(sampleDir, sample.BinaryName))
@@ -289,11 +298,66 @@ let runBinaryPhase config (sample, compileResult, binaryPathOpt) =
         { Sample = sample; CompileResult = compileResult; RunResult = None }
 
 /// Run all tests with strict phase separation:
-/// Phase 1: Compile ALL samples sequentially
-/// Phase 2: Run ALL binaries sequentially
-let runAllTests config samples : TestResult list =
-    let compileResults = samples |> List.map (fun s -> compileSamplePhase config s)
-    compileResults |> List.map (fun r -> runBinaryPhase config r)
+/// Phase 1: Compile ALL samples sequentially (with progress)
+/// Phase 2: Run ALL binaries sequentially (with progress)
+let runAllTests config samples verbose : TestResult list =
+    let total = List.length samples
+
+    printfn "--- Compile Phase (%d samples) ---" total
+    let compileResults =
+        samples |> List.mapi (fun i s ->
+            if verbose then printf "  [%d/%d] Compiling %s... " (i+1) total s.Name; Console.Out.Flush()
+            let result = compileSamplePhase config s
+            let (_, cr, _) = result
+            match cr with
+            | CompileSuccess ms ->
+                if verbose then printfn "OK (%.2fs)" (float ms / 1000.0)
+                else printf "."
+            | CompileFailed (code, _, stderr, ms) ->
+                if verbose then printfn "FAIL (exit %d, %.2fs)" code (float ms / 1000.0)
+                else printf "X"
+                if verbose && stderr.Length > 0 then
+                    let truncated = if stderr.Length > 300 then stderr.Substring(0, 300) + "..." else stderr
+                    printfn "    stderr: %s" truncated
+            | CompileTimeout t ->
+                if verbose then printfn "TIMEOUT (%dms)" t
+                else printf "T"
+            | CompileSkipped reason ->
+                if verbose then printfn "SKIP (%s)" reason
+                else printf "S"
+            result)
+    if not verbose then printfn ""
+
+    printfn "\n--- Run Phase ---"
+    let results =
+        compileResults |> List.mapi (fun i r ->
+            let (sample, _, _) = r
+            if verbose then printf "  [%d/%d] Running %s... " (i+1) total sample.Name; Console.Out.Flush()
+            let result = runBinaryPhase config r
+            match result.RunResult with
+            | Some (RunSuccess ms) ->
+                if verbose then printfn "PASS (%dms)" ms
+                else printf "."
+            | Some (RunFailed (code, _, _, ms)) ->
+                if verbose then printfn "FAIL (exit %d, %dms)" code ms
+                else printf "X"
+            | Some (OutputMismatch (exp, act, ms)) ->
+                if verbose then
+                    printfn "MISMATCH (%dms)" ms
+                    printfn "    %s" (createDiffSummary exp act 5)
+                else printf "M"
+            | Some (RunTimeout t) ->
+                if verbose then printfn "TIMEOUT (%dms)" t
+                else printf "T"
+            | Some (RunSkipped reason) ->
+                if verbose then printfn "SKIP (%s)" reason
+                else printf "S"
+            | None ->
+                if verbose then printfn "(no binary)"
+                else printf "-"
+            result)
+    if not verbose then printfn ""
+    results
 
 let buildCompiler compilerDir =
     let (result, ms) = runProcess "dotnet" "build" compilerDir None 120000
@@ -359,7 +423,7 @@ let main argv =
             printfn "Running %d tests...\n" (List.length samplesToRun)
 
             let startTime = DateTime.Now
-            let results = runAllTests config samplesToRun
+            let results = runAllTests config samplesToRun opts.Verbose
             let endTime = DateTime.Now
 
             let report = {

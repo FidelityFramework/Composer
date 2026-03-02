@@ -85,7 +85,7 @@ expected_output = """
 === Interactive Number Addition ===
 Enter any numeric form: integers (42) or decimals (3.14159265)
 
-Enter first number: Enter second number: 42 + 3.14 = 45.14
+Enter first number: Enter second number: 987 + 85.298734987000003 = 1072.298734986999988
 """
 
 # =============================================================================

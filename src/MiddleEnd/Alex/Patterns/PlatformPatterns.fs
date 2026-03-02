@@ -266,6 +266,68 @@ let pSysReadline (nodeId: NodeId) (fdSSA: SSA) : PSGParser<MLIROp list * Transfe
     }
 
 // ═══════════════════════════════════════════════════════════
+// EXTERN CALL PATTERN (FidelityExtern bindings)
+// ═══════════════════════════════════════════════════════════
+
+/// Monadically recall a list of argument nodes from the accumulator.
+/// Returns (SSA * MLIRType) pairs preserving argument order.
+let private recallArgs (argIds: NodeId list) : PSGParser<(SSA * MLIRType) list> =
+    let rec loop (ids: NodeId list) : PSGParser<(SSA * MLIRType) list> =
+        parser {
+            match ids with
+            | [] -> return []
+            | id :: rest ->
+                let! pair = pRecallNode id
+                let! restPairs = loop rest
+                return pair :: restPairs
+        }
+    loop argIds
+
+/// ExternCall resolved pattern — emits func.call for [<FidelityExtern>] bindings.
+/// Matches Application nodes with ExternCall in pre-computed coeffects.
+/// Uses the C symbol name from the binding (not the Clef function name).
+///
+/// Discriminator: coeffect-based. If Platform.Bindings[nodeId] has ExternCall,
+/// PlatformWitness handles it. Otherwise, ApplicationWitness handles it.
+///
+/// SSA layout (1 + N SSAs from SSAAssignment computeApplicationSSACost VarRef case):
+///   [0] = result (func.call return value)
+///   [1..N] = potential type compatibility casts (unused here)
+let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        // Match Application node
+        let! (_funcId, argIds) = pApplication
+        let! node = getCurrentNode
+        let! state = getUserState
+
+        // Guard: check if this node has an ExternCall binding in coeffects
+        let (NodeId nodeIdInt) = node.Id
+        match Map.tryFind nodeIdInt state.Platform.Bindings with
+        | Some { Resolved = ExternCall (_library, symbol) } ->
+            // Get pre-allocated SSAs
+            let! ssas = getNodeSSAs node.Id
+            do! ensure (ssas.Length >= 1) $"pExternCallResolved: Expected at least 1 SSA, got {ssas.Length}"
+            let resultSSA = ssas.[0]
+
+            // Recall all argument SSAs (post-order: children already witnessed)
+            let! argPairs = recallArgs argIds
+            let vals = argPairs |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+            let argTypes = argPairs |> List.map snd
+
+            // Map return type from Clef NativeType to MLIR type
+            let! retType = pMapType node.Type
+
+            // Emit external function declaration + call
+            // pFuncDecl establishes the symbol in MLIR (linker visibility)
+            // pFuncCall emits the actual invocation
+            let! declOp = pFuncDecl symbol argTypes retType FuncVisibility.Private
+            let! callOp = pFuncCall (Some resultSSA) symbol vals retType
+
+            return ([declOp; callOp], TRValue { SSA = resultSSA; Type = retType })
+        | _ -> return! fail (Message "Not an ExternCall")
+    }
+
+// ═══════════════════════════════════════════════════════════
 // COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
 // ═══════════════════════════════════════════════════════════
 
