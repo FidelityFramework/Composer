@@ -1,141 +1,128 @@
-# D-02: WebKitGTK WebView
+# D-02: WebKitGTK WebView (Multi-Library Composition)
 
 > **Sample**: `26_WebViewBasic` | **Status**: Planned | **Depends On**: D-01 (GTKWindow)
 
 ## 1. Executive Summary
 
-This PRD adds WebKitGTK WebView to GTK windows - enabling hybrid web/native applications. This is the foundation for the WREN (WebView + Region + Elmish + Native) stack vision.
+This PRD adds WebKitGTK WebView to GTK windows, enabling hybrid web/native applications. This is the foundation for the WREN (WebView + Region + Elmish + Native) stack vision.
 
-**Key Insight**: WebKitGTK provides a C API similar to GTK. The same FFI patterns from D-01 apply. JavaScript<->Clef bridging is future work (PRD beyond scope).
+**Key Insight**: WebKitGTK provides a C API similar to GTK. The same ExternCall pathway from D-01 applies. The application imports **two** Farscape-generated binding libraries (`Fidelity.Gtk` and `Fidelity.WebKit`) — demonstrating **Layer 3 composition** where two generated libraries come together in application code.
 
-## 2. Language Feature Specification
+JavaScript<->Clef bridging is future work (PRD beyond scope).
 
-### 2.1 WebView Creation
+## 2. Binding Generation (Farscape)
 
-```fsharp
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern nativeptr<byte> webkit_web_view_new()
+### 2.1 WebKit Pilot TOML
 
-let webview = webkit_web_view_new()
+```toml
+[library]
+name = "webkitgtk-6.0"
+headers = ["/usr/include/webkitgtk-6.0/webkit/webkit.h"]
+include_paths = [
+    "/usr/include/webkitgtk-6.0",
+    "/usr/include/gtk-4.0",
+    "/usr/include/glib-2.0",
+    "/usr/lib/glib-2.0/include"
+]
+macro_prefixes = ["WEBKIT_"]
+
+[output]
+mode = "fidelity"
+directory = "../Bindings/WebKit"
+
+[options]
+opaque_handles = true
+
+[[namespace]]
+name = "Fidelity.WebKit.View"
+description = "WebView creation, content loading, and navigation"
+library = "webkitgtk-6.0"
+prefixes = ["webkit_web_view"]
 ```
 
-### 2.2 Loading Content
+### 2.2 Generated L1 Declarations (View.clef)
 
-```fsharp
-// Load URL
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern void webkit_web_view_load_uri(view: nativeptr<byte>, uri: string)
+```clef
+module Fidelity.WebKit.View
 
-webkit_web_view_load_uri(webview, "https://fsharp.org")
+[<FidelityExtern("webkitgtk-6.0", "webkit_web_view_new")>]
+let webkit_web_view_new () : nativeint = Unchecked.defaultof<nativeint>
 
-// Load HTML
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern void webkit_web_view_load_html(view: nativeptr<byte>, html: string, baseUri: string)
+[<FidelityExtern("webkitgtk-6.0", "webkit_web_view_load_uri")>]
+let webkit_web_view_load_uri (view: nativeint) (uri: nativeint) : unit = Unchecked.defaultof<unit>
 
-webkit_web_view_load_html(webview, "<h1>Hello WREN!</h1>", "about:blank")
+[<FidelityExtern("webkitgtk-6.0", "webkit_web_view_load_html")>]
+let webkit_web_view_load_html (view: nativeint) (content: nativeint) (baseUri: nativeint) : unit = Unchecked.defaultof<unit>
 ```
 
-### 2.3 WebView in GTK Window
+### 2.3 Generated L2 Wrappers (ViewApi.clef)
 
-```fsharp
-let window = gtk_window_new()
-let webview = webkit_web_view_new()
-gtk_window_set_child(window, webview)
-webkit_web_view_load_html(webview, html, "about:blank")
-gtk_widget_show(window)
+```clef
+module Fidelity.WebKit.View.Api
+
+open Fidelity.WebKit.View
+
+/// Create a new WebView widget. Returns None if creation fails.
+let webViewNew () : option<nativeint> =
+    let result = webkit_web_view_new ()
+    if result = 0n then None
+    else Some result
+
+/// Load HTML content with a base URI.
+let loadHtml (view: nativeint) (content: nativeint) (baseUri: nativeint) : unit =
+    webkit_web_view_load_html view content baseUri
+
+/// Navigate to a URL.
+let loadUri (view: nativeint) (uri: nativeint) : unit =
+    webkit_web_view_load_uri view uri
 ```
 
-## 3. CCS Layer Implementation
+## 3. Application Code
 
-### 3.1 WebKit Extern Declarations
+### 3.1 Multi-Library Composition
 
-Same pattern as GTK - extern functions with DllImport:
+This sample demonstrates **Layer 3 composition** — application code that depends on multiple Farscape-generated libraries:
 
-```fsharp
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern nativeptr<byte> webkit_web_view_new()
-
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern void webkit_web_view_load_uri(view: nativeptr<byte>, uri: string)
-
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern void webkit_web_view_load_html(view: nativeptr<byte>, content: string, baseUri: string)
+```
+HelloWebView/
+├── HelloWebView.fidproj
+└── src/
+    ├── Program.clef
+    └── WebApp.clef
 ```
 
-No new CCS machinery needed beyond D-01.
+### 3.2 HelloWebView.fidproj
 
-## 4. Composer/Alex Layer Implementation
+```toml
+[package]
+name = "HelloWebView"
+version = "0.1.0"
+description = "Clef Language + Fidelity Framework — WebKitGTK WebView"
 
-### 4.1 Same FFI Patterns
+[compilation]
+target = "cpu"
 
-WebKit uses the same patterns as GTK:
-- External function declarations
-- Opaque pointer types
-- String parameters
+[dependencies]
+platform = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+gtk = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Gtk.fidproj" }
+webkit = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.WebKit.fidproj" }
 
-No new Alex machinery needed beyond D-01.
+[build]
+sources = ["src/WebApp.clef", "src/Program.clef"]
+output = "HelloWebView"
+output_kind = "console"
 
-## 5. MLIR Output Specification
-
-### 5.1 WebKit Function Declarations
-
-```mlir
-// NOTE: At the MLIR level, FFI pointer parameters use index type.
-// The MLIR→LLVM lowering pass converts index to !llvm.ptr at the backend boundary.
-func.func private @webkit_web_view_new() -> index attributes { "link" = "webkitgtk-6.0" }
-func.func private @webkit_web_view_load_uri(index, index) attributes { "link" = "webkitgtk-6.0" }
-func.func private @webkit_web_view_load_html(index, index, index) attributes { "link" = "webkitgtk-6.0" }
+[link]
+libraries = ["gtk-4", "webkitgtk-6.0"]
 ```
 
-### 5.2 WebView Creation and Loading
+### 3.3 WebApp.clef (Behavior)
 
-```mlir
-// let webview = webkit_web_view_new()
-%webview = func.call @webkit_web_view_new() : () -> index
+```clef
+module HelloWebView.WebApp
 
-// webkit_web_view_load_html(webview, html, "about:blank")
-%html_ref = memref.get_global @html_content : memref<...xi8>
-%html = memref.extract_aligned_pointer_as_index %html_ref : memref<...xi8> -> index
-%base_ref = memref.get_global @about_blank : memref<11xi8>
-%base = memref.extract_aligned_pointer_as_index %base_ref : memref<11xi8> -> index
-func.call @webkit_web_view_load_html(%webview, %html, %base) : (index, index, index) -> ()
-```
-
-## 6. Validation
-
-### 6.1 Sample Code
-
-```fsharp
-module WebViewBasicSample
-
-// GTK imports (from D-01)
-[<DllImport("libgtk-4.so.1")>]
-extern void gtk_init()
-
-[<DllImport("libgtk-4.so.1")>]
-extern nativeptr<byte> gtk_window_new()
-
-[<DllImport("libgtk-4.so.1")>]
-extern void gtk_window_set_title(window: nativeptr<byte>, title: string)
-
-[<DllImport("libgtk-4.so.1")>]
-extern void gtk_window_set_default_size(window: nativeptr<byte>, width: int, height: int)
-
-[<DllImport("libgtk-4.so.1")>]
-extern void gtk_window_set_child(window: nativeptr<byte>, child: nativeptr<byte>)
-
-[<DllImport("libgtk-4.so.1")>]
-extern void gtk_widget_show(widget: nativeptr<byte>)
-
-[<DllImport("libgtk-4.so.1")>]
-extern void gtk_main()
-
-// WebKit imports
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern nativeptr<byte> webkit_web_view_new()
-
-[<DllImport("libwebkitgtk-6.0.so.4")>]
-extern void webkit_web_view_load_html(view: nativeptr<byte>, content: string, baseUri: string)
+open Fidelity.Gtk.Window.Api
+open Fidelity.WebKit.View.Api
 
 let htmlContent = """
 <!DOCTYPE html>
@@ -161,78 +148,121 @@ let htmlContent = """
 </html>
 """
 
+/// Create a window with an embedded WebView showing HTML content.
+let createWebWindow (title: nativeint) (width: int) (height: int) (html: nativeint) : option<nativeint> =
+    match windowNew () with
+    | Some window ->
+        setTitle window title
+        setDefaultSize window width height
+        match webViewNew () with
+        | Some webview ->
+            loadHtml webview html "about:blank"
+            Fidelity.Gtk.Window.gtk_window_set_child window webview
+            Some window
+        | None -> None
+    | None -> None
+```
+
+### 3.4 Program.clef (Entry Point)
+
+```clef
+module HelloWebView.Program
+
+open Fidelity.Gtk.Window.Api
+open HelloWebView.WebApp
+
 [<EntryPoint>]
 let main _ =
     Console.writeln "=== WebView Basic Test ==="
 
-    gtk_init()
+    init ()
 
-    let window = gtk_window_new()
-    gtk_window_set_title(window, "WREN WebView")
-    gtk_window_set_default_size(window, 800, 600)
-
-    let webview = webkit_web_view_new()
-    webkit_web_view_load_html(webview, htmlContent, "about:blank")
-
-    gtk_window_set_child(window, webview)
-    gtk_widget_show(window)
-
-    Console.writeln "WebView shown, entering main loop..."
-    gtk_main()
-
-    0
+    match createWebWindow "WREN WebView" 800 600 htmlContent with
+    | Some window ->
+        Fidelity.Gtk.Window.gtk_widget_show window
+        Console.writeln "WebView shown, entering main loop..."
+        Fidelity.Gtk.Window.gtk_main ()
+        0
+    | None ->
+        Console.writeln "Failed to create web window"
+        1
 ```
 
-### 6.2 Expected Behavior
+## 4. Compiler Pipeline
 
-- Window appears titled "WREN WebView"
-- WebView displays styled "Hello WREN Stack!" message
-- Closing window exits program
+No CCS or Composer modifications needed beyond D-01. The ExternCall pathway handles both GTK and WebKit function calls identically — they differ only in the library name in the `"link"` attribute.
 
-## 7. Files to Create/Modify
+## 5. MLIR Output Specification
 
-No new files beyond D-01. Sample code demonstrates WebKit usage.
+### 5.1 WebKit Function Declarations
 
-## 8. Implementation Checklist
+```mlir
+// From Fidelity.WebKit — same ExternCall pattern as GTK
+func.func private @webkit_web_view_new() -> index attributes { "link" = "webkitgtk-6.0" }
+func.func private @webkit_web_view_load_uri(index, index) attributes { "link" = "webkitgtk-6.0" }
+func.func private @webkit_web_view_load_html(index, index, index) attributes { "link" = "webkitgtk-6.0" }
+```
 
-### Phase 1: Verify D-01 Complete
-- [ ] GTK FFI working
-- [ ] External calls working
-- [ ] Library linking working
+### 5.2 WebView Creation and Loading
 
-### Phase 2: WebKit Integration
-- [ ] Add WebKit library linking
-- [ ] Verify WebView creates
-- [ ] Verify HTML loading
+```mlir
+%webview = func.call @webkit_web_view_new() : () -> index
+
+%html_ref = memref.get_global @html_content : memref<...xi8>
+%html = memref.extract_aligned_pointer_as_index %html_ref : memref<...xi8> -> index
+%base_ref = memref.get_global @about_blank : memref<11xi8>
+%base = memref.extract_aligned_pointer_as_index %base_ref : memref<11xi8> -> index
+func.call @webkit_web_view_load_html(%webview, %html, %base) : (index, index, index) -> ()
+```
+
+## 6. Validation
+
+### 6.1 Expected Behavior
+
+- Window appears titled "WREN WebView" at 800x600
+- WebView displays styled "Hello WREN Stack!" with gradient background
+- Closing window exits program cleanly
+
+### 6.2 Commands
+
+```bash
+farscape generate --project webkit.pilot.toml
+composer compile HelloWebView.fidproj
+```
+
+## 7. Implementation Checklist
+
+### Phase 1: Binding Generation
+- [ ] Create `webkit.pilot.toml`
+- [ ] Run `farscape generate` — verify L1/L2 WebKit output
+- [ ] Verify fidproj generated with correct dependencies
+
+### Phase 2: Application
+- [ ] Create `HelloWebView.fidproj` with GTK + WebKit dependencies
+- [ ] Write `WebApp.clef` and `Program.clef`
+- [ ] Verify multi-library `open` resolution works
 
 ### Phase 3: Validation
-- [ ] Sample 26 compiles
-- [ ] WebView displays content
-- [ ] Window closes correctly
+- [ ] `composer compile` succeeds with both library dependencies
+- [ ] Binary links against both `libgtk-4.so` and `libwebkitgtk-6.0.so`
+- [ ] WebView renders HTML content
 
-## 9. Future: JavaScript Bridge
+## 8. Future: JavaScript Bridge
 
 Full WREN stack needs JavaScript<->Clef communication:
 
-```fsharp
-// Future API
-webkit_web_view_run_javascript(webview, "document.title = 'Updated'")
+```clef
+// Future API — via Farscape-generated WebKit bindings
+Fidelity.WebKit.View.webkit_web_view_run_javascript webview "document.title = 'Updated'"
 
-// Callback from JS to Clef
-webkit_web_view_register_script_message_handler(webview, "fsharp", onMessage)
+// Callback from JS to Clef — uses Farscape L2 callback registration
+registerScriptMessageHandler webview "clef" onMessage
 ```
 
 This is beyond the scope of Sample 26 but establishes the foundation.
 
-## 10. Linking
+## 9. Related PRDs
 
-```bash
-# Link against both GTK and WebKit
-gcc app.o -o app $(pkg-config --libs gtk4 webkitgtk-6.0)
-```
-
-## 11. Related PRDs
-
-- **D-01**: GTKWindow - GTK foundation
-- **T-03 to T-05**: MailboxProcessor - UI event handling
+- **D-01**: GTKWindow — GTK foundation, ExternCall pathway definition
+- **T-03 to T-05**: MailboxProcessor — UI event handling
 - (Future): Elmish architecture, JS bridge

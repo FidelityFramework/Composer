@@ -274,7 +274,7 @@ let pBuildLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (c
 
 /// Build lazy force: Call lazy thunk via struct pointer passing
 ///
-/// LazyForce is a SIMPLE operation (not elaborated by FNCS).
+/// LazyForce is a SIMPLE operation (not elaborated by CCS).
 /// SSA cost: Fixed 5 (extract code_ptr, const 1, alloca, index, store, call)
 ///
 /// Calling convention: Thunk receives pointer to lazy struct
@@ -448,8 +448,8 @@ let pSeqMoveNext (seqSSA: SSA) (seqTy: MLIRType) (captureTypes: MLIRType list)
 /// Build seq struct: High-level pattern for SeqExpr witnesses
 /// Combines pSeqStruct with proper result construction
 ///
-/// SeqExpr structure from FNCS: `SeqExpr of body: NodeId * captures: CaptureInfo list`
-/// The body is the MoveNext lambda that was elaborated by FNCS saturation.
+/// SeqExpr structure from CCS: `SeqExpr of body: NodeId * captures: CaptureInfo list`
+/// The body is the MoveNext lambda that was elaborated by CCS saturation.
 /// Captures are the closed-over variables.
 /// Internal state fields come from the body lambda's mutable locals.
 let pBuildSeqStruct (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
@@ -476,7 +476,7 @@ let pBuildSeqStruct (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
 
 /// Build ForEach loop: Iterate over sequence with MoveNext calls
 ///
-/// ForEach structure from FNCS: `ForEach of var: string * collection: NodeId * body: NodeId`
+/// ForEach structure from CCS: `ForEach of var: string * collection: NodeId * body: NodeId`
 /// This generates a while loop calling MoveNext until exhausted.
 ///
 /// Gap: MoveNext calling convention implementation needed

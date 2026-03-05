@@ -1,5 +1,7 @@
 module Examples.HelloWorldHalfCurried
 
+open Console
+
 /// Demonstrates HALF-CURRIED patterns:
 /// - Pipe operator: `x |> f`
 /// - Function composition with pipes

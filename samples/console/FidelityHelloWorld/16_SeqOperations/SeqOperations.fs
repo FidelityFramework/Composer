@@ -7,6 +7,9 @@
 /// Both inner_seq and closure are INLINED (copied by value, not by pointer)
 module SeqOperationsSample
 
+open Console
+open Format
+
 // ============================================================================
 // PART 1: Source Sequences (from PRD-15)
 // Foundation sequences used as inputs for transformation operations

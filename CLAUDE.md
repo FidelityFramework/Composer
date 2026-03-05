@@ -19,6 +19,19 @@ Elements are `module internal` — witnesses physically cannot import them.
 
 ---
 
+## Decision-Making Discipline
+
+When implementation has multiple apparent options, **do not present them as equal choices** when architectural principles clearly dictate one answer. Apply the Fidelity design filters before presenting options:
+
+1. **Clef-native vs legacy** — Always use Clef-native constructs (FnPtr<'F> not delegate, NativeDefault.zeroed not Unchecked.defaultof, NTU dimensional types not fixed-width). We are not in the F#/.NET business.
+2. **Type-preserving vs type-erasing** — Always preserve type information at boundaries (FnPtr<'F> not nativeint for callbacks).
+3. **NTU-aligned vs premature concretization** — Never bake CPU-specific widths into generated code. The DTS defers resolution to platform context.
+4. **CCS-compatible vs aspirational** — Generate code that targets CCS's *current* type algebra, not capabilities that don't exist yet.
+
+Only present genuine choices when principles don't clearly favor one direction. ~90% of the time there is no real choice given the compiler's architectural imperatives.
+
+---
+
 ## Architectural Principles
 
 ### The Cardinal Rule: Fix Upstream

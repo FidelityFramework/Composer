@@ -1,7 +1,7 @@
 /// ProjectLoader - FrontEnd entry point
 ///
 /// Clean public API: .fidproj path → PSG + PlatformContext
-/// Wraps FNCS project loading and type checking
+/// Wraps CCS project loading and type checking
 module FrontEnd.ProjectLoader
 
 open Clef.Compiler.Project

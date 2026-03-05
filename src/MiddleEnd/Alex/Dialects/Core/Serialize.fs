@@ -464,15 +464,14 @@ let rec opToString (op: MLIROp) : string =
             | Some value, Some ty -> sprintf "func.return %s : %s" (ssaToString value) (typeToString ty)
             | Some value, None -> sprintf "func.return %s" (ssaToString value)
             | None, _ -> "func.return"
-    | MLIROp.GlobalString (name, content, byteLength) ->
-        // Escape the string content for MLIR
-        let escaped = content.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\t", "\\t")
-        // Add @ prefix for MLIR global symbol naming convention
-        // Emit memref.global (portable MLIR) instead of llvm.mlir.global
-        // Use dense<...> for array literal initialization
+    | MLIROp.GlobalString (name, content, storageLength) ->
+        // Emit memref.global (portable MLIR) with null sentinel byte for C interop.
+        // Clef strings are (ptr, length) — the sentinel is a storage detail invisible
+        // to the type system, ensuring .Pointer yields C-compatible null-terminated data.
         let bytes = System.Text.Encoding.UTF8.GetBytes(content)
-        let denseStr = bytes |> Array.map (sprintf "%d") |> String.concat ", "
-        sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]>" name byteLength denseStr
+        let bytesWithSentinel = Array.append bytes [| 0uy |]
+        let denseStr = bytesWithSentinel |> Array.map (sprintf "%d") |> String.concat ", "
+        sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]>" name storageLength denseStr
     | MLIROp.IndexOp iop ->
         match iop with
         | IndexOp.IndexConst (result, value) ->

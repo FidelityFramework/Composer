@@ -12,9 +12,9 @@ license = "MIT"
 target = "cpu"
 
 [dependencies]
-# Types and operations are FNCS intrinsics - no external library needed
-# Arena<'lifetime> is now an FNCS intrinsic
-platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64" }
+# Types and operations are CCS intrinsics - no external library needed
+# Arena<'lifetime> is now an CCS intrinsic
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
 
 [build]
 sources = [

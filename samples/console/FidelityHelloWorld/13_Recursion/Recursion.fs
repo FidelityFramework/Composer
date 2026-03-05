@@ -6,6 +6,9 @@
 /// - Recursive data structure traversal (conceptual)
 module RecursionSample
 
+open Console
+open Format
+
 /// Classic factorial - not tail recursive
 let rec factorial (n: int) : int =
     if n <= 1 then 1

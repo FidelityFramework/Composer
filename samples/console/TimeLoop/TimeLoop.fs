@@ -2,6 +2,9 @@
 /// Shows current time as HH:MM:SS.mmm with delta from previous emission
 module TimeLoop
 
+open Console
+open Format
+
 /// Format a 2-digit number with leading zero if needed
 let padTwo (n: int) : string =
     if n < 10 then

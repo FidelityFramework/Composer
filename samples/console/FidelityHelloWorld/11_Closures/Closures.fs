@@ -13,6 +13,9 @@
 /// - All closure state lives as long as main's stack frame
 module ClosuresSample
 
+open Console
+open Format
+
 /// Create a counter that increments each time called
 /// Arena parameter allows mutable state to escape safely
 let makeCounter (arena: byref<Arena<'a>>) (start: int) : (unit -> int) =

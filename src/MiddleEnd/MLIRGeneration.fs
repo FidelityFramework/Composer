@@ -1,7 +1,7 @@
 /// MLIRGeneration - MiddleEnd orchestration layer
 ///
 /// Composer Pipeline Context:
-///   FrontEnd (FNCS) → PSG → MiddleEnd → MLIR text → BackEnd (mliropt/LLVM)
+///   FrontEnd (CCS) → PSG → MiddleEnd → MLIR text → BackEnd (mliropt/LLVM)
 ///
 /// This module is the PUBLIC API for the MiddleEnd. It orchestrates:
 ///   1. PSGElaboration: Compute coeffects (SSA, mutability, yields, etc.)

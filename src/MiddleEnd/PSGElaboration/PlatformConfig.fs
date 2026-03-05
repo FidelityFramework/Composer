@@ -61,7 +61,7 @@ type BindingResolution = {
 
 /// Resolve platform word type for a given architecture
 /// This is the authoritative source for what PlatformWord layout means on each target.
-/// FNCS uses TypeLayout.PlatformWord; Alex resolves it here based on target.
+/// CCS uses TypeLayout.PlatformWord; Alex resolves it here based on target.
 let platformWordType (arch: Architecture) : MLIRType =
     match arch with
     | X86_64 | ARM64 | RISCV64 -> TInt (IntWidth 64)  // 64-bit platforms
@@ -85,7 +85,7 @@ type PlatformResolutionResult = {
     /// Target architecture
     TargetArch: Architecture
     /// Platform word type (i64 on 64-bit, i32 on 32-bit)
-    /// This is the resolved MLIRType for FNCS PlatformWord layout
+    /// This is the resolved MLIRType for CCS PlatformWord layout
     PlatformWordType: MLIRType
     /// All resolved bindings keyed by PSG node ID
     Bindings: Map<int, BindingResolution>
@@ -204,7 +204,7 @@ let resolveRuntimeMode
         | Core.Types.Dialects.DeploymentMode.Library -> Console
         | Core.Types.Dialects.DeploymentMode.Embedded -> Freestanding
 
-/// Build PlatformResolutionResult from FNCS PlatformContext
+/// Build PlatformResolutionResult from CCS PlatformContext
 let fromPlatformContext (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext) (mode: RuntimeMode) : PlatformResolutionResult =
     let (os, arch) = resolveOSArch ctx
     {

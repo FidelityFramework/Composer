@@ -471,3 +471,18 @@ Expected values:
   deepPipeline1: 3 6 9 12 15
   deepPipelineWithFold: 400
 """
+
+# =============================================================================
+# Sample 17: ExternCall
+# First sample using Farscape-generated binding library (Fidelity.Libc)
+# Exercises: ExternCall pathway, CaseElimination on option<nativeint> return
+# =============================================================================
+[[samples]]
+name = "17_ExternCall"
+project = "ExternCall.fidproj"
+binary = "targets/externcall"
+expected_output = """
+=== ExternCall Test ===
+malloc succeeded
+free completed
+"""

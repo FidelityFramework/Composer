@@ -9,7 +9,7 @@
 ///
 /// NOTE: Entry point elaboration (_start wrapper for freestanding mode)
 /// is NOT handled here. That's a PSG-level concern handled by
-/// IntrinsicElaboration.fs in FNCS. See Phase 7 of XParsec-centric
+/// IntrinsicElaboration.fs in CCS. See Phase 7 of XParsec-centric
 /// Baker remediation plan.
 module PSGElaboration.PlatformBindingResolution
 
@@ -166,7 +166,7 @@ let analyze
             | _ -> None)
         |> Map.ofSeq
 
-    // Note: _start wrapper generation moved to FNCS IntrinsicElaboration.fs
+    // Note: _start wrapper generation moved to CCS IntrinsicElaboration.fs
     // Entry point elaboration is a PSG-level concern, not code generation
     let needsStart = (mode = Freestanding)
 

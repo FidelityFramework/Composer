@@ -105,6 +105,22 @@ type ScopeExitCoeffect = {
 
 ## 4. Composer/Alex Layer Implementation
 
+### 4.0 OS Memory via Farscape-Generated Bindings
+
+The raw `mmap`/`munmap`/`mremap` functions are accessed via Farscape-generated `Fidelity.Libc.Memory` bindings:
+
+```clef
+module Fidelity.Libc.Memory
+
+[<FidelityExtern("c", "mmap")>]
+let mmap (addr: nativeint) (length: int64) (prot: int) (flags: int) (fd: int) (offset: int64) : nativeint = Unchecked.defaultof<nativeint>
+
+[<FidelityExtern("c", "munmap")>]
+let munmap (addr: nativeint) (length: int64) : int = Unchecked.defaultof<int>
+```
+
+These go through the standard ExternCall pathway (D-01). The `Region.create` intrinsic witness calls `mmap` via ExternCall — same `pExternCallResolved` pattern as GTK, Wayland, or pthread functions.
+
 ### 4.1 Region Struct
 
 ```fsharp
@@ -118,6 +134,8 @@ type Region = {
 
 ### 4.2 Region.create Witness
 
+The witness calls `mmap` via ExternCall to `Fidelity.Libc.Memory`:
+
 ```fsharp
 let witnessRegionCreate z pagesSSA =
     let regionSSA = freshSSA ()
@@ -125,18 +143,12 @@ let witnessRegionCreate z pagesSSA =
     // Calculate size
     emit $"  %%size = arith.muli %%{pagesSSA}, 4096 : i64"
 
-    // mmap (addr=0 means OS chooses address)
-    emit "  %addr_zero = llvm.mlir.zero : !llvm.ptr"
-    emit $"  %%base = llvm.call @mmap(%%addr_zero, %%size, i32 3, i32 34, i32 -1, i64 0)"
+    // mmap via ExternCall (addr=0 means OS chooses address)
+    // func.call @mmap(0, size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
+    // ↑ This goes through pExternCallResolved — same pathway as all Farscape bindings
 
-    // Allocate Region struct
-    emit $"  %%{regionSSA} = llvm.alloca 1 x !region_type"
-    emit $"  %%base_ptr = llvm.getelementptr %%{regionSSA}[0, 0]"
-    emit "  llvm.store %base, %base_ptr"
-    emit $"  %%cap_ptr = llvm.getelementptr %%{regionSSA}[0, 1]"
-    emit "  llvm.store %size, %cap_ptr"
-    emit $"  %%used_ptr = llvm.getelementptr %%{regionSSA}[0, 2]"
-    emit "  llvm.store 0, %used_ptr"
+    // Allocate Region struct and populate fields
+    // ...
 
     TRValue { SSA = regionSSA; Type = TRegion }
 ```
@@ -170,14 +182,11 @@ let witnessRegionAlloc z regionSSA countSSA elemSize =
 
 ```fsharp
 let witnessRegionRelease z regionSSA =
-    // Get base and capacity
-    emit $"  %%base_ptr = llvm.getelementptr %%{regionSSA}[0, 0]"
-    emit "  %base = llvm.load %base_ptr : !llvm.ptr"
-    emit $"  %%cap_ptr = llvm.getelementptr %%{regionSSA}[0, 1]"
-    emit "  %cap = llvm.load %cap_ptr : i64"
+    // Get base and capacity from Region struct
+    // ...
 
-    // munmap
-    emit "  llvm.call @munmap(%base, %cap)"
+    // munmap via ExternCall to Fidelity.Libc.Memory
+    // func.call @munmap(%base, %cap) — same ExternCall pathway as D-01
 
     TRVoid
 ```
@@ -340,14 +349,19 @@ Sum of squares 0-99: 328350
 
 ## 9. Platform Bindings
 
-| Operation | Linux | Windows | Embedded |
-|-----------|-------|---------|----------|
+All platform-specific memory functions are accessed via Farscape-generated bindings (ExternCall pathway):
+
+| Operation | Linux (Fidelity.Libc.Memory) | Windows (Fidelity.Win32.Memory) | Embedded |
+|-----------|------------------------------|----------------------------------|----------|
 | Create | mmap | VirtualAlloc | Static buffer |
 | Grow | mremap | VirtualAlloc | ERROR |
 | Release | munmap | VirtualFree | No-op |
 
+`Region.create`/`alloc`/`release` remain CCS intrinsics because they involve compiler-managed state: bump pointer arithmetic, struct layout, and scope exit insertion. The raw OS memory calls go through ExternCall.
+
 ## 10. Related PRDs
 
-- **A-05**: Region Passing - Regions as parameters
-- **A-06**: Region Escape - copyOut for escaping data
-- **T-03 to T-05**: MailboxProcessor - Region per message batch
+- **D-01**: GTKWindow — establishes ExternCall pathway used by mmap/munmap bindings
+- **A-05**: Region Passing — regions as parameters
+- **A-06**: Region Escape — copyOut for escaping data
+- **T-03 to T-05**: MailboxProcessor — region per message batch

@@ -9,6 +9,9 @@
 /// - Utilities: Option.map, fst, snd, max, min
 module SimpleCollections
 
+open Console
+open Format
+
 // ============================================================================
 // SECTION 1: List Operations
 // ============================================================================

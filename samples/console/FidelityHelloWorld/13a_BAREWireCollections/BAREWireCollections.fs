@@ -15,6 +15,9 @@
 /// - Other: Option.map, fst, snd, max, min, String.concat
 module BAREWireCollections
 
+open Console
+open Format
+
 // ============================================================================
 // Types mimicking BAREWire schema structures
 // ============================================================================

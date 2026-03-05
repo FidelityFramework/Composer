@@ -287,12 +287,23 @@ let private recallArgs (argIds: NodeId list) : PSGParser<(SSA * MLIRType) list> 
 /// Matches Application nodes with ExternCall in pre-computed coeffects.
 /// Uses the C symbol name from the binding (not the Clef function name).
 ///
+/// FFI MARSHALING (Mar 2026): When the Fidelity-level return type differs from the
+/// C-level return type, this pattern inserts marshaling at the boundary:
+///   - option<T> return → C returns nullable pointer (index); null-check + option construction
+///   - Direct types → no marshaling needed (passthrough)
+///
+/// This is the FFI boundary where DTS concretization is legitimate — C's types ARE
+/// genuine width demands. The pattern observes the ExternCall coeffect and the marshaling
+/// code elides naturally as the residual (Pillar 4: Elision).
+///
 /// Discriminator: coeffect-based. If Platform.Bindings[nodeId] has ExternCall,
 /// PlatformWitness handles it. Otherwise, ApplicationWitness handles it.
 ///
-/// SSA layout (1 + N SSAs from SSAAssignment computeApplicationSSACost VarRef case):
-///   [0] = result (func.call return value)
-///   [1..N] = potential type compatibility casts (unused here)
+/// SSA layout:
+///   Direct return: [0] = result (func.call return value), [1..N] = potential casts
+///   Option return: [0] = option memref result, [1] = raw C return, [2] = null const,
+///     [3] = cmp result, [4] = tag extended, [5] = alloca, [6..7] = tag insert views,
+///     [8..10] = payload insert views + offset
 let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
     parser {
         // Match Application node
@@ -306,24 +317,81 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
         | Some { Resolved = ExternCall (_library, symbol) } ->
             // Get pre-allocated SSAs
             let! ssas = getNodeSSAs node.Id
-            do! ensure (ssas.Length >= 1) $"pExternCallResolved: Expected at least 1 SSA, got {ssas.Length}"
-            let resultSSA = ssas.[0]
 
             // Recall all argument SSAs (post-order: children already witnessed)
             let! argPairs = recallArgs argIds
             let vals = argPairs |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
             let argTypes = argPairs |> List.map snd
 
-            // Map return type from Clef NativeType to MLIR type
-            let! retType = pMapType node.Type
+            // Detect option<T> return type — requires FFI marshaling at the boundary.
+            // C returns a nullable pointer; we must null-check and construct the option.
+            match node.Type with
+            | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "option" || tycon.Name = "voption" ->
+                // FFI MARSHALING: option<T> return
+                // C returns the inner type (pointer); null = None, non-null = Some(value)
+                do! ensure (ssas.Length >= 11) $"pExternCallResolved (option): Expected at least 11 SSAs, got {ssas.Length}"
+                let resultSSA   = ssas.[0]   // Final option memref
+                let rawRetSSA   = ssas.[1]   // Raw C return value
+                let nullConstSSA = ssas.[2]  // Null constant for comparison
+                let cmpSSA      = ssas.[3]   // Comparison result (i1)
+                let tagExtSSA   = ssas.[4]   // Extended tag (i8)
+                // ssas.[5..6] for tag insert (viewSSA, zeroSSA)
+                let tagViewSSA  = ssas.[5]
+                let tagZeroSSA  = ssas.[6]
+                // ssas.[7..9] for payload insert (offsetSSA, viewSSA, zeroSSA)
+                let payOffsetSSA = ssas.[7]
+                let payViewSSA  = ssas.[8]
+                let payZeroSSA  = ssas.[9]
+                // ssas.[10] = alloca for option memref
+                let allocaSSA   = ssas.[10]
 
-            // Emit external function declaration + call
-            // pFuncDecl establishes the symbol in MLIR (linker visibility)
-            // pFuncCall emits the actual invocation
-            let! declOp = pFuncDecl symbol argTypes retType FuncVisibility.Private
-            let! callOp = pFuncCall (Some resultSSA) symbol vals retType
+                // Map inner type to MLIR (this is what C actually returns)
+                let! cRetType = pMapType innerTy
+                // Map full option type to MLIR (for the constructed result)
+                let! optionType = pMapType node.Type
 
-            return ([declOp; callOp], TRValue { SSA = resultSSA; Type = retType })
+                // 1. Declare extern with C-level return type
+                let! declOp = pFuncDecl symbol argTypes cRetType FuncVisibility.Private
+                // 2. Call extern — get raw C value back
+                let! callOp = pFuncCall (Some rawRetSSA) symbol vals cRetType
+
+                // 3. Alloca option memref (tag byte + payload)
+                let optionElemTy = TInt (IntWidth 8)
+                let optionSize = match optionType with TMemRefStatic (n, _) -> n | _ -> 9
+                let! allocaOp = pAlloca allocaSSA optionSize optionElemTy None
+
+                // 4. Null-check: compare raw result to 0 (null)
+                let! nullOp = pConstI nullConstSSA 0L TIndex
+                let! cmpOp = pCmpI cmpSSA ICmpPred.Ne rawRetSSA nullConstSSA TIndex
+
+                // 5. Extend i1 → i8 for tag value (0 = None, 1 = Some)
+                let! extOp = pExtUI tagExtSSA cmpSSA (TInt (IntWidth 1)) (TInt (IntWidth 8))
+
+                // 6. Store tag at offset 0
+                let! tagInsertOps = pTypedInsert allocaSSA tagExtSSA 0 tagViewSSA tagZeroSSA (TInt (IntWidth 8)) optionType
+
+                // 7. Store payload at offset 1 (always — value is meaningless for None,
+                //    CaseElimination checks tag before reading payload)
+                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
+
+                let allOps = [declOp; callOp; allocaOp; nullOp; cmpOp; extOp]
+                             @ tagInsertOps @ payInsertOps
+
+                return (allOps, TRValue { SSA = allocaSSA; Type = optionType })
+
+            | _ ->
+                // DIRECT RETURN: No FFI marshaling needed — type passes through
+                do! ensure (ssas.Length >= 1) $"pExternCallResolved: Expected at least 1 SSA, got {ssas.Length}"
+                let resultSSA = ssas.[0]
+
+                // Map return type from Clef NativeType to MLIR type
+                let! retType = pMapType node.Type
+
+                // Emit external function declaration + call
+                let! declOp = pFuncDecl symbol argTypes retType FuncVisibility.Private
+                let! callOp = pFuncCall (Some resultSSA) symbol vals retType
+
+                return ([declOp; callOp], TRValue { SSA = resultSSA; Type = retType })
         | _ -> return! fail (Message "Not an ExternCall")
     }
 

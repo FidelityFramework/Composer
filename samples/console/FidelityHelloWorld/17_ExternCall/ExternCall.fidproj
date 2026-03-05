@@ -1,7 +1,7 @@
 [package]
-name = "SeqOperations"
+name = "ExternCall"
 version = "0.1.0"
-description = "Sample 16: Sequence Operations (PRD-16)"
+description = "First sample using [<FidelityExtern>] bindings (ExternCall pathway)"
 authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
@@ -12,6 +12,9 @@ target = "cpu"
 platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
 
 [build]
-sources = ["SeqOperations.fs"]
-output = "SeqOperations"
+sources = ["bindings/CMemory.clef", "ExternCall.clef"]
+output = "externcall"
 output_kind = "console"
+
+[link]
+libraries = ["c"]

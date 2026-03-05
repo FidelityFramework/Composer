@@ -8,6 +8,9 @@
 ///   F# source → PSG intrinsic → classifyAtomicOp → arith dialect MLIR
 module BitwiseOps
 
+open Console
+open Format
+
 [<EntryPoint>]
 let main _ =
     // AND: isolate a bit field from packed flags

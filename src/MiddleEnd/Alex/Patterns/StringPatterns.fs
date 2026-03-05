@@ -73,8 +73,8 @@ let pStringFromBuffer (nodeId: NodeId) (bufferSSA: SSA) (bufferType: MLIRType) :
         return ([castOp], TRValue { SSA = resultSSA; Type = stringType })
     }
 
-/// Create substring from buffer pointer and length (FNCS NativeStr.fromPointer contract)
-/// FNCS contract (Intrinsics.fs:372): "creates a new memref<?xi8> with specified length"
+/// Create substring from buffer pointer and length (CCS NativeStr.fromPointer contract)
+/// CCS contract (Intrinsics.fs:372): "creates a new memref<?xi8> with specified length"
 /// This is NOT a cast - it's a substring extraction via allocate + memcpy.
 /// When srcOffset is Some, the source pointer is adjusted by adding the offset (for NativePtr.add fusion).
 /// SSA extracted from coeffects via nodeId (7 minimum, 8 when srcOffset provided):
@@ -133,7 +133,7 @@ let pStringFromPointerWithLength (nodeId: NodeId) (bufferSSA: SSA) (lengthSSA: S
         let! copyOps = pStringMemCopy memcpyResultSSA destPtrWord srcPtrWord lenWord
 
         // 6. Return new memref<?xi8> with actual length
-        // FNCS contract satisfied: "creates a NEW memref<?xi8> with SPECIFIED LENGTH"
+        // CCS contract satisfied: "creates a NEW memref<?xi8> with SPECIFIED LENGTH"
         let ops =
             [allocOp] @
             [extractSrcPtr; extractDestPtr] @

@@ -62,7 +62,7 @@ to every ML programmer's mental model.
 
 Added to `classifyAtomicOp` in `PSGCombinators.fs`:
 
-| F# Operator | FNCS Operation    | MLIR (arith dialect)       | Notes                              |
+| F# Operator | CCS Operation    | MLIR (arith dialect)       | Notes                              |
 |-------------|-------------------|----------------------------|------------------------------------|
 | `&&&`       | `op_BitwiseAnd`   | `arith.andi`               | Always integer; no float analog    |
 | `\|\|\|`    | `op_BitwiseOr`    | `arith.ori`                | Always integer; no float analog    |

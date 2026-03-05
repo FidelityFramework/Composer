@@ -13,6 +13,7 @@ type TargetPlatform =
     | GPU           // Graphics/compute processor → future
     | MCU           // Microcontroller → LLVM backend (different config)
     | NPU           // Neural processing unit → future
+    | Library       // Pure library — substrate-neutral, no hardware affinity
 
 /// Deployment mode — backend-internal concern from fidproj configuration.
 /// Determines linker flags, runtime dependencies, entry point handling.

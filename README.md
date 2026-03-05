@@ -10,7 +10,7 @@
 <em>Early development (Feb 2026: 3/16 samples working). Not production-ready.</em>
 </p>
 
-Ahead-of-time F# compiler producing native executables without managed runtime or garbage collection. Leverages [F# Native Compiler Services (FNCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
+Ahead-of-time F# compiler producing native executables without managed runtime or garbage collection. Leverages [F# Native Compiler Services (CCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
 
 ## Current Status (February 2026)
 
@@ -21,7 +21,7 @@ Ahead-of-time F# compiler producing native executables without managed runtime o
 
 **Recent Achievements**:
 - **VarRef SSA Auto-Loading**: Mutable variables used as memref indices now auto-load values compositionally
-- **FNCS Contract Compliance**: NativeStr.fromPointer honors substring extraction via allocate + memcpy
+- **CCS Contract Compliance**: NativeStr.fromPointer honors substring extraction via allocate + memcpy
 - **Compositional Patterns**: Element/Pattern/Witness stratification validated with cross-discipline composition
 
 **Known Limitations**:
@@ -42,7 +42,7 @@ Composer implements a true nanopass compiler architecture with ~25 distinct pass
 F# Source
     ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ FNCS (6 phases)                                             │
+│ CCS (6 phases)                                             │
 │ Phase 0: FCS parse and type check                           │
 │ Phase 1: Structural construction (SynExpr → PSG)            │
 │ Phase 2: Symbol correlation (attach FSharpSymbol)           │
@@ -118,7 +118,7 @@ MiddleEnd emits only portable MLIR dialects (memref, arith, func, index, scf). T
 
 ## Native Type System
 
-FNCS provides native type universe (`NTUKind`) at compile time. Types are compiler intrinsics, not runtime constructs:
+CCS provides native type universe (`NTUKind`) at compile time. Types are compiler intrinsics, not runtime constructs:
 
 - Primitives: `i8`, `i16`, `i32`, `i64`, `f32`, `f64`, `nativeint` → MLIR integer/float/index types
 - Pointers: `nativeptr<'T>` → opaque pointers
@@ -140,7 +140,7 @@ String operations use memref.dim to get length, memref.alloc for runtime-sized a
 
 ### Intrinsic Operations
 
-Platform operations defined in FNCS as compiler intrinsics:
+Platform operations defined in CCS as compiler intrinsics:
 
 **System (`Sys` module):**
 - `Sys.write(fd: i64, buf: memref<?xi8>): i64` — syscall (extracts ptr + length from memref)
@@ -255,7 +255,7 @@ dotnet fsi Runner.fsx -- --sample 02_HelloWorldSaturated
 src/
 ├── CLI/                    Command-line interface
 ├── Core/                   Configuration, timing, diagnostics
-├── FrontEnd/               FNCS integration
+├── FrontEnd/               CCS integration
 ├── MiddleEnd/
 │   ├── PSGElaboration/     Coeffect analysis (SSA, platform, DU layouts)
 │   └── Alex/               MLIR generation layer
@@ -290,7 +290,7 @@ Previously blocked by hard-coded LLVM types. Now possible via target-specific ml
 
 | Document | Content |
 |----------|---------|
-| `docs/Architecture_Canonical.md` | FNCS-first architecture, intrinsic modules |
+| `docs/Architecture_Canonical.md` | CCS-first architecture, intrinsic modules |
 | `docs/PSG_Nanopass_Architecture.md` | Phase 0-5+ detailed design |
 | `docs/Alex_Architecture_Overview.md` | Element/Pattern/Witness stratification |
 | `docs/XParsec_PSG_Architecture.md` | Pattern combinators, codata witnesses |
@@ -326,7 +326,7 @@ Development organized by category-prefixed PRDs. See [docs/PRDs/README.md](docs/
 - `let mutable pos = 0` → `memref.alloca() : memref<1xindex>`
 - Mutable variables as memref indices (auto-load value before use)
 - Mutable variables in loop conditions (while, for)
-- String operations honoring FNCS contracts (substring extraction)
+- String operations honoring CCS contracts (substring extraction)
 
 **What Doesn't Work**:
 - Mutable variables captured in closures (closure detection exists, allocation strategy integration pending)

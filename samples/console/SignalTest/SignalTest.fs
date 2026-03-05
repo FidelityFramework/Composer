@@ -1,10 +1,13 @@
 /// SignalTest - Comprehensive validation of Fidelity.Signal reactive primitives
 /// Tests: Signal, Effect, Memo, Batch - the full reactive signal infrastructure
 ///
-/// Design: Per FNCS spec (reactive-signals.md Section 2.2), FnPtr.ofFunction only
+/// Design: Per CCS spec (reactive-signals.md Section 2.2), FnPtr.ofFunction only
 /// supports top-level functions without closures. All signals that effect/memo
 /// functions depend on must be at module level.
 module Examples.SignalTest
+
+open Console
+open Format
 
 // ============================================================================
 // Test Utilities
@@ -117,7 +120,7 @@ let testSignalTypes () =
 
 // ============================================================================
 // Effect Tests - Module Level State
-// Per FNCS spec: Effect functions must be top-level (no closures)
+// Per CCS spec: Effect functions must be top-level (no closures)
 // ============================================================================
 
 let mutable effectRunCount = 0
@@ -163,7 +166,7 @@ let testEffects () =
 
 // ============================================================================
 // Memo Tests - Module Level State
-// Per FNCS spec: Memo functions must be top-level (no closures)
+// Per CCS spec: Memo functions must be top-level (no closures)
 // ============================================================================
 
 let mutable memoComputeCount = 0
@@ -211,7 +214,7 @@ let testMemos () =
 
 // ============================================================================
 // Batch Tests - Module Level State
-// Per FNCS spec: Batch/Effect functions must be top-level (no closures)
+// Per CCS spec: Batch/Effect functions must be top-level (no closures)
 // ============================================================================
 
 let mutable batchEffectRunCount = 0

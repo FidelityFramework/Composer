@@ -1,5 +1,7 @@
 module Examples.HelloWorldFullCurried
 
+open Console
+
 /// Demonstrates FULL CURRYING patterns:
 /// - Curried function with multiple parameters
 /// - Partial application: binding first argument to create specialized function

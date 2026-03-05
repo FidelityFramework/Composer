@@ -110,11 +110,15 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
         // Use StringCollection pure derivation (coeffect model)
         let globalName = deriveGlobalRef content
         let byteLength = deriveByteLength content
+        // Storage includes a null sentinel byte for C interop safety.
+        // Clef strings are (ptr, length) — the sentinel is invisible to the type system
+        // but ensures .Pointer yields a C-compatible null-terminated pointer.
+        let storageLength = byteLength + 1
 
-        do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d" globalName byteLength)
+        do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d, storageLength=%d" globalName byteLength storageLength)
 
-        // Static type from global: memref<Nxi8> where N is byte length
-        let staticTy = TMemRefStatic (byteLength, TInt (IntWidth 8))
+        // Static type from global: memref<Nxi8> where N is storage length (includes null sentinel)
+        let staticTy = TMemRefStatic (storageLength, TInt (IntWidth 8))
         // Dynamic type (string): memref<?xi8>
         let dynamicTy = TMemRef (TInt (IntWidth 8))
 
@@ -140,8 +144,8 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
 
         do! emitTrace "pBuildStringLiteral.returning" (sprintf "Returning %d ops" (List.length inlineOps))
 
-        // Return ops + (globalName, content, byteLength) for witness to emit memref.global
-        return ((inlineOps, globalName, content, byteLength), result)
+        // Return ops + (globalName, content, storageLength) for witness to emit memref.global
+        return ((inlineOps, globalName, content, storageLength), result)
     }
 
 // DEAD CODE DELETED: pStringGetPtr and pStringGetLength were unused

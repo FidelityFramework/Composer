@@ -3,6 +3,9 @@
 /// PRD-15: Builds on Lazy (PRD-14) - sequences are resumable thunks
 module SimpleSeqSample
 
+open Console
+open Format
+
 // ============================================================================
 // PART 1: Basic Sequences - Literal Yields
 // ============================================================================

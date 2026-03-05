@@ -45,7 +45,7 @@ let private literalExpansionCost (lit: NativeLiteral) : int =
     | NativeLiteral.BigInt _ -> 1
 
 /// Compute exact SSA count for Lambda based on captures list
-/// This is DETERMINISTIC - derived directly from PSG structure (captures list from FNCS)
+/// This is DETERMINISTIC - derived directly from PSG structure (captures list from CCS)
 ///
 /// CLOSURE CONSTRUCTION with heap allocation:
 /// - Simple Lambda (0 captures): 0 SSAs (emits func.func, no local value needed)
@@ -608,7 +608,24 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 // Function call: 1 result + N potential type compatibility casts (static→dynamic memref)
                 // Argument count = Children.Length - 1 (first child is function)
                 let argCount = max 0 (node.Children.Length - 1)
-                1 + argCount  // 1 for result, argCount for potential casts
+                // ExternCall FFI marshaling: option<T> return requires extra SSAs for
+                // C-level call (returns raw pointer) + null check + option construction.
+                // Detect FidelityExtern metadata on the target binding to identify ExternCalls.
+                let isExternCallWithOptionReturn =
+                    match node.Type with
+                    | NativeType.TApp(tycon, [_]) when tycon.Name = "option" || tycon.Name = "voption" ->
+                        match funcNode.Kind with
+                        | SemanticKind.VarRef (_, Some definitionId) ->
+                            match Map.tryFind definitionId ctx.Graph.Nodes with
+                            | Some bindingNode ->
+                                bindingNode.Metadata.ContainsKey "FidelityExtern.Library"
+                            | None -> false
+                        | _ -> false
+                    | _ -> false
+                if isExternCallWithOptionReturn then
+                    15 + argCount  // Extra SSAs for: raw C result, null const, cmp, alloca, tag, payload view, stores
+                else
+                    1 + argCount  // 1 for result, argCount for potential casts
             | _ -> 10  // Other applications
         | None -> 10
     | [] -> 5
@@ -1020,7 +1037,7 @@ let rec private assignFunctionBody
             else
                 // Potentially escaping closure: use closure struct model
                 // Lambda itself gets SSAs in the PARENT scope for closure struct construction
-                // SSA count is deterministic based on captures (from FNCS)
+                // SSA count is deterministic based on captures (from CCS)
                 let cost = computeLambdaSSACost captures
                 if cost > 0 then
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren

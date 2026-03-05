@@ -1,6 +1,9 @@
 /// Sample 09: Result Type - Simplified
 module ResultSample
 
+open Console
+open Format
+
 [<EntryPoint>]
 let main _ =
     Console.writeln "=== Result Type Test ==="

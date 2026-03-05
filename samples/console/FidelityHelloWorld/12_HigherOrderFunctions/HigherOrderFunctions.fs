@@ -7,6 +7,9 @@
 /// - Common HOF patterns (map, filter, fold concepts)
 module HigherOrderFunctionsSample
 
+open Console
+open Format
+
 /// Apply a function twice to a value
 let applyTwice (f: int -> int) (x: int) : int =
     f (f x)

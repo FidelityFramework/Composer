@@ -599,9 +599,9 @@ let onChildren (childIds: NodeId list) (p: PSGParser<'T>) : PSGParser<'T list> =
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // TERMINOLOGY NOTE (January 2026):
-// - FNCS calls them: "Intrinsics" (intrinsic to native type universe)
+// - CCS calls them: "Intrinsics" (intrinsic to native type universe)
 // - MiddleEnd calls them: "Atomic Operations" (atomic/indivisible at MLIR level)
-// - PSG type name remains `SemanticKind.Intrinsic` (can't change FNCS output)
+// - PSG type name remains `SemanticKind.Intrinsic` (can't change CCS output)
 // - Comments and function names use "Atomic Operation" terminology
 
 /// Match atomic operation by module (SemanticKind.Intrinsic)
@@ -670,7 +670,7 @@ let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     // String
     | IntrinsicModule.String, op -> StringOp op
     // NOTE: Console is NOT an atomic operation - see fsnative-spec/spec/platform-bindings.md
-    // Platform (Sys.* atomic operations from FNCS)
+    // Platform (Sys.* atomic operations from CCS)
     | IntrinsicModule.Sys, op -> PlatformOp op
     // DateTime operations
     | IntrinsicModule.DateTime, op -> DateTimeOp op

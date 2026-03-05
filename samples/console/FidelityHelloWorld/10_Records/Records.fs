@@ -7,6 +7,9 @@
 /// - Pattern matching on records
 module RecordsSample
 
+open Console
+open Format
+
 /// Simple person record
 type Person = {
     Name: string

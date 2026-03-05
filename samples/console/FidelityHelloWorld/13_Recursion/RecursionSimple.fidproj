@@ -9,7 +9,7 @@ license = "MIT"
 target = "cpu"
 
 [dependencies]
-platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64" }
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
 
 [build]
 sources = ["RecursionSimple.fs"]

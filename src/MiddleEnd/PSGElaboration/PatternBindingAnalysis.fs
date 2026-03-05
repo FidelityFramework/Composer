@@ -61,7 +61,7 @@ let rec extractPatternBindings (pattern: Pattern) : PatternBinding list =
     
     | Pattern.As (inner, _name) ->
         // As pattern binds the whole value AND the inner pattern
-        // The outer 'as' binding is handled separately by FNCS
+        // The outer 'as' binding is handled separately by CCS
         extractPatternBindings inner
     
     | Pattern.Union (_, _tagIndex, Some payload, _) ->
@@ -91,7 +91,7 @@ let rec extractPatternBindings (pattern: Pattern) : PatternBinding list =
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Find all PatternBinding nodes directly in the graph
-/// This is the ground truth for pattern bindings - FNCS creates these nodes
+/// This is the ground truth for pattern bindings - CCS creates these nodes
 /// and they survive saturation transformations.
 ///
 /// ARCHITECTURAL NOTE (January 2026):

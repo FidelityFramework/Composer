@@ -10,7 +10,7 @@
 /// - NodeSSAAllocation: Which SSAs are assigned to each PSG node
 /// - ClosureLayout: How closures are structured (captures, SSAs, types)
 ///
-/// Future coeffects (when SeqMoveNext moves to FNCS):
+/// Future coeffects (when SeqMoveNext moves to CCS):
 /// - SeqMoveNextLayout: State machine structure for sequence MoveNext
 module PSGElaboration.Coeffects
 
@@ -45,7 +45,7 @@ module NodeSSAAllocation =
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // For Lambdas with captures, we pre-compute the complete closure layout.
-// This is deterministic - derived from CaptureInfo list in PSG (from FNCS).
+// This is deterministic - derived from CaptureInfo list in PSG (from CCS).
 // Witnesses observe this coeffect; they do NOT compute layout during emission.
 
 /// How a variable is captured in a closure

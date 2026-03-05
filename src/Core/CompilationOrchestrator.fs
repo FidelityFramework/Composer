@@ -1,7 +1,7 @@
 /// CompilationOrchestrator - Top-level compiler pipeline coordination
 ///
 /// Orchestrates the full compilation pipeline:
-/// FrontEnd (FNCS) → MiddleEnd (Alex) → BackEnd (resolved from target platform)
+/// FrontEnd (CCS) → MiddleEnd (Alex) → BackEnd (resolved from target platform)
 ///
 /// The orchestrator is backend-agnostic. It resolves the backend once at
 /// pipeline assembly time and delegates to it. No dispatch, no branching
@@ -73,9 +73,9 @@ let private requireCleanDiagnostics (warnaserror: bool) (project: ProjectCheckRe
 
 let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<string * Set<string>, string> =
     timePhase "MiddleEnd" "MLIR Generation" (fun () ->
-        // Get platform context from FNCS
-        match Core.FNCS.Integration.platformContext project.CheckResult with
-        | None -> Error "No platform context available from FNCS"
+        // Get platform context from CCS
+        match Core.CCS.Integration.platformContext project.CheckResult with
+        | None -> Error "No platform context available from CCS"
         | Some platformCtx ->
             // Delegate to MiddleEnd - it orchestrates PSGElaboration + Alex
             MiddleEnd.MLIRGeneration.generate
@@ -105,11 +105,12 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
 
     let targetPlatform =
         match config.TargetPlatform with
-        | TargetPlatform.CPU -> Core.Types.Dialects.TargetPlatform.CPU
-        | TargetPlatform.FPGA -> Core.Types.Dialects.TargetPlatform.FPGA
-        | TargetPlatform.GPU -> Core.Types.Dialects.TargetPlatform.GPU
-        | TargetPlatform.MCU -> Core.Types.Dialects.TargetPlatform.MCU
-        | TargetPlatform.NPU -> Core.Types.Dialects.TargetPlatform.NPU
+        | TargetPlatform.CPU     -> Core.Types.Dialects.TargetPlatform.CPU
+        | TargetPlatform.FPGA    -> Core.Types.Dialects.TargetPlatform.FPGA
+        | TargetPlatform.GPU     -> Core.Types.Dialects.TargetPlatform.GPU
+        | TargetPlatform.MCU     -> Core.Types.Dialects.TargetPlatform.MCU
+        | TargetPlatform.NPU     -> Core.Types.Dialects.TargetPlatform.NPU
+        | TargetPlatform.Library -> Core.Types.Dialects.TargetPlatform.Library
 
     let deploymentMode =
         match config.DeploymentMode with
@@ -147,7 +148,7 @@ let compileProject (options: CompilationOptions) : int =
     printfn "======================"
     printfn ""
 
-    // Setup intermediates directory BEFORE loading project (enables FNCS phase emission)
+    // Setup intermediates directory BEFORE loading project (enables CCS phase emission)
     let needsIntermediates = options.KeepIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly
     if needsIntermediates then
         let projectDir = Path.GetDirectoryName(options.ProjectPath)

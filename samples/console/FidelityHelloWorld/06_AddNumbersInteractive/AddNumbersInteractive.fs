@@ -7,6 +7,10 @@
 /// - String.contains for type detection
 module AddNumbers
 
+open Console
+open Format
+open Parse
+
 // Discriminated union with two cases
 type Number =
     | IntVal of int

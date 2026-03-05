@@ -7,8 +7,8 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>composer</ToolCommandName>
     <PackageOutputPath>./nupkg</PackageOutputPath>
-    <Version>0.0.1</Version>
-    <Description>Composer F# Compiler - Native Type Universe via FNCS</Description>
+    <Version>0.0.2</Version>
+    <Description>Composer F# Compiler - Native Type Universe via CCS</Description>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
@@ -34,8 +34,8 @@
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Types.fs" />
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Serialize.fs" />
 
-      <!-- FNCS Integration (thin layer receiving SemanticGraph) -->
-      <Compile Include="FrontEnd/FNCS/Integration.fs" />
+      <!-- CCS Integration (thin layer receiving SemanticGraph) -->
+      <Compile Include="FrontEnd/CCS/Integration.fs" />
       <!-- FrontEnd - Project Loading (public API: .fidproj → PSG) -->
       <Compile Include="FrontEnd/ProjectLoader.fs" />
       <!-- Platform Templates -->
@@ -189,7 +189,7 @@
   <ItemGroup>
     <PackageReference Include="FSharp.Core" Version="10.0.101" />
     <PackageReference Include="IcedTasks" Version="0.11.7" />
-    <!-- FNCS: F# Native Compiler Services (native type universe) -->
+    <!-- CCS: F# Native Compiler Services (native type universe) -->
     <ProjectReference Include="../../clef/src/Compiler/Clef.Compiler.Service.fsproj" />
     <!-- TUI foundation (Color/Style types now, full TUI later) -->
     <ProjectReference Include="../../Thuja/src/Thuja/Thuja.fsproj" />

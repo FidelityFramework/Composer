@@ -4,6 +4,9 @@
 /// - Pattern matching for type-aware dispatch
 module AddNumbers
 
+open Console
+open Format
+
 // Discriminated union with two cases
 type Number =
     | IntVal of int

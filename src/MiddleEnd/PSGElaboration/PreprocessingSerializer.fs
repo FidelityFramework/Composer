@@ -1,7 +1,7 @@
 /// Preprocessing Serializer - Serialize PSGElaboration results to intermediates
 ///
 /// This module serializes ALL preprocessing coeffects to JSON for inspection.
-/// Following the FNCS phase emission pattern, this enables architectural
+/// Following the CCS phase emission pattern, this enables architectural
 /// debugging through intermediates rather than console output.
 ///
 /// "Pierce the Veil" Infrastructure (January 2026):

@@ -3,6 +3,9 @@
 /// Key validation: Side effects verify lazy evaluation timing
 module LazySample
 
+open Console
+open Format
+
 /// Helper to demonstrate side effects in thunks
 /// Returns unit after printing
 let sideEffect msg =

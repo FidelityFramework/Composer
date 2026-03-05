@@ -1,6 +1,9 @@
 /// Sample 08: Option Type - Simplified test
 module OptionSample
 
+open Console
+open Format
+
 [<EntryPoint>]
 let main argv =
     Console.writeln "=== Option Type Test ==="

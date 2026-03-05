@@ -49,7 +49,7 @@ let pFieldAccess (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (ge
         let! state = getUserState
         let arch = state.Platform.TargetArch
 
-        // Calculate byte offset for the field using FNCS-provided type structure
+        // Calculate byte offset for the field using CCS-provided type structure
         let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
 
         // Emit offset constant using SSA observed from coeffects via witness
@@ -70,7 +70,7 @@ let pFieldSet (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (value
         let arch = state.Platform.TargetArch
         let elemType = mapNativeTypeWithGraphForArch arch state.Graph state.Current.Type
 
-        // Calculate byte offset for the field using FNCS-provided type structure
+        // Calculate byte offset for the field using CCS-provided type structure
         let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
 
         // Emit offset constant using SSA observed from coeffects via witness
@@ -250,7 +250,7 @@ let pArraySet (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (value: SSA) (gep
     }
 
 // ═══════════════════════════════════════════════════════════
-// NATIVEPTR OPERATIONS (FNCS Intrinsics)
+// NATIVEPTR OPERATIONS (CCS Intrinsics)
 // ═══════════════════════════════════════════════════════════
 
 /// Build NativePtr.stackalloc pattern
@@ -395,7 +395,7 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
         | TMemRef _ | TMemRefScalar _ ->
             // String as memref - use memref operations
             match fieldName with
-            | "Pointer" | "ptr" ->  // Accept both capitalized (old) and lowercase (FNCS)
+            | "Pointer" | "ptr" ->  // Accept both capitalized (old) and lowercase (CCS)
                 // Extract base pointer from memref descriptor as index, then cast to target type
                 let! state = getUserState
                 let targetTy =
@@ -414,7 +414,7 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
                     let! extractOp = pExtractBasePtr indexSSA structSSA structTy
                     let! castOp = pIndexCastS resultSSA indexSSA TIndex targetTy
                     return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = targetTy })
-            | "Length" | "len" ->  // Accept both capitalized (old) and lowercase (FNCS)
+            | "Length" | "len" ->  // Accept both capitalized (old) and lowercase (CCS)
                 // Extract length using memref.dim (returns index type)
                 let dimIndexSSA = ssas.[0]  // Dim constant (0) from coeffects
                 let! constOp = pConstI dimIndexSSA 0L TIndex
@@ -437,8 +437,8 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
             // LLVM struct - use extractvalue (for closures, option, etc.)
             let fieldIndex =
                 match fieldName with
-                | "Pointer" | "ptr" -> 0  // Accept both capitalized (old) and lowercase (FNCS)
-                | "Length" | "len" -> 1  // Accept both capitalized (old) and lowercase (FNCS)
+                | "Pointer" | "ptr" -> 0  // Accept both capitalized (old) and lowercase (CCS)
+                | "Length" | "len" -> 1  // Accept both capitalized (old) and lowercase (CCS)
                 | _ -> failwith $"Unknown field name: {fieldName}"
 
             // Extract field value - pExtractField needs [offsetSSA, resultSSA]

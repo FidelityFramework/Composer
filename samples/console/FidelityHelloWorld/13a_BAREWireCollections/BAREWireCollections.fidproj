@@ -9,8 +9,8 @@ license = "MIT"
 target = "cpu"
 
 [dependencies]
-# Types and operations are FNCS intrinsics - no external library needed
-platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64" }
+# Types and operations are CCS intrinsics - no external library needed
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
 
 [build]
 sources = ["BAREWireCollections.fs"]

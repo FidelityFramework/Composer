@@ -1,9 +1,9 @@
-/// TypeMapping - FNCS NativeType to MLIR type conversion
+/// TypeMapping - CCS NativeType to MLIR type conversion
 ///
-/// Maps FNCS native types to their MLIR representations.
+/// Maps CCS native types to their MLIR representations.
 /// Uses structured MLIRType from Alex.Dialects.Core.Types.
 ///
-/// FNCS-native: Uses NativeType from Clef.Compiler.NativeTypedTree
+/// CCS-native: Uses NativeType from Clef.Compiler.NativeTypedTree
 module Alex.CodeGeneration.TypeMapping
 
 open Clef.Compiler.NativeTypedTree.NativeTypes
@@ -102,7 +102,7 @@ let mapNTUKindToMLIRType (platform: TargetPlatform) (arch: Architecture) (kind: 
 // MAIN TYPE MAPPING
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Map FNCS NativeType to structured MLIRType with architecture awareness.
+/// Map CCS NativeType to structured MLIRType with architecture awareness.
 /// This is the canonical conversion used throughout Alex.
 /// Uses NTU layout information for platform-aware type mapping.
 ///
@@ -159,12 +159,12 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         // Char (Unicode codepoint)
         | _, Some NTUKind.NTUchar -> TInt (IntWidth 32)
         // String as memref (portable MLIR type, not LLVM struct)
-        // At F# level: string has .Pointer/.Length accessors (FNCS synthetic members)
+        // At F# level: string has .Pointer/.Length accessors (CCS synthetic members)
         // At MLIR level: memref<?xi8> (dynamic buffer)
         // Descriptor (ptr+size) is MLIR's concern, not explicitly modeled here
         | TypeLayout.FatPointer, Some NTUKind.NTUstring -> TMemRef (TInt (IntWidth 8))
         // String with Opaque layout (memref transition - January 2026)
-        // After FNCS memref transition, strings use TypeLayout.Opaque instead of FatPointer
+        // After CCS memref transition, strings use TypeLayout.Opaque instead of FatPointer
         // Both layouts map to the same MLIR type: memref<?xi8>
         | TypeLayout.Opaque, Some NTUKind.NTUstring -> TMemRef (TInt (IntWidth 8))
         // SECOND: Name-based fallback for types without proper NTU metadata
@@ -227,15 +227,16 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 else
                     match tyconLayout with
                     | TypeLayout.Inline (size, align) when size > 8 ->
-                        // DU layout: FNCS provides size & align - type uses size, allocation uses align
+                        // DU layout: CCS provides size & align - type uses size, allocation uses align
                         // Heterogeneous struct → TMemRefStatic (size, TInt (IntWidth 8))
                         // This is the CORRECT portable representation for WASM and other backends
                         TMemRefStatic (size, TInt (IntWidth 8))
                     | TypeLayout.Inline (_size, _align) when tycon.CaseCount > 0 ->
                         // Small enum DU: abstract tag type — platform elision decides concrete width
                         TTag tycon.CaseCount
-                    | TypeLayout.Inline (size, align) when size > 0 ->
-                        failwithf "TApp with unknown Inline layout (%d, %d): %s" size align tycon.Name
+                    | TypeLayout.Inline (size, _align) when size > 0 ->
+                        // C-style integer enum (CaseCount = 0, known size): map to integer of matching width
+                        TInt (IntWidth (size * 8))
                     | TypeLayout.FatPointer ->
                         // FatPointer types should have been handled earlier by NTUKind or name
                         // Strings: TypeLayout.FatPointer + NTUKind.NTUstring → TMemRef (line 151)
@@ -243,16 +244,16 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                         // If we reach here, check if it's a string by name (defensive)
                         if tycon.Name.ToLowerInvariant().Contains("string") then
                             // String without proper NTUKind - use memref but warn
-                            printfn "WARNING: String type '%s' lacks NTUKind.NTUstring - fix FNCS intrinsic definition" tycon.Name
+                            printfn "WARNING: String type '%s' lacks NTUKind.NTUstring - fix CCS intrinsic definition" tycon.Name
                             TMemRef <| TInt (IntWidth 8)
                         else
                             // Unknown FatPointer type - fail loudly
-                            failwithf "FatPointer type '%s' lacks proper NTUKind or name match - fix FNCS metadata" tycon.Name
+                            failwithf "FatPointer type '%s' lacks proper NTUKind or name match - fix CCS metadata" tycon.Name
                     | TypeLayout.PlatformWord ->
                         // Should have been handled by NTU-aware code at top; this is a fallback
                         TInt wordWidth
                     | TypeLayout.Opaque ->
-                        failwithf "TApp with Opaque layout - FNCS must resolve type '%s'" tycon.Name
+                        failwithf "TApp with Opaque layout - CCS must resolve type '%s'" tycon.Name
                     | TypeLayout.Reference _ ->
                         failwithf "Reference type not yet implemented: %s" tycon.Name
                     | TypeLayout.NTUCompound n ->
@@ -357,7 +358,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         TMemRefStatic (totalSize, TInt (IntWidth 8))
 
     | NativeType.TMeasure _ ->
-        failwith "Measure type should have been stripped - this is an FNCS issue"
+        failwith "Measure type should have been stripped - this is an CCS issue"
 
     | NativeType.TError msg ->
         failwithf "NativeType.TError: %s" msg
@@ -373,7 +374,7 @@ let mapNativeType (ty: NativeType) : MLIRType =
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Calculate byte offset for a field within a struct
-/// Uses FNCS-provided type structure and arch-aware size computation
+/// Uses CCS-provided type structure and arch-aware size computation
 let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (fieldIndex: int) : int =
     match nativeType with
     | NativeType.TTuple(elements, _) ->
@@ -463,7 +464,7 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
             TStruct mlirFields
         | None ->
             // Fallback: shouldn't happen if TypeDef nodes are properly created
-            failwithf "Record type '%s' not found in TypeDef nodes - FNCS must create TypeDef for records" tycon.Name
+            failwithf "Record type '%s' not found in TypeDef nodes - CCS must create TypeDef for records" tycon.Name
     | NativeType.TApp(tycon, args) ->
         // Non-record TApp (FieldCount = 0) - but check if it might be a record by name lookup
         // This handles cases where FieldCount wasn't preserved in type extraction
@@ -583,7 +584,7 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
             let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy))
             TStruct mlirFields
         | None ->
-            failwithf "Record type '%s' not found in TypeDef nodes - FNCS must create TypeDef for records" tycon.Name
+            failwithf "Record type '%s' not found in TypeDef nodes - CCS must create TypeDef for records" tycon.Name
     | NativeType.TApp(tycon, args) ->
         // Non-record TApp (FieldCount = 0) - check if it might be a record by name lookup
         match SemanticGraph.tryGetRecordFields tycon.Name graph with
@@ -644,7 +645,7 @@ let mapNativeTypeWithGraph (graph: SemanticGraph) (ty: NativeType) : MLIRType =
 // STRING-BASED TYPE MAPPING (for legacy code)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Convert FNCS NativeType to MLIR type string
+/// Convert CCS NativeType to MLIR type string
 /// Uses Serialize module for structured type → string conversion
 let nativeTypeToMLIR (ty: NativeType) : string =
     let mlirType = mapNativeType ty

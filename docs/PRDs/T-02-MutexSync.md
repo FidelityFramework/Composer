@@ -6,19 +6,25 @@
 
 This PRD adds mutual exclusion (mutex) primitives for thread synchronization. Mutexes prevent data races when multiple threads access shared state.
 
-**Key Insight**: Mutexes are OS primitives (pthread_mutex on Linux, CRITICAL_SECTION on Windows). They protect critical sections where shared data is accessed.
+**Key Insight**: Mutexes are OS primitives (pthread_mutex on Linux, CRITICAL_SECTION on Windows). The raw pthread_mutex functions are accessed via Farscape-generated `Fidelity.Pthread` bindings. The language-level `Mutex.create`/`lock`/`unlock` API is a **CCS intrinsic** that wraps the raw bindings with opaque handle management.
+
+**Architecture**: Same two-layer model as T-01:
+- **Raw binding** (L1): `Fidelity.Pthread` — `[<FidelityExtern("pthread", "pthread_mutex_init")>]`
+- **Language API** (CCS intrinsic): `Mutex.create` — allocates opaque storage, initializes via ExternCall to pthread
+
+The CCS intrinsic is justified because mutex handles require compiler-managed opaque storage sizing (40 bytes for pthread_mutex_t on Linux) and destruction guarantees.
 
 ## 2. Language Feature Specification
 
 ### 2.1 Mutex Creation
 
-```fsharp
+```clef
 let mutex = Mutex.create ()
 ```
 
 ### 2.2 Lock/Unlock
 
-```fsharp
+```clef
 Mutex.lock mutex
 // Critical section - only one thread at a time
 sharedCounter <- sharedCounter + 1
@@ -27,7 +33,7 @@ Mutex.unlock mutex
 
 ### 2.3 Lock Guard Pattern
 
-```fsharp
+```clef
 let withLock (mutex: Mutex) (f: unit -> 'T) : 'T =
     Mutex.lock mutex
     let result = f ()
@@ -39,9 +45,9 @@ let value = withLock mutex (fun () ->
     sharedData.[index])
 ```
 
-### 2.4 Condition Variables (Future)
+### 2.4 Condition Variables
 
-```fsharp
+```clef
 let cond = CondVar.create ()
 CondVar.wait cond mutex    // Atomically unlock and wait
 CondVar.signal cond        // Wake one waiter
@@ -63,23 +69,18 @@ CondVar.broadcast cond     // Wake all waiters
 ```fsharp
 // In CheckExpressions.fs
 | "Mutex.create" ->
-    // unit -> Mutex
     NativeType.TFun(env.Globals.UnitType, NativeType.TMutex)
 
 | "Mutex.lock" ->
-    // Mutex -> unit
     NativeType.TFun(NativeType.TMutex, env.Globals.UnitType)
 
 | "Mutex.unlock" ->
-    // Mutex -> unit
     NativeType.TFun(NativeType.TMutex, env.Globals.UnitType)
 
 | "Mutex.tryLock" ->
-    // Mutex -> bool
     NativeType.TFun(NativeType.TMutex, env.Globals.BoolType)
 
 | "Mutex.destroy" ->
-    // Mutex -> unit
     NativeType.TFun(NativeType.TMutex, env.Globals.UnitType)
 ```
 
@@ -87,111 +88,106 @@ CondVar.broadcast cond     // Wake all waiters
 
 ```fsharp
 | "CondVar.create" ->
-    // unit -> CondVar
     NativeType.TFun(env.Globals.UnitType, NativeType.TCondVar)
 
 | "CondVar.wait" ->
-    // CondVar -> Mutex -> unit
     NativeType.TFun(NativeType.TCondVar,
         NativeType.TFun(NativeType.TMutex, env.Globals.UnitType))
 
 | "CondVar.signal" ->
-    // CondVar -> unit
     NativeType.TFun(NativeType.TCondVar, env.Globals.UnitType)
 
 | "CondVar.broadcast" ->
-    // CondVar -> unit
     NativeType.TFun(NativeType.TCondVar, env.Globals.UnitType)
 ```
 
-## 4. Composer/Alex Layer Implementation
+## 4. Binding Generation (Farscape)
 
-### 4.1 Mutex Structure
+### 4.1 pthread_mutex in Pilot TOML
 
-On Linux, pthread_mutex_t is 40 bytes. We allocate opaque storage:
-
-```fsharp
-type Mutex = {
-    Storage: byte[40]  // pthread_mutex_t
-}
+```toml
+# pthread.pilot.toml
+[[namespace]]
+name = "Fidelity.Pthread.Mutex"
+description = "POSIX mutex and condition variable operations"
+library = "pthread"
+functions = ["pthread_mutex_init", "pthread_mutex_lock", "pthread_mutex_unlock",
+             "pthread_mutex_trylock", "pthread_mutex_destroy",
+             "pthread_cond_init", "pthread_cond_wait", "pthread_cond_signal",
+             "pthread_cond_broadcast", "pthread_cond_destroy"]
 ```
 
-### 4.2 Mutex.create Witness
+### 4.2 Generated L1 Declarations
 
-```fsharp
-let witnessMutexCreate z =
-    let mutexSSA = freshSSA ()
+```clef
+module Fidelity.Pthread.Mutex
 
-    // Allocate mutex storage
-    emit $"  %%{mutexSSA} = llvm.alloca 40 x i8"
+[<FidelityExtern("pthread", "pthread_mutex_init")>]
+let pthread_mutex_init (mutex: nativeint) (attr: nativeint) : int = Unchecked.defaultof<int>
 
-    // Initialize (attr=0 means default attributes)
-    emit "  %attr_zero = llvm.mlir.zero : !llvm.ptr"
-    emit $"  llvm.call @pthread_mutex_init(%%{mutexSSA}, %%attr_zero)"
+[<FidelityExtern("pthread", "pthread_mutex_lock")>]
+let pthread_mutex_lock (mutex: nativeint) : int = Unchecked.defaultof<int>
 
-    TRValue { SSA = mutexSSA; Type = TMutex }
+[<FidelityExtern("pthread", "pthread_mutex_unlock")>]
+let pthread_mutex_unlock (mutex: nativeint) : int = Unchecked.defaultof<int>
+
+[<FidelityExtern("pthread", "pthread_mutex_destroy")>]
+let pthread_mutex_destroy (mutex: nativeint) : int = Unchecked.defaultof<int>
+
+[<FidelityExtern("pthread", "pthread_cond_init")>]
+let pthread_cond_init (cond: nativeint) (attr: nativeint) : int = Unchecked.defaultof<int>
+
+[<FidelityExtern("pthread", "pthread_cond_wait")>]
+let pthread_cond_wait (cond: nativeint) (mutex: nativeint) : int = Unchecked.defaultof<int>
+
+[<FidelityExtern("pthread", "pthread_cond_signal")>]
+let pthread_cond_signal (cond: nativeint) : int = Unchecked.defaultof<int>
 ```
 
-### 4.3 Mutex.lock/unlock Witness
+## 5. Composer/Alex Layer Implementation
 
-```fsharp
-let witnessMutexLock z mutexSSA =
-    emit $"  llvm.call @pthread_mutex_lock(%%{mutexSSA})"
-    TRVoid
+### 5.1 Mutex.create Witness
 
-let witnessMutexUnlock z mutexSSA =
-    emit $"  llvm.call @pthread_mutex_unlock(%%{mutexSSA})"
-    TRVoid
-```
-
-### 4.4 CondVar.wait Witness
-
-```fsharp
-let witnessCondVarWait z condSSA mutexSSA =
-    emit $"  llvm.call @pthread_cond_wait(%%{condSSA}, %%{mutexSSA})"
-    TRVoid
-```
-
-## 5. MLIR Output Specification
-
-### 5.1 Mutex Type
+The witness allocates opaque storage and calls `pthread_mutex_init` via ExternCall:
 
 ```mlir
-// Opaque storage for pthread_mutex_t
-!mutex_type = !llvm.array<40 x i8>
+// Mutex.create() generates:
+%mutex = memref.alloca() : memref<40xi8>  // sizeof(pthread_mutex_t)
+%mutex_ptr = memref.extract_aligned_pointer_as_index %mutex : memref<40xi8> -> index
+%null = arith.constant 0 : index
+func.call @pthread_mutex_init(%mutex_ptr, %null) : (index, index) -> i32
 ```
 
-### 5.2 Mutex Operations
+### 5.2 Mutex.lock/unlock Witness
 
 ```mlir
-// let mutex = Mutex.create ()
-%mutex = llvm.alloca 40 x i8
-llvm.call @pthread_mutex_init(%mutex, %null) : (!llvm.ptr, !llvm.ptr) -> i32
-
 // Mutex.lock mutex
-llvm.call @pthread_mutex_lock(%mutex) : (!llvm.ptr) -> i32
+func.call @pthread_mutex_lock(%mutex_ptr) : (index) -> i32
 
 // ... critical section ...
 
 // Mutex.unlock mutex
-llvm.call @pthread_mutex_unlock(%mutex) : (!llvm.ptr) -> i32
+func.call @pthread_mutex_unlock(%mutex_ptr) : (index) -> i32
 ```
 
-### 5.3 CondVar Operations
+### 5.3 pthread declarations via ExternCall
 
 ```mlir
-// CondVar.wait cond mutex
-llvm.call @pthread_cond_wait(%cond, %mutex) : (!llvm.ptr, !llvm.ptr) -> i32
-
-// CondVar.signal cond
-llvm.call @pthread_cond_signal(%cond) : (!llvm.ptr) -> i32
+// Generated from [<FidelityExtern>] metadata — same pathway as D-01
+func.func private @pthread_mutex_init(index, index) -> i32 attributes { "link" = "pthread" }
+func.func private @pthread_mutex_lock(index) -> i32 attributes { "link" = "pthread" }
+func.func private @pthread_mutex_unlock(index) -> i32 attributes { "link" = "pthread" }
+func.func private @pthread_mutex_destroy(index) -> i32 attributes { "link" = "pthread" }
+func.func private @pthread_cond_init(index, index) -> i32 attributes { "link" = "pthread" }
+func.func private @pthread_cond_wait(index, index) -> i32 attributes { "link" = "pthread" }
+func.func private @pthread_cond_signal(index) -> i32 attributes { "link" = "pthread" }
 ```
 
 ## 6. Validation
 
 ### 6.1 Sample Code
 
-```fsharp
+```clef
 module MutexSyncSample
 
 let mutable sharedCounter = 0
@@ -242,55 +238,38 @@ Without mutex (expect < 200000): 156789  (varies, usually < 200000)
 With mutex (expect 200000): 200000
 ```
 
-## 7. Files to Create/Modify
+## 7. Implementation Checklist
 
-### 7.1 CCS
+### Phase 1: CCS Foundation
+- [ ] Add TMutex, TCondVar types to NativeTypes.fs
+- [ ] Add Mutex/CondVar intrinsics to CheckExpressions.fs
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `NativeTypes.fs` | MODIFY | Add TMutex, TCondVar types |
-| `CheckExpressions.fs` | MODIFY | Add Mutex/CondVar intrinsics |
+### Phase 2: Binding Generation
+- [ ] Confirm `pthread.pilot.toml` includes mutex/condvar functions
+- [ ] Run `farscape generate` — verify Fidelity.Pthread output
 
-### 7.2 Composer
+### Phase 3: Alex Implementation
+- [ ] Implement Mutex.create witness (alloc + ExternCall pthread_mutex_init)
+- [ ] Implement Mutex.lock/unlock witnesses (ExternCall pthread_mutex_lock/unlock)
+- [ ] Implement CondVar witnesses
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `src/Alex/Witnesses/MutexWitness.fs` | CREATE | Mutex/CondVar witnesses |
-| `src/Alex/Bindings/Mutex_Linux_x86_64.fs` | CREATE | pthread_mutex bindings |
-| `src/Alex/Bindings/Mutex_Windows_x86_64.fs` | CREATE | CRITICAL_SECTION bindings |
-
-## 8. Implementation Checklist
-
-### Phase 1: Basic Mutex
-- [ ] Add TMutex type
-- [ ] Add Mutex.create/lock/unlock/destroy intrinsics
-- [ ] Implement witnesses
-- [ ] Add platform bindings
-
-### Phase 2: Condition Variables
-- [ ] Add TCondVar type
-- [ ] Add CondVar intrinsics
-- [ ] Implement witnesses
-
-### Phase 3: Validation
+### Phase 4: Validation
 - [ ] Sample 28 compiles
 - [ ] Race condition visible without mutex
 - [ ] Correct result with mutex
-- [ ] Samples 01-27 still pass
 
-## 9. Platform Bindings
+## 8. Design Decision: Why Mutex.create is an Intrinsic
 
-| Operation | Linux | Windows |
-|-----------|-------|---------|
-| Mutex init | pthread_mutex_init | InitializeCriticalSection |
-| Mutex lock | pthread_mutex_lock | EnterCriticalSection |
-| Mutex unlock | pthread_mutex_unlock | LeaveCriticalSection |
-| Mutex destroy | pthread_mutex_destroy | DeleteCriticalSection |
-| CondVar init | pthread_cond_init | InitializeConditionVariable |
-| CondVar wait | pthread_cond_wait | SleepConditionVariableCS |
-| CondVar signal | pthread_cond_signal | WakeConditionVariable |
+Same reasoning as T-01's `Thread.create`:
+1. **Opaque storage sizing**: `pthread_mutex_t` is 40 bytes on Linux, different on other platforms. The compiler must know the size.
+2. **Destruction guarantees**: Future integration with linear types (A-04) may require compiler tracking of mutex lifecycle.
+3. **Platform abstraction**: The `Mutex` type abstracts over platform differences. The raw pthread calls go through ExternCall; the abstraction is compiler-managed.
 
-## 10. Related PRDs
+The raw `pthread_mutex_*` functions are library functions (ExternCall via Farscape). The `Mutex.*` wrapper API is a compiler intrinsic.
 
-- **T-01**: BasicThread - Threading foundation
-- **T-03-31**: MailboxProcessor - Uses mutex for message queue
+## 9. Related PRDs
+
+- **T-01**: BasicThread — threading foundation
+- **D-01**: GTKWindow — establishes ExternCall pathway used by pthread bindings
+- **T-03-31**: MailboxProcessor — uses mutex for message queue
+- **A-04**: BasicRegion — linear types may govern mutex lifecycle

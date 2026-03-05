@@ -1,6 +1,8 @@
 /// Minimal Mutual Recursion Test
 module MutualRecursionSample
 
+open Console
+
 /// Mutual recursion example: even/odd determination
 let rec isEven (n: int) : bool =
     if n = 0 then true
