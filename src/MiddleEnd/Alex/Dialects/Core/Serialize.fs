@@ -418,15 +418,20 @@ let memrefOpToString (op: MemRefOp) : string =
         // memref.cast %source : srcType to destType
         sprintf "%s = memref.cast %s : %s to %s"
             (ssaToString result) (ssaToString source) (typeToString srcType) (typeToString destType)
-    | MemRefOp.ReinterpretCast (result, source, byteOffset, srcType, destType) ->
-        // memref.reinterpret_cast: layout change at byte offset, SAME element type only
-        sprintf "%s = memref.reinterpret_cast %s to offset: [%d], sizes: [1], strides: [1] : %s to %s"
-            (ssaToString result) (ssaToString source) byteOffset (typeToString srcType) (typeToString destType)
+    | MemRefOp.ReinterpretCast (result, source, byteOffset, size, srcType, destType) ->
+        // memref.reinterpret_cast: layout change at byte offset with explicit size
+        sprintf "%s = memref.reinterpret_cast %s to offset: [%d], sizes: [%d], strides: [1] : %s to %s"
+            (ssaToString result) (ssaToString source) byteOffset size (typeToString srcType) (typeToString destType)
     | MemRefOp.View (result, source, offsetSSA, srcType, destType) ->
         // memref.view: typed view of byte buffer (different element type allowed)
         // Portable across all targets: CPU (→ GEP), FPGA (→ typed memory port), NPU (→ typed channel)
         sprintf "%s = memref.view %s[%s][] : %s to %s"
             (ssaToString result) (ssaToString source) (ssaToString offsetSSA) (typeToString srcType) (typeToString destType)
+    | MemRefOp.IndexToMemRef (result, source, destType) ->
+        // builtin.unrealized_conversion_cast: FFI boundary crossing (raw pointer → memref)
+        // NativePtr.ofNativeInt: index (platform pointer) → memref for typed access
+        sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s"
+            (ssaToString result) (ssaToString source) (typeToString destType)
 
 /// Serialize top-level MLIROp to MLIR text
 let rec opToString (op: MLIROp) : string =

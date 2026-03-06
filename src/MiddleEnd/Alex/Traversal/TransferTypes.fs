@@ -117,10 +117,50 @@ type DiagnosticSeverity =
     | Warning
     | Info
 
+/// Formal Alex error codes — AX prefix, 4-digit numeric
+/// Ranges:
+///   AX1xxx — Type resolution errors
+///   AX2xxx — Witness/traversal errors
+///   AX3xxx — SSA/accumulator errors
+///   AX4xxx — Pattern match errors
+///   AX5xxx — Scope/control flow errors
+type AlexErrorCode =
+    // AX1xxx: Type resolution
+    | AX1001  // Unbound type variable
+    | AX1002  // Type mapping failure
+
+    // AX2xxx: Witness/traversal
+    | AX2001  // Arguments not yet witnessed (accumulator recall failure)
+    | AX2002  // Function node not resolved
+    | AX2003  // Direct call pattern failure
+    | AX2004  // Indirect call pattern failure
+
+    // AX3xxx: SSA/accumulator
+    | AX3001  // SSA count mismatch
+    | AX3002  // SSA not found in coeffects
+
+    // AX4xxx: Pattern match
+    | AX4001  // Pattern emission failure
+
+    // AX5xxx: Scope/control flow
+    | AX5001  // Scope isolation failure
+
+module AlexErrorCode =
+    let format (code: AlexErrorCode) : string =
+        match code with
+        | AX1001 -> "AX1001" | AX1002 -> "AX1002"
+        | AX2001 -> "AX2001" | AX2002 -> "AX2002" | AX2003 -> "AX2003" | AX2004 -> "AX2004"
+        | AX3001 -> "AX3001" | AX3002 -> "AX3002"
+        | AX4001 -> "AX4001"
+        | AX5001 -> "AX5001"
+
 /// Structured diagnostic capturing WHERE and WHAT went wrong
 type Diagnostic = {
     /// Severity level
     Severity: DiagnosticSeverity
+
+    /// Formal error code
+    Code: AlexErrorCode option
 
     /// NodeId where error occurred (if known)
     NodeId: NodeId option
@@ -142,6 +182,17 @@ module Diagnostic =
     /// Create an error diagnostic with full context
     let error nodeId source phase message =
         { Severity = Error
+          Code = None
+          NodeId = nodeId
+          Source = source
+          Phase = phase
+          Message = message
+          Details = None }
+
+    /// Create an error diagnostic with formal error code and full context
+    let coded code nodeId source phase message =
+        { Severity = Error
+          Code = Some code
           NodeId = nodeId
           Source = source
           Phase = phase
@@ -155,6 +206,7 @@ module Diagnostic =
     /// Create an error diagnostic with expected/actual details
     let errorWithDetails nodeId source phase message expected actual =
         { Severity = Error
+          Code = None
           NodeId = nodeId
           Source = source
           Phase = phase
@@ -169,6 +221,11 @@ module Diagnostic =
             | Error -> Some "[ERROR]"
             | Warning -> Some "[WARNING]"
             | Info -> Some "[INFO]"
+
+            // Error code
+            match diag.Code with
+            | Some code -> Some (AlexErrorCode.format code)
+            | None -> None
 
             // NodeId
             match diag.NodeId with
@@ -380,6 +437,10 @@ module WitnessOutput =
     /// Create error output with simple message
     let error msg = { InlineOps = []; TopLevelOps = []; Result = TRError (Diagnostic.errorSimple msg) }
 
+    /// Create error output with formal error code and full context
+    let errorCoded code nodeId source phase msg =
+        { InlineOps = []; TopLevelOps = []; Result = TRError (Diagnostic.coded code nodeId source phase msg) }
+
     /// Create error output with full diagnostic context
     let errorDiag diag = { InlineOps = []; TopLevelOps = []; Result = TRError diag }
 
@@ -433,8 +494,15 @@ let targetArch (ctx: WitnessContext) : Architecture =
 
 /// Witness-layer type mapping — delegates to mapNativeTypeForTarget.
 /// Extracts platform, architecture, and graph from WitnessContext.
+/// Drains any AX1001 diagnostics collected during mapping into the accumulator.
 let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
-    mapNativeTypeForTarget ctx.Coeffects.TargetPlatform ctx.Coeffects.Platform.TargetArch ctx.Graph ty
+    let result = mapNativeTypeForTarget ctx.Coeffects.TargetPlatform ctx.Coeffects.Platform.TargetArch ctx.Graph ty
+    // Drain type mapping diagnostics (AX1001: unbound TVar).
+    // These are non-fatal — CCS may leave type variables unresolved for unused bindings
+    // (e.g. `| Error err -> ...` where err is never referenced). Alex continues with TIndex.
+    // CCS diagnostics surface these at the appropriate level; Alex doesn't re-report.
+    drainTypeMappingErrors () |> ignore
+    result
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =

@@ -332,7 +332,7 @@ let private witnessHardwareModule
                 match stepStateType with
                 | Some sty -> sty
                 | None ->
-                    // Fallback: narrow from init node type
+                    // Step didn't provide state type — derive from init node type
                     let rawStateType = mapType initNode.Type ctx
                     narrowType ctx.Coeffects initNodeId rawStateType
 

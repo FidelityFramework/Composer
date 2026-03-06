@@ -6,8 +6,9 @@
 /// NANOPASS: Registered for ALL platforms. Replaces DU handling formerly in MemoryWitness.
 module Alex.Witnesses.DUWitness
 
-open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId, NativeType
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.Core  // SemanticGraph.tryGetNode
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -41,11 +42,25 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
     | Some ((duValueId, caseIndex, _caseName, _payloadType), _) ->
         match MLIRAccumulator.recallNode duValueId ctx.Accumulator with
         | Some (duSSA, duType) ->
-            let payloadType = mapType node.Type ctx
+            // Derive payload type from scrutinee's DU type args, indexed by case.
+            // CCS may leave the DUEliminate node's own type unresolved (TVar) when
+            // the binding is unused — the scrutinee's TApp carries the concrete types.
+            let payloadType =
+                match SemanticGraph.tryGetNode duValueId ctx.Graph with
+                | Some scrutineeNode ->
+                    match scrutineeNode.Type with
+                    | NativeType.TApp (tycon, typeArgs) when caseIndex < typeArgs.Length ->
+                        mapType typeArgs.[caseIndex] ctx
+                    | _ -> mapType node.Type ctx
+                | None -> mapType node.Type ctx
             match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType caseIndex payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | Result.Error diagnostic -> WitnessOutput.error $"DUEliminate: {diagnostic}"
-        | None -> WitnessOutput.error "DUEliminate: DU value not available"
+            | Result.Error diagnostic ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "DUEliminate")
+                    (sprintf "DUEliminate case %d: %s" caseIndex diagnostic)
+        | None ->
+            WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "DU") (Some "DUEliminate")
+                (sprintf "DU scrutinee node %d not yet witnessed" (NodeId.value duValueId))
 
     | None ->
 

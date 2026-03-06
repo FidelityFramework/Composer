@@ -498,7 +498,7 @@ let pBuildMatchElimination
                         let zeroSSA = allSSAs.[2]
                         let tagSSA = allSSAs.[3]
                         let memrefI8Ty = TMemRef (TInt (IntWidth 8))
-                        let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, scrutineeType, memrefI8Ty))
+                        let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, 1, scrutineeType, memrefI8Ty))
                         let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
                         let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))
                         [castOp; zeroOp; loadOp], tagSSA, 4

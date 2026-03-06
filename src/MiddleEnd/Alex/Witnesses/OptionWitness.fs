@@ -78,7 +78,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    let valueType = TIndex  // Fallback type
+                    let valueType = mapType node.Type ctx
 
                     match tryMatchWithDiagnostics (pOptionGet node.Id optSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

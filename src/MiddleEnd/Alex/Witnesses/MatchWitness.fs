@@ -90,9 +90,12 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                     (armOps, armValueNodeId, arm))
 
             // Step 3: Determine if expression-valued
+            // TVar means CCS didn't resolve the match result type — treat as void
+            // (if arms are side-effect-only, the match result type stays unresolved)
             let isExpressionValued =
                 match node.Type with
                 | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) -> false
+                | NativeType.TVar _ -> false
                 | _ -> true
 
             let result =

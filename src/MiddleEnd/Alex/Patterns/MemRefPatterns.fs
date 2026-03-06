@@ -106,3 +106,33 @@ let pStoreMutableVariable (nodeId: int) (memrefSSA: SSA) (valueSSA: SSA) (elemTy
         let ops = [zeroOp; storeOp]
         return (ops, TRVoid)
     }
+
+// ═══════════════════════════════════════════════════════════
+// ADDRESS-OF PATTERN
+// ═══════════════════════════════════════════════════════════
+
+/// Build address-of: alloca + store to get a memref (pointer) to a value
+/// For Clef `&expr` — takes the address of a stack value
+///
+/// Emits:
+///   %ref = memref.alloca() : memref<1x{elemType}>
+///   %c0 = arith.constant 0 : index
+///   memref.store %value, %ref[%c0] : {elemType}, memref<1x{elemType}>
+///
+/// Returns: memref SSA (the address)
+let pBuildAddressOf (nodeId: NodeId) (valueSSA: SSA) (elemType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 2) $"pBuildAddressOf: Expected at least 2 SSAs, got {ssas.Length}"
+        let memrefSSA = ssas.[0]
+        let zeroSSA = ssas.[1]
+
+        let! allocOp = pAlloca memrefSSA 1 elemType None
+        let! zeroOp = pIndexConst zeroSSA 0L
+        let memrefType = TMemRefStatic (1, elemType)
+        let! storeOp = pStore valueSSA memrefSSA [zeroSSA] elemType memrefType
+
+        let ops = [allocOp; zeroOp; storeOp]
+        let result = TRValue { SSA = memrefSSA; Type = memrefType }
+        return (ops, result)
+    }

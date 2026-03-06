@@ -147,7 +147,20 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
 
                 let allWitnessed = argsResult |> List.forall Option.isSome
                 if not allWitnessed then
-                    WitnessOutput.error "Application: Some arguments not yet witnessed"
+                    let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
+                    let missingDetail =
+                        List.zip argIds argsResult
+                        |> List.choose (fun (id, r) ->
+                            if r.IsNone then
+                                let kindStr =
+                                    match SemanticGraph.tryGetNode id ctx.Graph with
+                                    | Some n -> sprintf "%A (reachable=%b, type=%A)" n.Kind n.IsReachable n.Type
+                                    | None -> "NOT_FOUND"
+                                Some (sprintf "  Node %d: %s" (NodeId.value id) kindStr)
+                            else None)
+                        |> String.concat "\n"
+                    WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
+                        (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)\n%s" funcName missing missingDetail)
                 else
                     let args = argsResult |> List.choose id
                     let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
@@ -155,7 +168,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let paramNames = extractParamNames defId ctx.Graph
                     match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{funcName}': {diagnostic}"
+                    | Result.Error diagnostic ->
+                        WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
+                            (sprintf "Call to '%s': %s" funcName diagnostic)
 
             | SemanticKind.VarRef (localName, None) ->
                 // Unresolved VarRef — try direct call with local name
@@ -164,18 +179,24 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
                 let allWitnessed = argsResult |> List.forall Option.isSome
                 if not allWitnessed then
-                    WitnessOutput.error "Application: Some arguments not yet witnessed"
+                    let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
+                    WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
+                        (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)" localName missing)
                 else
                     let args = argsResult |> List.choose id
                     let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
                     match tryMatchWithDiagnostics (pDirectCall node.Id localName args retType None) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | Result.Error diagnostic -> WitnessOutput.error $"Direct call '{localName}': {diagnostic}"
+                    | Result.Error diagnostic ->
+                        WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
+                            (sprintf "Call to '%s': %s" localName diagnostic)
 
             | _ ->
                 // Function is an SSA value (indirect call)
                 match MLIRAccumulator.recallNode funcId ctx.Accumulator with
-                | None -> WitnessOutput.error "Application: Function not yet witnessed"
+                | None ->
+                    WitnessOutput.errorCoded AX2002 (Some node.Id) (Some "Application") (Some "IndirectCall")
+                        (sprintf "Function node %d not yet witnessed" (NodeId.value funcId))
                 | Some (funcSSA, _) ->
                     let argsResult =
                         argIds
@@ -183,16 +204,21 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
 
                     let allWitnessed = argsResult |> List.forall Option.isSome
                     if not allWitnessed then
-                        WitnessOutput.error "Application: Some arguments not yet witnessed"
+                        let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
+                        WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "IndirectCall")
+                            (sprintf "Indirect call: arguments not yet witnessed (missing nodes: %A)" missing)
                     else
                         let args = argsResult |> List.choose id
                         let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
 
                         match tryMatchWithDiagnostics (pApplicationCall node.Id funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                        | Result.Error diagnostic -> WitnessOutput.error $"Indirect call: {diagnostic}"
+                        | Result.Error diagnostic ->
+                            WitnessOutput.errorCoded AX2004 (Some node.Id) (Some "Application") (Some "IndirectCall")
+                                (sprintf "Indirect call: %s" diagnostic)
         | None ->
-            WitnessOutput.error $"Application: Could not resolve function node {funcId}"
+            WitnessOutput.errorCoded AX2002 (Some node.Id) (Some "Application") (Some "ResolveFunctionNode")
+                (sprintf "Could not resolve function node %d" (NodeId.value funcId))
     | None ->
         WitnessOutput.skip
 

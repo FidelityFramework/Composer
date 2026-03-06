@@ -32,7 +32,7 @@ open PSGElaboration.Coeffects
 /// Get the number of SSAs needed for a literal value
 let private literalExpansionCost (lit: NativeLiteral) : int =
     match lit with
-    | NativeLiteral.String _ -> 2  // memref.get_global (static) + memref.cast (static → dynamic)
+    | NativeLiteral.String _ -> 3  // memref.get_global (storage) + memref.reinterpret_cast (content view) + memref.cast (dynamic)
     | NativeLiteral.Unit -> 1     // constI
     | NativeLiteral.Bool _ -> 1   // constI
     | NativeLiteral.Int _ -> 1    // All integer types (int8..int64, uint8..uint64, nativeint)

@@ -194,8 +194,9 @@ type MemRefOp =
     | GetGlobal of SSA * string * MLIRType                             // result, globalName, memrefType
     | Dim of SSA * SSA * SSA * MLIRType                                // result, memref, dimIndex, memrefType (returns index)
     | Cast of SSA * SSA * MLIRType * MLIRType                          // result, source, srcType, destType (memref type cast)
-    | ReinterpretCast of SSA * SSA * int * MLIRType * MLIRType         // result, source, byteOffset, srcType, destType (same element type only)
+    | ReinterpretCast of SSA * SSA * int * int * MLIRType * MLIRType   // result, source, byteOffset, size, srcType, destType
     | View of SSA * SSA * SSA * MLIRType * MLIRType                   // result, source, offsetSSA, srcType, destType (different element type: byte buffer → typed view)
+    | IndexToMemRef of SSA * SSA * MLIRType                            // result, sourceIndex, destMemRefType (raw pointer → memref for NativePtr.ofNativeInt)
 
 /// Arithmetic dialect operations
 type ArithOp =

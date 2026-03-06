@@ -268,6 +268,15 @@ let pVarRef : PSGParser<string * NodeId option> =
         | _ -> return! fail (Message "Expected VarRef")
     }
 
+/// Match an AddressOf node — takes the address of a value
+let pAddressOf : PSGParser<NodeId> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.AddressOf (exprId, _) -> return exprId
+        | _ -> return! fail (Message "Expected AddressOf")
+    }
+
 /// Match a FieldGet node (extracts field from struct/tuple)
 let pFieldGet : PSGParser<NodeId * string> =
     parser {
@@ -435,7 +444,7 @@ let pLambdaWithBinding : PSGParser<string * (string * Clef.Compiler.NativeTypedT
             | Some name -> return (name, params', bodyId, captures)
             | None -> return (sprintf "lambda_%d" (NodeId.value state.Current.Id), params', bodyId, captures)
         | None ->
-            // No parent - use node ID as fallback name
+            // No parent binding — use node ID as synthetic name
             return (sprintf "lambda_%d" (NodeId.value state.Current.Id), params', bodyId, captures)
     }
 

@@ -47,8 +47,8 @@ let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                 | None -> return! fail (Message "LazyExpr: Body not yet witnessed")
                 | Some (codePtr, codePtrTy) ->
                     // Get Lazy<T> type from node
-                    // With TMemRefStatic, we can't extract value type from structure - use fallback
-                    let valueTy = TIndex  // fallback (may need type tracking refactor)
+                    // TODO(AX1002): Extract value type from Lazy<T> node type via mapType
+                    let valueTy = TIndex  // Lazy<T> value type extraction not yet implemented
                     return! pBuildLazyStruct valueTy codePtrTy codePtr captures ssas arch
             }
 

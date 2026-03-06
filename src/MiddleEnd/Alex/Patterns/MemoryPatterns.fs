@@ -911,3 +911,126 @@ let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let subviewCopyOp = MLIROp.MemRefOp (MemRefOp.SubViewCopy (resultSSA, sourceSSA, [offsetIndexSSA], [SubViewParam.Dynamic countIndexSSA], [SubViewParam.Static 1L], countIndexSSA, sourceType))
         return ([offsetCastOp; countCastOp; subviewCopyOp], TRValue { SSA = resultSSA; Type = sourceType })
     }
+
+// ═══════════════════════════════════════════════════════════
+// NativePtr INTRINSIC PARSERS (untransformed by Baker)
+// ═══════════════════════════════════════════════════════════
+// Baker transforms NativePtr.stackalloc → MemRef.alloca, NativePtr.write → MemRef.store,
+// NativePtr.add → flattened, NativePtr.copy → MemRef.copy.
+// These three operations pass through untransformed:
+//   ofNativeInt — raw pointer (index) to typed memref
+//   set         — indexed write through raw pointer
+//   read        — scalar read from raw pointer
+
+/// NativePtr.ofNativeInt: nativeint → nativeptr<'T>
+/// At MLIR level: index (raw C pointer) → memref<?xT> via unrealized_conversion_cast.
+/// The cast is resolved at LLVM lowering where both are bare pointers.
+///
+/// SSA layout (1 SSA): [0] = result memref
+let pNativePtrOfNativeIntIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
+        do! ensure (info.Operation = "ofNativeInt") "Not NativePtr.ofNativeInt"
+        do! ensure (argIds.Length >= 1) "NativePtr.ofNativeInt: Expected 1 arg"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 1) $"pNativePtrOfNativeInt: Expected 1 SSA, got {ssas.Length}"
+        let resultSSA = ssas.[0]
+
+        // Recall the nativeint argument (raw pointer as index)
+        let! (_, ptrSSA, _) = pRecallArgWithLoad argIds.[0]
+
+        // Extract element type from nativeptr<'T> return type
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
+        match state.Current.Type with
+        | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "nativeptr" || tycon.Name = "Ptr" ->
+            let elemType = mapNativeTypeWithGraphForArch arch state.Graph innerTy
+            let memrefType = TMemRef elemType  // dynamic memref — size unknown
+
+            // Emit unrealized_conversion_cast: index → memref<?xElem>
+            let castOp = MLIROp.MemRefOp (MemRefOp.IndexToMemRef (resultSSA, ptrSSA, memrefType))
+
+            // Register in accumulator so downstream pLoad can find the memref type
+            MLIRAccumulator.registerSSAType resultSSA memrefType state.Accumulator
+
+            return ([castOp], TRValue { SSA = resultSSA; Type = memrefType })
+        | NativeType.TNativePtr innerTy ->
+            let elemType = mapNativeTypeWithGraphForArch arch state.Graph innerTy
+            let memrefType = TMemRef elemType
+
+            let castOp = MLIROp.MemRefOp (MemRefOp.IndexToMemRef (resultSSA, ptrSSA, memrefType))
+            MLIRAccumulator.registerSSAType resultSSA memrefType state.Accumulator
+
+            return ([castOp], TRValue { SSA = resultSSA; Type = memrefType })
+        | _ ->
+            return! fail (Message $"NativePtr.ofNativeInt: expected nativeptr<'T> return type, got {state.Current.Type}")
+    }
+
+/// NativePtr.set: nativeptr<'T> → int → 'T → unit
+/// Indexed write through a raw pointer (memref from ofNativeInt).
+///
+/// SSA layout (1 SSA): [0] = index cast to TIndex
+let pNativePtrSetIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
+        do! ensure (info.Operation = "set") "Not NativePtr.set"
+        do! ensure (argIds.Length >= 3) "NativePtr.set: Expected 3 args (ptr, index, value)"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 1) $"pNativePtrSet: Expected 1 SSA, got {ssas.Length}"
+        let indexCastSSA = ssas.[0]
+
+        // Recall args: ptr (memref from ofNativeInt), index (int), value ('T)
+        let! (_, ptrSSA, ptrType) = pRecallArgWithLoad argIds.[0]
+        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
+        let! (_, valueSSA, _) = pRecallArgWithLoad argIds.[2]
+
+        // Cast index from int to TIndex (memref indexing requires index type)
+        let! indexCastOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
+
+        // Determine element type from the pointer's memref type
+        do! ensure (match ptrType with TMemRef _ | TMemRefStatic _ -> true | _ -> false)
+                $"NativePtr.set: pointer argument has non-memref type {ptrType} — upstream NativePtr.ofNativeInt must produce memref"
+        let elemType =
+            match ptrType with
+            | TMemRef elemTy -> elemTy
+            | TMemRefStatic (_, elemTy) -> elemTy
+            | _ -> failwith "unreachable"  // guarded by ensure above
+
+        // Emit memref.store value, ptr[index]
+        let! storeOp = pStore valueSSA ptrSSA [indexCastSSA] elemType ptrType
+
+        return ([indexCastOp; storeOp], TRVoid)
+    }
+
+/// NativePtr.read: nativeptr<'T> → 'T
+/// Scalar read from a raw pointer (memref from ofNativeInt) at index 0.
+///
+/// SSA layout (2 SSAs): [0] = index zero constant, [1] = load result
+let pNativePtrReadIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
+        do! ensure (info.Operation = "read") "Not NativePtr.read"
+        do! ensure (argIds.Length >= 1) "NativePtr.read: Expected 1 arg"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 2) $"pNativePtrRead: Expected 2 SSAs, got {ssas.Length}"
+        let indexZeroSSA = ssas.[0]
+        let resultSSA = ssas.[1]
+
+        // Recall pointer arg (memref from ofNativeInt)
+        let! (_, ptrSSA, _) = pRecallArgWithLoad argIds.[0]
+
+        // Get result type from current node type
+        let! state = getUserState
+        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
+
+        // Index 0 constant for scalar read
+        let! constOp = pConstI indexZeroSSA 0L TIndex
+
+        // Load from memref at index 0
+        let! loadOp = pLoad resultSSA ptrSSA [indexZeroSSA]
+
+        return ([constOp; loadOp], TRValue { SSA = resultSSA; Type = resultType })
+    }

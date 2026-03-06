@@ -86,14 +86,14 @@ let pBuildRecord
                         let offsetSSA = ssas.[1 + 3*i]
                         let viewSSA   = ssas.[2 + 3*i]
                         let zeroSSA   = ssas.[3 + 3*i]
-                        // Look up field by NAME in TStruct — handles both full and partial field lists
-                        let byteOffset =
+                        // Look up field by NAME in TStruct — field must exist
+                        let! byteOffset =
                             match structTy with
                             | TStruct allFields ->
                                 match structFieldLookup allFields fieldName with
-                                | Some (fieldIdx, _) -> structFieldByteOffset allFields fieldIdx
-                                | None -> i * 8  // fallback
-                            | _ -> i * 8  // fallback
+                                | Some (fieldIdx, _) -> parser { return structFieldByteOffset allFields fieldIdx }
+                                | None -> fail (Message $"Record field '{fieldName}' not found in struct type — CCS must provide complete field metadata")
+                            | _ -> fail (Message $"Record construction requires TStruct type, got {structTy} — type mapping must produce TStruct for records")
                         return! pTypedInsertView allocSSA valueSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
                     })
                 |> Alex.XParsec.Extensions.sequence

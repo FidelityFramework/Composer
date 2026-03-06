@@ -102,8 +102,8 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
     parser {
         do! emitTrace "pBuildStringLiteral.entry" (sprintf "content='%s', ssas=%A, arch=%A" content ssas arch)
 
-        // Need 2 SSAs: memref.get_global (static) + memref.cast (static → dynamic)
-        do! ensure (ssas.Length >= 2) $"pBuildStringLiteral: Expected 2 SSAs, got {ssas.Length}"
+        // Need 3 SSAs: memref.get_global (storage) + memref.reinterpret_cast (content view) + memref.cast (dynamic)
+        do! ensure (ssas.Length >= 3) $"pBuildStringLiteral: Expected 3 SSAs, got {ssas.Length}"
 
         do! emitTrace "pBuildStringLiteral.ssa_validated" (sprintf "SSA count OK: %d" ssas.Length)
 
@@ -118,28 +118,35 @@ let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
         do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d, storageLength=%d" globalName byteLength storageLength)
 
         // Static type from global: memref<Nxi8> where N is storage length (includes null sentinel)
-        let staticTy = TMemRefStatic (storageLength, TInt (IntWidth 8))
+        let storageTy = TMemRefStatic (storageLength, TInt (IntWidth 8))
+        // Content view type: memref<Mxi8> where M is byte length (semantic content, no sentinel)
+        let contentTy = TMemRefStatic (byteLength, TInt (IntWidth 8))
         // Dynamic type (string): memref<?xi8>
         let dynamicTy = TMemRef (TInt (IntWidth 8))
 
-        do! emitTrace "pBuildStringLiteral.types" (sprintf "staticTy=%A, dynamicTy=%A" staticTy dynamicTy)
+        do! emitTrace "pBuildStringLiteral.types" (sprintf "storageTy=%A, contentTy=%A, dynamicTy=%A" storageTy contentTy dynamicTy)
 
-        let getGlobalSSA = ssas.[0]  // SSA for memref.get_global (static)
-        let castSSA = ssas.[1]       // SSA for memref.cast (static → dynamic)
+        let getGlobalSSA = ssas.[0]    // SSA for memref.get_global (storage dim)
+        let reinterpretSSA = ssas.[1]  // SSA for memref.reinterpret_cast (content dim)
+        let castSSA = ssas.[2]         // SSA for memref.cast (content → dynamic)
 
-        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "getGlobal=%A, cast=%A" getGlobalSSA castSSA)
+        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "getGlobal=%A, reinterpret=%A, cast=%A" getGlobalSSA reinterpretSSA castSSA)
 
-        // memref.get_global @globalName : memref<Nxi8>
-        do! emitTrace "pBuildStringLiteral.calling_pMemRefGetGlobal" (sprintf "getGlobalSSA=%A, globalName=%s, staticTy=%A" getGlobalSSA globalName staticTy)
-        let! getGlobalOp = pMemRefGetGlobal getGlobalSSA globalName staticTy
+        // memref.get_global @globalName : memref<Nxi8> (storage dimension, includes null sentinel)
+        let! getGlobalOp = pMemRefGetGlobal getGlobalSSA globalName storageTy
 
-        // memref.cast: memref<Nxi8> → memref<?xi8>
+        // memref.reinterpret_cast: memref<Nxi8> → memref<Mxi8> (narrow to content dimension)
+        // This separates storage length (for C interop) from semantic length (for I/O operations).
+        // Downstream memref.dim will return byteLength, not storageLength.
+        let reinterpretOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (reinterpretSSA, getGlobalSSA, 0, byteLength, storageTy, contentTy))
+
+        // memref.cast: memref<Mxi8> → memref<?xi8>
         // String literals ARE strings (dynamic memref) — cast at point of creation
-        let! castOp = pMemRefCast castSSA getGlobalSSA staticTy dynamicTy
+        let! castOp = pMemRefCast castSSA reinterpretSSA contentTy dynamicTy
 
-        do! emitTrace "pBuildStringLiteral.elements_complete" "memref.get_global + memref.cast succeeded"
+        do! emitTrace "pBuildStringLiteral.elements_complete" "memref.get_global + memref.reinterpret_cast + memref.cast succeeded"
 
-        let inlineOps = [getGlobalOp; castOp]
+        let inlineOps = [getGlobalOp; reinterpretOp; castOp]
         let result = TRValue { SSA = castSSA; Type = dynamicTy }
 
         do! emitTrace "pBuildStringLiteral.returning" (sprintf "Returning %d ops" (List.length inlineOps))

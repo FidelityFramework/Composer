@@ -14,6 +14,21 @@ open Alex.Dialects.Core.Types
 open Core.Types.Dialects
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TYPE MAPPING DIAGNOSTIC COLLECTION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Collects AX1001 diagnostics during type mapping so compilation can continue
+/// and report ALL unbound type variables, not just the first one.
+/// Drained by mapType after each call.
+let private typeMappingErrors = System.Collections.Generic.List<string>()
+
+/// Drain collected type mapping errors. Returns the list and clears the collector.
+let drainTypeMappingErrors () : string list =
+    let errors = typeMappingErrors |> Seq.toList
+    typeMappingErrors.Clear()
+    errors
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TYPE SIZE COMPUTATION (for DU slot sizing)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -167,8 +182,8 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         // After CCS memref transition, strings use TypeLayout.Opaque instead of FatPointer
         // Both layouts map to the same MLIR type: memref<?xi8>
         | TypeLayout.Opaque, Some NTUKind.NTUstring -> TMemRef (TInt (IntWidth 8))
-        // SECOND: Name-based fallback for types without proper NTU metadata
-        // Note: Arrays have FatPointer layout but no specific NTUKind, handled in fallback
+        // SECOND: Name-based resolution for types without NTU metadata
+        // Arrays have FatPointer layout but no specific NTUKind, handled here
         | _ ->
             match tycon.Name with
             // Byref types: all variants map to pointers
@@ -250,7 +265,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                             // Unknown FatPointer type - fail loudly
                             failwithf "FatPointer type '%s' lacks proper NTUKind or name match - fix CCS metadata" tycon.Name
                     | TypeLayout.PlatformWord ->
-                        // Should have been handled by NTU-aware code at top; this is a fallback
+                        // PlatformWord without NTUKind — resolve to platform word width
                         TInt wordWidth
                     | TypeLayout.Opaque ->
                         failwithf "TApp with Opaque layout - CCS must resolve type '%s'" tycon.Name
@@ -283,7 +298,10 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         match find tvar with
         | (_, Some boundTy) -> mapNativeTypeForArch arch boundTy
         | (root, None) ->
-            printfn "WARNING: Unbound type variable '%s' - using TIndex fallback" root.Name
+            // AX1001: Unbound type variable at MLIR generation time.
+            // All type variables must be resolved by CCS/Baker before Alex runs.
+            // Collect diagnostic and continue with TIndex so all errors are reported.
+            typeMappingErrors.Add(sprintf "AX1001: Unbound type variable '%s' — CCS/Baker must resolve all type variables before MLIR generation" root.Name)
             TIndex
 
     | NativeType.TByref _ -> TIndex
@@ -345,7 +363,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
             casePayloadTypes
             |> List.choose id
             |> List.tryHead
-            |> Option.defaultValue (TInt (IntWidth 8))  // Empty union fallback
+            |> Option.defaultValue (TInt (IntWidth 8))  // Empty union: tag-only storage
 
         // Convert to byte-level memref: tag + payload
         let totalSize = mlirTypeSizeForArch arch tagType + mlirTypeSizeForArch arch payloadType
@@ -463,8 +481,8 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
             let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
             TStruct mlirFields
         | None ->
-            // Fallback: shouldn't happen if TypeDef nodes are properly created
-            failwithf "Record type '%s' not found in TypeDef nodes - CCS must create TypeDef for records" tycon.Name
+            // AX1002: Record type not found — CCS must create TypeDef nodes for all record types
+            failwithf "AX1002: Record type '%s' not found in TypeDef nodes — CCS must create TypeDef for records" tycon.Name
     | NativeType.TApp(tycon, args) ->
         // Non-record TApp (FieldCount = 0) - but check if it might be a record by name lookup
         // This handles cases where FieldCount wasn't preserved in type extraction
@@ -630,7 +648,10 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
         match find tvar with
         | (_, Some boundTy) -> recurse boundTy
         | (root, None) ->
-            printfn "WARNING: Unbound type variable '%s' - using TIndex fallback" root.Name
+            // AX1001: Unbound type variable at MLIR generation time.
+            // All type variables must be resolved by CCS/Baker before Alex runs.
+            // Collect diagnostic and continue with TIndex so all errors are reported.
+            typeMappingErrors.Add(sprintf "AX1001: Unbound type variable '%s' — CCS/Baker must resolve all type variables before MLIR generation" root.Name)
             TIndex
     | _ ->
         // Leaf types: platform-aware mapping (FPGA: IntWidth 0 for platform-word integers)

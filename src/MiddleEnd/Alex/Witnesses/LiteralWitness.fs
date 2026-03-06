@@ -36,18 +36,18 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                     // Extract result SSAs for string literal (monadic)
                     let! ssas = getNodeSSAs node.Id
 
-                    if ssas.Length < 2 then
-                        return! fail (Message $"String literal: Expected 2 SSAs, got {ssas.Length}")
+                    if ssas.Length < 3 then
+                        return! fail (Message $"String literal: Expected 3 SSAs, got {ssas.Length}")
                     else
                         return! pBuildStringLiteral content ssas arch
                 }
 
             // Use trace-enabled variant to capture full execution path
             match tryMatchWithTrace stringPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Result.Ok (((inlineOps, globalName, strContent, byteLength), result), _, _trace) ->
+            | Result.Ok (((inlineOps, globalName, strContent, storageLength), result), _, _trace) ->
                 // Success - emit GlobalString via coordination (dependent transparency)
                 let topLevelOps =
-                    match MLIRAccumulator.tryEmitGlobal globalName strContent byteLength ctx.Accumulator with
+                    match MLIRAccumulator.tryEmitGlobal globalName strContent storageLength ctx.Accumulator with
                     | Some globalOp -> [globalOp]
                     | None -> []  // Already emitted by another witness
                 { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }

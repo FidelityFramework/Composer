@@ -93,8 +93,8 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                 | None -> return! fail (Message "SeqExpr: Body not yet witnessed")
                 | Some (codePtr, codePtrTy) ->
                     // Get Seq<T> type from node
-                    // With TMemRefStatic, we can't extract current type from structure - use fallback
-                    let currentTy = TIndex  // fallback (may need type tracking refactor)
+                    // TODO(AX1002): Extract element type from Seq<T> node type via mapType
+                    let currentTy = TIndex  // Seq<T> element type extraction not yet implemented
                     return! pBuildSeqStruct currentTy codePtrTy codePtr captureVals internalState ssas arch
             }
 
