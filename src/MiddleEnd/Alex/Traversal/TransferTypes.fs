@@ -278,6 +278,7 @@ type MLIRAccumulator() =
 
     // Witnessing Coordination State (Dependent Transparency)
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)
+    member val EmittedThunks: Set<string> = Set.empty with get, set              // Track emitted closure thunks (dedup _as_closure wrappers)
     // NOTE: Function declarations now handled by MLIR Declaration Collection Pass (no coordination needed)
 
     // Deferred InlineOps: Partial app arguments whose InlineOps are suppressed at their
@@ -360,6 +361,15 @@ module MLIRAccumulator =
         else
             acc.EmittedGlobals <- Set.add name acc.EmittedGlobals
             Some (MLIROp.GlobalString (name, content, byteLength))
+
+    /// Check if a thunk wrapper has already been emitted (returns true if NEW, false if duplicate)
+    /// Parallel to tryEmitGlobal: module-level thunk declarations are emitted once per function name.
+    let tryEmitThunk (thunkName: string) (acc: MLIRAccumulator) : bool =
+        if Set.contains thunkName acc.EmittedThunks then
+            false  // Already emitted
+        else
+            acc.EmittedThunks <- Set.add thunkName acc.EmittedThunks
+            true
 
     /// Store deferred InlineOps for a node (suppressed at original scope, re-emitted at saturated call site)
     let deferInlineOps (nodeId: NodeId) (ops: MLIROp list) (acc: MLIRAccumulator) =

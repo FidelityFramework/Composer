@@ -172,7 +172,15 @@ let pNamedFunctionAsClosure
         let storeEnvOp = MLIROp.MemRefOp (MemRefOp.Store (zeroSSA, pairSSA, [oneSSA], TIndex, pairTy))
 
         let inlineOps = [funcConstOp; castOp; allocOp; zeroOp; storeCodeOp; oneOp; storeEnvOp]
-        let topLevelOps = [thunkOp]
+
+        // Thunk is a module-level declaration — emit once per function name.
+        // Same coordination pattern as tryEmitGlobal for global strings.
+        let! state = getUserState
+        let topLevelOps =
+            if MLIRAccumulator.tryEmitThunk thunkName state.Accumulator then
+                [thunkOp]
+            else
+                []  // Already emitted by a prior VarRef for the same function
 
         return (inlineOps, topLevelOps, pairSSA, pairTy)
     }

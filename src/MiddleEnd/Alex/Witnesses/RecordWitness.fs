@@ -56,10 +56,11 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 | Result.Error diagnostic -> WitnessOutput.error $"RecordExpr: {diagnostic}"
 
     | None ->
-        // Try TupleExpr on FPGA — tuples are first-class values (hw.struct_create)
-        // StructuralWitness skips TupleExpr on FPGA so we handle it here.
+        // Try TupleExpr — tuples are first-class values on all platforms.
+        // CPU: memref alloca + byte-offset stores via pBuildRecord
+        // FPGA: hw.struct_create via pBuildRecord
         match node.Kind with
-        | SemanticKind.TupleExpr elements when ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA ->
+        | SemanticKind.TupleExpr elements ->
             // Map tuple type to TStruct with Item1, Item2, ... fields
             let structTy =
                 (match node.Type with

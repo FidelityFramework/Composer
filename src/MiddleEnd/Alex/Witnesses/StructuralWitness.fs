@@ -10,8 +10,11 @@ module Alex.Witnesses.StructuralWitness
 open Clef.Compiler.NativeTypedTree.NativeTypes
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
+open Alex.XParsec.PSGCombinators
+open Alex.Patterns.RecordPatterns  // pRecordFieldGet
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -55,30 +58,37 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
     | SemanticKind.TupleExpr _ ->
-        // Tuple expression: on FPGA, tuples are values (hw.struct_create) — let RecordWitness handle.
-        // On CPU, tuples are virtual containers — TupleGet accesses elements directly.
-        match ctx.Coeffects.TargetPlatform with
-        | Core.Types.Dialects.FPGA -> WitnessOutput.skip
-        | _ -> { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+        // Tuples are first-class values on all platforms — RecordWitness handles materialization.
+        // CPU: memref alloca + byte-offset stores (pBuildRecord)
+        // FPGA: hw.struct_create (pBuildRecord)
+        WitnessOutput.skip
 
     | SemanticKind.TupleGet (tupleId, index) ->
-        // Tuple element extraction - recall the indexed element's SSA from the accumulator
-        // Baker decomposes `match a, b with` into TupleExpr + TupleGet nodes.
-        // TupleGet looks up the TupleExpr's element list and recalls the element at `index`.
+        // Tuple element extraction.
+        // Path 1: TupleExpr source — pass-through to element SSA (elements already in accumulator)
+        // Path 2: Non-TupleExpr source (function return, binding) — struct field extraction
+        let fieldName = sprintf "Item%d" (index + 1)
         match SemanticGraph.tryGetNode tupleId ctx.Graph with
         | Some tupleNode ->
             match tupleNode.Kind with
             | SemanticKind.TupleExpr elements when index < List.length elements ->
+                // Path 1: TupleExpr — element SSAs are in accumulator from post-order witnessing
                 let elementId = elements.[index]
                 match MLIRAccumulator.recallNode elementId ctx.Accumulator with
                 | Some (ssa, ty) ->
-                    // Bind this TupleGet node to the element's SSA (pass-through)
                     MLIRAccumulator.bindNode node.Id ssa ty ctx.Accumulator
                     { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                 | None ->
                     WitnessOutput.error (sprintf "TupleGet: element %d (node %d) not in accumulator" index (NodeId.value elementId))
             | _ ->
-                WitnessOutput.error (sprintf "TupleGet: tuple node %d is not a TupleExpr or index %d out of range" (NodeId.value tupleId) index)
+                // Path 2: Non-TupleExpr — extract field from materialized TStruct
+                match MLIRAccumulator.recallNode tupleId ctx.Accumulator with
+                | Some (structSSA, structTy) ->
+                    match tryMatchWithDiagnostics (pRecordFieldGet node.Id structSSA fieldName structTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error diagnostic -> WitnessOutput.error $"TupleGet[{index}]: {diagnostic}"
+                | None ->
+                    WitnessOutput.error (sprintf "TupleGet: tuple node %d not in accumulator" (NodeId.value tupleId))
         | None ->
             WitnessOutput.error (sprintf "TupleGet: tuple node %d not found in graph" (NodeId.value tupleId))
 

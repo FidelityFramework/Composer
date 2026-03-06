@@ -288,10 +288,9 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         TMemRefStatic (2, TIndex)
 
     | NativeType.TTuple(elements, _) ->
-        // Tuple: Product of element types - convert to byte-level memref
-        let elemTypes = elements |> List.map (mapNativeTypeForArch arch)
-        let totalSize = elemTypes |> List.sumBy (mlirTypeSizeForArch arch)
-        TMemRefStatic (totalSize, TInt (IntWidth 8))
+        // Tuples are materialized as TStruct with positional field names on all platforms.
+        let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), mapNativeTypeForArch arch e)
+        TStruct fields
 
     | NativeType.TVar tvar ->
         // Use Union-Find to resolve type variable chains
@@ -495,10 +494,9 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
             // Not a record - use standard mapping with architecture
             mapNativeTypeForArch arch ty
     | NativeType.TTuple(elements, _) ->
-        // Tuples also need recursive mapping for nested records
-        let elementTypes = elements |> List.map (mapNativeTypeWithGraphForArch arch graph)
-        let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
-        TMemRefStatic(totalBytes, TInt (IntWidth 8))
+        // Tuples are materialized as TStruct with positional field names on all platforms.
+        let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), mapNativeTypeWithGraphForArch arch graph e)
+        TStruct fields
     | NativeType.TAnon(fields, _) ->
         // Anonymous records → TStruct with named fields
         let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
@@ -624,16 +622,11 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
                 | _ -> mapLeafTypeForPlatform platform arch ty
             | _ -> mapLeafTypeForPlatform platform arch ty
     | NativeType.TTuple(elements, _) ->
-        match platform with
-        | FPGA ->
-            // FPGA: tuples become hw.struct with positional field names
-            let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), recurse e)
-            TStruct fields
-        | _ ->
-            // CPU: tuples are flat byte blobs
-            let elementTypes = elements |> List.map recurse
-            let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
-            TMemRefStatic(totalBytes, TInt (IntWidth 8))
+        // Tuples are materialized as TStruct with positional field names on all platforms.
+        // CPU uses memref alloca + byte-offset stores; FPGA uses hw.struct_create.
+        // Both need TStruct for field-level access (pRecordFieldGet, TupleGet extraction).
+        let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), recurse e)
+        TStruct fields
     | NativeType.TAnon(fields, _) ->
         // Anonymous records → TStruct with named fields
         let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy))

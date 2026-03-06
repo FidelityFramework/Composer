@@ -114,9 +114,9 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
                 else
                     TIndex  // Fallback for other cases
     | NativeType.TFun _ ->
-        let sizeOf = mlirTypeSizeForArch arch
-        let totalBytes = sizeOf TIndex + sizeOf TIndex
-        TMemRefStatic(totalBytes, TInt (IntWidth 8))  // Function = closure struct
+        // Closures are uniform pairs: {code_ptr: index, env_ptr: index} = memref<2xindex>
+        // Must match mapNativeTypeForArch so pClosureCall sees the correct type
+        TMemRefStatic(2, TIndex)
     | NativeType.TTuple (elements, _) ->
         let elementTypes = elements |> List.map (mapCaptureType arch)
         let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
@@ -661,10 +661,11 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
     | [] -> 5
 
 /// Compute exact SSA count for TupleExpr based on element count
+/// Tuples are materialized as TStruct on all platforms via pBuildRecord.
+/// CPU: alloca(1) + per element: byte-offset(1) + view(1) + zero-index(1)
+/// FPGA: result(1) — but we allocate for worst case (CPU)
 let private computeTupleSSACost (childIds: NodeId list) : int =
-    // undef + (offset constant + insertvalue result) per element
-    // Each insertvalue needs 2 SSAs in memref semantics
-    1 + 2 * List.length childIds
+    1 + 3 * List.length childIds
 
 /// Compute exact SSA count for RecordExpr based on field count and copy-from
 let private computeRecordSSACost (fields: (string * NodeId) list) (copyFrom: NodeId option) : int =
@@ -829,15 +830,16 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
         // need 7 SSAs (closure pair construction). All others need 2.
         if Set.contains node.Id ctx.ValuePosition.FunctionVarRefsInValuePosition then 7
         else 2
+    | SemanticKind.TupleGet _ -> 4  // Struct field extraction: offset + view + zero + result (pass-through uses 0 but over-allocate for safety)
     | SemanticKind.FieldGet _ -> 4  // View-based: offset + view + zero + result (for TStruct records)
     | SemanticKind.FieldSet _ -> 2  // Offset constant + store
     | SemanticKind.Set _ -> 1  // For module-level mutable address operation
     | SemanticKind.TraitCall _ -> 1
     | SemanticKind.ArrayExpr _ -> 20
     | SemanticKind.ListExpr _ -> 20
-    // PatternBinding needs SSAs for extraction + conversion
-    // For tuple patterns: elemExtract + payloadExtract + convert = 3
-    | SemanticKind.PatternBinding _ -> 3
+    // PatternBinding needs SSAs for tuple element extraction via pRecordFieldGet:
+    // offset + view + zero + result = 4
+    | SemanticKind.PatternBinding _ -> 4
     // PRD-14: Lazy values - SSA costs derived from PSG structure
     // LazyExpr: 5 base + N captures (per LazyWitness documentation)
     //   - 1: false constant, 1: undef struct, 1: insert computed
@@ -1167,9 +1169,19 @@ let rec private assignFunctionBody
                     let alloc = NodeSSAAllocation.multi ssas
                     FunctionScope.assign node.Id alloc scopeWithSSAs
             else
-                // Lambda parameter - no children, Lambda processing assigns Arg SSAs
-                // Just pass through - don't allocate here
-                scopeAfterChildren
+                // No children: either Lambda parameter (Arg SSA from Lambda processing)
+                // or match-arm tuple pattern binding (needs SSAs for field extraction).
+                // Check if Lambda processing already assigned an Arg SSA:
+                match Map.tryFind (NodeId.value node.Id) scopeAfterChildren.Assignments with
+                | Some _ ->
+                    // Already assigned by Lambda parameter processing — keep it
+                    scopeAfterChildren
+                | None ->
+                    // Match-arm binding — allocate SSAs for tuple element extraction
+                    let cost = nodeExpansionCost ctx node
+                    let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
+                    let alloc = NodeSSAAllocation.multi ssas
+                    FunctionScope.assign node.Id alloc scopeWithSSAs
 
         | _ ->
             // Regular node - assign SSAs based on structural analysis

@@ -357,11 +357,12 @@ let pBuildMatchElimination
         | _ ->
             let numArms = List.length arms
 
-            // Detect record match (all arms are Record/Wildcard patterns — no DU tag)
+            // Detect irrefutable match (Record/Tuple/Wildcard patterns — no DU tag)
             let isRecordMatch =
                 arms |> List.forall (fun (_, _, arm) ->
                     match arm.Pattern with
                     | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Record _ -> true
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Tuple _ -> true
                     | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard -> true
                     | _ -> false)
 
