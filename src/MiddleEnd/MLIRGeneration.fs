@@ -55,7 +55,9 @@ let generate
         |> Map.map (fun _ info -> List.length info.AllArgNodes)
 
     // Compute coeffects on flattened graph (SSAs reflect flattened parameter structure)
-    let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA arch flattenedGraph saturatedCallArgCounts
+    // ValuePosition runs first — SSAAssignment consumes it for VarRef SSA cost decisions
+    let valuePosition = PSGElaboration.ValuePositionAnalysis.analyze flattenedGraph
+    let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA arch flattenedGraph saturatedCallArgCounts valuePosition
     let mutability = PSGElaboration.MutabilityAnalysis.analyze flattenedGraph
     let yieldStates = PSGElaboration.YieldStateIndices.run flattenedGraph
     let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze flattenedGraph
@@ -101,6 +103,7 @@ let generate
         TargetPlatform = targetPlatform
         PinMapping = pinMapping
         WidthInference = widthInference
+        ValuePosition = valuePosition
     }
 
     // Execute Alex transfer (parallel nanopasses)

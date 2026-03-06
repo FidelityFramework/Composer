@@ -1,8 +1,12 @@
-/// BitwiseOps - Exercises idiomatic F# bitwise operators on integers
+/// BitwiseOps - Exercises bitwise, comparison, and boolean operators
 ///
 /// F#'s bitwise operators (&&&, |||, ^^^, ~~~, <<<, >>>) are type-preserving:
 /// the result type always equals the operand type.  No hidden coercions,
 /// no C-style byte-order magic — purely dimensional operations within a type.
+///
+/// Comparison operators (<, >, <=, >=, =, <>) produce i1 (boolean) results.
+/// Boolean operators (&&, ||) are andi/ori on i1 — same emission path as
+/// bitwise &&&/||| but at boolean width.
 ///
 /// This sample validates the lowering path:
 ///   F# source → PSG intrinsic → classifyAtomicOp → arith dialect MLIR
@@ -52,5 +56,55 @@ let main _ =
     let shifted_right = big >>> 3  // 32
     Console.write "SHR: "
     Console.writeln (Format.int shifted_right)
+
+    // ─── Comparisons: arith.cmpi producing i1 ───
+    Console.writeln ""
+    Console.writeln "--- Comparisons ---"
+
+    Console.write "5 < 10: "
+    Console.writeln (if 5 < 10 then "true" else "false")
+
+    Console.write "10 < 5: "
+    Console.writeln (if 10 < 5 then "true" else "false")
+
+    Console.write "5 <= 5: "
+    Console.writeln (if 5 <= 5 then "true" else "false")
+
+    Console.write "5 >= 5: "
+    Console.writeln (if 5 >= 5 then "true" else "false")
+
+    Console.write "10 > 5: "
+    Console.writeln (if 10 > 5 then "true" else "false")
+
+    Console.write "5 = 5: "
+    Console.writeln (if 5 = 5 then "true" else "false")
+
+    Console.write "5 <> 10: "
+    Console.writeln (if 5 <> 10 then "true" else "false")
+
+    // ─── Boolean operators: andi/ori on i1 ───
+    Console.writeln ""
+    Console.writeln "--- Boolean Operators ---"
+
+    Console.write "true && true: "
+    Console.writeln (if true && true then "true" else "false")
+
+    Console.write "true && false: "
+    Console.writeln (if true && false then "true" else "false")
+
+    Console.write "true || false: "
+    Console.writeln (if true || false then "true" else "false")
+
+    Console.write "false || false: "
+    Console.writeln (if false || false then "true" else "false")
+
+    // Compound: comparison results fed into boolean operators
+    let v = 5
+    Console.write "range check (5 in 1..10): "
+    Console.writeln (if v >= 1 && v <= 10 then "true" else "false")
+
+    let w = 15
+    Console.write "range check (15 in 1..10): "
+    Console.writeln (if w >= 1 && w <= 10 then "true" else "false")
 
     0

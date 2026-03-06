@@ -103,6 +103,23 @@ XOR: 153
 NOT: -1
 SHL: 16
 SHR: 32
+
+--- Comparisons ---
+5 < 10: true
+10 < 5: false
+5 <= 5: true
+5 >= 5: true
+10 > 5: true
+5 = 5: true
+5 <> 10: true
+
+--- Boolean Operators ---
+true && true: true
+true && false: false
+true || false: true
+false || false: false
+range check (5 in 1..10): true
+range check (15 in 1..10): false
 """
 
 # =============================================================================
@@ -165,6 +182,58 @@ Name only: Diana
 """
 
 # =============================================================================
+# Sample 10a: ImperativeControl
+# Mutable bindings, assignment, while loops
+# =============================================================================
+[[samples]]
+name = "10a_ImperativeControl"
+project = "ImperativeControl.fidproj"
+binary = "targets/imperativecontrol"
+expected_output = """
+=== Imperative Control Test ===
+--- Mutable Bindings ---
+initial: 0
+after increment: 1
+after add 10: 11
+
+--- While Loop ---
+sum 1 to 10: 55
+countdown: 5 4 3 2 1
+
+--- Nested While ---
+multiplication table 3x3:
+1 2 3
+2 4 6
+3 6 9
+"""
+
+# =============================================================================
+# Sample 10b: Arena Memory Management (DMM Infrastructure)
+# Arena allocation, byref threading, NativePtr read/write
+# =============================================================================
+[[samples]]
+name = "10b_PointerOps"
+project = "PointerOps.fidproj"
+binary = "targets/pointerops"
+expected_output = """
+=== Arena Memory Test ===
+--- Basic Allocation ---
+alloc and read: 42
+
+--- Arena Threading ---
+a=10, b=20, c=30
+
+--- Arena Mutation ---
+initial: 0
+after +1: 1
+after +10: 11
+
+--- Independent Values ---
+x=100, y=200
+after x=999: x=999, y=200
+"""
+
+# =============================================================================
 # Sample 11: Closures
 # Lambdas, captured variables, arena-allocated state
 # =============================================================================
@@ -174,31 +243,33 @@ project = "Closures.fidproj"
 binary = "targets/closures"
 expected_output = """
 === Closures Test ===
---- Counter ---
-First call: 1
-Second call: 2
-Third call: 3
-
 --- Greeter ---
 Hello, Alice!
 Goodbye, Alice!
 Welcome, Bob!
 
---- Accumulator ---
-Add 10: 110
-Add 25: 135
-Add 5: 140
+--- Adder ---
+add10 5: 15
+add10 20: 30
+add100 5: 105
 
 --- Range Checker ---
 5 in range 10-20: false
 15 in range 10-20: true
 25 in range 10-20: false
 
---- Independent Closures ---
-counter1: 1
-counter2: 101
-counter1: 2
-counter2: 102
+--- Multi-Type Captures ---
+val=+42
+val=-7
+x=42
+
+--- Zero-Capture Lambda ---
+add: 7
+mul: 12
+
+--- HOF Bridge (twice) ---
+twice add10 on 5: 25
+twice (fun x -> x * 2) on 3: 12
 """
 
 # =============================================================================

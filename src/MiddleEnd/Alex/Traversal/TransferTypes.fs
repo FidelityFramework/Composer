@@ -33,6 +33,7 @@ module PatternAnalysis = PSGElaboration.PatternBindingAnalysis
 module YieldStateIndices = PSGElaboration.YieldStateIndices
 module EscapeAnalysis = PSGElaboration.EscapeAnalysis
 module CurryFlat = PSGElaboration.CurryFlattening
+module ValuePosition = PSGElaboration.ValuePositionAnalysis
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TRANSFER COEFFECTS (Pre-computed, Immutable)
@@ -58,6 +59,10 @@ type TransferCoeffects = {
     /// Inferred value widths for FPGA targets (None for CPU)
     /// Observed by TypeMapping for minimum-width MLIR type selection
     WidthInference: PSGElaboration.IntervalAnalysis.WidthInferenceResult option
+    /// VarRef nodes that reference function bindings and appear in value position.
+    /// Observed by VarRefWitness to decide closure pair construction.
+    /// Observed by SSAAssignment for SSA cost (7 vs 2).
+    ValuePosition: ValuePosition.ValuePositionResult
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

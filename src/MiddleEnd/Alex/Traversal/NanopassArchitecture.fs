@@ -88,80 +88,92 @@ let rec visitAllNodes
         // (On CPU these are the same ref; on FPGA the local set is separate)
         visitedCtx.GlobalVisited := Set.add currentNode.Id !(visitedCtx.GlobalVisited)
 
-        // Focus zipper on this node
-        match PSGZipper.focusOn currentNode.Id visitedCtx.Zipper with
-        | None ->
-            printfn "[visitAllNodes] WARNING: Failed to focus zipper on node %A" currentNode.Id
-            ()
-        | Some focusedZipper ->
-            if traceTraversal then printfn "[visitAllNodes] Focused on node %A" currentNode.Id
-            // Shadow context with focused zipper
-            let focusedCtx = { visitedCtx with Zipper = focusedZipper }
+        // The caller's Zipper is already focused on currentNode with correct breadcrumbs.
+        // No re-rooting needed — Huet navigation maintains the path.
+        if traceTraversal then printfn "[visitAllNodes] At node %A (zipper depth %d)" currentNode.Id (PSGZipper.depth visitedCtx.Zipper)
 
-            // POST-ORDER Phase 1: Visit children FIRST (tree edges)
-            // This ensures children's SSA bindings are available when parent witnesses
-            if not (isScopeBoundary currentNode) then
-                if traceTraversal then printfn "[visitAllNodes] Node %A: visiting %d children" currentNode.Id currentNode.Children.Length
-                for childId in currentNode.Children do
-                    match SemanticGraph.tryGetNode childId visitedCtx.Graph with
-                    | Some childNode -> visitAllNodes witness focusedCtx childNode visited
+        // POST-ORDER Phase 1: Visit children FIRST (tree edges)
+        // Navigate down to each child via PSGZipper.down — preserves breadcrumbs.
+        if not (isScopeBoundary currentNode) then
+            if traceTraversal then printfn "[visitAllNodes] Node %A: visiting %d children" currentNode.Id currentNode.Children.Length
+            currentNode.Children |> List.iteri (fun childIndex childId ->
+                match SemanticGraph.tryGetNode childId visitedCtx.Graph with
+                | Some childNode ->
+                    // Navigate zipper DOWN to this child — builds path with parent breadcrumb
+                    match PSGZipper.down childIndex visitedCtx.Zipper with
+                    | Some childZipper ->
+                        let childCtx = { visitedCtx with Zipper = childZipper }
+                        visitAllNodes witness childCtx childNode visited
                     | None ->
-                        printfn "[visitAllNodes] WARNING: Child node %A not found in graph!" childId
+                        // Fallback: child not reachable via zipper navigation (shouldn't happen)
+                        if traceTraversal then printfn "[visitAllNodes] WARNING: Could not navigate down to child %d of node %A" childIndex currentNode.Id
+                        visitAllNodes witness visitedCtx childNode visited
+                | None ->
+                    printfn "[visitAllNodes] WARNING: Child node %A not found in graph!" childId
+            )
 
-            // POST-ORDER Phase 2: Visit VarRef binding targets (reference edges)
-            // VarRef nodes reference Bindings that may not be in child structure - visit those too
-            //
-            // FPGA scoping: On FPGA, `visited` is per-function (local). Value bindings from
-            // other modules are NOT in the local set, so they're naturally re-emitted in each
-            // hw.module scope. Function bindings (Lambdas) are compiled once — check globalVisited
-            // to prevent duplicate hw.module emission.
-            match currentNode.Kind with
-            | SemanticKind.VarRef (_, Some bindingId) ->
-                let alreadyHandled =
-                    Set.contains bindingId !visited
-                    || // FPGA: function bindings are compiled once globally
-                       (focusedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA
-                        && Set.contains bindingId !(focusedCtx.GlobalVisited)
-                        && isFunctionBinding bindingId focusedCtx.Graph)
-                if not alreadyHandled then
-                    match SemanticGraph.tryGetNode bindingId focusedCtx.Graph with
-                    | Some bindingNode -> visitAllNodes witness focusedCtx bindingNode visited
+        // POST-ORDER Phase 2: Visit VarRef binding targets (reference edges)
+        // These are cross-references, not structural children. Re-root the zipper
+        // at the binding node — it lives in a different part of the tree, so the
+        // current zipper path is not applicable.
+        //
+        // FPGA scoping: On FPGA, `visited` is per-function (local). Value bindings from
+        // other modules are NOT in the local set, so they're naturally re-emitted in each
+        // hw.module scope. Function bindings (Lambdas) are compiled once — check globalVisited
+        // to prevent duplicate hw.module emission.
+        match currentNode.Kind with
+        | SemanticKind.VarRef (_, Some bindingId) ->
+            let alreadyHandled =
+                Set.contains bindingId !visited
+                || // FPGA: function bindings are compiled once globally
+                   (visitedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA
+                    && Set.contains bindingId !(visitedCtx.GlobalVisited)
+                    && isFunctionBinding bindingId visitedCtx.Graph)
+            if not alreadyHandled then
+                match SemanticGraph.tryGetNode bindingId visitedCtx.Graph with
+                | Some bindingNode ->
+                    // Re-root zipper at binding — cross-reference, not tree child
+                    match PSGZipper.create visitedCtx.Zipper.Graph bindingId with
+                    | Some bindingZipper ->
+                        let bindingCtx = { visitedCtx with Zipper = bindingZipper }
+                        visitAllNodes witness bindingCtx bindingNode visited
                     | None -> ()
-            | _ -> ()
+                | None -> ()
+        | _ -> ()
 
-            // THEN witness current node (after ALL dependencies - children AND references)
-            let output = witness focusedCtx currentNode
-            if traceTraversal then printfn "[visitAllNodes] Node %A: witness returned %A" currentNode.Id output.Result
+        // THEN witness current node (after ALL dependencies - children AND references)
+        let output = witness visitedCtx currentNode
+        if traceTraversal then printfn "[visitAllNodes] Node %A: witness returned %A" currentNode.Id output.Result
 
-            // Add operations to appropriate scope contexts (principled accumulation)
-            // InlineOps go to current scope (may be nested function body)
-            // EXCEPTION: Deferred arg nodes (partial app arguments) have their InlineOps
-            // stored in the accumulator for re-emission at the saturated call site.
-            // This prevents MLIR region isolation violations when partial app is at module
-            // scope but saturated call is inside a function body.
-            let isDeferredArg = Set.contains currentNode.Id focusedCtx.Coeffects.CurryFlattening.DeferredArgNodes
-            if isDeferredArg && not (List.isEmpty output.InlineOps) then
-                MLIRAccumulator.deferInlineOps currentNode.Id output.InlineOps focusedCtx.Accumulator
-            else
-                let updatedCurrentScope = ScopeContext.addOps output.InlineOps !focusedCtx.ScopeContext
-                focusedCtx.ScopeContext := updatedCurrentScope
+        // Add operations to appropriate scope contexts (principled accumulation)
+        // InlineOps go to current scope (may be nested function body)
+        // EXCEPTION: Deferred arg nodes (partial app arguments) have their InlineOps
+        // stored in the accumulator for re-emission at the saturated call site.
+        // This prevents MLIR region isolation violations when partial app is at module
+        // scope but saturated call is inside a function body.
+        let isDeferredArg = Set.contains currentNode.Id visitedCtx.Coeffects.CurryFlattening.DeferredArgNodes
+        if isDeferredArg && not (List.isEmpty output.InlineOps) then
+            MLIRAccumulator.deferInlineOps currentNode.Id output.InlineOps visitedCtx.Accumulator
+        else
+            let updatedCurrentScope = ScopeContext.addOps output.InlineOps !visitedCtx.ScopeContext
+            visitedCtx.ScopeContext := updatedCurrentScope
 
-            // TopLevelOps go to ROOT scope (module level: GlobalString, nested FuncDef)
-            if not (List.isEmpty output.TopLevelOps) then
-                if traceTraversal then
-                    let funcDefCount = output.TopLevelOps |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> true | _ -> false) |> List.length
-                    printfn "[visitAllNodes] Node %d: Adding %d TopLevelOps (%d FuncDefs) to RootScopeContext" (NodeId.value currentNode.Id) (List.length output.TopLevelOps) funcDefCount
-                let updatedRootScope = ScopeContext.addOps output.TopLevelOps !focusedCtx.RootScopeContext
-                focusedCtx.RootScopeContext := updatedRootScope
+        // TopLevelOps go to ROOT scope (module level: GlobalString, nested FuncDef)
+        if not (List.isEmpty output.TopLevelOps) then
+            if traceTraversal then
+                let funcDefCount = output.TopLevelOps |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> true | _ -> false) |> List.length
+                printfn "[visitAllNodes] Node %d: Adding %d TopLevelOps (%d FuncDefs) to RootScopeContext" (NodeId.value currentNode.Id) (List.length output.TopLevelOps) funcDefCount
+            let updatedRootScope = ScopeContext.addOps output.TopLevelOps !visitedCtx.RootScopeContext
+            visitedCtx.RootScopeContext := updatedRootScope
 
-            // Bind result if value (global binding)
-            match output.Result with
-            | TRValue v ->
-                MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type focusedCtx.Accumulator
-            | TRVoid -> ()
-            | TRError diag ->
-                MLIRAccumulator.addError diag focusedCtx.Accumulator
-            | TRSkip -> ()  // Should never reach here (combineWitnesses filters out TRSkip)
+        // Bind result if value (global binding)
+        match output.Result with
+        | TRValue v ->
+            MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type visitedCtx.Accumulator
+        | TRVoid -> ()
+        | TRError diag ->
+            MLIRAccumulator.addError diag visitedCtx.Accumulator
+        | TRSkip -> ()  // Should never reach here (combineWitnesses filters out TRSkip)
 
 /// REMOVED: witnessSubgraph and witnessSubgraphWithResult
 ///

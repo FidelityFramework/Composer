@@ -195,6 +195,7 @@ type MemRefOp =
     | Dim of SSA * SSA * SSA * MLIRType                                // result, memref, dimIndex, memrefType (returns index)
     | Cast of SSA * SSA * MLIRType * MLIRType                          // result, source, srcType, destType (memref type cast)
     | ReinterpretCast of SSA * SSA * int * int * MLIRType * MLIRType   // result, source, byteOffset, size, srcType, destType
+    | ReinterpretCastDynamic of SSA * SSA * int * SSA * MLIRType * MLIRType  // result, source, offset, sizeSSA, srcType, destType (dynamic size for memref reconstruction)
     | View of SSA * SSA * SSA * MLIRType * MLIRType                   // result, source, offsetSSA, srcType, destType (different element type: byte buffer → typed view)
     | IndexToMemRef of SSA * SSA * MLIRType                            // result, sourceIndex, destMemRefType (raw pointer → memref for NativePtr.ofNativeInt)
 
@@ -367,6 +368,10 @@ and FuncOp =
     | FuncCall of SSA option * string * Val list * MLIRType                                // result, func, args, retType
     | FuncCallIndirect of SSA option * SSA * Val list * MLIRType                           // result, callee, args, retType
     | FuncConstant of SSA * string * MLIRType                                              // result, funcName, funcType
+    // Cast index → function type for call_indirect (unrealized_conversion_cast)
+    | IndexToFunc of SSA * SSA * MLIRType list * MLIRType                                 // result, sourceIndex, argTypes, retType
+    // Cast function type → index for closure storage (unrealized_conversion_cast)
+    | FuncToIndex of SSA * SSA * MLIRType list * MLIRType                                 // result, sourceFunc, argTypes, retType
     // Return
     | Return of SSA option * MLIRType option                                               // value, type
 

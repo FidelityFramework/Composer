@@ -2,6 +2,7 @@
 ///
 /// This module handles MLIR-to-LLVM IR conversion:
 /// - Dialect lowering via mlir-opt (vector, scf, cf, func, arith → llvm)
+/// - flat-closure-lowering plugin resolves closure cast patterns
 /// - mlir-translate to LLVM IR
 ///
 /// When Composer becomes self-hosted, this module gets replaced with
@@ -10,17 +11,47 @@ module BackEnd.LLVM.Lowering
 
 open System.IO
 
+/// Resolve the path to the flat-closure-lowering MLIR pass plugin.
+/// Checks FIDELITY_MLIR_PLUGINS environment variable first, then falls back
+/// to the standard install location.
+let internal closurePluginPath =
+    let envPath = System.Environment.GetEnvironmentVariable("FIDELITY_MLIR_PLUGINS")
+    let pluginDir =
+        if not (System.String.IsNullOrEmpty(envPath)) then envPath
+        else
+            // Standard location: ~/repos/mlir-plugins/build/flat-closure-lowering
+            let home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
+            Path.Combine(home, "repos", "mlir-plugins", "build", "flat-closure-lowering")
+    Path.Combine(pluginDir, "flat-closure-lowering.so")
+
 /// Lower MLIR to LLVM IR using mlir-opt and mlir-translate
 let lowerToLLVM (mlirPath: string) (llvmPath: string) : Result<unit, string> =
     try
         // Step 1: mlir-opt to convert to LLVM dialect
-        // Conversion order: memref -> vector -> scf -> cf -> index -> func -> arith -> llvm, then cleanup casts
-        // Note: --expand-strided-metadata decomposes memref.subview into offset/stride computations (BEFORE finalize)
-        // Note: --convert-vector-to-llvm enables SIMD code generation
-        // Note: memref passes MUST come before func/arith lowering (func lowering may reference memref types)
-        // Note: --convert-index-to-llvm converts portable index types to platform i32/i64 (BEFORE func/arith)
-        // Note: --canonicalize after reconciliation helps clean up remaining artifacts
-        let mlirOptArgs = sprintf "%s --expand-strided-metadata --memref-expand --finalize-memref-to-llvm --convert-vector-to-llvm --convert-scf-to-cf --convert-cf-to-llvm --convert-index-to-llvm --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts --canonicalize" mlirPath
+        // Uses --pass-pipeline syntax (required for dynamically loaded pass plugins).
+        //
+        // Pipeline order:
+        //   memref preparation → vector → scf → cf → index → func → arith →
+        //   resolve-closure-casts → reconcile-unrealized-casts → canonicalize
+        //
+        // resolve-closure-casts (flat-closure-lowering plugin) resolves three cast patterns:
+        //   - !llvm.ptr → i64  (FuncToIndex: function pointer stored as index)
+        //   - i64 → !llvm.ptr  (IndexToFunc: index recovered as function pointer)
+        //   - i64 → memref     (IndexToMemRef: pointer to captured memref data)
+        // These arise from the flat closure representation (memref<Nxindex> pairs).
+        // Must run AFTER convert-func-to-llvm (which creates the !llvm.ptr casts)
+        // and BEFORE reconcile-unrealized-casts (which cannot resolve cross-domain casts).
+        let pluginArg =
+            if File.Exists(closurePluginPath) then
+                sprintf "--load-pass-plugin=\"%s\" " closurePluginPath
+            else ""
+        let pipeline = "builtin.module(expand-strided-metadata,memref-expand,finalize-memref-to-llvm,convert-vector-to-llvm,convert-scf-to-cf,convert-cf-to-llvm,convert-index-to-llvm,convert-func-to-llvm,convert-arith-to-llvm,resolve-closure-casts,reconcile-unrealized-casts,canonicalize)"
+        let mlirOptArgs =
+            if File.Exists(closurePluginPath) then
+                sprintf "%s--pass-pipeline=\"%s\" %s" pluginArg pipeline mlirPath
+            else
+                // Fallback: no plugin available, use individual flags (will fail on closure code)
+                sprintf "%s --expand-strided-metadata --memref-expand --finalize-memref-to-llvm --convert-vector-to-llvm --convert-scf-to-cf --convert-cf-to-llvm --convert-index-to-llvm --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts --canonicalize" mlirPath
         let mlirOptProcess = new System.Diagnostics.Process()
         mlirOptProcess.StartInfo.FileName <- "mlir-opt"
         mlirOptProcess.StartInfo.Arguments <- mlirOptArgs

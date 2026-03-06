@@ -300,10 +300,11 @@ let private recallArgs (argIds: NodeId list) : PSGParser<(SSA * MLIRType) list> 
 /// PlatformWitness handles it. Otherwise, ApplicationWitness handles it.
 ///
 /// SSA layout:
-///   Direct return: [0] = result (func.call return value), [1..N] = potential casts
+///   Direct return: [0] = result, [1..N] = FFI arg extraction (memref→index)
 ///   Option return: [0] = option memref result, [1] = raw C return, [2] = null const,
-///     [3] = cmp result, [4] = tag extended, [5] = alloca, [6..7] = tag insert views,
-///     [8..10] = payload insert views + offset
+///     [3] = cmp result, [4] = tag extended, [5..6] = tag insert views,
+///     [7..9] = payload insert views + offset, [10] = alloca,
+///     [11..11+N] = FFI arg extraction (memref→index)
 let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
     parser {
         // Match Application node
@@ -318,10 +319,12 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
             // Get pre-allocated SSAs
             let! ssas = getNodeSSAs node.Id
 
-            // Recall all argument SSAs (post-order: children already witnessed)
+            // Recall and marshal arguments in one monadic fold.
+            // At the FFI boundary, memref-typed args need pointer extraction
+            // via pExtractBasePtr (Element) — the extraction op elides naturally
+            // as the residual of observing memref at the C boundary (Pillar 4).
+            // Cast SSAs are pre-allocated in coeffects (Pillar 1).
             let! argPairs = recallArgs argIds
-            let vals = argPairs |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
-            let argTypes = argPairs |> List.map snd
 
             // Detect option<T> return type — requires FFI marshaling at the boundary.
             // C returns a nullable pointer; we must null-check and construct the option.
@@ -345,12 +348,35 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 // ssas.[10] = alloca for option memref
                 let allocaSSA   = ssas.[10]
 
+                // FFI argument marshaling: extract pointers from memref args.
+                // Cast SSAs for option path start at ssas.[11].
+                // Monadic fold: recall each arg, compose pExtractBasePtr for memrefs.
+                let! marshaledArgs =
+                    let rec fold i pairs = parser {
+                        match pairs with
+                        | [] -> return []
+                        | (ssa, ty) :: rest ->
+                            match ty with
+                            | TMemRef _ | TMemRefStatic _ when ty <> TMemRefStatic(9, TInt(IntWidth 8)) ->
+                                let extractSSA = ssas.[11 + i]
+                                let! extractOp = pExtractBasePtr extractSSA ssa ty
+                                let! restResult = fold (i + 1) rest
+                                return (Some extractOp, { SSA = extractSSA; Type = TIndex }, TIndex) :: restResult
+                            | _ ->
+                                let! restResult = fold (i + 1) rest
+                                return (None, { SSA = ssa; Type = ty }, ty) :: restResult
+                    }
+                    fold 0 argPairs
+                let marshalOps = marshaledArgs |> List.choose (fun (op, _, _) -> op)
+                let vals = marshaledArgs |> List.map (fun (_, v, _) -> v)
+                let argTypes = marshaledArgs |> List.map (fun (_, _, t) -> t)
+
                 // Map inner type to MLIR (this is what C actually returns)
                 let! cRetType = pMapType innerTy
                 // Map full option type to MLIR (for the constructed result)
                 let! optionType = pMapType node.Type
 
-                // 1. Declare extern with C-level return type
+                // 1. Declare extern with C-level (marshaled) arg types and return type
                 let! declOp = pFuncDecl symbol argTypes cRetType FuncVisibility.Private
                 // 2. Call extern — get raw C value back
                 let! callOp = pFuncCall (Some rawRetSSA) symbol vals cRetType
@@ -374,24 +400,46 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 //    CaseElimination checks tag before reading payload)
                 let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
 
-                let allOps = [declOp; callOp; allocaOp; nullOp; cmpOp; extOp]
+                let allOps = marshalOps @ [declOp; callOp; allocaOp; nullOp; cmpOp; extOp]
                              @ tagInsertOps @ payInsertOps
 
                 return (allOps, TRValue { SSA = allocaSSA; Type = optionType })
 
             | _ ->
-                // DIRECT RETURN: No FFI marshaling needed — type passes through
+                // DIRECT RETURN: type passes through
                 do! ensure (ssas.Length >= 1) $"pExternCallResolved: Expected at least 1 SSA, got {ssas.Length}"
                 let resultSSA = ssas.[0]
+
+                // FFI argument marshaling: extract pointers from memref args.
+                // Cast SSAs for non-option path start at ssas.[1].
+                let! marshaledArgs =
+                    let rec fold i pairs = parser {
+                        match pairs with
+                        | [] -> return []
+                        | (ssa, ty) :: rest ->
+                            match ty with
+                            | TMemRef _ | TMemRefStatic _ when ty <> TMemRefStatic(9, TInt(IntWidth 8)) ->
+                                let extractSSA = ssas.[1 + i]
+                                let! extractOp = pExtractBasePtr extractSSA ssa ty
+                                let! restResult = fold (i + 1) rest
+                                return (Some extractOp, { SSA = extractSSA; Type = TIndex }, TIndex) :: restResult
+                            | _ ->
+                                let! restResult = fold (i + 1) rest
+                                return (None, { SSA = ssa; Type = ty }, ty) :: restResult
+                    }
+                    fold 0 argPairs
+                let marshalOps = marshaledArgs |> List.choose (fun (op, _, _) -> op)
+                let vals = marshaledArgs |> List.map (fun (_, v, _) -> v)
+                let argTypes = marshaledArgs |> List.map (fun (_, _, t) -> t)
 
                 // Map return type from Clef NativeType to MLIR type
                 let! retType = pMapType node.Type
 
-                // Emit external function declaration + call
+                // Emit external function declaration + call with marshaled arg types
                 let! declOp = pFuncDecl symbol argTypes retType FuncVisibility.Private
                 let! callOp = pFuncCall (Some resultSSA) symbol vals retType
 
-                return ([declOp; callOp], TRValue { SSA = resultSSA; Type = retType })
+                return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = retType })
         | _ -> return! fail (Message "Not an ExternCall")
     }
 

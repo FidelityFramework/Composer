@@ -37,6 +37,7 @@ type AllocSiteKind =
     | DUConstruction
     | RecordConstruction
     | StringReturningCall
+    | ClosureConstruction
 
 /// Result of escape analysis for a single allocating site
 type AllocSiteEscapeInfo = {
@@ -167,6 +168,12 @@ let findAllocatingSites (graph: SemanticGraph) : (NodeId * string * AllocSiteKin
                     | _ -> "<anonymous>"
                 | None -> "<unknown>"
             Some (nodeId, funcName, StringReturningCall)
+        | SemanticKind.Lambda (_, _, captures, enclosing, _) when not captures.IsEmpty ->
+            // A Lambda with captures allocates a closure env buffer and uniform pair.
+            // The allocation's lifetime depends on whether the closure escapes its
+            // defining scope — determined by analyzeAllocSite like any other alloc site.
+            let name = enclosing |> Option.defaultValue "<lambda>"
+            Some (nodeId, name, ClosureConstruction)
         | _ -> None)
     |> Seq.toList
 
@@ -178,10 +185,26 @@ let findAllocatingSites (graph: SemanticGraph) : (NodeId * string * AllocSiteKin
 let analyzeAllocSite (siteId: NodeId) (name: string) (siteKind: AllocSiteKind) (graph: SemanticGraph) : AllocSiteEscapeInfo =
     // For DU constructions, the value IS the node itself (no binding indirection needed)
     // For string-returning calls, trace through binding to find scope
+    // Closure construction is structurally escaping: the Lambda allocates an env buffer
+    // that becomes part of the returned closure pair. The env buffer IS the return value —
+    // it must outlive the Lambda's stack frame by definition.
+    // This is a structural property of closure construction, not a general escape trace.
+    match siteKind with
+    | ClosureConstruction ->
+        { NodeId = siteId
+          Name = name
+          SiteKind = siteKind
+          EscapeKind = EscapesViaReturn
+          Reason = sprintf "Closure '%s' env buffer escapes via return (structural)" name }
+    | _ ->
+
     let (valueId, valueName) =
         match siteKind with
         | DUConstruction | RecordConstruction ->
             // DU/Record construction IS the value — check if THIS node escapes
+            (siteId, name)
+        | ClosureConstruction ->
+            // Handled above — unreachable
             (siteId, name)
         | StringReturningCall ->
             // String-returning call — check binding (original behavior)

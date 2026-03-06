@@ -419,9 +419,27 @@ let memrefOpToString (op: MemRefOp) : string =
         sprintf "%s = memref.cast %s : %s to %s"
             (ssaToString result) (ssaToString source) (typeToString srcType) (typeToString destType)
     | MemRefOp.ReinterpretCast (result, source, byteOffset, size, srcType, destType) ->
-        // memref.reinterpret_cast: layout change at byte offset with explicit size
-        sprintf "%s = memref.reinterpret_cast %s to offset: [%d], sizes: [%d], strides: [1] : %s to %s"
-            (ssaToString result) (ssaToString source) byteOffset size (typeToString srcType) (typeToString destType)
+        // Check if source and dest have different element types
+        let getElemType = function
+            | TMemRef e | TMemRefStatic (_, e) | TMemRefScalar e -> Some e
+            | _ -> None
+        match getElemType srcType, getElemType destType with
+        | Some srcElem, Some destElem when srcElem <> destElem ->
+            // Different element types: emit memref.view (allows cross-element-type access)
+            // Generate inline offset constant + view as two ops on separate lines
+            let resultStr = ssaToString result
+            let offsetName = sprintf "%s_off" resultStr
+            sprintf "%s = arith.constant %d : index\n    %s = memref.view %s[%s][] : %s to %s"
+                offsetName byteOffset resultStr (ssaToString source) offsetName (typeToString srcType) (typeToString destType)
+        | _ ->
+            // Same element type: standard memref.reinterpret_cast
+            sprintf "%s = memref.reinterpret_cast %s to offset: [%d], sizes: [%d], strides: [1] : %s to %s"
+                (ssaToString result) (ssaToString source) byteOffset size (typeToString srcType) (typeToString destType)
+    | MemRefOp.ReinterpretCastDynamic (result, source, offset, sizeSSA, srcType, destType) ->
+        // memref.reinterpret_cast with dynamic size: reconstruct memref from pointer + known length
+        // Used for string/array capture extraction where size is loaded from closure struct
+        sprintf "%s = memref.reinterpret_cast %s to offset: [%d], sizes: [%s], strides: [1] : %s to %s"
+            (ssaToString result) (ssaToString source) offset (ssaToString sizeSSA) (typeToString srcType) (typeToString destType)
     | MemRefOp.View (result, source, offsetSSA, srcType, destType) ->
         // memref.view: typed view of byte buffer (different element type allowed)
         // Portable across all targets: CPU (→ GEP), FPGA (→ typed memory port), NPU (→ typed channel)
@@ -464,6 +482,16 @@ let rec opToString (op: MLIROp) : string =
             | None -> sprintf "func.call_indirect %s(%s) : (%s) -> %s" (ssaToString callee) argSSAs argTypes (typeToString retTy)
         | FuncConstant (result, funcName, funcTy) ->
             sprintf "%s = func.constant @%s : %s" (ssaToString result) funcName (typeToString funcTy)
+        | IndexToFunc (result, source, argTypes, retTy) ->
+            let funcTyStr =
+                let argsStr = argTypes |> List.map typeToString |> String.concat ", "
+                sprintf "(%s) -> %s" argsStr (typeToString retTy)
+            sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s" (ssaToString result) (ssaToString source) funcTyStr
+        | FuncToIndex (result, source, argTypes, retTy) ->
+            let funcTyStr =
+                let argsStr = argTypes |> List.map typeToString |> String.concat ", "
+                sprintf "(%s) -> %s" argsStr (typeToString retTy)
+            sprintf "%s = builtin.unrealized_conversion_cast %s : %s to index" (ssaToString result) (ssaToString source) funcTyStr
         | Return (valueOpt, tyOpt) ->
             match valueOpt, tyOpt with
             | Some value, Some ty -> sprintf "func.return %s : %s" (ssaToString value) (typeToString ty)

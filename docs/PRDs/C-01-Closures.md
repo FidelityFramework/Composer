@@ -4,9 +4,15 @@
 
 ## 1. Executive Summary
 
-This PRD specifies the implementation of MLKit-style flat closures for Clef Native compilation. Closures are foundational to functional programming - they enable functions to capture variables from enclosing scopes. This feature unlocks higher-order functions (Sample 12), sequences (Samples 14-15), async (Samples 17-19), and ultimately the MailboxProcessor capstone (Samples 29-31).
+This PRD specifies the implementation of MLKit-style flat closures for Clef Native compilation. Closures are foundational to functional programming — they enable functions to capture variables from enclosing scopes. This feature unlocks higher-order functions (C-02), lazy evaluation (C-05), sequences (C-06/C-07), async (A-01+), and ultimately the MailboxProcessor capstone (T-03+).
 
-**Key Architectural Decision**: Capture analysis is scope analysis. Scope is resolved during type checking. Therefore, **capture analysis belongs in CCS**, not Composer. CCS computes captures during PSG construction; Alex handles only SSA assignment and MLIR emission.
+**Key Architectural Decisions**:
+
+1. **Capture analysis belongs in CCS**, not Composer. Captures are scope analysis; scope is resolved during type checking. CCS computes captures during PSG construction; Alex handles only SSA assignment and MLIR emission.
+
+2. **Portable memref dialect throughout** — no LLVM dialect. Closures use byte-level `TMemRefStatic(totalBytes, TInt(IntWidth 8))` for struct representation, `pInsertValue`/`pExtractValue` for field access, `pFuncCallIndirect` for code pointer invocation. This keeps closures target-agnostic: CPU → native pointers, FPGA → typed channels, NPU → typed descriptors.
+
+3. **FFI boundary marshaling is explicit** — closures are Clef-internal values. When closure state (function pointers, struct references) must cross the C boundary, extraction to raw pointers happens as the natural residual at the boundary, not as a general-purpose conversion.
 
 ## 2. Language Feature Specification
 
@@ -15,21 +21,25 @@ This PRD specifies the implementation of MLKit-style flat closures for Clef Nati
 A closure is a function bundled with its captured environment:
 
 ```fsharp
-let makeCounter (start: int) : (unit -> int) =
-    let mutable count = start
+let makeCounter (arena: byref<Arena<'a>>) (start: int) : (unit -> int) =
+    let countPtr = Arena.alloc &arena (Platform.wordSize ())
+    NativePtr.write (NativePtr.ofNativeInt<int> countPtr) start
     fun () ->
-        count <- count + 1
-        count
+        let ptr = NativePtr.ofNativeInt<int> countPtr
+        let current = NativePtr.read ptr
+        let next = current + 1
+        NativePtr.write ptr next
+        next
 ```
 
-The inner lambda `fun () -> ...` captures the mutable variable `count`. Each call to `makeCounter` produces an independent closure with its own `count` state.
+The inner lambda captures `countPtr` (the arena-allocated storage). Each call to `makeCounter` produces an independent closure with its own storage.
 
 ### 2.2 Capture Modes
 
 | Variable Kind | Capture Mode | Environment Entry | Semantics |
-|---------------|--------------|-------------------|-----------|
-| Immutable `let x = ...` | ByValue | `T` | Copy value into closure |
-| Mutable `let mutable x = ...` | ByRef | `ptr<T>` | Pointer to original slot |
+|---|---|---|---|
+| Immutable `let x = ...` | ByValue | `T` | Copy value into closure struct |
+| Mutable `let mutable x = ...` | ByRef | `ptr<T>` | Pointer to original alloca |
 
 **Critical**: Mutable variables MUST be captured by reference to enable mutation through the closure. Multiple closures capturing the same mutable variable share the same storage.
 
@@ -38,7 +48,7 @@ The inner lambda `fun () -> ...` captures the mutable variable `count`. Each cal
 Based on Shao & Appel (1994) "Space-Efficient Closure Representations":
 
 | Property | Flat Closures (MLKit) | Linked Closures |
-|----------|----------------------|-----------------|
+|---|---|---|
 | Memory layout | All captures inline | Pointer to outer env |
 | Access time | O(1) direct offset | O(depth) chain walk |
 | Space safety | Safe for GC | Keeps outer env alive |
@@ -46,120 +56,93 @@ Based on Shao & Appel (1994) "Space-Efficient Closure Representations":
 | Cache behavior | Contiguous | Scattered |
 
 **Fidelity uses FLAT closures** because:
-1. No GC - space safety is structural, not runtime
-2. Region allocation - closures live in regions, not heap
-3. Predictable performance - no chain traversal
+1. No GC — space safety is structural, not runtime
+2. Arena allocation — closures live in arenas, not heap
+3. Predictable performance — no chain traversal
+4. Target portability — flat structs map cleanly to FPGA/NPU
 
 ### 2.4 Memory Layout
 
 ```
-Closure Structure (Flat)
-+---------------------+----------------------------------+
-| code_ptr (8 bytes)  | env: captured values inline      |
-|                     |   capture_0: T0                  |
-|                     |   capture_1: T1                  |
-|                     |   ...                            |
-+---------------------+----------------------------------+
+Closure Struct (Flat, byte-level memref)
+┌─────────────────────────────────────────────────────────┐
+│ code_ptr (TIndex): pointer to lambda implementation     │
+├─────────────────────────────────────────────────────────┤
+│ capture_0: T₀  (value or pointer depending on mode)     │
+│ capture_1: T₁                                           │
+│ ...                                                     │
+└─────────────────────────────────────────────────────────┘
+
+MLIR representation: memref<N x i8> where N = sum of field sizes
+Field access: arith.constant (offset) + memref.load/store
 ```
 
-For `makeCounter`, the returned closure:
+For `makeCounter` capturing `countPtr: nativeint`, the returned closure:
 ```
-+---------------------+----------------------------------+
-| ptr<increment_impl> | count_ref: ptr<int>              |
-+---------------------+----------------------------------+
+┌──────────────────────────┬──────────────────────────┐
+│ code_ptr (8 bytes)       │ countPtr: nativeint (8b)  │
+└──────────────────────────┴──────────────────────────┘
+= memref<16 x i8>
 ```
+
+### 2.5 Arena-Based Lifetime Management
+
+With no runtime/GC, closures that outlive their defining scope need explicit lifetime management:
+
+```fsharp
+let main _ =
+    let arenaMem = NativePtr.stackalloc<byte> 4096
+    let mutable arena = Arena.fromPointer (NativePtr.toNativeInt arenaMem) 4096
+
+    let counter = makeCounter &arena 0   // closure state lives in arena
+    counter ()  // 1 — arena still alive, safe
+    counter ()  // 2
+    0           // arena dies with main's stack frame
+```
+
+The arena's lifetime is the caller's stack frame. Factory functions receive the arena and allocate from it. All closure state lives as long as the arena.
 
 ## 3. CCS Layer Implementation
 
 ### 3.1 Type Definitions
 
-**File**: `~/repos/clef/src/Compiler/Checking.Native/SemanticGraph.fs`
+**File**: `src/Compiler/NativeTypedTree/SemanticGraph.fs`
 
 ```fsharp
-/// Information about a captured variable
 type CaptureInfo = {
     Name: string
     Type: NativeType
     IsMutable: bool
-    SourceNodeId: NodeId option  // Where the captured binding is defined
+    SourceNodeId: NodeId option
 }
 
-/// SemanticKind.Lambda now includes captures
 type SemanticKind =
-    // ...
     | Lambda of
         parameters: (string * NativeType * NodeId) list *
         body: NodeId *
-        captures: CaptureInfo list
+        captures: CaptureInfo list *
+        closureId: ClosureId option *
+        isEntryPoint: bool
 ```
 
 ### 3.2 Capture Analysis Algorithm
 
-**File**: `~/repos/clef/src/Compiler/Checking.Native/Expressions/Applications.fs`
+**File**: `src/Compiler/NativeTypedTree/Expressions/Applications.fs`
 
-The `checkLambda` function computes captures during type checking:
+CCS computes captures during `checkLambda` via free variable analysis:
 
-```fsharp
-let checkLambda env builder lambdaExpr =
-    // 1. Create parameter bindings in extended environment
-    let envWithParams = addParameterBindings params env
+1. Create parameter bindings in extended environment
+2. Check body expression in extended environment
+3. Collect VarRefs in body (recursive traversal)
+4. Identify captures: VarRefs not in parameter set, looked up in *outer* environment
+5. Build `CaptureInfo` list from outer scope bindings
+6. Create Lambda node with captures embedded
 
-    // 2. Check body expression in extended environment
-    let bodyNode = checkExpr envWithParams builder bodyExpr
+**Key insight**: Captures are determined by checking which VarRefs in the body refer to bindings in the *outer* environment (before parameters were added). This is scope analysis, performed once during type checking.
 
-    // 3. Collect VarRefs in body (recursive traversal)
-    let bodyVarRefs = collectVarRefs builder bodyNode.Id
+### 3.3 Unit-Parameterized Lambda Types
 
-    // 4. Identify captures: VarRefs not in parameter set
-    let paramNames = params |> List.map fst |> Set.ofList
-    let capturedNames = Set.difference bodyVarRefs paramNames
-
-    // 5. Build CaptureInfo list from outer scope bindings
-    let captures =
-        capturedNames
-        |> Set.toList
-        |> List.choose (fun name ->
-            match tryLookupBinding name env with  // Original env!
-            | Some binding ->
-                Some { Name = name
-                       Type = binding.Type
-                       IsMutable = binding.IsMutable
-                       SourceNodeId = binding.NodeId }
-            | None -> None)
-
-    // 6. Create Lambda node with captures
-    builder.Create(
-        SemanticKind.Lambda(lambdaParams, bodyNode.Id, captures),
-        funcType,
-        range,
-        children = paramNodeIds @ [bodyNode.Id])
-```
-
-**Key insight**: Captures are bindings referenced in the body that exist in the OUTER environment (before parameters were added), not the extended environment.
-
-### 3.3 VarRef Collection Helper
-
-```fsharp
-let private collectVarRefs (builder: NodeBuilder) (nodeId: NodeId) : Set<string> =
-    let nodes = builder.Nodes
-    let rec collect (nodeId: NodeId) (acc: Set<string>) : Set<string> =
-        match Map.tryFind nodeId nodes with
-        | None -> acc
-        | Some node ->
-            let acc =
-                match node.Kind with
-                | SemanticKind.VarRef(name, _) -> Set.add name acc
-                | _ -> acc
-            node.Children |> List.fold (fun a childId -> collect childId a) acc
-    collect nodeId Set.empty
-```
-
-### 3.4 Unit-Parameterized Lambda Types
-
-**Issue**: `fun () -> body` must have type `unit -> bodyType`, not just `bodyType`.
-
-**Fix**: In `checkLambda`, handle empty parameter list specially:
-
+`fun () -> body` has type `unit -> bodyType`. CCS handles empty parameter lists:
 ```fsharp
 let funcType =
     if List.isEmpty paramTypes then
@@ -168,298 +151,358 @@ let funcType =
         mkFunctionType paramTypes bodyNode.Type
 ```
 
-### 3.5 Lambda Children Structure
+### 3.4 Lambda Children Structure
 
-Lambda nodes must include parameter PatternBinding NodeIds in Children for proper traversal:
-
+Lambda nodes include parameter PatternBinding NodeIds in Children for proper traversal ordering:
 ```fsharp
-let paramNodeIds = lambdaParams |> List.map (fun (_, _, nodeId) -> nodeId)
-builder.Create(
-    SemanticKind.Lambda(lambdaParams, bodyNode.Id, captures),
-    funcType,
-    range,
-    children = paramNodeIds @ [bodyNode.Id])  // Params THEN body
+children = paramNodeIds @ [bodyNode.Id]  // Params THEN body
 ```
 
-### 3.6 Traversal Updates
-
-**File**: `~/repos/clef/src/Compiler/Checking.Native/SemanticGraph.fs`
-
-The `foldWithSCFRegions` function must walk Lambda parameter PatternBindings before the body region:
-
-```fsharp
-| SemanticKind.Lambda (params', bodyId, _captures), Some hook ->
-    let parentId = node.Id
-    // Walk parameter PatternBindings first (for SSA assignment)
-    let paramNodeIds = params' |> List.map (fun (_, _, nodeId) -> nodeId)
-    let state = paramNodeIds |> List.fold walk state
-    // Lambda body is a region
-    let state = hook.BeforeRegion state parentId LambdaBodyRegion
-    let state = walk state bodyId
-    let state = hook.AfterRegion state parentId LambdaBodyRegion
-    state
-```
+The `foldWithSCFRegions` traversal walks parameter PatternBindings before the body region.
 
 ## 4. Composer/Alex Layer Implementation
 
-### 4.1 SSA Assignment
+### 4.1 Coeffect Types (Pre-computed Mise-en-Place)
 
-**File**: `src/Alex/Preprocessing/SSAAssignment.fs`
+**File**: `src/MiddleEnd/PSGElaboration/Coeffects.fs`
 
-For Lambda nodes with captures, SSAAssignment allocates:
-
-```fsharp
-// For captured mutable variables (need address SSA for ByRef)
-%var_value    // SSA for the value (already assigned)
-%var_addr     // SSA for the address (NEW - for ByRef capture)
-
-// For Lambda with captures
-%env_alloca   // SSA for llvm.alloca of env struct
-%env_slot_N   // SSA for GEP to capture slot N
-%closure      // SSA for final closure struct
-```
-
-**Implementation approach**: When visiting a Lambda node, check if `captures` is non-empty. If so, allocate additional SSAs for environment construction.
-
-### 4.2 Closure Coeffect
-
-**File**: `src/Alex/Preprocessing/SSAAssignment.fs` (or new `ClosureLayout.fs`)
+All closure layout information is pre-computed during SSAAssignment — witnesses observe the result, never compute it.
 
 ```fsharp
-type CaptureEntry = {
+type CaptureMode =
+    | ByValue  // Immutable: copy value into closure struct
+    | ByRef    // Mutable: store pointer to alloca in closure struct
+
+type CaptureSlot = {
     Name: string
-    SourceSSA: SSA           // SSA of captured variable's value
-    AddressSSA: SSA option   // SSA of address (for ByRef captures)
-    CaptureKind: CaptureKind // ByValue or ByRef
-    OffsetInEnv: int         // Byte offset in struct
-    SlotSSA: SSA             // SSA for GEP to this slot
+    SlotIndex: int           // 0 = code_ptr, 1+ = captures
+    SlotType: MLIRType
+    SourceNodeId: NodeId option
+    Mode: CaptureMode
 }
 
-type ClosureCoeffect = {
+type LambdaContext =
+    | RegularClosure         // captures start at index 1
+    | LazyThunk              // captures start at index 3 (after computed, value, code_ptr)
+    | SeqGenerator           // captures start at index 3 (after state, current, code_ptr)
+
+type ClosureLayout = {
     LambdaNodeId: NodeId
-    Captures: CaptureEntry list
-    EnvStructType: string       // MLIR struct type string
-    EnvAllocaSSA: SSA
-    ClosureSSA: SSA
-    CodePtrSSA: SSA
+    Captures: CaptureSlot list
+
+    // FLAT STRUCT CONSTRUCTION SSAs
+    CodeAddrSSA: SSA
+    ClosureUndefSSA: SSA
+    ClosureWithCodeSSA: SSA
+    CaptureInsertSSAs: SSA list
+
+    // HEAP ALLOCATION SSAs (arena bump allocator)
+    HeapPosPtrSSA: SSA; HeapPosSSA: SSA; HeapBaseSSA: SSA
+    HeapResultPtrSSA: SSA; HeapNewPosSSA: SSA
+    SizeGepSSA: SSA; SizeSSA: SSA; SizeOneSSA: SSA
+
+    // UNIFORM PAIR CONSTRUCTION SSAs
+    PairUndefSSA: SSA; PairWithCodeSSA: SSA; ClosureResultSSA: SSA
+
+    // CAPTURE EXTRACTION SSA (inner function)
+    StructLoadSSA: SSA
+
+    // TYPE INFORMATION
+    EnvStructType: MLIRType
+    ClosureStructType: MLIRType    // memref<N x i8>
+    Context: LambdaContext
+    LazyStructType: MLIRType option
 }
 ```
 
-### 4.3 Lambda Witness - Closure Construction
+### 4.2 SSA Assignment
 
-**File**: `src/Alex/Witnesses/LambdaWitness.fs`
+**File**: `src/MiddleEnd/PSGElaboration/SSAAssignment.fs`
 
-```fsharp
-let witnessLambda (z: PSGZipper) (lambdaNodeId: NodeId) =
-    match getLambdaCaptures lambdaNodeId z with
-    | [] ->
-        // No captures - simple function pointer
-        let codePtr = getCodePointerForLambda lambdaNodeId z
-        TRValue { SSA = codePtr; Type = TFunctionPointer }
-    | captures ->
-        // Has captures - emit flat closure
-        emitFlatClosure z lambdaNodeId captures
+For Lambda nodes with captures, `buildClosureLayout` allocates SSAs for closure CONSTRUCTION in the parent scope. The SSA layout for N captures (total N+3 SSAs):
 
-let emitFlatClosure (z: PSGZipper) (lambdaId: NodeId) (captures: CaptureInfo list) =
-    let coeffect = lookupClosureCoeffect lambdaId z
-
-    // 1. Allocate environment struct
-    emit $"  %%{coeffect.EnvAllocaSSA} = llvm.alloca 1 x {coeffect.EnvStructType}"
-
-    // 2. Store each capture
-    for entry in coeffect.Captures do
-        emit $"  %%{entry.SlotSSA} = llvm.getelementptr %%{coeffect.EnvAllocaSSA}[0, {entry.OffsetInEnv}]"
-
-        match entry.CaptureKind with
-        | ByRef ->
-            // Store pointer to mutable variable
-            emit $"  llvm.store %%{entry.AddressSSA.Value}, %%{entry.SlotSSA}"
-        | ByValue ->
-            // Copy immutable value
-            emit $"  llvm.store %%{entry.SourceSSA}, %%{entry.SlotSSA}"
-
-    // 3. Build closure struct { code_ptr, env_ptr }
-    emit $"  %%tmp = llvm.insertvalue undef[0], %%{coeffect.CodePtrSSA}"
-    emit $"  %%{coeffect.ClosureSSA} = llvm.insertvalue %%tmp[1], %%{coeffect.EnvAllocaSSA}"
-
-    TRValue { SSA = coeffect.ClosureSSA; Type = TClosureStruct }
+```
+ssas[0]        = addressof code_ptr
+ssas[1]        = undef closure struct
+ssas[2]        = insertvalue code_ptr at [0]
+ssas[3..N+2]   = insertvalue each capture at [1..N]
 ```
 
-### 4.4 Closure Invocation Witness
+Plus additional SSAs for heap allocation (6), size computation (3), and uniform pair construction (3).
 
-When a closure is **called**, extract and invoke:
+**Two-scope model**:
+- **Parent scope**: closure CONSTRUCTION (these SSAs)
+- **Child scope (inner function)**: capture EXTRACTION (via `pExtractCaptures` with base index from `LambdaContext`)
 
-```fsharp
-let witnessClosureCall (z: PSGZipper) (closureSSA: SSA) (args: TRValue list) =
-    let extractCode = freshSynthSSA z
-    let extractEnv = freshSynthSSA z
-    let resultSSA = freshSynthSSA z
+### 4.3 Pattern Layer — ClosurePatterns.fs
 
-    // Extract code pointer and environment
-    emit $"  %%{extractCode} = llvm.extractvalue %%{closureSSA}[0]"
-    emit $"  %%{extractEnv} = llvm.extractvalue %%{closureSSA}[1]"
+**File**: `src/MiddleEnd/Alex/Patterns/ClosurePatterns.fs`
 
-    // Call with env as first argument
-    let argList =
-        extractEnv :: (args |> List.map (fun a -> a.SSA))
-        |> List.map (sprintf "%%%s")
-        |> String.concat ", "
-    emit $"  %%{resultSSA} = llvm.call %%{extractCode}({argList})"
+Patterns compose Elements into semantic closure operations. All use the `parser { }` CE with XParsec state threading.
 
-    TRValue { SSA = resultSSA; Type = returnType }
-```
+#### 4.3.1 Closure Construction — `pFlatClosure`
 
-### 4.5 Lambda Body Code Generation
-
-The lambda's implementation function receives the environment as its first parameter:
+Builds closure struct by inserting code_ptr at index [0], then captures at indices [1..N]:
 
 ```fsharp
-// Lambda: fun () -> count <- count + 1; count
-// Generated function signature:
-llvm.func @lambda_impl(%env: !llvm.ptr) -> i32 {
-    // Load captured mutable variable (ByRef - it's a pointer)
-    %count_ptr_addr = llvm.getelementptr %env[0, 0]
-    %count_ptr = llvm.load %count_ptr_addr : !llvm.ptr
-
-    // Read current value
-    %count_val = llvm.load %count_ptr : i32
-
-    // Increment
-    %new_val = arith.addi %count_val, 1
-
-    // Store back through pointer
-    llvm.store %new_val, %count_ptr
-
-    // Return new value
-    llvm.return %new_val
-}
+let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list)
+                 (ssas: SSA list) : PSGParser<MLIROp list>
 ```
 
-### 4.6 PatternBinding Handler Update
+SSA layout: `[0]` = undef, `[1-2]` = insert code_ptr (offset, result), then for each capture: `[3+2*i]` = offsetSSA, `[4+2*i]` = resultSSA.
 
-**File**: `src/Alex/Traversal/CCSTransfer.fs`
+The closure struct is `TMemRefStatic(totalBytes, TInt(IntWidth 8))` — a byte-level memref whose total size is the sum of all field sizes.
 
-Lambda parameter PatternBindings need special handling - they define bindings but don't have values from the outer scope:
+#### 4.3.2 Closure Invocation — `pClosureCall`
+
+Extracts code_ptr from [0], captures from [1..N], then emits indirect function call with captures prepended to explicit args:
 
 ```fsharp
-| SemanticKind.PatternBinding name ->
-    match Map.tryFind name z.State.VarBindings with
-    | Some (ssa, ty) ->
-        z, TRValue { SSA = ssa; Type = ty }
-    | None when name = "_" || name.StartsWith("_") ->
-        z, TRVoid  // Discarded binding
-    | None ->
-        // Check if this is a Lambda parameter definition
-        match z.Path with
-        | step :: _ when isLambdaNode step.Parent ->
-            z, TRVoid  // Lambda param - binding created elsewhere
-        | _ ->
-            z, TRError (sprintf "PatternBinding '%s' not found" name)
+let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType list)
+                 (args: Val list) (extractSSAs: SSA list) (resultSSA: SSA)
+                 : PSGParser<MLIROp list>
 ```
+
+Calling convention: `call code_ptr(capture_0, capture_1, ..., explicit_arg_0, explicit_arg_1, ...)`
+
+Captures are explicit parameters in the generated code — not passed via context/userdata. This is the Clef calling convention, not the C calling convention.
+
+#### 4.3.3 Capture Extraction — `pExtractCaptures`
+
+At inner function entry, extracts captures from the env_ptr (Arg 0):
+
+```fsharp
+let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list)
+                     (structType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list>
+```
+
+`baseIndex` comes from `closureExtractionBaseIndex` — 1 for regular closures, 3 for lazy/seq.
+
+#### 4.3.4 Arena Allocation — `pAllocateInArena`
+
+Bump allocator for closures that escape their defining scope:
+
+```fsharp
+let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * SSA>
+```
+
+SSA layout: `[0]` = heap_pos_ptr, `[1]` = heap_pos, `[2]` = heap_base, `[3]` = result_ptr, `[4]` = new_pos, `[5]` = index.
+
+#### 4.3.5 Function Definition — `pFunctionDef`
+
+Coeffect-aware function definition wrapping. Observes `TargetPlatform` to elide:
+- **CPU** → `func.func` (portable MLIR)
+- **FPGA** → `hw.module` (hardware description)
+
+### 4.4 Element Layer
+
+Closure patterns compose from these Elements:
+
+| Element | File | Purpose |
+|---|---|---|
+| `pUndef` | MLIRAtomics.fs | Create uninitialized memref (closure struct) |
+| `pInsertValue` | MLIRAtomics.fs | Store field at index in struct (code_ptr, captures) |
+| `pExtractValue` | MLIRAtomics.fs | Load field at index from struct |
+| `pLoad` | MemRefElements.fs | Load value from memref |
+| `pStore` | MemRefElements.fs | Store value to memref |
+| `pAlloca` | MemRefElements.fs | Stack allocate memref |
+| `pSubView` | MemRefElements.fs | Compute subview offset |
+| `pExtractBasePtr` | MemRefElements.fs | Extract raw pointer from memref (FFI boundary) |
+| `pConstI` | MLIRAtomics.fs | Integer constant |
+| `pFuncCallIndirect` | FuncElements.fs | Indirect function call via code pointer |
+| `pFuncDef` | FuncElements.fs | Function definition |
+
+### 4.5 Witness Layer — LambdaWitness.fs
+
+**File**: `src/MiddleEnd/Alex/Witnesses/LambdaWitness.fs`
+
+Categorized as Lambda nanopass. Uses Y-combinator thunk (`getCombinator`) for recursive self-reference — nested lambdas require the combinator to include itself.
+
+Matches `pLambdaWithCaptures` from PSGCombinators:
+- **No captures** → simple `func.func` definition
+- **Has captures** → emit flat closure via `pFlatClosure`
+
+Three Lambda flavors handled:
+1. **Entry point** (`DeclRoot.EntryPoint`) → `func.func @main` wrapper
+2. **Hardware module** (`DeclRoot.HardwareModule`) → `hw.module`
+3. **Non-root** (`None`) → module-level `func.func` with qualified name
 
 ## 5. MLIR Output Specification
 
 ### 5.1 Closure Struct Type
 
 ```mlir
-// Closure type: { function_ptr, env_ptr }
-!closure_type = !llvm.struct<(ptr, ptr)>
-
-// Environment struct (example for makeCounter)
-!counter_env = !llvm.struct<(ptr)>  // Single ptr<int> for mutable count
+// Closure for makeCounter capturing countPtr (8 bytes code_ptr + 8 bytes capture)
+// Represented as: memref<16 x i8>
 ```
 
 ### 5.2 Closure Construction
 
 ```mlir
 // makeCounter returning a closure
-llvm.func @makeCounter(%start: i32) -> !closure_type {
-    // Allocate stack slot for mutable 'count'
-    %count_slot = llvm.alloca 1 x i32
-    llvm.store %start, %count_slot
+func.func private @makeCounter(%arg0: memref<16xi8>, %arg1: i64) -> memref<16xi8> {
+    // ... arena allocation, store start value ...
 
-    // Allocate environment struct
-    %env = llvm.alloca 1 x !counter_env
+    // Build closure struct (16 bytes: code_ptr + countPtr)
+    %undef = memref.alloca() : memref<16xi8>
 
-    // Store pointer to count in environment
-    %env_slot0 = llvm.getelementptr %env[0, 0]
-    llvm.store %count_slot, %env_slot0
+    // Insert code_ptr at [0]
+    %off0 = arith.constant 0 : index
+    memref.store @counter_impl_ptr, %undef[%off0] : memref<16xi8>
 
-    // Build closure struct
-    %closure_tmp = llvm.insertvalue undef : !closure_type[0], @counter_increment_impl
-    %closure = llvm.insertvalue %closure_tmp[1], %env
+    // Insert captured countPtr at [1]
+    %off1 = arith.constant 1 : index
+    memref.store %countPtr, %undef[%off1] : memref<16xi8>
 
-    llvm.return %closure
+    func.return %undef : memref<16xi8>
 }
 ```
 
 ### 5.3 Closure Implementation Function
 
 ```mlir
-// The actual increment function
-llvm.func @counter_increment_impl(%env: !llvm.ptr) -> i32 {
-    // Get pointer to count from environment
-    %count_ptr_addr = llvm.getelementptr %env[0, 0] : (!llvm.ptr) -> !llvm.ptr
-    %count_ptr = llvm.load %count_ptr_addr : !llvm.ptr -> !llvm.ptr
+// The lambda body — receives captures as explicit parameters
+func.func private @counter_impl(%countPtr: index) -> i64 {
+    // NativePtr.read: load through pointer
+    %ptr = ... // ofNativeInt<int> countPtr
+    %current = memref.load %ptr[%zero] : memref<1xi64>
 
-    // Load, increment, store
-    %old_val = llvm.load %count_ptr : !llvm.ptr -> i32
-    %one = arith.constant 1 : i32
-    %new_val = arith.addi %old_val, %one : i32
-    llvm.store %new_val, %count_ptr : i32, !llvm.ptr
+    // Increment
+    %one = arith.constant 1 : i64
+    %next = arith.addi %current, %one : i64
 
-    llvm.return %new_val : i32
+    // NativePtr.write: store through pointer
+    memref.store %next, %ptr[%zero] : memref<1xi64>
+
+    func.return %next : i64
 }
 ```
 
 ### 5.4 Closure Invocation
 
 ```mlir
-// Calling counter()
-%code_ptr = llvm.extractvalue %closure[0] : !closure_type -> !llvm.ptr
-%env_ptr = llvm.extractvalue %closure[1] : !closure_type -> !llvm.ptr
-%result = llvm.call %code_ptr(%env_ptr) : (!llvm.ptr) -> i32
+// counter() — extract code_ptr, extract captures, indirect call
+%off0 = arith.constant 0 : index
+%code_ptr = memref.load %closure[%off0] : index     // Extract code_ptr from [0]
+%off1 = arith.constant 1 : index
+%capture0 = memref.load %closure[%off1] : index     // Extract countPtr from [1]
+
+%result = func.call_indirect %code_ptr(%capture0) : (index) -> i64
 ```
 
-## 6. clef-spec Updates
+## 6. FFI Boundary Marshaling
 
-**File**: `~/repos/clef-spec/spec/closure-representation.md`
+### 6.1 The Boundary Problem
 
-Document the normative closure specification:
-- Flat closure requirement
-- Capture mode determination (ByValue vs ByRef)
-- Environment struct layout rules
-- Calling convention (env as first parameter)
+Closures are Clef-internal values. C functions know nothing about flat closure structs. When Clef code interacts with C at function pointer boundaries, explicit marshaling is required.
 
-## 7. Reference Patterns
+Three boundary scenarios:
 
-### 7.1 MLKit (CCS Reference)
+| Direction | Clef Side | C Side | Marshaling |
+|---|---|---|---|
+| Clef → C callback | Flat closure struct | `void (*fn)(void*, ...)` + `void* userdata` | Decompose: trampoline + struct-as-userdata |
+| C fn ptr → Clef | Callable value | `nativeint` (raw pointer) | Wrap: zero-capture closure with C fn ptr as code_ptr |
+| Clef struct → C | memref struct value | `void*` raw pointer | Extract: `pExtractBasePtr` at boundary |
 
-MLKit's `ClosExp.sml` shows flat closure construction:
-- All captured values copied into environment record
-- Environment allocated in current region
-- Function pointer paired with environment pointer
+### 6.2 Clef → C Callback (Pattern A: Registration)
 
-**Key insight**: MLKit determines captures during lambda compilation, not as a separate pass.
+When passing a Clef closure to a C function expecting `void (*callback)(T1, T2, ..., void* userdata)`:
 
-### 7.2 FStar Free Variable Analysis
-
-FStar's `FStarC_Syntax_Free.ml` provides the traversal pattern:
-```ocaml
-let rec free_names_and_uvs' tm =
-  match tm with
-  | Tm_name x -> singleton_bv x  (* Variable = potential free var *)
-  | Tm_abs { bs; body; _ } ->
-      let body_fvs = free_names_and_uvars body in
-      aux_binders bs body_fvs  (* Exclude lambda params *)
+```fsharp
+// Clef code: register a handler with a C library
+let handler = fun (data: nativeint) ->
+    Console.writeln "event received"
+wl_display_add_listener display (nativeint &handler) 0n
 ```
 
-### 7.3 Triton-CPU (MLIR Reference)
+The closure struct must be decomposed at the boundary:
+1. **Trampoline function**: A static C-ABI-compatible function that receives `void*`, casts it back to the closure struct, extracts code_ptr and captures, and calls the Clef lambda
+2. **Userdata**: Pointer to the closure struct (arena-allocated, lifetime must exceed the registration)
 
-Triton-CPU's closure-like patterns in `TritonToTritonGPU/`:
-- Struct type construction for captured state
-- GEP-based field access
-- Function pointer extraction and indirect calls
+**Implementation**: This is Farscape's Layer 2 responsibility. Farscape generates registration wrappers that take symbol names, resolve via `dlsym`, and pass `nativeint` to L1 extern bindings. The trampoline is a Clef function with C-compatible signature.
+
+### 6.3 C Function Pointer → Clef Callable (Pattern B: dlsym)
+
+When receiving a C function pointer (from `dlsym`, from a listener struct field):
+
+```fsharp
+// Farscape L2 generates:
+let buildWlPointerListener (enter: nativeint) (leave: nativeint) ... =
+    { wl_pointer_listener.enter = enter; leave = leave; ... }
+```
+
+These are raw `nativeint` values — C function pointers. They cannot be called as Clef closures directly. They're stored in listener structs and passed back to C via `wl_proxy_add_listener`.
+
+**When Clef code needs to call a C function pointer**: Use `NativePtr.invoke<'T>` intrinsic (future) or explicit extern binding.
+
+### 6.4 Clef Struct → C Raw Pointer
+
+When a Clef struct (like a listener containing function pointers) must be passed to a C function expecting a raw pointer:
+
+```fsharp
+// HelloWayland: pass listener struct to C function
+wl_proxy_add_listener proxy (nativeint &xdgSurfaceListener) 0n
+```
+
+The `nativeint &struct` expression:
+1. `&struct` → `AddressOf` node → `pBuildAddressOf` (alloca + store) → `memref<1 x StructType>`
+2. `nativeint memref` → type conversion → `pExtractBasePtr` → `memref.extract_aligned_pointer_as_index`
+
+The type conversion from memref to index happens in `pTypeConversion` (`ApplicationPatterns.fs`):
+```fsharp
+| TMemRef _, TIndex | TMemRefStatic _, TIndex ->
+    pExtractBasePtr resultSSA srcSSA srcType
+```
+
+### 6.5 FFI Argument Marshaling at ExternCall Boundaries
+
+When `pExternCallResolved` (`PlatformPatterns.fs`) calls a C function, arguments with memref types are automatically marshaled to raw pointers using pre-allocated cast SSAs:
+
+```fsharp
+// For each argument:
+// - If type is TMemRef/TMemRefStatic → pExtractBasePtr, pass as TIndex
+// - Otherwise → pass through unchanged
+```
+
+This uses the pre-allocated SSAs from `SSAAssignment.fs` (indices `1..argCount` for non-option, `11..11+argCount` for option return). No runtime SSA allocation.
+
+### 6.6 Design Principle: C Does Not Leak In
+
+The marshaling boundary is ONE-WAY and EXPLICIT:
+- **Inside Clef**: Everything is memref, portable, target-agnostic
+- **At the boundary**: Extraction/injection is the natural residual of observing a type mismatch
+- **C semantics never propagate inward**: No raw pointers inside Clef code, no `void*` semantics, no C calling conventions
+
+This is the same principle as `pSysWrite`: the syscall boundary extracts `memref.extract_aligned_pointer_as_index` + `index.casts i64`, but the string value inside Clef is always a fat pointer (memref + length).
+
+## 7. Lazy and Seq Extensions
+
+### 7.1 Lazy Thunk (C-05)
+
+Lazy values reuse the closure struct layout with additional prefix fields:
+
+```
+Lazy Struct: {computed: i1, value: T, code_ptr: ptr, capture₀, capture₁, ...}
+             [0]           [1]       [2]            [3...]
+```
+
+- `LambdaContext.LazyThunk` → extraction base index = 3
+- `pLazyStruct`: builds the struct with `computed=false` initial state
+- `pBuildLazyForce`: extracts code_ptr, alloca struct, store, call thunk with pointer
+
+### 7.2 Seq Generator (C-06/C-07)
+
+Sequence iterators use:
+
+```
+Seq Struct: {state: i32, current: T, code_ptr: ptr, captures..., internal_state...}
+            [0]         [1]         [2]            [3...]
+```
+
+- `LambdaContext.SeqGenerator` → extraction base index = 3
+- `pSeqStruct`: builds struct with initial state
+- `pSeqMoveNext`: extracts state + code_ptr + captures, calls MoveNext
+- `pBuildForEachLoop`: (gap — needs SCF.While integration)
 
 ## 8. Validation
 
@@ -467,25 +510,17 @@ Triton-CPU's closure-like patterns in `TritonToTritonGPU/`:
 
 **File**: `samples/console/FidelityHelloWorld/11_Closures/Closures.fs`
 
-```fsharp
-let makeCounter (start: int) : (unit -> int) =
-    let mutable count = start
-    fun () ->
-        count <- count + 1
-        count
+The sample covers:
 
-let makeGreeter (name: string) : (string -> string) =
-    fun greeting -> $"{greeting}, {name}!"
+| Test Case | What It Validates |
+|---|---|
+| `makeCounter` | Mutable capture via arena, ByRef semantics, independent state |
+| `makeGreeter` | Immutable capture (string), ByValue semantics |
+| `makeAccumulator` | Mutable capture, arithmetic accumulation |
+| `makeRangeChecker` | Multiple immutable captures |
+| Independent closures | Two counters from same factory, independent state |
 
-let makeAccumulator (initial: int) : (int -> int) =
-    let mutable total = initial
-    fun n ->
-        total <- total + n
-        total
-
-let makeRangeChecker (min: int) (max: int) : (int -> bool) =
-    fun x -> x >= min && x <= max
-```
+See Section 10 for expanded boundary marshaling test cases.
 
 ### 8.2 Expected Output
 
@@ -520,87 +555,208 @@ counter2: 102
 
 ### 8.3 Regression Tests
 
-ALL samples 01-10 must continue to pass after closure implementation:
+ALL samples 01-10 must continue to pass after closure implementation.
 
-```bash
-for i in 01 02 03 04 05 06 07 08 09 10; do
-  cd ~/repos/Composer/samples/console/FidelityHelloWorld/${i}_*/
-  ~/repos/Composer/src/bin/Debug/net10.0/Composer compile *.fidproj
-  ./targets/* || echo "FAIL: Sample $i"
-done
-```
+## 9. Implementation Status
 
-## 9. Files to Create/Modify
+### Phase 1: CCS Changes — COMPLETE
+- [x] `CaptureInfo` type in SemanticGraph.fs
+- [x] `SemanticKind.Lambda` updated with captures field
+- [x] `collectVarRefs` free variable analysis
+- [x] Capture analysis in `checkLambda`
+- [x] Unit-parameterized lambda types
+- [x] Lambda Children include parameter PatternBindings
+- [x] `foldWithSCFRegions` traversal updated
+- [x] All Lambda pattern matches updated
 
-### 9.1 CCS (~/repos/clef/)
+### Phase 2: Composer Infrastructure — COMPLETE
+- [x] `CaptureMode`, `CaptureSlot`, `ClosureLayout` coeffect types (Coeffects.fs)
+- [x] `LambdaContext` DU (RegularClosure, LazyThunk, SeqGenerator)
+- [x] `buildClosureLayout` in SSAAssignment.fs
+- [x] `lookupClosureLayout` / `hasClosure` coeffect lookups
+- [x] Lambda pattern matches updated in PSGCombinators, CCSTransfer
+- [x] Samples 01-10 verified
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `src/Compiler/Checking.Native/SemanticGraph.fs` | MODIFY | Add CaptureInfo type, update Lambda SemanticKind, fix traversal |
-| `src/Compiler/Checking.Native/Expressions/Applications.fs` | MODIFY | Add collectVarRefs, implement capture analysis in checkLambda |
-| `src/Compiler/Checking.Native/Expressions/Bindings.fs` | MODIFY | Update Lambda creation sites for Children structure |
-| `src/Compiler/Checking.Native/Expressions/Coordinator.fs` | MODIFY | Update any Lambda pattern matches |
-| `src/Compiler/Checking.Native/Expressions/Collections.fs` | MODIFY | Update any Lambda pattern matches |
-| `src/Compiler/Checking.Native/ClefNativeExpr.fs` | MODIFY | Update Lambda pattern matches for 3-tuple |
+### Phase 3: Closure Patterns — COMPLETE
+- [x] `pFlatClosure` — struct construction via insertvalue chain
+- [x] `pClosureCall` — extract + indirect call with captures prepended
+- [x] `pExtractCaptures` — environment extraction at function entry
+- [x] `pAllocateInArena` — heap arena bump allocation
+- [x] `pFunctionDef` — coeffect-aware (CPU → func.func, FPGA → hw.module)
+- [x] `pLazyStruct` / `pBuildLazyForce` — lazy thunk patterns
+- [x] `pSeqStruct` / `pSeqMoveNext` — seq generator patterns
 
-### 9.2 Composer (~/repos/Composer/)
+### Phase 4: LambdaWitness Integration — IN PROGRESS
+- [x] Entry point Lambda handling
+- [x] Non-root Lambda handling (qualified names)
+- [x] Parameter PatternBinding visiting
+- [x] Y-combinator recursive self-reference
+- [ ] Closure construction emission (connecting `pFlatClosure` to witness)
+- [ ] Closure invocation emission (connecting `pClosureCall` to witness)
+- [ ] Nested lambda / returning function values
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `src/Alex/Preprocessing/SSAAssignment.fs` | MODIFY | Add closure-aware SSA assignments |
-| `src/Alex/Traversal/CCSTransfer.fs` | MODIFY | Update Lambda pattern match, fix PatternBinding handler |
-| `src/Alex/Witnesses/LambdaWitness.fs` | MODIFY | Implement flat closure MLIR emission |
-| `src/Alex/XParsec/PSGCombinators.fs` | MODIFY | Update Lambda pattern matching |
-| `src/Composer.fsproj` | MODIFY | Any new file references |
-| `docs/Closure_Nanopass_Architecture.md` | UPDATED | Reflects correct architecture |
+### Phase 5: FFI Boundary Marshaling — IN PROGRESS
+- [x] `pTypeConversion` TMemRef → TIndex case (ApplicationPatterns.fs)
+- [x] `pExternCallResolved` argument marshaling (PlatformPatterns.fs)
+- [ ] AddressOf + type conversion PSG connection (CCS enrichment investigation)
+- [ ] End-to-end verification with HelloWayland
 
-## 10. Implementation Checklist
+### Phase 6: ForEach / MoveNext — PENDING
+- [ ] SCF.While integration for `pBuildForEachLoop`
+- [ ] MoveNext calling convention implementation
 
-### Phase 1: CCS Changes (COMPLETE)
-- [x] Define CaptureInfo type in SemanticGraph.fs
-- [x] Update SemanticKind.Lambda to 3-tuple with captures
-- [x] Implement collectVarRefs helper in Applications.fs
-- [x] Add capture analysis to checkLambda
-- [x] Fix unit-parameterized lambda types (`fun () -> ...`)
-- [x] Fix Lambda Children to include parameter PatternBindings
-- [x] Update Lambda traversal in foldWithSCFRegions
-- [x] Update all Lambda pattern matches in CCS
-
-### Phase 2: Composer Basic Support (COMPLETE)
-- [x] Update Lambda pattern matches in CCSTransfer.fs
-- [x] Update Lambda pattern matches in PSGCombinators.fs
-- [x] Fix PatternBinding handler for Lambda parameters
-- [x] Verify samples 01-10 still pass
-
-### Phase 3: Closure MLIR Emission (IN PROGRESS)
-- [ ] Add closure SSA assignments in SSAAssignment.fs
-- [ ] Define ClosureCoeffect type
-- [ ] Implement closure struct type generation
-- [ ] Implement environment allocation MLIR
-- [ ] Implement capture store MLIR (ByValue and ByRef)
-- [ ] Implement closure struct construction MLIR
-- [ ] Implement closure invocation MLIR
-
-### Phase 4: Lambda Body Generation (PENDING)
-- [ ] Generate lambda implementation functions
-- [ ] Handle environment parameter in lambda body
-- [ ] Implement capture load from environment
-- [ ] Handle mutable capture access (through pointer)
-
-### Phase 5: Validation (PENDING)
+### Phase 7: Validation — PENDING
 - [ ] Sample 11 compiles without errors
 - [ ] Sample 11 produces correct output
+- [ ] Expanded boundary tests pass (Section 10)
 - [ ] All regression tests pass (samples 01-10)
 
-## 11. Academic References
+## 10. Expanded Sample 11 — Boundary Marshaling Coverage
 
-1. Shao & Appel (1994), "Space-Efficient Closure Representations" - Flat vs linked closures
-2. Tofte & Talpin (1997), "Region-Based Memory Management" - Closures in regions
-3. MLKit Programming with Regions (Elsman, 2021) - Production implementation
-4. Perconti & Ahmed (2019), "Closure Conversion is Safe for Space" - Formal verification
+Sample 11 should be expanded to cover the full feature area, including the boundary edge cases that are literally at the edge between Clef's portable world and C's raw pointer world.
 
-## 12. Related PRDs
+### 10.1 Core Closure Cases (existing)
 
-- **C-02**: Higher-Order Functions - Builds on closures for functions as values
-- **A-01 to A-03**: Async - Uses closures for continuation callbacks
-- **T-03 to T-05**: MailboxProcessor - Synthesizes closures + async + threading
+```fsharp
+// Already covered:
+// - makeCounter: mutable capture via arena, ByRef
+// - makeGreeter: immutable capture (string), ByValue
+// - makeAccumulator: mutable capture, accumulation
+// - makeRangeChecker: multiple immutable captures
+// - Independent closures from same factory
+```
+
+### 10.2 Zero-Capture Closures
+
+```fsharp
+/// Lambda with no captures — pure function value
+/// Should be a minimal closure struct (code_ptr only, no env)
+let applyOp (f: int -> int -> int) (a: int) (b: int) : int =
+    f a b
+
+// Usage: applyOp (fun a b -> a + b) 3 4  // 7
+```
+
+### 10.3 Multi-Type Captures
+
+```fsharp
+/// Captures of different types: int, string, bool
+let makeFormatter (prefix: string) (width: int) (showSign: bool) : (int -> string) =
+    fun value ->
+        let sign = if showSign && value > 0 then "+" else ""
+        $"{prefix}{sign}{Format.int value}"
+```
+
+### 10.4 Nested Closures (Closure Returning Closure)
+
+```fsharp
+/// Outer closure captures 'base', returns inner closure that captures 'multiplier'
+/// Tests nested flat closure construction — each level has its own struct
+let makeScaledAdder (base': int) : (int -> (int -> int)) =
+    fun multiplier ->
+        fun x -> base' + multiplier * x
+```
+
+### 10.5 Closure as Function Argument (HOF Bridge)
+
+```fsharp
+/// Pass closure to a higher-order function
+/// Tests that closure struct flows correctly as parameter
+let twice (f: int -> int) (x: int) : int =
+    f (f x)
+
+// Usage: twice (makeAdder 10) 5  // 25
+```
+
+### 10.6 Closure Over Arena-Allocated Struct
+
+```fsharp
+/// Capture a pointer to an arena-allocated struct
+/// Tests that struct references survive in closure environment
+let makePointMover (arena: byref<Arena<'a>>) (x: int) (y: int) : (int -> int -> string) =
+    let xPtr = Arena.alloc &arena (Platform.wordSize ())
+    let yPtr = Arena.alloc &arena (Platform.wordSize ())
+    NativePtr.write (NativePtr.ofNativeInt<int> xPtr) x
+    NativePtr.write (NativePtr.ofNativeInt<int> yPtr) y
+    fun dx dy ->
+        let newX = NativePtr.read (NativePtr.ofNativeInt<int> xPtr) + dx
+        let newY = NativePtr.read (NativePtr.ofNativeInt<int> yPtr) + dy
+        NativePtr.write (NativePtr.ofNativeInt<int> xPtr) newX
+        NativePtr.write (NativePtr.ofNativeInt<int> yPtr) newY
+        $"({Format.int newX}, {Format.int newY})"
+```
+
+### 10.7 Boundary: Struct Reference to C (the HelloWayland pattern)
+
+```fsharp
+/// Build a struct of function pointers (simulating a C listener)
+/// Then pass its address as nativeint to an extern function
+/// This is the exact pattern that HelloWayland uses
+
+// Simulated C struct (mirrors wl_*_listener pattern)
+type EventHandler = {
+    on_enter: nativeint    // C function pointer
+    on_leave: nativeint
+}
+
+// Simulated extern (would be [<FidelityExtern>] in real code)
+[<FidelityExtern>]
+let register_handler (target: nativeint) (handler: nativeint) (data: nativeint) : int64 =
+    Unchecked.defaultof<int64>
+
+let testBoundaryMarshal () =
+    let handler = { on_enter = 0n; on_leave = 0n }
+    // nativeint &handler — AddressOf produces memref, nativeint extracts pointer
+    let result = register_handler 0n (nativeint &handler) 0n
+    Console.writeln $"register result: {Format.int64 result}"
+```
+
+### 10.8 Boundary: Closure State Pointer to C (future — trampoline)
+
+```fsharp
+/// Pass closure's capture environment to C as void* userdata
+/// This requires decomposing the closure at the boundary:
+///   1. Extract code_ptr → wrap in C-ABI trampoline
+///   2. Extract env_ptr → pass as void* userdata
+///
+/// NOTE: This is future work — requires trampoline generation.
+/// Documenting the pattern here so the PRD covers the full edge.
+```
+
+## 11. Files to Create/Modify
+
+### 11.1 CCS — COMPLETE
+
+| File | Status | Purpose |
+|---|---|---|
+| SemanticGraph.fs | DONE | CaptureInfo, Lambda with captures |
+| Applications.fs | DONE | collectVarRefs, capture analysis |
+| Bindings.fs | DONE | Lambda creation with Children |
+| SemanticGraph.fs traversal | DONE | foldWithSCFRegions Lambda region |
+
+### 11.2 Composer — IN PROGRESS
+
+| File | Status | Purpose |
+|---|---|---|
+| Coeffects.fs | DONE | CaptureMode, CaptureSlot, ClosureLayout, LambdaContext |
+| SSAAssignment.fs | DONE | buildClosureLayout, closure SSA allocation |
+| ClosurePatterns.fs | DONE | pFlatClosure, pClosureCall, pExtractCaptures, arena, lazy, seq |
+| LambdaWitness.fs | PARTIAL | Entry/non-root handling done; closure emission pending |
+| ApplicationPatterns.fs | DONE | pTypeConversion TMemRef→TIndex |
+| PlatformPatterns.fs | DONE | pExternCallResolved argument marshaling |
+| PSGCombinators.fs | DONE | pLambdaWithCaptures |
+
+## 12. Academic References
+
+1. Shao & Appel (1994), "Space-Efficient Closure Representations"
+2. Tofte & Talpin (1997), "Region-Based Memory Management"
+3. MLKit Programming with Regions (Elsman, 2021)
+4. Perconti & Ahmed (2019), "Closure Conversion is Safe for Space"
+
+## 13. Related PRDs
+
+- **C-02**: Higher-Order Functions — closures as values passed to/from functions
+- **C-05**: Lazy Evaluation — reuses closure struct layout with prefix fields
+- **C-06/C-07**: Sequences — reuses closure struct for MoveNext state machine
+- **A-01 to A-03**: Async — uses closures for continuation callbacks
+- **T-03 to T-05**: MailboxProcessor — synthesizes closures + async + threading

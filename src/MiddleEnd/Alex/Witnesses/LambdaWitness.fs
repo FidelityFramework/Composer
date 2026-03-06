@@ -22,7 +22,12 @@ open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
-open Alex.CodeGeneration.TypeMapping  // For resolveTypeParams
+open Alex.CodeGeneration.TypeMapping  // For resolveTypeParams, mlirTypeSizeForArch
+open Alex.Elements.MLIRAtomics  // For pUndef, pInsertValue, pExtractValue
+open Alex.Elements.FuncElements  // For pFuncConstant
+open PSGElaboration.SSAAssignment  // For lookupClosureLayout
+open PSGElaboration.Coeffects  // For ClosureLayout, closureExtractionBaseIndex
+open PSGElaboration.EscapeAnalysis  // For getEscapeKindOrDefault — PULL allocation strategy
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
@@ -180,6 +185,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
         | None ->
             // Non-root Lambda: Generate FuncDef for module-level function
+            // Check for ClosureLayout — determines if this is a closure (escaping lambda with captures)
+            let closureLayoutOpt = lookupClosureLayout node.Id ctx.Coeffects.SSA
+
             // Extract QUALIFIED function name from parent Binding + ModuleDef (if present)
             // Same logic as ApplicationWitness for qualified name resolution
             let funcName =
@@ -231,13 +239,23 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match tryMatch extractParamSSAs ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Some (paramList, _) -> paramList
                 | None ->
-                    // ARCHITECTURAL VIOLATION REMOVED: Was generating SSAs at runtime
-                    // SSAs MUST come from SSAAssignment coeffects only
-                    // If this fails, SSAAssignment nanopass needs to be fixed
                     printfn "[ERROR] LambdaWitness: Parameter SSAs not found in coeffects for Lambda node %A" (NodeId.value node.Id)
                     printfn "[ERROR] This indicates SSAAssignment nanopass failed to pre-allocate parameter SSAs"
                     printfn "[ERROR] Parameters: %A" params'
                     []  // Return empty list - will cause compilation to fail with proper error
+
+            // For closures: prepend env parameter (Arg 0 = raw pointer as index)
+            // The call site passes the env as an index (raw pointer from the uniform pair).
+            // The lambda body reconstructs the typed memref<Nxi8> from this index before
+            // extracting captures. This ensures calling convention agreement.
+            let funcParams =
+                match closureLayoutOpt with
+                | Some _layout ->
+                    // Closure: env param prepended as TIndex (raw pointer).
+                    // Shift user params to Arg 1, Arg 2, etc.
+                    (SSA.Arg 0, TIndex) :: mlirParams
+                | None ->
+                    mlirParams
 
             // ═══ SSATypes SCOPING ═══
             // SSA values (V n, Arg n) are per-function — different functions reuse the same SSA names.
@@ -246,21 +264,109 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             ctx.Accumulator.SSATypes <- Map.empty
 
             // Register parameter SSA types for this function scope
-            for (paramSSA, mlirType) in mlirParams do
+            for (paramSSA, mlirType) in funcParams do
                 MLIRAccumulator.registerSSAType paramSSA mlirType ctx.Accumulator
 
             // Eagerly resolve type parameters from the Lambda's type signature
             resolveTypeParams ctx.Graph node.Type
 
+            // For closures: build capture extraction prologue
+            // Extract captures from Arg 0 (env/closure struct) at function entry
+            // Uses memref.reinterpret_cast to create typed views at byte offsets
+            let captureExtractionOps =
+                match closureLayoutOpt with
+                | Some layout when not layout.Captures.IsEmpty ->
+                    let captureTypes = layout.Captures |> List.map (fun cap -> cap.SlotType)
+                    // Compute prefix byte offset (bytes before first capture in struct)
+                    let arch = ctx.Coeffects.Platform.TargetArch
+                    let sizeOf = mlirTypeSizeForArch arch
+                    let prefixByteOffset =
+                        match layout.Context with
+                        | LambdaContext.RegularClosure -> sizeOf TIndex  // code_ptr = one platform word
+                        | LambdaContext.LazyThunk ->
+                            // {computed: i1, value: T, code_ptr: ptr} — need value type from lazy struct
+                            sizeOf (TInt (IntWidth 1)) + sizeOf TIndex + sizeOf TIndex  // Approximate
+                        | LambdaContext.SeqGenerator ->
+                            // {state: i32, current: T, code_ptr: ptr}
+                            sizeOf (TInt (IntWidth 32)) + sizeOf TIndex + sizeOf TIndex  // Approximate
+                    // Build SSAs for extraction: variable-width per capture type.
+                    // Result SSAs are V(0)..V(n-1), work SSAs start at V(n).
+                    // pExtractCaptures consumes SSAs in order per capture:
+                    //   decomposed memref: 8 SSAs [ptrView,ptrZero,ptr, lenView,lenZero,len, rawMemref, result]
+                    //   scalar: 3 SSAs [view, zero, result]
+                    let n = captureTypes.Length
+                    let extractionSSAs, captureResultTypes, totalWorkSSAs =
+                        let mutable ssaList = []
+                        let mutable resultTypes = []  // per-capture: the type body code sees
+                        let mutable workIdx = 0  // work SSA counter (offset from n)
+                        for i in 0 .. n - 1 do
+                            let capTy = captureTypes.[i]
+                            match capTy with
+                            | TStruct [("ptr", TIndex); ("len", TIndex)] ->
+                                // Decomposed memref: 7 work SSAs + 1 result SSA
+                                let ptrViewSSA  = V (n + workIdx)
+                                let ptrZeroSSA  = V (n + workIdx + 1)
+                                let ptrSSA      = V (n + workIdx + 2)
+                                let lenViewSSA  = V (n + workIdx + 3)
+                                let lenZeroSSA  = V (n + workIdx + 4)
+                                let lenSSA      = V (n + workIdx + 5)
+                                let rawMemrefSSA = V (n + workIdx + 6)
+                                let resultSSA   = V i
+                                ssaList <- ssaList @ [ptrViewSSA; ptrZeroSSA; ptrSSA; lenViewSSA; lenZeroSSA; lenSSA; rawMemrefSSA; resultSSA]
+                                resultTypes <- resultTypes @ [TMemRef(TInt (IntWidth 8))]
+                                workIdx <- workIdx + 7
+                            | _ ->
+                                // Scalar: 2 work SSAs + 1 result SSA
+                                let viewSSA   = V (n + workIdx)
+                                let zeroSSA   = V (n + workIdx + 1)
+                                let resultSSA = V i
+                                ssaList <- ssaList @ [viewSSA; zeroSSA; resultSSA]
+                                resultTypes <- resultTypes @ [capTy]
+                                workIdx <- workIdx + 2
+                        ssaList, resultTypes, workIdx
+
+                    // ═══ ENV RECONSTRUCTION PROLOGUE ═══
+                    // Arg 0 arrives as index (raw pointer from uniform pair).
+                    // Reconstruct memref<Nxi8> so capture extraction can use typed views.
+                    // Uses 2 SSAs at end of work range: rawEnvSSA, envMemrefSSA
+                    let rawEnvSSA = V (n + totalWorkSSAs)       // memref<?xi8> from IndexToMemRef
+                    let envMemrefSSA = V (n + totalWorkSSAs + 1) // memref<Nxi8> from ReinterpretCast
+                    let dynMemrefTy = TMemRef(TInt (IntWidth 8))
+                    let envReconstructionOps = [
+                        MLIROp.MemRefOp(MemRefOp.IndexToMemRef(rawEnvSSA, SSA.Arg 0, dynMemrefTy))
+                        MLIROp.MemRefOp(MemRefOp.ReinterpretCast(envMemrefSSA, rawEnvSSA, 0, (match layout.ClosureStructType with TMemRefStatic(sz, _) -> sz | _ -> 0), dynMemrefTy, layout.ClosureStructType))
+                    ]
+
+                    match tryMatch (pExtractCaptures prefixByteOffset captureTypes layout.ClosureStructType envMemrefSSA extractionSSAs) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Some (ops, _) ->
+                        // Register capture SSAs in accumulator so body references can find them.
+                        // For decomposed memref captures, bind with the RECONSTRUCTED type (memref<?>),
+                        // not the slot type (TStruct). The extraction reconstructs the memref.
+                        for i in 0 .. layout.Captures.Length - 1 do
+                            let cap = layout.Captures.[i]
+                            match cap.SourceNodeId with
+                            | Some sourceId ->
+                                let captureSSA = V cap.SlotIndex
+                                let bindType = captureResultTypes.[i]
+                                MLIRAccumulator.bindNode sourceId captureSSA bindType ctx.Accumulator
+                            | None -> ()
+                        // Prepend env reconstruction (index → memref<Nxi8>) before extraction
+                        envReconstructionOps @ ops
+                    | None ->
+                        printfn "[ERROR] LambdaWitness: Capture extraction failed for closure Lambda %d" nodeIdValue
+                        []
+                | _ -> []
+
             // Create child scope for function body (principled accumulation)
             let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
             let bodyScopeRef = ref bodyScope
 
+            // Add capture extraction ops to body scope FIRST (prologue)
+            for op in captureExtractionOps do
+                let updated = ScopeContext.addOp op !bodyScopeRef
+                bodyScopeRef := updated
+
             // FPGA: Per-function visited set for hw.module scope isolation.
-            // Each hw.module has its own SSA region — value bindings are naturally
-            // re-emitted in each module that uses them. Function bindings (Lambdas)
-            // are checked against globalVisited to prevent duplicate hw.module emission.
-            // Seed with parameter node IDs (already visited globally) to avoid redundant re-visits.
             let bodyVisited =
                 if ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA then
                     let paramIds = params' |> List.fold (fun s (_, _, pid) -> Set.add pid s) Set.empty
@@ -292,9 +398,6 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // For flattened Lambdas with N params, unroll N levels of TFun
             let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
             let rawReturnType = mapType innerReturnNativeType2 ctx
-            // Use actual body result type (ground truth from walk) when available.
-            // The mapped+narrowed type is a pre-walk approximation that may miss
-            // nested struct widths (e.g. TStruct fields inside a tuple TStruct).
             let returnType =
                 match bodyResult with
                 | Some (_, actualTy) -> actualTy
@@ -305,14 +408,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match bodyResult with
                 | Some (ssa, _) -> Some ssa
                 | None ->
-                    // Check if Lambda returns unit - if so, None is expected (TRVoid)
                     match innerReturnNativeType2 with
                     | NativeType.TApp ({ NTUKind = Some NTUunit }, []) ->
-                        // Unit-returning function - no result SSA is expected
                         None
                     | _ ->
-                        // Non-unit function should have produced a result
-                        // Enrich diagnostic with body node kind to diagnose nested-lambda / currying gaps
                         let bodyNodeKindStr =
                             match SemanticGraph.tryGetNode actualValueNode ctx.Graph with
                             | Some bodyNode ->
@@ -333,12 +432,175 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         None
 
             // Delegate function wrapping to Pattern — coeffect determines func.func vs hw.module
-            let paramNames = params' |> List.map (fun (name, _, _) -> name)
-            match tryMatchWithDiagnostics (pFunctionDef funcName mlirParams (Some paramNames) returnType bodyOps returnSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            let paramNames =
+                match closureLayoutOpt with
+                | Some _ -> "env" :: (params' |> List.map (fun (name, _, _) -> name))
+                | None -> params' |> List.map (fun (name, _, _) -> name)
+            match tryMatchWithDiagnostics (pFunctionDef funcName funcParams (Some paramNames) returnType bodyOps returnSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
-                { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+
+                // ═══ CLOSURE CONSTRUCTION (parent scope) ═══
+                // If this Lambda has captures, build closure struct + uniform pair in parent scope
+                // All stores use memref.reinterpret_cast to create typed views at byte offsets
+                match closureLayoutOpt with
+                | Some layout ->
+                    // 1. Get code pointer (func.constant @funcName → real function type → index)
+                    // func.constant must use actual function type; we cast to index for storage
+                    let innerFuncParamTypes = funcParams |> List.map snd
+                    let funcRefSSA = layout.SizeGepSSA  // Repurpose unused heap SSA for func ref
+                    let funcTy = TFunc (innerFuncParamTypes, returnType)
+                    let funcConstOp = MLIROp.FuncOp (FuncOp.FuncConstant (funcRefSSA, funcName, funcTy))
+                    ctx.ScopeContext := ScopeContext.addOp funcConstOp !ctx.ScopeContext
+                    // Cast function reference → index for storage in closure struct/pair
+                    let codePtrTy = TIndex
+                    let castOp = MLIROp.FuncOp (FuncOp.FuncToIndex (layout.CodeAddrSSA, funcRefSSA, innerFuncParamTypes, returnType))
+                    ctx.ScopeContext := ScopeContext.addOp castOp !ctx.ScopeContext
+
+                    // 2. Allocate closure struct — PULL allocation strategy from escape analysis coeffect
+                    // StackScoped → alloca (non-escaping closure), EscapesViaReturn → alloc (escaping closure)
+                    let closureTy = layout.ClosureStructType
+                    let escapeKind = getEscapeKindOrDefault node.Id ctx.Coeffects.EscapeAnalysis
+                    let envAllocOp =
+                        match escapeKind with
+                        | StackScoped ->
+                            MLIROp.MemRefOp (MemRefOp.Alloca (layout.ClosureUndefSSA, closureTy, None))
+                        | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
+                            MLIROp.MemRefOp (MemRefOp.AllocStatic (layout.ClosureUndefSSA, closureTy, None))
+                    let parentScope2 = ScopeContext.addOp envAllocOp !ctx.ScopeContext
+                    ctx.ScopeContext := parentScope2
+
+                    // Shared zero constant for all store indices
+                    let zeroSSA = layout.HeapPosSSA  // Repurpose unused heap SSA
+                    let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
+                    let parentScope2a = ScopeContext.addOp zeroOp !ctx.ScopeContext
+                    ctx.ScopeContext := parentScope2a
+
+                    // 3. Insert code_ptr at byte offset 0 via reinterpret_cast
+                    let codeViewSSA = layout.ClosureWithCodeSSA  // Repurpose as view SSA
+                    let codeViewTy = TMemRefStatic (1, codePtrTy)
+                    let codeCastOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (codeViewSSA, layout.ClosureUndefSSA, 0, 1, closureTy, codeViewTy))
+                    let parentScope3 = ScopeContext.addOp codeCastOp !ctx.ScopeContext
+                    ctx.ScopeContext := parentScope3
+                    let codeStoreOp = MLIROp.MemRefOp (MemRefOp.Store (layout.CodeAddrSSA, codeViewSSA, [zeroSSA], codePtrTy, codeViewTy))
+                    let parentScope4 = ScopeContext.addOp codeStoreOp !ctx.ScopeContext
+                    ctx.ScopeContext := parentScope4
+
+                    // 4. Insert captures at computed byte offsets via reinterpret_cast
+                    // Variable-width: decomposed memref captures use 5 SSAs from CaptureInsertSSAs,
+                    // scalar captures use 1 SSA. CaptureInsertSSAs is a flat list sized by
+                    // captureConstructionSSACount per capture.
+                    let arch = ctx.Coeffects.Platform.TargetArch
+                    let sizeOf = mlirTypeSizeForArch arch
+                    let mutable captureByteOffset = sizeOf codePtrTy  // Start after code_ptr
+                    let mutable ssaIdx = 0  // Index into flat CaptureInsertSSAs list
+                    for i in 0 .. layout.Captures.Length - 1 do
+                        let cap = layout.Captures.[i]
+                        // Resolve capture source SSA from coeffects (SSAAssignment).
+                        // Captures reference parent-scope bindings (params or let-bindings).
+                        // Coeffects always have the correct parent-scope SSA assignment.
+                        // Do NOT use recallNode — NodeAssoc may contain inner function's
+                        // extraction bindings that overwrite the parent's SSA for this node.
+                        let captureSSAOpt =
+                            match cap.SourceNodeId with
+                            | Some sourceId ->
+                                PSGElaboration.SSAAssignment.lookupSSA sourceId ctx.Coeffects.SSA
+                            | None -> None
+                        match captureSSAOpt with
+                        | Some capSSA ->
+                            match cap.SlotType with
+                            | TStruct [("ptr", TIndex); ("len", TIndex)] ->
+                                // Decomposed memref: extract ptr + len from source memref, store separately
+                                let ptrSSA     = layout.CaptureInsertSSAs.[ssaIdx]
+                                let dimZeroSSA = layout.CaptureInsertSSAs.[ssaIdx + 1]
+                                let lenSSA     = layout.CaptureInsertSSAs.[ssaIdx + 2]
+                                let ptrViewSSA = layout.CaptureInsertSSAs.[ssaIdx + 3]
+                                let lenViewSSA = layout.CaptureInsertSSAs.[ssaIdx + 4]
+                                ssaIdx <- ssaIdx + 5
+
+                                // Extract base pointer from source memref
+                                let srcMemrefTy = TMemRef(TInt (IntWidth 8))
+                                let extractPtrOp = MLIROp.MemRefOp(MemRefOp.ExtractBasePtr(ptrSSA, capSSA, srcMemrefTy))
+                                ctx.ScopeContext := ScopeContext.addOp extractPtrOp !ctx.ScopeContext
+
+                                // Extract length (dim 0) from source memref
+                                let dimZeroOp = MLIROp.ArithOp(ArithOp.ConstI(dimZeroSSA, 0L, TIndex))
+                                ctx.ScopeContext := ScopeContext.addOp dimZeroOp !ctx.ScopeContext
+                                let dimOp = MLIROp.MemRefOp(MemRefOp.Dim(lenSSA, capSSA, dimZeroSSA, srcMemrefTy))
+                                ctx.ScopeContext := ScopeContext.addOp dimOp !ctx.ScopeContext
+
+                                // Store ptr at current byte offset
+                                let ptrViewTy = TMemRefStatic(1, TIndex)
+                                let ptrCastOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCast(ptrViewSSA, layout.ClosureUndefSSA, captureByteOffset, 1, closureTy, ptrViewTy))
+                                ctx.ScopeContext := ScopeContext.addOp ptrCastOp !ctx.ScopeContext
+                                let ptrStoreOp = MLIROp.MemRefOp(MemRefOp.Store(ptrSSA, ptrViewSSA, [zeroSSA], TIndex, ptrViewTy))
+                                ctx.ScopeContext := ScopeContext.addOp ptrStoreOp !ctx.ScopeContext
+
+                                // Store len at next word offset
+                                let lenByteOffset = captureByteOffset + sizeOf TIndex
+                                let lenViewTy = TMemRefStatic(1, TIndex)
+                                let lenCastOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCast(lenViewSSA, layout.ClosureUndefSSA, lenByteOffset, 1, closureTy, lenViewTy))
+                                ctx.ScopeContext := ScopeContext.addOp lenCastOp !ctx.ScopeContext
+                                let lenStoreOp = MLIROp.MemRefOp(MemRefOp.Store(lenSSA, lenViewSSA, [zeroSSA], TIndex, lenViewTy))
+                                ctx.ScopeContext := ScopeContext.addOp lenStoreOp !ctx.ScopeContext
+
+                            | _ ->
+                                // Scalar: single reinterpret_cast + store
+                                let viewSSA = layout.CaptureInsertSSAs.[ssaIdx]
+                                ssaIdx <- ssaIdx + 1
+                                let viewTy = TMemRefStatic (1, cap.SlotType)
+                                let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (viewSSA, layout.ClosureUndefSSA, captureByteOffset, 1, closureTy, viewTy))
+                                ctx.ScopeContext := ScopeContext.addOp castOp !ctx.ScopeContext
+                                let storeOp = MLIROp.MemRefOp (MemRefOp.Store (capSSA, viewSSA, [zeroSSA], cap.SlotType, viewTy))
+                                ctx.ScopeContext := ScopeContext.addOp storeOp !ctx.ScopeContext
+                        | None ->
+                            printfn "[WARN] LambdaWitness: Capture '%s' (source %A) not found in accumulator for closure %d"
+                                cap.Name cap.SourceNodeId nodeIdValue
+                            // Still advance ssaIdx for consistency
+                            match cap.SlotType with
+                            | TStruct [("ptr", TIndex); ("len", TIndex)] -> ssaIdx <- ssaIdx + 5
+                            | _ -> ssaIdx <- ssaIdx + 1
+                        captureByteOffset <- captureByteOffset + sizeOf cap.SlotType
+
+                    // 5. Build uniform pair {code_ptr, env_ptr}
+                    // Pair type matches TypeMapping: TMemRefStatic(2, TIndex) = memref<2xindex>
+                    // Same escape analysis governs the pair — it shares the closure's lifetime.
+                    let pairTy = TMemRefStatic(2, TIndex)
+
+                    let pairAllocOp =
+                        match escapeKind with
+                        | StackScoped ->
+                            MLIROp.MemRefOp (MemRefOp.Alloca (layout.PairUndefSSA, pairTy, None))
+                        | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
+                            MLIROp.MemRefOp (MemRefOp.AllocStatic (layout.PairUndefSSA, pairTy, None))
+                    ctx.ScopeContext := ScopeContext.addOp pairAllocOp !ctx.ScopeContext
+
+                    // Store code_ptr at element [0] — direct store, same element type
+                    let pairCodeStoreOp = MLIROp.MemRefOp (MemRefOp.Store (layout.CodeAddrSSA, layout.PairUndefSSA, [zeroSSA], TIndex, pairTy))
+                    ctx.ScopeContext := ScopeContext.addOp pairCodeStoreOp !ctx.ScopeContext
+
+                    // Extract env_ptr = base pointer of closure struct
+                    let envPtrSSA = layout.HeapPosPtrSSA  // Reuse a pre-allocated SSA for env_ptr extraction
+                    let envExtractOp = MLIROp.MemRefOp (MemRefOp.ExtractBasePtr (envPtrSSA, layout.ClosureUndefSSA, closureTy))
+                    ctx.ScopeContext := ScopeContext.addOp envExtractOp !ctx.ScopeContext
+
+                    // Store env_ptr at element [1]
+                    let oneSSA = layout.PairWithCodeSSA  // Repurpose as constant 1 SSA
+                    let oneOp = MLIROp.ArithOp (ArithOp.ConstI (oneSSA, 1L, TIndex))
+                    ctx.ScopeContext := ScopeContext.addOp oneOp !ctx.ScopeContext
+                    let pairEnvStoreOp = MLIROp.MemRefOp (MemRefOp.Store (envPtrSSA, layout.PairUndefSSA, [oneSSA], TIndex, pairTy))
+                    ctx.ScopeContext := ScopeContext.addOp pairEnvStoreOp !ctx.ScopeContext
+
+                    // Register closure pair in accumulator for BindingWitness/VarRefWitness to find
+                    MLIRAccumulator.bindNode node.Id layout.PairUndefSSA pairTy ctx.Accumulator
+
+                    { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = layout.PairUndefSSA; Type = pairTy } }
+
+                | None ->
+                    // No captures — plain named function, no closure construction needed
+                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+
             | Result.Error diagnostic ->
                 WitnessOutput.error $"Function '{funcName}': {diagnostic}"
 

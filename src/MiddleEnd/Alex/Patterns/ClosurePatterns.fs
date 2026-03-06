@@ -98,37 +98,158 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
     }
 
 // ═══════════════════════════════════════════════════════════
+// NAMED FUNCTION AS CLOSURE VALUE
+// ═══════════════════════════════════════════════════════════
+
+/// Build a closure pair for a named function that needs to be used as a first-class value.
+///
+/// Named functions are emitted without env params: `func @M.f(%arg0: i64) -> i64`
+/// But closure calling convention prepends env: `call_indirect codePtr(env, args...)`
+/// So we generate an env-accepting thunk that forwards to the original function:
+///
+///   func @M.f_as_closure(%arg0: index, %arg1: i64) -> i64 {
+///       %r = func.call @M.f(%arg1) -> i64
+///       func.return %r : i64
+///   }
+///
+/// Then build a closure pair: {code_ptr → thunk, env_ptr → 0}
+///
+/// SSA layout in parent scope (5 SSAs):
+///   [0] = funcRefSSA (func.constant result)
+///   [1] = codePtrSSA (FuncToIndex result)
+///   [2] = pairSSA (alloca memref<2xindex>)
+///   [3] = zeroSSA (const 0 : index)
+///   [4] = oneSSA (const 1 : index)
+///
+/// Returns: (inlineOps, topLevelOps, pairSSA, pairType)
+///   inlineOps = closure pair construction in parent scope
+///   topLevelOps = thunk function definition (goes to root scope)
+let pNamedFunctionAsClosure
+    (funcName: string)
+    (paramMLIRTypes: MLIRType list)
+    (returnMLIRType: MLIRType)
+    (ssas: SSA list)
+    : PSGParser<MLIROp list * MLIROp list * SSA * MLIRType> =
+    parser {
+        do! ensure (ssas.Length >= 5) $"pNamedFunctionAsClosure: Expected at least 5 SSAs, got {ssas.Length}"
+
+        let funcRefSSA = ssas.[0]
+        let codePtrSSA = ssas.[1]
+        let pairSSA    = ssas.[2]
+        let zeroSSA    = ssas.[3]
+        let oneSSA     = ssas.[4]
+
+        let pairTy = TMemRefStatic(2, TIndex)
+
+        // ═══ THUNK FUNCTION ═══
+        // Thunk accepts env (index, ignored) + original params, forwards to target
+        let thunkName = funcName + "_as_closure"
+        let thunkParams =
+            (SSA.Arg 0, TIndex) :: (paramMLIRTypes |> List.mapi (fun i ty -> (SSA.Arg (i + 1), ty)))
+        // Body: call @funcName with args (skip env)
+        let callArgs =
+            paramMLIRTypes |> List.mapi (fun i ty -> { SSA = SSA.Arg (i + 1); Type = ty })
+        let resultSSA = SSA.V 0
+        let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, callArgs, returnMLIRType))
+        let returnOp = MLIROp.FuncOp (FuncOp.Return (Some resultSSA, Some returnMLIRType))
+        let thunkBody = [callOp; returnOp]
+        let thunkOp = MLIROp.FuncOp (FuncOp.FuncDef (thunkName, thunkParams, returnMLIRType, thunkBody, FuncVisibility.Private))
+
+        // ═══ CLOSURE PAIR CONSTRUCTION ═══
+        // func.constant @thunkName : (index, params...) -> retType
+        let thunkFuncParamTypes = TIndex :: paramMLIRTypes
+        let thunkFuncTy = TFunc (thunkFuncParamTypes, returnMLIRType)
+        let funcConstOp = MLIROp.FuncOp (FuncOp.FuncConstant (funcRefSSA, thunkName, thunkFuncTy))
+        // Cast to index for storage
+        let castOp = MLIROp.FuncOp (FuncOp.FuncToIndex (codePtrSSA, funcRefSSA, thunkFuncParamTypes, returnMLIRType))
+        // Alloca pair
+        let allocOp = MLIROp.MemRefOp (MemRefOp.Alloca (pairSSA, pairTy, None))
+        // Store code_ptr at [0]
+        let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
+        let storeCodeOp = MLIROp.MemRefOp (MemRefOp.Store (codePtrSSA, pairSSA, [zeroSSA], TIndex, pairTy))
+        // Store null env at [1]
+        let oneOp = MLIROp.ArithOp (ArithOp.ConstI (oneSSA, 1L, TIndex))
+        let storeEnvOp = MLIROp.MemRefOp (MemRefOp.Store (zeroSSA, pairSSA, [oneSSA], TIndex, pairTy))
+
+        let inlineOps = [funcConstOp; castOp; allocOp; zeroOp; storeCodeOp; oneOp; storeEnvOp]
+        let topLevelOps = [thunkOp]
+
+        return (inlineOps, topLevelOps, pairSSA, pairTy)
+    }
+
+// ═══════════════════════════════════════════════════════════
 // CAPTURE EXTRACTION
 // ═══════════════════════════════════════════════════════════
 
-/// Extract captures from closure struct at function entry
-/// SSA layout: [0] = indexZero, [1] = structLoad, then for each capture: [2*i+2] = offsetSSA, [2*i+3] = resultSSA
-let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list) (structType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
+/// Extract captures from closure struct at function entry via typed reinterpret_cast.
+/// The closure struct is a byte-level memref (memref<Nxi8>). Each capture is extracted
+/// by reinterpret_casting to a typed view at the correct byte offset, then loading.
+///
+/// Slot type dispatches extraction strategy (pattern match on coeffect):
+///   - Scalar (TIndex, TInt, TFloat): pTypedExtract — 3 SSAs (view, zero, result)
+///   - Decomposed memref (TStruct [ptr; len]): load ptr + len separately,
+///     reconstruct memref via IndexToMemRef + ReinterpretCastDynamic — 8 SSAs total
+///
+/// SSA layout is variable-stride: each capture consumes SSAs from the flat list
+/// based on its slot type. Result SSAs are at fixed positions [0..n-1]; work SSAs follow.
+let pExtractCaptures (prefixByteOffset: int) (captureTypes: MLIRType list) (structType: MLIRType) (envSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
-        let captureCount = captureTypes.Length
-        do! ensure (ssas.Length >= 2 + 2 * captureCount) $"pExtractCaptures: Expected {2 + 2 * captureCount} SSAs, got {ssas.Length}"
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
+        let envPtrSSA = envSSA  // Reconstructed memref<Nxi8> from caller
 
-        let indexZeroSSA = ssas.[0]
-        let structLoadSSA = ssas.[1]
-        let envPtrSSA = Arg 0  // First argument is always env_ptr for closures
+        // Walk captures, consuming SSAs per slot type
+        // SSA layout: result SSAs at V(0)..V(n-1), work SSAs from V(n) onward
+        // The ssas list is ordered: [workSSAs...; resultSSA] per capture, interleaved
+        let mutable ssaOffset = 0
+        let mutable byteOffset = prefixByteOffset
 
-        // Load struct from env_ptr (MLIR memrefs require indices)
-        let! indexZeroOp = pConstI indexZeroSSA 0L TIndex
-        let! loadOp = pLoad structLoadSSA envPtrSSA [indexZeroSSA]
-
-        // Extract each capture
         let! extractOpLists =
             captureTypes
-            |> List.mapi (fun i capTy ->
+            |> List.mapi (fun _i capTy ->
                 parser {
-                    let offsetSSA = ssas.[2 + 2*i]
-                    let extractSSA = ssas.[3 + 2*i]
-                    let extractIndex = baseIndex + i
-                    return! pExtractValue extractSSA structLoadSSA extractIndex offsetSSA capTy
+                    match capTy with
+                    | TStruct [("ptr", TIndex); ("len", TIndex)] ->
+                        // Decomposed memref capture: load {ptr, len}, reconstruct memref
+                        // SSAs: ptrView, ptrZero, ptr, lenView, lenZero, len, rawMemref, result
+                        let ptrViewSSA  = ssas.[ssaOffset]
+                        let ptrZeroSSA  = ssas.[ssaOffset + 1]
+                        let ptrSSA      = ssas.[ssaOffset + 2]
+                        let lenViewSSA  = ssas.[ssaOffset + 3]
+                        let lenZeroSSA  = ssas.[ssaOffset + 4]
+                        let lenSSA      = ssas.[ssaOffset + 5]
+                        let rawMemrefSSA = ssas.[ssaOffset + 6]
+                        let resultSSA   = ssas.[ssaOffset + 7]
+                        ssaOffset <- ssaOffset + 8
+
+                        let ptrByteOffset = byteOffset
+                        let lenByteOffset = byteOffset + mlirTypeSizeForArch arch TIndex
+                        byteOffset <- byteOffset + mlirTypeSizeForArch arch capTy
+
+                        // Load ptr (TIndex) at ptrByteOffset
+                        let! ptrOps = pTypedExtract ptrSSA envPtrSSA ptrByteOffset ptrViewSSA ptrZeroSSA TIndex structType
+                        // Load len (TIndex) at lenByteOffset
+                        let! lenOps = pTypedExtract lenSSA envPtrSSA lenByteOffset lenViewSSA lenZeroSSA TIndex structType
+                        // Reconstruct: index → memref<?xi8>
+                        let dynMemrefTy = TMemRef(TInt (IntWidth 8))
+                        let castOp = MLIROp.MemRefOp(MemRefOp.IndexToMemRef(rawMemrefSSA, ptrSSA, dynMemrefTy))
+                        // Set size: reinterpret_cast with dynamic length
+                        let sizeOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCastDynamic(resultSSA, rawMemrefSSA, 0, lenSSA, dynMemrefTy, dynMemrefTy))
+                        return ptrOps @ lenOps @ [castOp; sizeOp]
+
+                    | _ ->
+                        // Scalar capture: standard typed extraction
+                        let viewSSA   = ssas.[ssaOffset]
+                        let zeroSSA   = ssas.[ssaOffset + 1]
+                        let resultSSA = ssas.[ssaOffset + 2]
+                        ssaOffset <- ssaOffset + 3
+                        let currentOffset = byteOffset
+                        byteOffset <- byteOffset + mlirTypeSizeForArch arch capTy
+                        return! pTypedExtract resultSSA envPtrSSA currentOffset viewSSA zeroSSA capTy structType
                 })
             |> sequence
 
-        return [indexZeroOp; loadOp] @ List.concat extractOpLists
+        return List.concat extractOpLists
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -143,11 +264,13 @@ let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list) (structType:
 /// SSA layout: [0] = undef, [1-2] = insert code_ptr (offset, result), then for each capture: [3+2*i] = offsetSSA, [4+2*i] = resultSSA
 let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
         do! ensure (ssas.Length >= 3 + 2 * captures.Length) $"pFlatClosure: Expected at least {3 + 2 * captures.Length} SSAs, got {ssas.Length}"
 
         // Compute closure type: {code_ptr: ptr, capture0, capture1, ...}
         let fieldTypes = codePtrTy :: (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
         let closureTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         // Create undef struct
@@ -219,11 +342,13 @@ let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType
 /// SSA layout: [0] = undef, [1] = falseConst, [2-3] = insert computed (offset, result), [4-5] = insert code_ptr (offset, result), then for each capture: [6+2*i] = offsetSSA, [7+2*i] = resultSSA
 let pLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
         do! ensure (ssas.Length >= 6 + 2 * captures.Length) $"pLazyStruct: Expected at least {6 + 2 * captures.Length} SSAs, got {ssas.Length}"
 
         // Compute lazy type: {computed: i1, value: T, code_ptr: ptr, captures...}
         let fieldTypes = [TInt (IntWidth 1); valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
         let lazyTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         // Create undef struct
@@ -266,7 +391,7 @@ let pBuildLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (c
 
         // Lazy type is {computed: i1, value: T, code_ptr, captures...}
         let fieldTypes = [TInt (IntWidth 1); valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
         let mlirType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         return (ops, TRValue { SSA = finalSSA; Type = mlirType })
@@ -331,6 +456,8 @@ let pBuildLazyForce (lazySSA: SSA) (lazyTy: MLIRType) (resultSSA: SSA) (resultTy
 let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
                (captures: Val list) (internalState: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
         let minSSAs = 6 + 2 * captures.Length + 2 * internalState.Length
         do! ensure (ssas.Length >= minSSAs) $"pSeqStruct: Expected at least {minSSAs} SSAs, got {ssas.Length}"
 
@@ -338,7 +465,7 @@ let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (c
         let fieldTypes = [TInt (IntWidth 32); currentTy; codePtrTy]
                          @ (captures |> List.map (fun cap -> cap.Type))
                          @ (internalState |> List.map (fun st -> st.Type))
-        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
         let seqTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         // Create undef struct
@@ -468,7 +595,7 @@ let pBuildSeqStruct (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
         let fieldTypes = [TInt (IntWidth 32); currentTy; codePtrTy]
                          @ (captures |> List.map (fun cap -> cap.Type))
                          @ (internalState |> List.map (fun st -> st.Type))
-        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
         let mlirType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         return (ops, TRValue { SSA = finalSSA; Type = mlirType })

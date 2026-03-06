@@ -1,0 +1,17 @@
+[package]
+name = "ImperativeControl"
+version = "0.1.0"
+description = "Mutable bindings, assignment, and while loops"
+authors = ["SpeakEZ Technologies, Inc."]
+license = "MIT"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["ImperativeControl.fs"]
+output = "imperativecontrol"
+output_kind = "console"

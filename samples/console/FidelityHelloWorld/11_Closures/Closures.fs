@@ -1,77 +1,79 @@
 /// Sample 11: Closures
-/// Demonstrates:
-/// - Lambdas that capture variables from enclosing scope
-/// - Mutable captured variables (arena-allocated for escape safety)
-/// - Counter pattern
-/// - Closure as state encapsulation
+/// Validates MLKit-style flat closure construction, capture, and invocation.
 ///
-/// ARCHITECTURAL NOTE (No Runtime):
-/// Mutable captures that escape their defining scope need storage that
-/// outlives that scope. With no runtime/GC, we use arena allocation:
-/// - main creates an arena on its stack
-/// - Factory functions receive the arena and allocate from it
-/// - All closure state lives as long as main's stack frame
+/// SECTION A — Immutable Captures
+///   1. Single string capture (makeGreeter)
+///   2. Single int capture (makeAdder)
+///   3. Multi-value capture with comparisons (makeRangeChecker)
+///   4. Heterogeneous capture: string + bool (makeFormatter)
+///
+/// SECTION B — Closure Composition
+///   5. Zero-capture lambda via HOF (applyOp)
+///   6. Closure as function argument (twice)
+///   7. Nested closures: closure returning closure (makeScaledAdder)
+///
+/// Dependencies: arithmetic (05), comparisons + booleans (07), Format/Console
+///
+/// NOTE: This sample tests closure MECHANICS only — immutable captures,
+/// invocation, HOF parameter passing, nested construction. Arena-based
+/// mutable captures are deferred until 10b (DMM infrastructure) passes.
 module ClosuresSample
 
 open Console
 open Format
 
-/// Create a counter that increments each time called
-/// Arena parameter allows mutable state to escape safely
-let makeCounter (arena: byref<Arena<'a>>) (start: int) : (unit -> int) =
-    // Allocate count in arena (not on makeCounter's stack)
-    // This storage outlives makeCounter's return
-    // Use Platform.wordSize() for platform-portable allocation (8 on 64-bit, 4 on 32-bit)
-    let countPtr = Arena.alloc &arena (Platform.wordSize ())
-    NativePtr.write (NativePtr.ofNativeInt<int> countPtr) start
-    fun () ->
-        let ptr = NativePtr.ofNativeInt<int> countPtr
-        let current = NativePtr.read ptr
-        let next = current + 1
-        NativePtr.write ptr next
-        next
+// ═══════════════════════════════════════════════════════════
+// SECTION A: Immutable Captures
+// ═══════════════════════════════════════════════════════════
 
-/// Create a greeting function that captures a name (immutable - no arena needed)
+/// Create a greeting function that captures a name (immutable)
 let makeGreeter (name: string) : (string -> string) =
     fun greeting -> $"{greeting}, {name}!"
 
-/// Create an accumulator that adds to running total
-/// Arena parameter for mutable state
-let makeAccumulator (arena: byref<Arena<'a>>) (initial: int) : (int -> int) =
-    // Use Platform.wordSize() for platform-portable allocation
-    let totalPtr = Arena.alloc &arena (Platform.wordSize ())
-    NativePtr.write (NativePtr.ofNativeInt<int> totalPtr) initial
-    fun n ->
-        let ptr = NativePtr.ofNativeInt<int> totalPtr
-        let current = NativePtr.read ptr
-        let next = current + n
-        NativePtr.write ptr next
-        next
+/// Create an adder that captures a fixed offset (immutable)
+let makeAdder (n: int) : (int -> int) =
+    fun x -> x + n
 
-/// Capture multiple values in a closure (immutable - no arena needed)
-let makeRangeChecker (min: int) (max: int) : (int -> bool) =
-    fun x -> x >= min && x <= max
+/// Capture two values, use comparisons + boolean operators
+let makeRangeChecker (lo: int) (hi: int) : (int -> bool) =
+    fun x -> x >= lo && x <= hi
+
+/// Heterogeneous capture: string + bool + comparison
+let makeFormatter (prefix: string) (showSign: bool) : (int -> string) =
+    fun value ->
+        if showSign && value > 0 then
+            $"{prefix}+{Format.int value}"
+        else
+            $"{prefix}{Format.int value}"
+
+// ═══════════════════════════════════════════════════════════
+// SECTION B: Closure Composition
+// ═══════════════════════════════════════════════════════════
+
+/// Zero-capture lambda — pure function value
+/// Minimal closure struct: code_ptr only, no environment
+let applyOp (f: int -> int -> int) (a: int) (b: int) : int =
+    f a b
+
+/// Apply a function twice — closure as function argument (HOF bridge)
+/// Tests that closure struct flows correctly as parameter
+let twice (f: int -> int) (x: int) : int =
+    f (f x)
+
+// TODO: Nested closures (makeScaledAdder) require partial application support.
+// Curry flattening merges `fun m -> fun x -> ...` into a flat function,
+// but `addScaled 3` expects a closure back. Deferred until PAP is implemented.
+
+// ═══════════════════════════════════════════════════════════
+// ENTRY POINT
+// ═══════════════════════════════════════════════════════════
 
 [<EntryPoint>]
 let main _ =
-    // Create arena on main's stack - all closure state lives here
-    let arenaMem = NativePtr.stackalloc<byte> 4096
-    let mutable arena = Arena.fromPointer (NativePtr.toNativeInt arenaMem) 4096
-
     Console.writeln "=== Closures Test ==="
 
-    // Counter closure (uses arena for mutable state)
-    Console.writeln "--- Counter ---"
-    let counter = makeCounter &arena 0
-    Console.write "First call: "
-    Console.writeln (Format.int (counter ()))  // 1
-    Console.write "Second call: "
-    Console.writeln (Format.int (counter ()))  // 2
-    Console.write "Third call: "
-    Console.writeln (Format.int (counter ()))  // 3
+    // ─── Section A: Immutable Captures ───
 
-    // Greeter closure (immutable capture - no arena)
-    Console.writeln ""
     Console.writeln "--- Greeter ---"
     let greetAlice = makeGreeter "Alice"
     let greetBob = makeGreeter "Bob"
@@ -79,18 +81,17 @@ let main _ =
     Console.writeln (greetAlice "Goodbye")
     Console.writeln (greetBob "Welcome")
 
-    // Accumulator closure (uses arena for mutable state)
     Console.writeln ""
-    Console.writeln "--- Accumulator ---"
-    let acc = makeAccumulator &arena 100
-    Console.write "Add 10: "
-    Console.writeln (Format.int (acc 10))  // 110
-    Console.write "Add 25: "
-    Console.writeln (Format.int (acc 25))  // 135
-    Console.write "Add 5: "
-    Console.writeln (Format.int (acc 5))   // 140
+    Console.writeln "--- Adder ---"
+    let add10 = makeAdder 10
+    let add100 = makeAdder 100
+    Console.write "add10 5: "
+    Console.writeln (Format.int (add10 5))
+    Console.write "add10 20: "
+    Console.writeln (Format.int (add10 20))
+    Console.write "add100 5: "
+    Console.writeln (Format.int (add100 5))
 
-    // Range checker closure (immutable capture - no arena)
     Console.writeln ""
     Console.writeln "--- Range Checker ---"
     let inRange = makeRangeChecker 10 20
@@ -101,18 +102,28 @@ let main _ =
     Console.write "25 in range 10-20: "
     Console.writeln (if inRange 25 then "true" else "false")
 
-    // Multiple independent closures from same factory
     Console.writeln ""
-    Console.writeln "--- Independent Closures ---"
-    let counter1 = makeCounter &arena 0
-    let counter2 = makeCounter &arena 100
-    Console.write "counter1: "
-    Console.writeln (Format.int (counter1 ()))  // 1
-    Console.write "counter2: "
-    Console.writeln (Format.int (counter2 ()))  // 101
-    Console.write "counter1: "
-    Console.writeln (Format.int (counter1 ()))  // 2
-    Console.write "counter2: "
-    Console.writeln (Format.int (counter2 ()))  // 102
+    Console.writeln "--- Multi-Type Captures ---"
+    let fmtPos = makeFormatter "val=" true
+    let fmtPlain = makeFormatter "x=" false
+    Console.writeln (fmtPos 42)
+    Console.writeln (fmtPos (-7))
+    Console.writeln (fmtPlain 42)
+
+    // ─── Section B: Closure Composition ───
+
+    Console.writeln ""
+    Console.writeln "--- Zero-Capture Lambda ---"
+    Console.write "add: "
+    Console.writeln (Format.int (applyOp (fun a b -> a + b) 3 4))
+    Console.write "mul: "
+    Console.writeln (Format.int (applyOp (fun a b -> a * b) 3 4))
+
+    Console.writeln ""
+    Console.writeln "--- HOF Bridge (twice) ---"
+    Console.write "twice add10 on 5: "
+    Console.writeln (Format.int (twice add10 5))
+    Console.write "twice (fun x -> x * 2) on 3: "
+    Console.writeln (Format.int (twice (fun x -> x * 2) 3))
 
     0

@@ -1,8 +1,11 @@
 /// ApplicationWitness - Witness function application nodes (non-intrinsic)
 ///
-/// Handles: curry flattening, VarRef function calls, indirect calls.
-/// Intrinsic operations (MemRef.*, String.*, Sys.*, Operators.*, Convert.*)
-/// are handled by domain-specific witnesses (MemoryIntrinsicWitness, etc.)
+/// Accumulator-driven dispatch:
+/// - Closure pair in accumulator → pClosureCall (indirect through pair)
+/// - No closure pair → pDirectCall (known function name)
+///
+/// Curry flattening: coeffect-driven direct call (Baker optimization)
+/// Intrinsics: delegated to domain-specific witnesses
 ///
 /// NANOPASS: This witness handles ONLY non-intrinsic Application nodes.
 module Alex.Witnesses.ApplicationWitness
@@ -14,6 +17,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ApplicationPatterns
+open Alex.Dialects.Core.Types
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -111,6 +115,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
         // ═══════════════════════════════════════════════════════════
         // STANDARD APPLICATION HANDLING (non-intrinsic only)
         // ═══════════════════════════════════════════════════════════
+        // Uniform calling convention: all function values are closure pairs.
+        // VarRefWitness produces pairs for named functions (via thunk) and closures.
+        // One path: recall function SSA from accumulator → pClosureCall.
 
         match resolveFunctionNode funcId ctx.Graph with
         | Some funcNode ->
@@ -120,102 +127,86 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 // (MemoryIntrinsicWitness, StringIntrinsicWitness, ArithIntrinsicWitness, PlatformWitness)
                 WitnessOutput.skip
 
-            | SemanticKind.VarRef (localName, Some defId) ->
-                // Extract qualified function name using PSG resolution
-                let funcName =
-                    match SemanticGraph.tryGetNode defId ctx.Graph with
-                    | Some bindingNode ->
-                        match bindingNode.Kind with
-                        | SemanticKind.Binding (bindName, _, _, _) ->
-                            match bindingNode.Parent with
-                            | Some parentId ->
-                                match SemanticGraph.tryGetNode parentId ctx.Graph with
-                                | Some parentNode ->
-                                    match parentNode.Kind with
-                                    | SemanticKind.ModuleDef (moduleName, _) ->
-                                        sprintf "%s.%s" moduleName bindName
-                                    | _ -> bindName
-                                | None -> bindName
-                            | None -> bindName
-                        | _ -> localName
-                    | None -> localName
-
-                // Recall argument SSAs with types
-                let argsResult =
-                    argIds
-                    |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
-
-                let allWitnessed = argsResult |> List.forall Option.isSome
-                if not allWitnessed then
-                    let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
-                    let missingDetail =
-                        List.zip argIds argsResult
-                        |> List.choose (fun (id, r) ->
-                            if r.IsNone then
-                                let kindStr =
-                                    match SemanticGraph.tryGetNode id ctx.Graph with
-                                    | Some n -> sprintf "%A (reachable=%b, type=%A)" n.Kind n.IsReachable n.Type
-                                    | None -> "NOT_FOUND"
-                                Some (sprintf "  Node %d: %s" (NodeId.value id) kindStr)
-                            else None)
-                        |> String.concat "\n"
-                    WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
-                        (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)\n%s" funcName missing missingDetail)
-                else
-                    let args = argsResult |> List.choose id
-                    let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
-
-                    let paramNames = extractParamNames defId ctx.Graph
-                    match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | Result.Error diagnostic ->
-                        WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
-                            (sprintf "Call to '%s': %s" funcName diagnostic)
-
-            | SemanticKind.VarRef (localName, None) ->
-                // Unresolved VarRef — try direct call with local name
-                let argsResult =
-                    argIds
-                    |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
-                let allWitnessed = argsResult |> List.forall Option.isSome
-                if not allWitnessed then
-                    let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
-                    WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
-                        (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)" localName missing)
-                else
-                    let args = argsResult |> List.choose id
-                    let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
-                    match tryMatchWithDiagnostics (pDirectCall node.Id localName args retType None) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | Result.Error diagnostic ->
-                        WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
-                            (sprintf "Call to '%s': %s" localName diagnostic)
-
             | _ ->
-                // Function is an SSA value (indirect call)
-                match MLIRAccumulator.recallNode funcId ctx.Accumulator with
-                | None ->
-                    WitnessOutput.errorCoded AX2002 (Some node.Id) (Some "Application") (Some "IndirectCall")
-                        (sprintf "Function node %d not yet witnessed" (NodeId.value funcId))
-                | Some (funcSSA, _) ->
-                    let argsResult =
-                        argIds
-                        |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
+                // Uniform closure call — function node must have been witnessed with a closure pair
+                let closureLookup =
+                    match funcNode.Kind with
+                    | SemanticKind.VarRef (_, Some defId) ->
+                        // Check the definition binding first (for Bindings that hold closures),
+                        // then the VarRef node itself (function parameters witnessed by VarRefWitness)
+                        match MLIRAccumulator.recallNode defId ctx.Accumulator with
+                        | Some (ssa, ty) when (match ty with TMemRefStatic _ -> true | _ -> false) -> Some (ssa, ty)
+                        | _ ->
+                            match MLIRAccumulator.recallNode funcNode.Id ctx.Accumulator with
+                            | Some (ssa, ty) when (match ty with TMemRefStatic _ -> true | _ -> false) -> Some (ssa, ty)
+                            | _ -> None
+                    | _ ->
+                        // Non-VarRef function expression (e.g. inline lambda result)
+                        match MLIRAccumulator.recallNode funcId ctx.Accumulator with
+                        | Some (ssa, ty) when (match ty with TMemRefStatic _ -> true | _ -> false) -> Some (ssa, ty)
+                        | _ -> None
 
-                    let allWitnessed = argsResult |> List.forall Option.isSome
+                // Recall arguments (shared by both paths)
+                let argsResult =
+                    argIds
+                    |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
+                let allWitnessed = argsResult |> List.forall Option.isSome
+
+                match closureLookup with
+                | Some (closureSSA, _closureTy) ->
+                    // ═══ CLOSURE CALL: function value is a closure pair ═══
                     if not allWitnessed then
                         let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
-                        WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "IndirectCall")
-                            (sprintf "Indirect call: arguments not yet witnessed (missing nodes: %A)" missing)
+                        WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "ClosureCall")
+                            (sprintf "Closure call: arguments not yet witnessed (missing nodes: %A)" missing)
                     else
                         let args = argsResult |> List.choose id
                         let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
 
-                        match tryMatchWithDiagnostics (pApplicationCall node.Id funcSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        match tryMatchWithDiagnostics (pClosureCall node.Id closureSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | Result.Error diagnostic ->
-                            WitnessOutput.errorCoded AX2004 (Some node.Id) (Some "Application") (Some "IndirectCall")
-                                (sprintf "Indirect call: %s" diagnostic)
+                            WitnessOutput.errorCoded AX2004 (Some node.Id) (Some "Application") (Some "ClosureCall")
+                                (sprintf "Closure call: %s" diagnostic)
+                | None ->
+                    // ═══ DIRECT CALL: no closure pair (extern functions, non-HOF calls) ═══
+                    // Resolve qualified function name from PSG
+                    let funcName =
+                        match funcNode.Kind with
+                        | SemanticKind.VarRef (localName, Some defId) ->
+                            match SemanticGraph.tryGetNode defId ctx.Graph with
+                            | Some bindingNode ->
+                                match bindingNode.Kind with
+                                | SemanticKind.Binding (bindName, _, _, _) ->
+                                    match bindingNode.Parent with
+                                    | Some parentId ->
+                                        match SemanticGraph.tryGetNode parentId ctx.Graph with
+                                        | Some parentNode ->
+                                            match parentNode.Kind with
+                                            | SemanticKind.ModuleDef (moduleName, _) ->
+                                                sprintf "%s.%s" moduleName bindName
+                                            | _ -> bindName
+                                        | None -> bindName
+                                    | None -> bindName
+                                | _ -> localName
+                            | None -> localName
+                        | SemanticKind.VarRef (localName, None) -> localName
+                        | _ -> sprintf "func_%d" (NodeId.value funcId)
+
+                    if not allWitnessed then
+                        let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
+                        WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
+                            (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)" funcName missing)
+                    else
+                        let args = argsResult |> List.choose id
+                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
+                        let defIdOpt = match funcNode.Kind with SemanticKind.VarRef (_, d) -> d | _ -> None
+                        let paramNames = defIdOpt |> Option.bind (fun d -> extractParamNames d ctx.Graph)
+                        match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error diagnostic ->
+                            WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
+                                (sprintf "Call to '%s': %s" funcName diagnostic)
         | None ->
             WitnessOutput.errorCoded AX2002 (Some node.Id) (Some "Application") (Some "ResolveFunctionNode")
                 (sprintf "Could not resolve function node %d" (NodeId.value funcId))

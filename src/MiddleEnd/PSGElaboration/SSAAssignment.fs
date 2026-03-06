@@ -44,31 +44,6 @@ let private literalExpansionCost (lit: NativeLiteral) : int =
     | NativeLiteral.UInt16Array _ -> 1
     | NativeLiteral.BigInt _ -> 1
 
-/// Compute exact SSA count for Lambda based on captures list
-/// This is DETERMINISTIC - derived directly from PSG structure (captures list from CCS)
-///
-/// CLOSURE CONSTRUCTION with heap allocation:
-/// - Simple Lambda (0 captures): 0 SSAs (emits func.func, no local value needed)
-/// - Closing Lambda (N captures):
-///   Flat struct construction (N + 3):
-///     - 1 SSA: addressof for code pointer
-///     - 1 SSA: undef for flat closure struct
-///     - 1 SSA: insertvalue for code_ptr at [0]
-///     - N SSAs: insertvalue for each capture at [1..N]
-///   Heap allocation (5):
-///     - 5 SSAs: posPtrSSA, posSSA, heapBaseSSA, resultPtrSSA, newPosSSA
-///   Size computation (3):
-///     - 3 SSAs: gepSSA, sizeSSA, oneSSA (size computed at compile time, no null GEP trick)
-///   Uniform pair construction (3):
-///     - 3 SSAs: pairUndefSSA, pairWithCodeSSA, closureResultSSA
-///   Total: N + 14 SSAs
-let private computeLambdaSSACost (captures: CaptureInfo list) : int =
-    let n = List.length captures
-    if n = 0 then
-        0  // Simple function - no closure struct needed
-    else
-        n + 14  // flat struct (n+3) + heap (5) + size (3) + pair (3)
-
 /// Minimal NativeType to MLIRType mapping for capture slots
 /// This is a subset of TypeMapping.mapNativeType, inlined here to avoid
 /// circular dependencies (SSAAssignment must compile before TypeMapping)
@@ -112,22 +87,24 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 64)) -> TFloat F64
         // Char (Unicode codepoint)
         | _, Some NTUKind.NTUchar -> TInt (IntWidth 32)
-        // String (fat pointer)
-        | TypeLayout.FatPointer, Some NTUKind.NTUstring ->
-            let totalBytes = mlirTypeSize TIndex + mlirTypeSize (TInt (IntWidth 64))
-            TMemRefStatic(totalBytes, TInt (IntWidth 8))
+        // String: decomposed memref capture — store {data_ptr, length} as two platform words.
+        // MLIR memref descriptors can't nest inside byte-level structs; we decompose on
+        // construction and reconstruct on extraction. Both components are TIndex (platform-word).
+        | _, Some NTUKind.NTUstring ->
+            TStruct [("ptr", TIndex); ("len", TIndex)]
         // SECOND: Name-based fallback for types without proper NTU metadata
         | _ ->
             match tycon.Name with
             | "Ptr" | "nativeptr" | "byref" | "inref" | "outref" -> TIndex
             | "array" ->
-                let totalBytes = mlirTypeSize TIndex + mlirTypeSize (TInt (IntWidth 64))
+                let sizeOf = mlirTypeSizeForArch arch
+                let totalBytes = sizeOf TIndex + sizeOf (TInt (IntWidth 64))
                 TMemRefStatic(totalBytes, TInt (IntWidth 8))  // Fat pointer
             | "option" | "voption" ->
                 match args with
                 | [innerTy] ->
                     let innerMlir = mapCaptureType arch innerTy
-                    let totalBytes = 1 + mlirTypeSize innerMlir
+                    let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
                     TMemRefStatic(totalBytes, TInt (IntWidth 8))
                 | _ -> TIndex  // Fallback
             | _ ->
@@ -137,11 +114,12 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
                 else
                     TIndex  // Fallback for other cases
     | NativeType.TFun _ ->
-        let totalBytes = mlirTypeSize TIndex + mlirTypeSize TIndex
+        let sizeOf = mlirTypeSizeForArch arch
+        let totalBytes = sizeOf TIndex + sizeOf TIndex
         TMemRefStatic(totalBytes, TInt (IntWidth 8))  // Function = closure struct
     | NativeType.TTuple (elements, _) ->
         let elementTypes = elements |> List.map (mapCaptureType arch)
-        let totalBytes = elementTypes |> List.sumBy mlirTypeSize
+        let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
         TMemRefStatic(totalBytes, TInt (IntWidth 8))
     | NativeType.TVar tvar ->
         // Resolve type variable using Union-Find
@@ -160,10 +138,51 @@ let private captureSlotType (arch: Architecture) (capture: CaptureInfo) : MLIRTy
         // Immutable capture: store the value directly
         mapCaptureType arch capture.Type
 
+/// Construction SSA cost per capture, derived from slot type.
+/// Decomposed memref captures (strings, arrays) need more SSAs because they
+/// store {ptr, len} separately: ExtractBasePtr + Dim + two typed stores.
+let private captureConstructionSSACount (slotType: MLIRType) : int =
+    match slotType with
+    | TStruct [("ptr", TIndex); ("len", TIndex)] -> 5  // ptrSSA, dimZeroSSA, lenSSA, ptrViewSSA, lenViewSSA
+    | _ -> 1  // viewSSA (for reinterpret_cast)
+
+/// Extraction work SSA cost per capture (excludes the result SSA).
+/// Work SSAs are allocated after the capture result SSAs [V(0)..V(n-1)].
+let private captureExtractionWorkSSACount (slotType: MLIRType) : int =
+    match slotType with
+    | TStruct [("ptr", TIndex); ("len", TIndex)] -> 7  // ptrView,ptrZero,ptr, lenView,lenZero,len, rawMemref
+    | _ -> 2  // view, zero
+
+/// Compute exact SSA count for Lambda based on captures list
+/// This is DETERMINISTIC - derived directly from PSG structure (captures list from CCS)
+///
+/// CLOSURE CONSTRUCTION with heap allocation:
+/// - Simple Lambda (0 captures): 0 SSAs (emits func.func, no local value needed)
+/// - Closing Lambda (C construction SSAs across all captures):
+///   Flat struct construction (C + 3):
+///     - 1 SSA: addressof for code pointer
+///     - 1 SSA: undef for flat closure struct
+///     - 1 SSA: insertvalue for code_ptr at [0]
+///     - C SSAs: per-capture construction SSAs (1 for scalar, 5 for decomposed memref)
+///   Heap allocation (5):
+///     - 5 SSAs: posPtrSSA, posSSA, heapBaseSSA, resultPtrSSA, newPosSSA
+///   Size computation (3):
+///     - 3 SSAs: gepSSA, sizeSSA, oneSSA (size computed at compile time, no null GEP trick)
+///   Uniform pair construction (3):
+///     - 3 SSAs: pairUndefSSA, pairWithCodeSSA, closureResultSSA
+///   Total: C + 14 SSAs
+let private computeLambdaSSACost (arch: Architecture) (captures: CaptureInfo list) : int =
+    let n = List.length captures
+    if n = 0 then
+        0  // Simple function - no closure struct needed
+    else
+        let c = captures |> List.sumBy (fun cap -> captureConstructionSSACount (captureSlotType arch cap))
+        c + 14  // flat struct (c+3) + heap (5) + size (3) + pair (3)
+
 /// Build the environment struct type from captures
 let private buildEnvStructType (arch: Architecture) (captures: CaptureInfo list) : MLIRType =
     let slotTypes = captures |> List.map (captureSlotType arch)
-    let totalBytes = slotTypes |> List.sumBy mlirTypeSize
+    let totalBytes = slotTypes |> List.sumBy (mlirTypeSizeForArch arch)
     TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
 /// Build complete ClosureLayout from Lambda captures and pre-assigned SSAs
@@ -191,30 +210,34 @@ let private buildClosureLayout
     : ClosureLayout =
 
     let n = List.length captures
+    let captureTypes = captures |> List.map (captureSlotType arch)
+
+    // Total construction SSAs varies by capture type (1 for scalar, 5 for decomposed memref)
+    let c = captureTypes |> List.sumBy captureConstructionSSACount
 
     // Extract SSAs by position for closure CONSTRUCTION
-    // Flat struct construction (0 to N+2)
+    // Flat struct construction (0 to c+2)
     let codeAddrSSA = ssas.[0]
     let undefSSA = ssas.[1]
     let withCodeSSA = ssas.[2]
-    let captureInsertSSAs = ssas.[3..(n + 2)]
+    let captureInsertSSAs = ssas.[3..(c + 2)]
 
-    // Heap allocation (N+3 to N+7)
-    let heapPosPtrSSA = ssas.[n + 3]
-    let heapPosSSA = ssas.[n + 4]
-    let heapBaseSSA = ssas.[n + 5]
-    let heapResultPtrSSA = ssas.[n + 6]
-    let heapNewPosSSA = ssas.[n + 7]
+    // Heap allocation (c+3 to c+7)
+    let heapPosPtrSSA = ssas.[c + 3]
+    let heapPosSSA = ssas.[c + 4]
+    let heapBaseSSA = ssas.[c + 5]
+    let heapResultPtrSSA = ssas.[c + 6]
+    let heapNewPosSSA = ssas.[c + 7]
 
-    // Size computation (N+8 to N+10) - no null GEP trick, size computed at compile time
-    let sizeGepSSA = ssas.[n + 8]
-    let sizeSSA = ssas.[n + 9]
-    let sizeOneSSA = ssas.[n + 10]
+    // Size computation (c+8 to c+10) - no null GEP trick, size computed at compile time
+    let sizeGepSSA = ssas.[c + 8]
+    let sizeSSA = ssas.[c + 9]
+    let sizeOneSSA = ssas.[c + 10]
 
-    // Uniform pair construction (N+11 to N+13)
-    let pairUndefSSA = ssas.[n + 11]
-    let pairWithCodeSSA = ssas.[n + 12]
-    let closureResultSSA = ssas.[n + 13]
+    // Uniform pair construction (c+11 to c+13)
+    let pairUndefSSA = ssas.[c + 11]
+    let pairWithCodeSSA = ssas.[c + 12]
+    let closureResultSSA = ssas.[c + 13]
 
     // Build capture slots (structural info only - no SSAs for extraction)
     // Extraction SSAs are derived at emission time from SlotIndex
@@ -237,7 +260,8 @@ let private buildClosureLayout
     // This eliminates lifetime issues - closure is returned by value with all state inline
     let captureTypes = captures |> List.map (captureSlotType arch)
     let fieldTypes = TIndex :: captureTypes
-    let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+    let sizeOf = mlirTypeSizeForArch arch
+    let totalBytes = fieldTypes |> List.sumBy sizeOf
     let closureStructType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
     // PRD-14 Option B: For lazy thunks, compute the FULL lazy struct type
@@ -252,7 +276,7 @@ let private buildClosureLayout
                 let elementType = mapCaptureType arch bodyNode.Type
                 // Lazy struct: {i1, T, ptr, cap0, cap1, ...}
                 let fieldTypes = [TInt (IntWidth 1); elementType; TIndex] @ captureTypes
-                let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+                let totalBytes = fieldTypes |> List.sumBy sizeOf
                 Some (TMemRefStatic(totalBytes, TInt (IntWidth 8)))
             | None ->
                 failwithf "LazyThunk Lambda body node %d not found" (NodeId.value bodyNodeId)
@@ -350,7 +374,7 @@ let private buildDULayout
     let caseStructType =
         match payloadType with
         | Some pType ->
-            let totalBytes = 1 + mlirTypeSize pType
+            let totalBytes = 1 + mlirTypeSizeForArch arch pType
             TMemRefStatic(totalBytes, TInt (IntWidth 8))
         | None ->
             TMemRefStatic(1, TInt (IntWidth 8))
@@ -459,6 +483,8 @@ type private SSAContext = {
     DULayouts: System.Collections.Generic.Dictionary<int, DULayout>
     InnerScopeAssignments: System.Collections.Generic.Dictionary<int, NodeSSAAllocation>
     SaturatedCallArgCounts: Map<NodeId, int>
+    /// Pre-computed value-position coeffect — VarRefs needing closure pair construction
+    ValuePosition: ValuePositionAnalysis.ValuePositionResult
 }
 
 let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : int =
@@ -625,7 +651,11 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 if isExternCallWithOptionReturn then
                     15 + argCount  // Extra SSAs for: raw C result, null const, cmp, alloca, tag, payload view, stores
                 else
-                    1 + argCount  // 1 for result, argCount for potential casts
+                    // 1 for result, argCount for potential casts, +6 for potential closure call
+                    // (2 for code_ptr reinterpret_cast+load, 2 for env_ptr reinterpret_cast+load,
+                    //  1 for shared zero, 1 for index→funcType cast before call_indirect)
+                    // Unused SSAs are harmless — elided if not consumed
+                    7 + argCount
             | _ -> 10  // Other applications
         | None -> 10
     | [] -> 5
@@ -671,8 +701,8 @@ let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType o
                 let okMlir = mapCaptureType arch okTy
                 let errorMlir = mapCaptureType arch errorTy
                 // Pick the larger type (same logic as TypeMapping.maxMLIRType)
-                let okSize = mlirTypeSize okMlir
-                let errorSize = mlirTypeSize errorMlir
+                let okSize = mlirTypeSizeForArch arch okMlir
+                let errorSize = mlirTypeSizeForArch arch errorMlir
                 Some (if okSize >= errorSize then okMlir else errorMlir)
             | _ -> None
         // Other DUs with known layout
@@ -783,9 +813,9 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.Literal lit -> literalExpansionCost lit
     | SemanticKind.InterpolatedString parts -> interpolatedStringCost parts
 
-    // Lambda: cost depends on captures (structural analysis)
+    // Lambda: cost depends on captures (structural analysis, capture types vary by arch)
     | SemanticKind.Lambda (_, _, captures, _, _) ->
-        computeLambdaSSACost captures
+        computeLambdaSSACost ctx.Arch captures
 
     // Fixed costs (these don't vary by structure)
     | SemanticKind.ForLoop _ -> 2
@@ -794,7 +824,11 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.IndexGet _ -> 2
     | SemanticKind.IndexSet _ -> 1
     | SemanticKind.AddressOf _ -> 2
-    | SemanticKind.VarRef _ -> 2
+    | SemanticKind.VarRef _ ->
+        // Value-position is a pre-computed coeffect. Function VarRefs in value position
+        // need 7 SSAs (closure pair construction). All others need 2.
+        if Set.contains node.Id ctx.ValuePosition.FunctionVarRefsInValuePosition then 7
+        else 2
     | SemanticKind.FieldGet _ -> 4  // View-based: offset + view + zero + result (for TStruct records)
     | SemanticKind.FieldSet _ -> 2  // Offset constant + store
     | SemanticKind.Set _ -> 1  // For module-level mutable address operation
@@ -981,24 +1015,38 @@ let rec private assignFunctionBody
         match node.Kind with
         | SemanticKind.Lambda(_params, bodyId, captures, enclosingFuncOpt, context) ->
             // Process Lambda body in a NEW scope.
-            // Architectural fix (January 2026): Start SSA counter AFTER capture extraction SSAs + StructLoad.
+            // Architectural fix: Start SSA counter AFTER capture extraction SSAs.
             // The body's EmissionStrategy.SeparateFunction carries the captureCount.
-            // SSA layout in inner function: v0..v(N-1) = extraction, vN = struct load, v(N+1)+ = body
-            // So body starts at captureCount + 1 (when there are captures) or 0 (no captures).
+            // SSA layout in inner function: v0..v(N-1) = capture results, then work SSAs.
+            // Work SSA count per capture varies by slot type (2 for scalar, 7 for decomposed memref).
+            // Body starts after all capture result + work SSAs.
             let startCounter =
                 match Map.tryFind bodyId ctx.Graph.Nodes with
                 | Some bodyNode ->
                     match bodyNode.EmissionStrategy with
                     | EmissionStrategy.SeparateFunction captureCount ->
-                        if captureCount > 0 then captureCount + 1 else 0
+                        if captureCount > 0 then
+                            let captureTypes = captures |> List.map (captureSlotType ctx.Arch)
+                            let workSSAs = captureTypes |> List.sumBy captureExtractionWorkSSACount
+                            // +2 for env reconstruction prologue: IndexToMemRef + ReinterpretCast
+                            // (converts Arg 0 : index → memref<Nxi8> before capture extraction)
+                            captureCount + workSSAs + 2
+                        else 0
                     | _ -> 0  // Shouldn't happen - Lambda bodies are marked SeparateFunction
                 | None -> 0
             let innerStartScope = { FunctionScope.empty with Counter = startCounter }
 
             // Assign Arg SSAs for nested lambda parameters (mirrors top-level handling in assignSSA)
+            // For closures: offset by 1 because Arg 0 = env_ptr (closure struct)
+            let requiresClosurePairNested =
+                node.Metadata
+                |> Map.tryFind ClosureMetadata.RequiresClosurePair
+                |> Option.map (function MetadataValue.Bool b -> b | _ -> false)
+                |> Option.defaultValue false
+            let argOffset = if not (List.isEmpty captures) || requiresClosurePairNested then 1 else 0
             let paramScope =
                 _params
-                |> List.mapi (fun i (_name, _ty, paramNodeId) -> i, paramNodeId)
+                |> List.mapi (fun i (_name, _ty, paramNodeId) -> i + argOffset, paramNodeId)
                 |> List.fold (fun (s: FunctionScope) (i, paramNodeId) ->
                     FunctionScope.assign paramNodeId (NodeSSAAllocation.single (Arg i)) s
                 ) innerStartScope
@@ -1038,7 +1086,22 @@ let rec private assignFunctionBody
                 // Potentially escaping closure: use closure struct model
                 // Lambda itself gets SSAs in the PARENT scope for closure struct construction
                 // SSA count is deterministic based on captures (from CCS)
-                let cost = computeLambdaSSACost captures
+                // Baker marks zero-capture lambdas in value position with ClosureMetadata.RequiresClosurePair.
+                // These need closure pair construction ({code_ptr, null_env}) even with empty captures.
+                let requiresClosurePair =
+                    node.Metadata
+                    |> Map.tryFind ClosureMetadata.RequiresClosurePair
+                    |> Option.map (function MetadataValue.Bool b -> b | _ -> false)
+                    |> Option.defaultValue false
+
+                let cost =
+                    if requiresClosurePair && List.isEmpty captures then
+                        // Zero-capture closure pair: need 14 SSAs (c+14 where c=0)
+                        // for code_ptr, closure struct alloca, and uniform pair construction
+                        14
+                    else
+                        computeLambdaSSACost ctx.Arch captures
+
                 if cost > 0 then
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                     let alloc = NodeSSAAllocation.multi ssas
@@ -1047,13 +1110,13 @@ let rec private assignFunctionBody
                     // Compute ClosureLayout immediately using the allocated SSAs from the parent scope
                     // Pass the context so witnesses know how to extract captures
                     // PRD-14: Pass graph and bodyId for lazy struct type computation
-                    if not (List.isEmpty captures) then
+                    if not (List.isEmpty captures) || requiresClosurePair then
                         let layout = buildClosureLayout ctx.Arch ctx.Graph node.Id bodyId captures ssas context
                         if not (ctx.ClosureLayouts.ContainsKey(NodeId.value node.Id)) then
                             ctx.ClosureLayouts.Add(NodeId.value node.Id, layout)
                     scopeWithAlloc
                 else
-                    // Simple lambda (no captures) - no SSAs needed in parent scope
+                    // Simple lambda (no captures, not in value position) - no SSAs needed in parent scope
                     scopeAfterChildren
         // VarRef now gets SSAs for mutable variable loads
         // (Regular VarRefs to immutable values may not use their SSAs, but unused SSAs are harmless)
@@ -1346,7 +1409,7 @@ let private findAllModuleLevelValueBindings (graph: SemanticGraph) : NodeId list
                 | None -> false)
         | _ -> [])
 
-let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) : SSAAssignment =
+let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) (valuePosition: ValuePositionAnalysis.ValuePositionResult) : SSAAssignment =
     let lambdaNames, declRootLambdas = collectLambdas graph
 
     let mutable allAssignments = Map.empty
@@ -1361,6 +1424,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
         DULayouts = mutableDULayouts
         InnerScopeAssignments = mutableInnerScopeAssignments
         SaturatedCallArgCounts = saturatedCallArgCounts
+        ValuePosition = valuePosition
     }
 
     // Find the main Lambda
@@ -1424,9 +1488,16 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
                 let initialScope = { FunctionScope.empty with Counter = initialCounter }
 
                 // Assign SSAs to parameter PatternBindings (Arg 0, Arg 1, etc.)
+                // For closures: offset by 1 because Arg 0 = env_ptr (closure struct)
+                let requiresClosurePairTopLevel =
+                    node.Metadata
+                    |> Map.tryFind ClosureMetadata.RequiresClosurePair
+                    |> Option.map (function MetadataValue.Bool b -> b | _ -> false)
+                    |> Option.defaultValue false
+                let argOffsetTopLevel = if not (List.isEmpty captures) || requiresClosurePairTopLevel then 1 else 0
                 let paramScope =
                     params'
-                    |> List.mapi (fun i (_name, _ty, nodeId) -> i, nodeId)
+                    |> List.mapi (fun i (_name, _ty, nodeId) -> i + argOffsetTopLevel, nodeId)
                     |> List.fold (fun (scope: FunctionScope) (i, nodeId) ->
                         FunctionScope.assign nodeId (NodeSSAAllocation.single (Arg i)) scope
                     ) initialScope
@@ -1449,7 +1520,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
                 // Assign SSAs to the Lambda node itself (for closure value)
                 // Top-level Lambdas (not visited during body traversal) need SSA assignments
                 // for closure construction if they have captures
-                let cost = computeLambdaSSACost captures
+                let cost = computeLambdaSSACost arch captures
                 if cost > 0 then
                     // Lambda with captures needs SSAs for closure struct construction
                     let ssas = List.init cost (fun i -> V (topLevelCounter + i))
@@ -1623,7 +1694,7 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
 
                     // Build the actual lazy struct type with captures inlined
                     let fieldTypes = TInt (IntWidth 1) :: elemMlir :: TIndex :: captureTypes
-                    let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+                    let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
                     let actualLazyType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
                     Some actualLazyType
 
@@ -1653,7 +1724,7 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
                         // Build the actual seq struct type with captures + internal state inlined
                         // Layout: {state: i32, current: T, code_ptr: ptr, cap0..., state0...}
                         let fieldTypes = TInt (IntWidth 32) :: elemMlir :: TIndex :: captureTypes @ internalStateTypes
-                        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+                        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
                         let actualSeqType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
                         Some actualSeqType
 

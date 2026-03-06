@@ -477,6 +477,106 @@ let pBuildMatchElimination
                     | None ->
                         return ([outerIfOp], TRVoid)
             else
+
+            // Detect constant match (arms are Const/Wildcard/Var — scrutinee IS the discriminant)
+            // Var patterns are the default/else case binding the scrutinee value.
+            let isConstMatch =
+                arms |> List.exists (fun (_, _, arm) ->
+                    match arm.Pattern with
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const _ -> true
+                    | _ -> false)
+                &&
+                arms |> List.forall (fun (_, _, arm) ->
+                    match arm.Pattern with
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const _ -> true
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard -> true
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var _ -> true
+                    | _ -> false)
+
+            if isConstMatch then
+                // ── Constant match path: no tag extraction, scrutinee compared directly ──
+                // match intValue with | 0L -> ... | 1L -> ... | _ -> ...
+
+                let! allSSAs = getNodeSSAs nodeId
+
+                // Step 1: Recall all arm value SSAs upfront
+                let! armValueSSAs =
+                    match result with
+                    | Some _ ->
+                        let rec recallAll idx acc =
+                            if idx >= numArms then preturn (List.rev acc)
+                            else
+                                let (_, armValueNodeId, _) = arms.[idx]
+                                parser {
+                                    let! (armSSA, _) = pRecallNode armValueNodeId
+                                    return! recallAll (idx + 1) (armSSA :: acc)
+                                }
+                        recallAll 0 []
+                    | None -> preturn []
+
+                // Step 2: Build nested scf.if chain — compare scrutinee against each constant
+                // SSA layout: [0] = result, then 2 per non-final arm (constLit + cmp)
+                let mutable ssaOffset = 1
+                let (lastArmOps, _, _) = arms.[numArms - 1]
+
+                let lastArmElseOps =
+                    match result with
+                    | Some (_, resultType) ->
+                        let lastSSA = armValueSSAs.[numArms - 1]
+                        lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])]
+                    | None ->
+                        lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+
+                let outerOps =
+                    List.foldBack (fun i currentElseOps ->
+                        let (armOps, _, arm) = arms.[i]
+
+                        // Extract literal value from Pattern.Const
+                        let constValue =
+                            match arm.Pattern with
+                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Int (v, _)) -> v
+                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.UInt (v, _)) -> int64 v
+                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Bool true) -> 1L
+                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Bool false) -> 0L
+                            | _ -> int64 i  // fallback to positional
+
+                        let constLitSSA = allSSAs.[ssaOffset]
+                        let cmpSSA = allSSAs.[ssaOffset + 1]
+                        ssaOffset <- ssaOffset + 2
+
+                        let constLitOp = MLIROp.ArithOp (ArithOp.ConstI (constLitSSA, constValue, scrutineeType))
+                        let cmpOp = MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, scrutineeSSA, constLitSSA, scrutineeType))
+
+                        let thenOps =
+                            match result with
+                            | Some (_, resultType) ->
+                                let armSSA = armValueSSAs.[i]
+                                armOps @ [MLIROp.SCFOp (SCFOp.Yield [(armSSA, resultType)])]
+                            | None ->
+                                armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
+
+                        match result with
+                        | Some (resultSSA, resultType) ->
+                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (resultSSA, resultType)))
+                            // Each intermediate output becomes the else body of the next outer scf.if,
+                            // so it must end with scf.yield. The outermost result's trailing yield
+                            // is stripped below (it goes in the function body, not a region).
+                            [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [(resultSSA, resultType)])]
+                        | None ->
+                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
+                            [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [])]
+                    ) [0 .. numArms - 2] lastArmElseOps
+
+                // Strip the trailing yield from the outermost ops — those go in the
+                // function body, not inside an scf.if region.
+                let outerOps = outerOps |> List.take (outerOps.Length - 1)
+
+                match result with
+                | Some (resultSSA, resultType) ->
+                    return (outerOps, TRValue { SSA = resultSSA; Type = resultType })
+                | None ->
+                    return (outerOps, TRVoid)
+            else
                 // ── DU match path: DUGetTag + nested scf.if chain ──
 
                 // Step 1: Extract tag from scrutinee

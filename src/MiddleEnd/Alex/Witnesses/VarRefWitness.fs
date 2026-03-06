@@ -3,8 +3,9 @@
 /// Variable references don't emit MLIR - they forward the binding's SSA.
 /// The binding SSA is looked up from the accumulator (bindings witnessed first in post-order).
 ///
-/// FUNCTION REFERENCES: VarRef nodes pointing to function bindings (Lambda nodes) are SKIPPED.
-/// ApplicationWitness handles extracting function names directly from VarRef nodes.
+/// FUNCTION REFERENCES: VarRef nodes pointing to function bindings (Lambda nodes) build
+/// closure pairs via pNamedFunctionAsClosure, enabling named functions as first-class values.
+/// For direct calls, ApplicationWitness navigates to VarRef for name resolution independently.
 ///
 /// NANOPASS: This witness handles ONLY VarRef nodes.
 /// All other nodes return WitnessOutput.skip for other nanopasses to handle.
@@ -17,6 +18,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemRefPatterns  // pLoadMutableVariable
+open Alex.Patterns.ClosurePatterns  // pNamedFunctionAsClosure
 open Alex.Dialects.Core.Types  // TMemRef
 open XParsec
 open XParsec.Parsers
@@ -38,22 +40,28 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 // Check binding type
                 match bindingNode.Kind with
                 | SemanticKind.PatternBinding _ ->
-                    // Parameter binding - SSA is in coeffects, not accumulator
-                    // Uses platform-aware mapping + per-node width narrowing from coeffects
-                    let patternBindingPattern =
-                        parser {
-                            let! ssa = getNodeSSA bindingId
-                            let! state = getUserState
-                            let platform = state.Coeffects.TargetPlatform
-                            let arch = state.Coeffects.Platform.TargetArch
-                            let rawTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph bindingNode.Type
-                            let ty = Alex.XParsec.PSGCombinators.narrowType state.Coeffects bindingId rawTy
-                            return ([], TRValue { SSA = ssa; Type = ty })
-                        }
+                    // Check accumulator first — match arm Var bindings are bound to
+                    // the scrutinee SSA by MatchWitness, not pre-assigned in coeffects.
+                    match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
+                    | Some (ssa, ty) ->
+                        { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+                    | None ->
+                        // Function parameter binding — SSA is in coeffects
+                        // Uses platform-aware mapping + per-node width narrowing from coeffects
+                        let patternBindingPattern =
+                            parser {
+                                let! ssa = getNodeSSA bindingId
+                                let! state = getUserState
+                                let platform = state.Coeffects.TargetPlatform
+                                let arch = state.Coeffects.Platform.TargetArch
+                                let rawTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph bindingNode.Type
+                                let ty = Alex.XParsec.PSGCombinators.narrowType state.Coeffects bindingId rawTy
+                                return ([], TRValue { SSA = ssa; Type = ty })
+                            }
 
-                    match tryMatch patternBindingPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                    | None -> WitnessOutput.error $"VarRef '{name}': PatternBinding has no SSA in coeffects"
+                        match tryMatch patternBindingPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | None -> WitnessOutput.error $"VarRef '{name}': PatternBinding has no SSA in coeffects"
 
                 | SemanticKind.Binding (_, isMut, _, _) ->
                     // Check if binding's child is a Lambda (function binding)
@@ -65,9 +73,62 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         |> Option.defaultValue false
 
                     if isFunctionBinding then
-                        // Function reference - structural node, no SSA value produced
-                        // ApplicationWitness navigates to VarRef for name resolution independently
-                        { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                        // Function reference - check if the binding holds a closure value
+                        match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
+                        | Some (closureSSA, closureTy) ->
+                            // Closure-captured function value — return the closure pair
+                            { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = closureSSA; Type = closureTy } }
+                        | None ->
+                            // Value position vs call position is a COEFFECT (pre-computed).
+                            // "The zipper witnesses, it does not decide." — SpeakEZ: Learning to Walk
+                            if not (Set.contains node.Id ctx.Coeffects.ValuePosition.FunctionVarRefsInValuePosition) then
+                                // Call position — ApplicationWitness handles direct call
+                                { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                            else
+                            // Value position — build closure pair with thunk wrapper.
+                            // The thunk accepts env (ignored) + params, forwarding to the original.
+                            // This bridges the calling convention gap: closure calls prepend env,
+                            // but named functions don't expect it.
+                            let namedFuncClosurePattern =
+                                parser {
+                                    let! state = getUserState
+                                    let! ssas = getNodeSSAs node.Id
+                                    // Resolve the QUALIFIED function name: Binding name + ModuleDef parent
+                                    // Same logic as LambdaWitness and ApplicationWitness direct call path
+                                    let funcName =
+                                        match bindingNode.Kind with
+                                        | SemanticKind.Binding (bindName, _, _, _) ->
+                                            match bindingNode.Parent with
+                                            | Some parentId ->
+                                                match SemanticGraph.tryGetNode parentId state.Graph with
+                                                | Some parentNode ->
+                                                    match parentNode.Kind with
+                                                    | SemanticKind.ModuleDef (moduleName, _) ->
+                                                        sprintf "%s.%s" moduleName bindName
+                                                    | _ -> bindName
+                                                | None -> bindName
+                                            | None -> bindName
+                                        | _ -> name
+                                    do! ensure (funcName <> "") $"VarRef '{name}': Could not resolve function name"
+                                    // Extract param/return types from the binding node's TFun type
+                                    let platform = state.Coeffects.TargetPlatform
+                                    let arch = state.Coeffects.Platform.TargetArch
+                                    let rec extractParamTypes ty acc =
+                                        match ty with
+                                        | Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TFun (domain, range) ->
+                                            let mlirTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph domain
+                                            extractParamTypes range (mlirTy :: acc)
+                                        | _ -> (List.rev acc, Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph ty)
+                                    let (paramMLIRTypes, returnMLIRType) = extractParamTypes bindingNode.Type []
+                                    let! (inlineOps, topLevelOps, pairSSA, pairTy) =
+                                        pNamedFunctionAsClosure funcName paramMLIRTypes returnMLIRType ssas
+                                    return (inlineOps, topLevelOps, TRValue { SSA = pairSSA; Type = pairTy })
+                                }
+                            match tryMatch namedFuncClosurePattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                            | Some ((inlineOps, topLevelOps, result), _) ->
+                                { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
+                            | None ->
+                                WitnessOutput.error $"VarRef '{name}': Failed to build closure pair for named function"
                     elif Set.contains bindingId ctx.Coeffects.CurryFlattening.PartialAppBindings then
                         // Partial application binding - no value SSA available
                         // ApplicationWitness handles saturated calls through the coeffect

@@ -75,6 +75,18 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                             visitAllNodes combinator ctx bindingNode ctx.TraversalVisited
                         | None -> ()
 
+                    // For Var pattern arms, the PatternBinding aliases the scrutinee.
+                    // PatternBinding witness is a no-op (designed for function params),
+                    // so we must explicitly bind the PatternBinding to the scrutinee SSA.
+                    match arm.Pattern with
+                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var _ ->
+                        for bindingId in arm.Bindings do
+                            match SemanticGraph.tryGetNode bindingId ctx.Graph with
+                            | Some bindingNode when bindingNode.Kind.ToString().StartsWith("PatternBinding") ->
+                                MLIRAccumulator.bindNode bindingId scrutineeSSA scrutineeMLIRType ctx.Accumulator
+                            | _ -> ()
+                    | _ -> ()
+
                     // Visit guard if present
                     match arm.Guard with
                     | Some guardId ->

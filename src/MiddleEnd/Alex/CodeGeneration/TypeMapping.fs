@@ -32,10 +32,6 @@ let drainTypeMappingErrors () : string list =
 // TYPE SIZE COMPUTATION (for DU slot sizing)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Compute max payload size in bytes for heterogeneous DUs
-let maxPayloadBytes (ty1: MLIRType) (ty2: MLIRType) : int =
-    max (mlirTypeSize ty1) (mlirTypeSize ty2)
-
 /// Architecture-aware type size computation
 /// Uses platform word width for pointer-sized types (TIndex, TIndex, memrefs)
 let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
@@ -55,6 +51,10 @@ let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
     | TTag _ -> 1
     | TUnit -> 0
     | TError _ -> 0
+
+/// Compute max payload size in bytes for heterogeneous DUs
+let maxPayloadBytes (arch: Architecture) (ty1: MLIRType) (ty2: MLIRType) : int =
+    max (mlirTypeSizeForArch arch ty1) (mlirTypeSizeForArch arch ty2)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NTUKind DIRECT MAPPING (for literals)

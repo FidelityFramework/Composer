@@ -40,8 +40,14 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                 match SemanticGraph.tryGetNode valueId ctx.Graph with
                 | Some valueNode when valueNode.Kind.ToString().StartsWith("Lambda") ->
                     // Function binding - Lambda child already generated FuncDef (post-order)
-                    // Binding node is structural (name association), return TRVoid per Domain Responsibility Principle
-                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                    // Check if Lambda produced a closure value (escaping lambda with captures)
+                    match MLIRAccumulator.recallNode valueId ctx.Accumulator with
+                    | Some (closureSSA, closureTy) ->
+                        // Closure: forward the closure pair as this binding's value
+                        { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = closureSSA; Type = closureTy } }
+                    | None ->
+                        // Named function (no captures) — structural, no SSA value
+                        { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                 | _ ->
                     // Check if this binding holds a partial application (curry flattening)
                     if Set.contains node.Id ctx.Coeffects.CurryFlattening.PartialAppBindings then
