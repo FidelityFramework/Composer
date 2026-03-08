@@ -111,28 +111,54 @@ let pStoreMutableVariable (nodeId: int) (memrefSSA: SSA) (valueSSA: SSA) (elemTy
 // ADDRESS-OF PATTERN
 // ═══════════════════════════════════════════════════════════
 
-/// Build address-of: alloca + store to get a memref (pointer) to a value
-/// For Clef `&expr` — takes the address of a stack value
+/// Build address-of for Clef `&expr`.
 ///
-/// Emits:
-///   %ref = memref.alloca() : memref<1x{elemType}>
-///   %c0 = arith.constant 0 : index
-///   memref.store %value, %ref[%c0] : {elemType}, memref<1x{elemType}>
+/// Two cases based on the element type:
 ///
-/// Returns: memref SSA (the address)
+/// 1. Memref-backed values (records, buffers): the data already lives behind
+///    the memref descriptor's aligned pointer. Extract it directly.
+///    Emits:
+///      %ptr = memref.extract_aligned_pointer_as_index %value : memref<Nxi8> -> index
+///
+/// 2. Scalar values: materialize on the stack via alloca + store, then extract.
+///    Emits:
+///      %ref = memref.alloca() : memref<1x{elemType}>
+///      %c0 = arith.constant 0 : index
+///      memref.store %value, %ref[%c0] : {elemType}, memref<1x{elemType}>
+///      %ptr = memref.extract_aligned_pointer_as_index %ref : memref<1x{elemType}> -> index
+///
+/// Returns: index SSA (the raw pointer)
+/// TByref maps to TIndex in TypeMapping — AddressOf produces a raw pointer.
 let pBuildAddressOf (nodeId: NodeId) (valueSSA: SSA) (elemType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 2) $"pBuildAddressOf: Expected at least 2 SSAs, got {ssas.Length}"
-        let memrefSSA = ssas.[0]
-        let zeroSSA = ssas.[1]
-
-        let! allocOp = pAlloca memrefSSA 1 elemType None
-        let! zeroOp = pIndexConst zeroSSA 0L
-        let memrefType = TMemRefStatic (1, elemType)
-        let! storeOp = pStore valueSSA memrefSSA [zeroSSA] elemType memrefType
-
-        let ops = [allocOp; zeroOp; storeOp]
-        let result = TRValue { SSA = memrefSSA; Type = memrefType }
-        return (ops, result)
+        // Determine if the value is memref-backed (data behind the descriptor's pointer).
+        // TStruct is the semantic type for records; physical representation is memref<Nxi8>.
+        let physicalMemrefType =
+            match elemType with
+            | TMemRefStatic _ | TMemRef _ | TMemRefScalar _ -> Some elemType
+            | TStruct _ -> Some (TMemRefStatic (mlirTypeSize elemType, TInt (IntWidth 8)))
+            | _ -> None
+        match physicalMemrefType with
+        // Memref-backed values: extract the data pointer directly — no alloca.
+        | Some memrefTy ->
+            do! ensure (ssas.Length >= 1) $"pBuildAddressOf: Expected at least 1 SSA, got {ssas.Length}"
+            let ptrSSA = ssas.[0]
+            let! extractOp = pExtractBasePtr ptrSSA valueSSA memrefTy
+            let result = TRValue { SSA = ptrSSA; Type = TIndex }
+            return ([extractOp], result)
+        // Scalar values: alloca + store + extract to materialize on stack
+        | _ ->
+            do! ensure (ssas.Length >= 3) $"pBuildAddressOf: Expected at least 3 SSAs, got {ssas.Length}"
+            let memrefSSA = ssas.[0]
+            let zeroSSA = ssas.[1]
+            let ptrSSA = ssas.[2]
+            let! allocOp = pAlloca memrefSSA 1 elemType None
+            let! zeroOp = pIndexConst zeroSSA 0L
+            let memrefType = TMemRefStatic (1, elemType)
+            let! storeOp = pStore valueSSA memrefSSA [zeroSSA] elemType memrefType
+            let! extractOp = pExtractBasePtr ptrSSA memrefSSA memrefType
+            let ops = [allocOp; zeroOp; storeOp; extractOp]
+            let result = TRValue { SSA = ptrSSA; Type = TIndex }
+            return (ops, result)
     }

@@ -270,6 +270,20 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Eagerly resolve type parameters from the Lambda's type signature
             resolveTypeParams ctx.Graph node.Type
 
+            // ═══ SAVE CAPTURE SOURCE SSAs BEFORE EXTRACTION REGISTRATION ═══
+            // Capture extraction (below) registers inner-function SSAs in NodeAssoc via bindNode,
+            // overwriting the parent-scope SSAs. Snapshot parent-scope SSAs NOW so closure
+            // construction can reference the actually-emitted values.
+            let savedCaptureSSAs =
+                match closureLayoutOpt with
+                | Some layout ->
+                    layout.Captures
+                    |> List.map (fun cap ->
+                        match cap.SourceNodeId with
+                        | Some sourceId -> MLIRAccumulator.recallNode sourceId ctx.Accumulator
+                        | None -> None)
+                | None -> []
+
             // For closures: build capture extraction prologue
             // Extract captures from Arg 0 (env/closure struct) at function entry
             // Uses memref.reinterpret_cast to create typed views at byte offsets
@@ -497,16 +511,16 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     let mutable ssaIdx = 0  // Index into flat CaptureInsertSSAs list
                     for i in 0 .. layout.Captures.Length - 1 do
                         let cap = layout.Captures.[i]
-                        // Resolve capture source SSA from coeffects (SSAAssignment).
-                        // Captures reference parent-scope bindings (params or let-bindings).
-                        // Coeffects always have the correct parent-scope SSA assignment.
-                        // Do NOT use recallNode — NodeAssoc may contain inner function's
-                        // extraction bindings that overwrite the parent's SSA for this node.
+                        // Resolve capture source SSA from the SAVED parent-scope snapshot.
+                        // We snapshot NodeAssoc BEFORE body emission because body emission
+                        // overwrites parent-scope entries with inner function extraction SSAs.
+                        // The saved SSAs reflect the actually-emitted values in the parent scope,
+                        // unlike coeffects ResultSSA which may not match emission (over-allocated SSAs).
                         let captureSSAOpt =
-                            match cap.SourceNodeId with
-                            | Some sourceId ->
-                                PSGElaboration.SSAAssignment.lookupSSA sourceId ctx.Coeffects.SSA
-                            | None -> None
+                            if i < savedCaptureSSAs.Length then
+                                savedCaptureSSAs.[i] |> Option.map fst
+                            else
+                                None
                         match captureSSAOpt with
                         | Some capSSA ->
                             match cap.SlotType with
@@ -552,7 +566,23 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                                 let viewTy = TMemRefStatic (1, cap.SlotType)
                                 let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (viewSSA, layout.ClosureUndefSSA, captureByteOffset, 1, closureTy, viewTy))
                                 ctx.ScopeContext := ScopeContext.addOp castOp !ctx.ScopeContext
-                                let storeOp = MLIROp.MemRefOp (MemRefOp.Store (capSSA, viewSSA, [zeroSSA], cap.SlotType, viewTy))
+                                // If capture slot expects index but source is a memref, extract base pointer.
+                                // Records, arrays, and other heap-allocated types are memref in MLIR but
+                                // the closure slot stores them as index (raw pointer).
+                                let actualCapSSA =
+                                    if i < savedCaptureSSAs.Length then
+                                        match savedCaptureSSAs.[i] with
+                                        | Some (_, srcTy) when cap.SlotType = TIndex && (match srcTy with TMemRefStatic _ | TMemRef _ -> true | _ -> false) ->
+                                            // Source is memref but slot is index — extract base pointer
+                                            let tempIdx = ctx.Accumulator.MLIRTempCounter
+                                            ctx.Accumulator.MLIRTempCounter <- tempIdx + 1
+                                            let extractSSA = V (10000 + tempIdx)  // High range to avoid collision with pre-computed SSAs
+                                            let extractOp = MLIROp.MemRefOp(MemRefOp.ExtractBasePtr(extractSSA, capSSA, srcTy))
+                                            ctx.ScopeContext := ScopeContext.addOp extractOp !ctx.ScopeContext
+                                            extractSSA
+                                        | _ -> capSSA
+                                    else capSSA
+                                let storeOp = MLIROp.MemRefOp (MemRefOp.Store (actualCapSSA, viewSSA, [zeroSSA], cap.SlotType, viewTy))
                                 ctx.ScopeContext := ScopeContext.addOp storeOp !ctx.ScopeContext
                         | None ->
                             printfn "[WARN] LambdaWitness: Capture '%s' (source %A) not found in accumulator for closure %d"

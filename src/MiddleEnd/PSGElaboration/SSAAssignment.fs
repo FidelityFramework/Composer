@@ -511,6 +511,8 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 | IntrinsicModule.String, "length" -> 3   // dim_const + memref.dim + index_cast
                 | IntrinsicModule.String, "contains" -> 20 // 6 setup + 5 cond + 7 body + 2 post (scf.while byte scan, TIndex iteration)
                 | IntrinsicModule.String, "concat2" -> 18  // concatenation (18 SSAs - pure index arithmetic, NO i64 round-trip)
+                | IntrinsicModule.String, "concat" -> 18   // alias for concat2
+                | IntrinsicModule.String, _ -> 20          // other String ops
                 | IntrinsicModule.Sys, "write" -> 6        // FFI extraction + length (2 ptr + 3 len + 1 result)
                 | IntrinsicModule.Sys, "read" -> 6         // FFI extraction + capacity (2 ptr + 3 cap + 1 result)
                 | IntrinsicModule.Sys, _ -> 16             // other syscalls (clock_gettime needs 16 for ms computation)
@@ -617,10 +619,24 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 | IntrinsicModule.Bits, "htonl" | IntrinsicModule.Bits, "ntohl" -> 2  // byte swap uint32
                 | IntrinsicModule.Bits, _ -> 1             // bitcast operations
 
+                // NativePtr operations (direct pointer access — not transformed by Baker)
+                | IntrinsicModule.NativePtr, "stackalloc" -> 1   // alloca result
+                | IntrinsicModule.NativePtr, "ofNativeInt" -> 2  // unrealized_conversion_cast
+                | IntrinsicModule.NativePtr, "set" -> 3          // potential index→memref cast + index_cast + store
+                | IntrinsicModule.NativePtr, "get" -> 3          // potential index→memref cast + index_cast + load
+                | IntrinsicModule.NativePtr, "read" -> 3         // potential index→memref cast + index zero + load
+                | IntrinsicModule.NativePtr, "write" -> 3        // potential index→memref cast + index zero + store
+                | IntrinsicModule.NativePtr, "add" -> 1          // index arithmetic
+                | IntrinsicModule.NativePtr, op ->
+                    failwith $"SSAAssignment: Unhandled NativePtr operation '{op}' at node {NodeId.value node.Id}. Add an explicit SSA cost."
+
+                // NativeDefault.zeroed — FidelityExtern placeholder body (unreachable at runtime)
+                | IntrinsicModule.NativeDefault, _ -> 1
+
                 // MemRef operations (MLIR memref semantics)
                 // Baker has transformed NativePtr → MemRef, these are the target operations
                 | IntrinsicModule.MemRef, "alloca" -> 1  // result memref only
-                | IntrinsicModule.MemRef, "load" -> 1    // load result (index already from Baker)
+                | IntrinsicModule.MemRef, "load" -> 2    // potential index→memref cast + load result
                 | IntrinsicModule.MemRef, "store" -> 1   // returns unit, but witness requires SSA allocation
                 | IntrinsicModule.MemRef, "add" -> 1     // marker: returns offset/index for memref operations
                 | IntrinsicModule.MemRef, "copy" -> 1    // memcpy returns void* (result pointer)
@@ -629,7 +645,8 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 | IntrinsicModule.Operators, _ -> 5        // arithmetic
                 | IntrinsicModule.Convert, _ -> 3          // type conversions
                 | IntrinsicModule.Math, _ -> 5             // math functions
-                | _ -> 20  // Default for unknown intrinsics
+                | unhandledModule, unhandledOp ->
+                    failwith $"SSAAssignment: Unhandled intrinsic '{unhandledModule}.{unhandledOp}' at node {NodeId.value node.Id}. Add an explicit SSA cost."
             | SemanticKind.VarRef _ ->
                 // Function call: 1 result + N potential type compatibility casts (static→dynamic memref)
                 // Argument count = Children.Length - 1 (first child is function)
@@ -649,13 +666,16 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                         | _ -> false
                     | _ -> false
                 if isExternCallWithOptionReturn then
-                    15 + argCount  // Extra SSAs for: raw C result, null const, cmp, alloca, tag, payload view, stores
+                    15 + 11 * argCount  // 11 base for option return handling (ssas[0..10])
+                                        // + 11 per arg: option unwrap needs 11 SSAs (tag extract,
+                                        // payload extract, cmp, select); memref/index use ≤2.
+                                        // Unused SSAs are harmless — elided if not consumed (Pillar 1).
                 else
-                    // 1 for result, argCount for potential casts, +6 for potential closure call
-                    // (2 for code_ptr reinterpret_cast+load, 2 for env_ptr reinterpret_cast+load,
-                    //  1 for shared zero, 1 for index→funcType cast before call_indirect)
+                    // 1 for result + 11 per arg for FFI boundary marshaling
+                    // (option unwrap=11, memref extract+cast=2, index cast=1)
+                    // +6 for potential closure call
                     // Unused SSAs are harmless — elided if not consumed
-                    7 + argCount
+                    7 + 11 * argCount
             | _ -> 10  // Other applications
         | None -> 10
     | [] -> 5
@@ -824,7 +844,7 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.Binding _ -> 3
     | SemanticKind.IndexGet _ -> 2
     | SemanticKind.IndexSet _ -> 1
-    | SemanticKind.AddressOf _ -> 2
+    | SemanticKind.AddressOf _ -> 3  // alloca, zero-index, extract-base-ptr
     | SemanticKind.VarRef _ ->
         // Value-position is a pre-computed coeffect. Function VarRefs in value position
         // need 7 SSAs (closure pair construction). All others need 2.
@@ -1182,6 +1202,35 @@ let rec private assignFunctionBody
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                     let alloc = NodeSSAAllocation.multi ssas
                     FunctionScope.assign node.Id alloc scopeWithSSAs
+
+        // ─────────────────────────────────────────────────────────────────────
+        // IMMUTABLE BINDING SSA ALIASING (March 2026)
+        // Immutable `let` bindings are transparent in MLIR — they forward the
+        // child expression's SSA without emitting any ops (BindingWitness).
+        // Their SSA assignment must ALIAS the child's, not allocate fresh SSAs,
+        // so that closure captures referencing the binding's SourceNodeId resolve
+        // to the actually-emitted SSA value.
+        // Mutable bindings need their own SSAs for memref.alloca + initialization.
+        // ─────────────────────────────────────────────────────────────────────
+        | SemanticKind.Binding (_name, isMutable, _isRec, _declRoot) when not isMutable ->
+            if not (List.isEmpty node.Children) then
+                let childId = List.head node.Children
+                match Map.tryFind (NodeId.value childId) scopeAfterChildren.Assignments with
+                | Some childSSA ->
+                    // Alias: immutable Binding gets the same SSA as its value expression
+                    FunctionScope.assign node.Id childSSA scopeAfterChildren
+                | None ->
+                    // Child not in assignments — fall back to normal allocation
+                    let cost = nodeExpansionCost ctx node
+                    let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
+                    let alloc = NodeSSAAllocation.multi ssas
+                    FunctionScope.assign node.Id alloc scopeWithSSAs
+            else
+                // No children — shouldn't happen for Binding, but be safe
+                let cost = nodeExpansionCost ctx node
+                let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
+                let alloc = NodeSSAAllocation.multi ssas
+                FunctionScope.assign node.Id alloc scopeWithSSAs
 
         | _ ->
             // Regular node - assign SSAs based on structural analysis

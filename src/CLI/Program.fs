@@ -99,16 +99,16 @@ let private showVersion() =
         |> Option.ofObj
         |> Option.map (fun a -> a.InformationalVersion)
         |> Option.defaultValue (assembly.GetName().Version.ToString())
-    printfn "Composer %s - F# to Native Compiler with Deterministic Memory Management" version
+    printfn "Composer %s - Clef to Native Compiler with Deterministic Memory Management" version
     printfn "Copyright (c) 2025-2026 SpeakEZ Technologies, Inc."
     0
 
 /// Display usage information
 let private showUsage() =
-    printfn "Composer - F# to Native Compiler"
+    printfn "Composer - Clef to Native Compiler"
     printfn ""
     printfn "Usage:"
-    printfn "  composer compile [options]    Compile F# to native code"
+    printfn "  composer compile [options]    Compile Clef to native code"
     printfn "  composer verify [options]     Verify binary meets constraints"
     printfn "  composer doctor [options]     Diagnose toolchain issues"
     printfn "  composer --version            Display version information"

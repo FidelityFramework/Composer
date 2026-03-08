@@ -60,9 +60,12 @@ let compileToNative
                 match deploymentMode with
                 | Console ->
                     // Use -no-pie to avoid relocation issues with LLVM-generated code
+                    // -rdynamic exports all symbols to dynamic symbol table so that
+                    // dlsym(RTLD_DEFAULT, "symbol") can find functions in the binary itself
+                    // (required for Fidelity callback resolution via string-literal dlsym)
                     // Console mode always links libc; additional libraries come from ExternLibraries
-                    let libs = if externLibraries.IsEmpty then "-lc" else libraryFlags
-                    sprintf "-O0 -no-pie %s -o %s %s" objPath outputPath libs
+                    let libs = if externLibraries.IsEmpty then "-lc" else "-lc " + libraryFlags
+                    sprintf "-O0 -no-pie -rdynamic %s -o %s %s" objPath outputPath libs
                 | Freestanding | Embedded ->
                     // Use _start as entry point - it handles argc/argv and calls exit syscall
                     sprintf "-O0 %s -o %s -nostdlib -static -ffreestanding -Wl,-e,_start" objPath outputPath

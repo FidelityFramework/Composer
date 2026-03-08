@@ -457,6 +457,8 @@ let pTypeConversion (nodeId: NodeId)
                     pSIToFP resultSSA srcSSA srcType dstType
                 | TIndex, TInt _ ->
                     pIndexCastS resultSSA srcSSA TIndex dstType
+                | TInt _, TIndex ->
+                    pIndexCastS resultSSA srcSSA srcType TIndex
                 | TMemRef _, TIndex | TMemRefStatic _, TIndex ->
                     pExtractBasePtr resultSSA srcSSA srcType
                 | _ ->

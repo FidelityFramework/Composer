@@ -69,7 +69,7 @@ let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * S
 /// Handles the function terminator internally: func.return (CPU) or hw.output (FPGA).
 ///
 /// `paramNames`: optional port names for hw.module (defaults to "in0", "in1", ...)
-/// `returnSSA`: the SSA of the return value (None for void/unit functions)
+/// `returnSSA`: the SSA of the return value (None for unit functions — zero constant synthesized)
 let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: string list option)
                  (retTy: MLIRType) (bodyOps: MLIROp list) (returnSSA: SSA option)
                  : PSGParser<MLIROp> =
@@ -92,8 +92,21 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
         | _ ->
             // func.func with positional parameters
             let visibility = if name = "main" then FuncVisibility.Public else FuncVisibility.Private
-            let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some retTy))
-            let body = bodyOps @ [returnOp]
+            // Unit-returning functions: returnSSA = None but retTy is concrete (e.g. i32).
+            // MLIR requires func.return operands to match function signature.
+            // Synthesize arith.constant 0 for the return value.
+            let! state = getUserState
+            let actualReturnSSA, extraOps =
+                match returnSSA with
+                | Some _ -> returnSSA, []
+                | None ->
+                    let tempIdx = state.Accumulator.MLIRTempCounter
+                    state.Accumulator.MLIRTempCounter <- tempIdx + 1
+                    let zeroSSA = V (10000 + tempIdx)
+                    let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, retTy))
+                    (Some zeroSSA, [zeroOp])
+            let returnOp = MLIROp.FuncOp (FuncOp.Return (actualReturnSSA, Some retTy))
+            let body = bodyOps @ extraOps @ [returnOp]
             return! pFuncDef name params' retTy body visibility
     }
 

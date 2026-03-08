@@ -24,6 +24,75 @@ open Alex.Elements.MLIRAtomics
 open PSGElaboration.PlatformConfig
 
 // ═══════════════════════════════════════════════════════════
+// FFI BOUNDARY MARSHALING
+// ═══════════════════════════════════════════════════════════
+
+/// Marshal an internal MLIR type to its C ABI representation.
+/// At the FFI boundary, TIndex (Clef's nativeint/pointer) must become
+/// PlatformWordType (i64 on x86_64). MLIR's index type is "in here" —
+/// the C world sees platform-word-sized integers for pointer values.
+/// This prevents symbol collisions with MLIR's own runtime symbols
+/// (e.g., finalize-memref-to-llvm's @malloc(i64) -> !llvm.ptr).
+let private marshalToCType (platformWordTy: MLIRType) (ty: MLIRType) : MLIRType =
+    match ty with
+    | TIndex -> platformWordTy
+    | other -> other
+
+/// Unwrap an option-typed argument at the FFI boundary.
+/// Options are inline DUs: memref<Nxi8> with tag at byte 0, payload at byte 1.
+///   None (tag=0) → NULL (0 as PlatformWordType)
+///   Some (tag≠0) → payload extracted as PlatformWordType
+///
+/// Composes from MLIRAtomics (pTypedExtract, pTypedExtractView) and
+/// ArithElements (pCmpI, pSelect, pConstI) — proper layer composition.
+///
+/// SSA layout (11 slots from coeffects, Pillar 1):
+///   0-2: tag extraction (tagSSA, tagViewSSA, tagZeroSSA)
+///   3-6: payload extraction (payloadSSA, payOffsetSSA, payViewSSA, payZeroSSA)
+///   7:   zero i8 constant for tag comparison
+///   8:   isSome comparison result (i1)
+///   9:   null constant (0 as PlatformWordType)
+///   10:  select result
+let private pUnwrapOptionArgForFFI
+    (optionSSA: SSA) (optionType: MLIRType) (platformWordTy: MLIRType)
+    (ssas: SSA list) (baseIdx: int)
+    : PSGParser<MLIROp list * Val> =
+    parser {
+        let tagSSA       = ssas.[baseIdx]
+        let tagViewSSA   = ssas.[baseIdx + 1]
+        let tagZeroSSA   = ssas.[baseIdx + 2]
+        let payloadSSA   = ssas.[baseIdx + 3]
+        let payOffsetSSA = ssas.[baseIdx + 4]
+        let payViewSSA   = ssas.[baseIdx + 5]
+        let payZeroSSA   = ssas.[baseIdx + 6]
+        let zeroI8SSA    = ssas.[baseIdx + 7]
+        let isSomeSSA    = ssas.[baseIdx + 8]
+        let nullSSA      = ssas.[baseIdx + 9]
+        let selectSSA    = ssas.[baseIdx + 10]
+
+        let tagTy = TInt (IntWidth 8)
+
+        // 1. Extract tag (i8) from byte offset 0 — pTypedExtract (MLIRAtomics)
+        let! tagOps = pTypedExtract tagSSA optionSSA 0 tagViewSSA tagZeroSSA tagTy optionType
+
+        // 2. Extract payload from byte offset 1 as PlatformWordType — pTypedExtractView (MLIRAtomics)
+        let! payloadOps = pTypedExtractView payloadSSA optionSSA 1 payOffsetSSA payViewSSA payZeroSSA platformWordTy optionType
+
+        // 3. Compare tag ≠ 0 → isSome — pCmpI (ArithElements)
+        let! zeroI8Op = pConstI zeroI8SSA 0L tagTy
+        let! cmpOp = pCmpI isSomeSSA ICmpPred.Ne tagSSA zeroI8SSA tagTy
+
+        // 4. Null constant for None case
+        let! nullOp = pConstI nullSSA 0L platformWordTy
+
+        // 5. Select: isSome ? payload : null — pSelect (ArithElements)
+        let! selectOp = pSelect selectSSA isSomeSSA payloadSSA nullSSA platformWordTy
+
+        return (tagOps @ payloadOps @ [zeroI8Op; cmpOp; nullOp; selectOp],
+                { SSA = selectSSA; Type = platformWordTy })
+    }
+
+// ═══════════════════════════════════════════════════════════
 // RESOLVED BINDING LOOKUP
 // ═══════════════════════════════════════════════════════════
 
@@ -316,6 +385,12 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
         let (NodeId nodeIdInt) = node.Id
         match Map.tryFind nodeIdInt state.Platform.Bindings with
         | Some { Resolved = ExternCall (_library, symbol) } ->
+            // FFI namespace prefix: all extern symbols get "ffi." prefix in MLIR
+            // to avoid collisions with MLIR infrastructure symbols (e.g., @malloc
+            // from finalize-memref-to-llvm). The reconcile-ffi-externs plugin
+            // strips the prefix after standard lowering passes complete.
+            let ffiSymbol = "ffi." + symbol
+
             // Get pre-allocated SSAs
             let! ssas = getNodeSSAs node.Id
 
@@ -348,47 +423,74 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 // ssas.[10] = alloca for option memref
                 let allocaSSA   = ssas.[10]
 
-                // FFI argument marshaling: extract pointers from memref args.
-                // Cast SSAs for option path start at ssas.[11].
-                // Monadic fold: recall each arg, compose pExtractBasePtr for memrefs.
+                // FFI argument marshaling: extract pointers from memref args,
+                // unwrap option-typed args (None→NULL, Some→payload), and
+                // cast TIndex values to PlatformWordType at the boundary.
+                // Each arg gets 11 SSA slots from coeffects (Pillar 1) starting at ssas.[11]:
+                //   Option args: all 11 slots used by pUnwrapOptionArgForFFI
+                //   Memref args: slots 0-1 used (extraction + boundary cast)
+                //   Index args: slot 1 used (boundary cast)
+                // "Good fences make good neighbors" — internal types stay inside,
+                // C ABI types cross the boundary.
+                let platformWordTy = state.Platform.PlatformWordType
                 let! marshaledArgs =
                     let rec fold i pairs = parser {
                         match pairs with
                         | [] -> return []
                         | (ssa, ty) :: rest ->
                             match ty with
-                            | TMemRef _ | TMemRefStatic _ when ty <> TMemRefStatic(9, TInt(IntWidth 8)) ->
-                                let extractSSA = ssas.[11 + i]
-                                let! extractOp = pExtractBasePtr extractSSA ssa ty
+                            | TMemRefStatic (_, TInt(IntWidth 8)) ->
+                                // Option/DU at FFI boundary: unwrap via composed pattern
+                                // pTypedExtract (tag) → pTypedExtractView (payload) → pCmpI → pSelect
+                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (11 + 11*i)
                                 let! restResult = fold (i + 1) rest
-                                return (Some extractOp, { SSA = extractSSA; Type = TIndex }, TIndex) :: restResult
+                                return (ops, v) :: restResult
+                            | TMemRef _ | TMemRefStatic _ ->
+                                // Memref → extract pointer (index) → cast to PlatformWordType
+                                let extractSlot = ssas.[11 + 11*i]
+                                let castSlot = ssas.[11 + 11*i + 1]
+                                let! extractOp = pExtractBasePtr extractSlot ssa ty
+                                let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
+                            | TIndex ->
+                                // Index value → cast to PlatformWordType at boundary
+                                let castSlot = ssas.[11 + 11*i + 1]
+                                let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | _ ->
+                                // Non-pointer arg — passes through unchanged
                                 let! restResult = fold (i + 1) rest
-                                return (None, { SSA = ssa; Type = ty }, ty) :: restResult
+                                return ([], { SSA = ssa; Type = ty }) :: restResult
                     }
                     fold 0 argPairs
-                let marshalOps = marshaledArgs |> List.choose (fun (op, _, _) -> op)
-                let vals = marshaledArgs |> List.map (fun (_, v, _) -> v)
-                let argTypes = marshaledArgs |> List.map (fun (_, _, t) -> t)
+                let marshalOps = marshaledArgs |> List.collect fst
+                let vals = marshaledArgs |> List.map snd
+                let cArgTypes = vals |> List.map (fun v -> v.Type)
 
-                // Map inner type to MLIR (this is what C actually returns)
-                let! cRetType = pMapType innerTy
+                // Map inner type to MLIR, then marshal to C ABI type at the boundary
+                let! internalRetType = pMapType innerTy
+                let cRetType = marshalToCType platformWordTy internalRetType
                 // Map full option type to MLIR (for the constructed result)
                 let! optionType = pMapType node.Type
 
                 // 1. Declare extern with C-level (marshaled) arg types and return type
-                let! declOp = pFuncDecl symbol argTypes cRetType FuncVisibility.Private
+                let! declOp = pFuncDecl ffiSymbol cArgTypes cRetType FuncVisibility.Private
                 // 2. Call extern — get raw C value back
-                let! callOp = pFuncCall (Some rawRetSSA) symbol vals cRetType
+                let! callOp = pFuncCall (Some rawRetSSA) ffiSymbol vals cRetType
 
-                // 3. Alloca option memref (tag byte + payload)
+                // 3. Alloc option memref on HEAP (tag byte + payload)
+                // Must be heap-allocated: this memref is returned from the wrapper function.
+                // Stack alloca would produce a dangling pointer after the callee's frame is destroyed.
                 let optionElemTy = TInt (IntWidth 8)
                 let optionSize = match optionType with TMemRefStatic (n, _) -> n | _ -> 9
-                let! allocaOp = pAlloca allocaSSA optionSize optionElemTy None
+                let! allocaOp = pAllocStatic allocaSSA optionSize optionElemTy None
 
                 // 4. Null-check: compare raw result to 0 (null)
-                let! nullOp = pConstI nullConstSSA 0L TIndex
-                let! cmpOp = pCmpI cmpSSA ICmpPred.Ne rawRetSSA nullConstSSA TIndex
+                // Comparison uses C-boundary type (PlatformWordType)
+                let! nullOp = pConstI nullConstSSA 0L cRetType
+                let! cmpOp = pCmpI cmpSSA ICmpPred.Ne rawRetSSA nullConstSSA cRetType
 
                 // 5. Extend i1 → i8 for tag value (0 = None, 1 = Some)
                 let! extOp = pExtUI tagExtSSA cmpSSA (TInt (IntWidth 1)) (TInt (IntWidth 8))
@@ -406,40 +508,59 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 return (allOps, TRValue { SSA = allocaSSA; Type = optionType })
 
             | _ ->
-                // DIRECT RETURN: type passes through
+                // DIRECT RETURN: type passes through with boundary marshaling
+                let platformWordTy = state.Platform.PlatformWordType
                 do! ensure (ssas.Length >= 1) $"pExternCallResolved: Expected at least 1 SSA, got {ssas.Length}"
                 let resultSSA = ssas.[0]
 
-                // FFI argument marshaling: extract pointers from memref args.
-                // Cast SSAs for non-option path start at ssas.[1].
+                // FFI argument marshaling: extract pointers from memref args,
+                // unwrap option-typed args (None→NULL, Some→payload), and
+                // cast TIndex values to PlatformWordType at the boundary.
+                // Each arg gets 11 SSA slots from coeffects (Pillar 1) starting at ssas.[1].
                 let! marshaledArgs =
                     let rec fold i pairs = parser {
                         match pairs with
                         | [] -> return []
                         | (ssa, ty) :: rest ->
                             match ty with
-                            | TMemRef _ | TMemRefStatic _ when ty <> TMemRefStatic(9, TInt(IntWidth 8)) ->
-                                let extractSSA = ssas.[1 + i]
-                                let! extractOp = pExtractBasePtr extractSSA ssa ty
+                            | TMemRefStatic (_, TInt(IntWidth 8)) ->
+                                // Option/DU at FFI boundary: unwrap via composed pattern
+                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (1 + 11*i)
                                 let! restResult = fold (i + 1) rest
-                                return (Some extractOp, { SSA = extractSSA; Type = TIndex }, TIndex) :: restResult
+                                return (ops, v) :: restResult
+                            | TMemRef _ | TMemRefStatic _ ->
+                                // Memref → extract pointer (index) → cast to PlatformWordType
+                                let extractSlot = ssas.[1 + 11*i]
+                                let castSlot = ssas.[1 + 11*i + 1]
+                                let! extractOp = pExtractBasePtr extractSlot ssa ty
+                                let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
+                            | TIndex ->
+                                // Index value → cast to PlatformWordType at boundary
+                                let castSlot = ssas.[1 + 11*i + 1]
+                                let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | _ ->
+                                // Non-pointer arg — passes through unchanged
                                 let! restResult = fold (i + 1) rest
-                                return (None, { SSA = ssa; Type = ty }, ty) :: restResult
+                                return ([], { SSA = ssa; Type = ty }) :: restResult
                     }
                     fold 0 argPairs
-                let marshalOps = marshaledArgs |> List.choose (fun (op, _, _) -> op)
-                let vals = marshaledArgs |> List.map (fun (_, v, _) -> v)
-                let argTypes = marshaledArgs |> List.map (fun (_, _, t) -> t)
+                let marshalOps = marshaledArgs |> List.collect fst
+                let vals = marshaledArgs |> List.map snd
+                let cArgTypes = vals |> List.map (fun v -> v.Type)
 
-                // Map return type from Clef NativeType to MLIR type
-                let! retType = pMapType node.Type
+                // Map return type from Clef NativeType to MLIR, then marshal at boundary
+                let! internalRetType = pMapType node.Type
+                let cRetType = marshalToCType platformWordTy internalRetType
 
-                // Emit external function declaration + call with marshaled arg types
-                let! declOp = pFuncDecl symbol argTypes retType FuncVisibility.Private
-                let! callOp = pFuncCall (Some resultSSA) symbol vals retType
+                // Emit external function declaration + call with C-boundary types
+                let! declOp = pFuncDecl ffiSymbol cArgTypes cRetType FuncVisibility.Private
+                let! callOp = pFuncCall (Some resultSSA) ffiSymbol vals cRetType
 
-                return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = retType })
+                return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })
         | _ -> return! fail (Message "Not an ExternCall")
     }
 

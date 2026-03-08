@@ -1,101 +1,90 @@
-/// Sample 10b: Arena Memory Management (DMM Infrastructure)
-/// Validates the Deterministic Memory Management primitives that
-/// closures with mutable captures depend on.
+/// Sample 10b: NativePtr Operations (Indexed Read/Write)
+/// Validates the NativePtr primitives that Platform.Display's callback
+/// data-passing pattern depends on:
+///   - NativePtr.stackalloc — allocate typed buffer on stack
+///   - NativePtr.set — indexed write (used by callbacks to store state)
+///   - NativePtr.get — indexed read (used by callers to retrieve state)
+///   - NativePtr.read/write — scalar access at typed addresses
+///   - NativePtr.ofNativeInt — cast nativeint to typed pointer
 ///
-/// The Arena is the DMM mechanism for managing memory with known
-/// lifetime boundaries. Memory is allocated from an arena and
-/// lives as long as the arena's backing storage (stack frame).
+/// The set/get round-trip is the exact pattern Connection.connect uses:
+///   malloc buffer → NativePtr.set to init → pass as callback data →
+///   callback writes via NativePtr.set → caller reads via NativePtr.get
 ///
-/// Pattern (Phase 1 explicit):
-///   1. NativePtr.stackalloc — allocate arena backing on stack
-///   2. Arena.fromPointer — create arena from backing storage
-///   3. Arena.alloc — allocate from arena
-///   4. NativePtr.ofNativeInt/read/write — access arena-allocated values
-///   5. byref<Arena<'a>> — thread arena through function calls
-///
-/// Dependencies: mutable bindings (sample 10a), arithmetic (sample 05)
-module ArenaMemory
+/// Dependencies: arithmetic (sample 05)
+module PointerOps
 
 open Console
 open Format
 
-/// Allocate and initialize an int value in the arena
-/// Returns nativeint address of allocated storage
-let allocInt (arena: byref<Arena<'a>>) (value: int) : nativeint =
-    let addr = Arena.alloc &arena (Platform.wordSize ())
-    NativePtr.write (NativePtr.ofNativeInt<int> addr) value
-    addr
-
-/// Read an int from arena-allocated storage
-let readInt (addr: nativeint) : int =
-    NativePtr.read (NativePtr.ofNativeInt<int> addr)
-
-/// Write an int to arena-allocated storage
-let writeInt (addr: nativeint) (value: int) : unit =
-    NativePtr.write (NativePtr.ofNativeInt<int> addr) value
-
 [<EntryPoint>]
 let main _ =
-    // Create arena on main's stack — all allocations live here
-    let arenaMem = NativePtr.stackalloc<byte> 4096
-    let mutable arena = Arena.fromPointer (NativePtr.toNativeInt arenaMem) 4096
+    Console.writeln "=== NativePtr Operations ==="
 
-    Console.writeln "=== Arena Memory Test ==="
+    // ─── NativePtr.set + get on nativeptr<int> (indexed access) ───
+    Console.writeln "--- set/get<int> ---"
 
-    // ─── Basic Arena Allocation ───
-    Console.writeln "--- Basic Allocation ---"
+    let intBuf = NativePtr.stackalloc<int> 4
+    NativePtr.set intBuf 0 42
+    NativePtr.set intBuf 1 99
+    NativePtr.set intBuf 2 7
+    NativePtr.set intBuf 3 256
+    Console.write "slot0: "
+    Console.writeln (Format.int (NativePtr.get intBuf 0))
+    Console.write "slot1: "
+    Console.writeln (Format.int (NativePtr.get intBuf 1))
+    Console.write "slot2: "
+    Console.writeln (Format.int (NativePtr.get intBuf 2))
+    Console.write "slot3: "
+    Console.writeln (Format.int (NativePtr.get intBuf 3))
 
-    let addr1 = Arena.alloc &arena (Platform.wordSize ())
-    NativePtr.write (NativePtr.ofNativeInt<int> addr1) 42
-    Console.write "alloc and read: "
-    Console.writeln (Format.int (NativePtr.read (NativePtr.ofNativeInt<int> addr1)))
-
-    // ─── Helper Functions (byref<Arena> threading) ───
+    // ─── NativePtr.set + get on nativeptr<nativeint> (callback data pattern) ───
     Console.writeln ""
-    Console.writeln "--- Arena Threading ---"
+    Console.writeln "--- set/get<nativeint> ---"
 
-    let a = allocInt &arena 10
-    let b = allocInt &arena 20
-    let c = allocInt &arena 30
-    Console.write "a="
-    Console.write (Format.int (readInt a))
-    Console.write ", b="
-    Console.write (Format.int (readInt b))
-    Console.write ", c="
-    Console.writeln (Format.int (readInt c))
+    let ptrBuf = NativePtr.stackalloc<nativeint> 3
+    NativePtr.set ptrBuf 0 42n
+    NativePtr.set ptrBuf 1 99n
+    NativePtr.set ptrBuf 2 7n
+    let n0 = NativePtr.get ptrBuf 0
+    let n1 = NativePtr.get ptrBuf 1
+    let n2 = NativePtr.get ptrBuf 2
+    if n0 = 42n then Console.writeln "slot0=42n: PASS"
+    else Console.writeln "slot0=42n: FAIL"
+    if n1 = 99n then Console.writeln "slot1=99n: PASS"
+    else Console.writeln "slot1=99n: FAIL"
+    if n2 = 7n then Console.writeln "slot2=7n: PASS"
+    else Console.writeln "slot2=7n: FAIL"
 
-    // ─── Mutation of Arena-Allocated Values ───
+    // ─── Set/Get round-trip (simulating callback data writes + readback) ───
     Console.writeln ""
-    Console.writeln "--- Arena Mutation ---"
+    Console.writeln "--- callback round-trip ---"
 
-    let counter = allocInt &arena 0
-    Console.write "initial: "
-    Console.writeln (Format.int (readInt counter))
-
-    writeInt counter (readInt counter + 1)
-    Console.write "after +1: "
-    Console.writeln (Format.int (readInt counter))
-
-    writeInt counter (readInt counter + 10)
-    Console.write "after +10: "
-    Console.writeln (Format.int (readInt counter))
-
-    // ─── Multiple Independent Values ───
-    Console.writeln ""
-    Console.writeln "--- Independent Values ---"
-
-    let x = allocInt &arena 100
-    let y = allocInt &arena 200
-    Console.write "x="
-    Console.write (Format.int (readInt x))
-    Console.write ", y="
-    Console.writeln (Format.int (readInt y))
-
-    // Modify x without affecting y
-    writeInt x 999
-    Console.write "after x=999: x="
-    Console.write (Format.int (readInt x))
-    Console.write ", y="
-    Console.writeln (Format.int (readInt y))
+    let cbBuf = NativePtr.stackalloc<nativeint> 3
+    // Init to zero (as Connection.connect does)
+    NativePtr.set cbBuf 0 0n
+    NativePtr.set cbBuf 1 0n
+    NativePtr.set cbBuf 2 0n
+    // Verify initial zeros
+    let z0 = NativePtr.get cbBuf 0
+    let z1 = NativePtr.get cbBuf 1
+    if z0 = 0n then Console.writeln "init0=0n: PASS"
+    else Console.writeln "init0=0n: FAIL"
+    if z1 = 0n then Console.writeln "init1=0n: PASS"
+    else Console.writeln "init1=0n: FAIL"
+    // Simulate callback writing globals (registryGlobal pattern)
+    NativePtr.set cbBuf 0 100n
+    NativePtr.set cbBuf 1 200n
+    NativePtr.set cbBuf 2 300n
+    // Read back (what Connection.connect does after wl_display_roundtrip)
+    let r0 = NativePtr.get cbBuf 0
+    let r1 = NativePtr.get cbBuf 1
+    let r2 = NativePtr.get cbBuf 2
+    if r0 = 100n then Console.writeln "cb0=100n: PASS"
+    else Console.writeln "cb0=100n: FAIL"
+    if r1 = 200n then Console.writeln "cb1=200n: PASS"
+    else Console.writeln "cb1=200n: FAIL"
+    if r2 = 300n then Console.writeln "cb2=300n: PASS"
+    else Console.writeln "cb2=300n: FAIL"
 
     0
