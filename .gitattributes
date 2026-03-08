@@ -1,1 +1,1 @@
-*.clef linguist-language=FSharp
+*.clef linguist-language=F# linguist-detectable=false
