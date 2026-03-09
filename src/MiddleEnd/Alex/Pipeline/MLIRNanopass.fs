@@ -50,7 +50,7 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
     /// Collect all FuncDecl names (emitted by patterns for external calls)
     let rec collectDecls (op: MLIROp) : (string * MLIROp) list =
         match op with
-        | MLIROp.FuncOp (FuncOp.FuncDecl (name, _, _, _)) as decl -> [(name, decl)]
+        | MLIROp.FuncOp (FuncOp.FuncDecl (name, _, _, _, _)) as decl -> [(name, decl)]
         | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectDecls
         | MLIROp.HWOp (HWOp.HWModule (_, _, _, body)) -> body |> List.collect collectDecls
         | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->

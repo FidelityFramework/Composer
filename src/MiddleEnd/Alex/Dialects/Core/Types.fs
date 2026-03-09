@@ -358,11 +358,16 @@ and CFOp =
     | CondBr of SSA * BlockRef * Val list * BlockRef * Val list * (int * int) option  // cond, trueDest, trueOps, falseDest, falseOps, weights
     | Switch of SSA * MLIRType * BlockRef * Val list * (int64 * BlockRef * Val list) list  // flag, flagTy, default, defaultOps, cases
 
+/// By-value struct parameter metadata for FFI boundary marshaling.
+/// At the C ABI level, structs > 16 bytes (SysV x86_64 MEMORY class) must be
+/// passed via `byval` — the struct data goes on the stack, not in a register.
+and ByvalParam = { ParamIndex: int; SizeBytes: int; AlignBytes: int }
+
 /// Function dialect operations
 and FuncOp =
     // Function definition/declaration
     | FuncDef of string * (SSA * MLIRType) list * MLIRType * MLIROp list * FuncVisibility  // name, args, retType, body, visibility
-    | FuncDecl of string * MLIRType list * MLIRType * FuncVisibility                       // name, paramTypes, retType, visibility (external decl)
+    | FuncDecl of string * MLIRType list * MLIRType * FuncVisibility * ByvalParam list     // name, paramTypes, retType, visibility, byvalParams (external decl)
     | ExternDecl of string * MLIRType list * MLIRType                                      // name, paramTypes, retType (backward compat)
     // Function calls
     | FuncCall of SSA option * string * Val list * MLIRType                                // result, func, args, retType

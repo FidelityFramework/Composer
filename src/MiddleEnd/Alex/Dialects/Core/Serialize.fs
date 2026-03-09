@@ -462,9 +462,17 @@ let rec opToString (op: MLIROp) : string =
             let argsStr = args |> List.map (fun (ssa, ty) -> sprintf "%s: %s" (ssaToString ssa) (typeToString ty)) |> String.concat ", "
             let bodyStr = body |> List.map opToString |> String.concat "\n    "
             sprintf "func.func @%s(%s) -> %s {\n    %s\n}" name argsStr (typeToString retTy) bodyStr
-        | FuncDecl (name, paramTypes, retTy, _visibility) ->
+        | FuncDecl (name, paramTypes, retTy, _visibility, byvalParams) ->
             let paramsStr = paramTypes |> List.map typeToString |> String.concat ", "
-            sprintf "func.func private @%s(%s) -> %s" name paramsStr (typeToString retTy)
+            let attrsStr =
+                match byvalParams with
+                | [] -> ""
+                | bvs ->
+                    // Encode byval metadata as function attribute for reconcile-ffi-externs plugin.
+                    // Format: "idx:size:align,idx:size:align,..."
+                    let bvStr = bvs |> List.map (fun bv -> sprintf "%d:%d:%d" bv.ParamIndex bv.SizeBytes bv.AlignBytes) |> String.concat ","
+                    sprintf " attributes {ffi.byval = \"%s\"}" bvStr
+            sprintf "func.func private @%s(%s) -> %s%s" name paramsStr (typeToString retTy) attrsStr
         | ExternDecl (name, paramTypes, retTy) ->
             let paramsStr = paramTypes |> List.map typeToString |> String.concat ", "
             sprintf "func.func private @%s(%s) -> %s" name paramsStr (typeToString retTy)

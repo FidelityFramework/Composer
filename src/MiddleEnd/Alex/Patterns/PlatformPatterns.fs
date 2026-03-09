@@ -401,6 +401,32 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
             // Cast SSAs are pre-allocated in coeffects (Pillar 1).
             let! argPairs = recallArgs argIds
 
+            // Helper: check if an argument's original NativeType is option/voption.
+            // Record types (e.g., resvg_transform) also lower to TMemRefStatic(N, i8)
+            // in MLIR, so we must check the NativeType to distinguish them from options.
+            let isOptionArgument (argId: NodeId) =
+                match Map.tryFind argId state.Graph.Nodes with
+                | Some argNode ->
+                    match argNode.Type with
+                    | NativeType.TApp(tycon, _) when tycon.Name = "option" || tycon.Name = "voption" -> true
+                    | _ -> false
+                | None -> false
+            let argWithIds = List.zip argIds argPairs
+
+            // Collect byval metadata for struct parameters at FFI boundaries.
+            // SysV x86_64: structs > 16 bytes are MEMORY class — passed on the stack
+            // via invisible reference. LLVM needs `byval` attribute to generate correct ABI.
+            let byvalParams =
+                argWithIds
+                |> List.mapi (fun i (_argId, (_ssa, ty)) ->
+                    match ty with
+                    | TStruct _ when not (isOptionArgument (fst (argWithIds.[i]))) ->
+                        let size = mlirTypeSize ty
+                        if size > 16 then Some { ParamIndex = i; SizeBytes = size; AlignBytes = 8 }
+                        else None
+                    | _ -> None)
+                |> List.choose id
+
             // Detect option<T> return type — requires FFI marshaling at the boundary.
             // C returns a nullable pointer; we must null-check and construct the option.
             match node.Type with
@@ -434,19 +460,21 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 // C ABI types cross the boundary.
                 let platformWordTy = state.Platform.PlatformWordType
                 let! marshaledArgs =
-                    let rec fold i pairs = parser {
-                        match pairs with
+                    let rec fold i items = parser {
+                        match items with
                         | [] -> return []
-                        | (ssa, ty) :: rest ->
+                        | (argId, (ssa, ty)) :: rest ->
                             match ty with
-                            | TMemRefStatic (_, TInt(IntWidth 8)) ->
+                            | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
                                 // Option/DU at FFI boundary: unwrap via composed pattern
                                 // pTypedExtract (tag) → pTypedExtractView (payload) → pCmpI → pSelect
                                 let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (11 + 11*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
-                            | TMemRef _ | TMemRefStatic _ ->
-                                // Memref → extract pointer (index) → cast to PlatformWordType
+                            | TMemRef _ | TMemRefStatic _ | TStruct _ ->
+                                // Memref/struct → extract pointer (index) → cast to PlatformWordType.
+                                // TStruct (record types) recalled from accumulator also need pointer
+                                // extraction at FFI boundaries, same as memrefs.
                                 let extractSlot = ssas.[11 + 11*i]
                                 let castSlot = ssas.[11 + 11*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
@@ -464,7 +492,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                                 let! restResult = fold (i + 1) rest
                                 return ([], { SSA = ssa; Type = ty }) :: restResult
                     }
-                    fold 0 argPairs
+                    fold 0 argWithIds
                 let marshalOps = marshaledArgs |> List.collect fst
                 let vals = marshaledArgs |> List.map snd
                 let cArgTypes = vals |> List.map (fun v -> v.Type)
@@ -476,7 +504,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 let! optionType = pMapType node.Type
 
                 // 1. Declare extern with C-level (marshaled) arg types and return type
-                let! declOp = pFuncDecl ffiSymbol cArgTypes cRetType FuncVisibility.Private
+                let! declOp = pFuncDeclByval ffiSymbol cArgTypes cRetType FuncVisibility.Private byvalParams
                 // 2. Call extern — get raw C value back
                 let! callOp = pFuncCall (Some rawRetSSA) ffiSymbol vals cRetType
 
@@ -518,18 +546,22 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 // cast TIndex values to PlatformWordType at the boundary.
                 // Each arg gets 11 SSA slots from coeffects (Pillar 1) starting at ssas.[1].
                 let! marshaledArgs =
-                    let rec fold i pairs = parser {
-                        match pairs with
+                    let rec fold i items = parser {
+                        match items with
                         | [] -> return []
-                        | (ssa, ty) :: rest ->
+                        | (argId, (ssa, ty)) :: rest ->
                             match ty with
-                            | TMemRefStatic (_, TInt(IntWidth 8)) ->
+                            | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
                                 // Option/DU at FFI boundary: unwrap via composed pattern
                                 let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (1 + 11*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
-                            | TMemRef _ | TMemRefStatic _ ->
-                                // Memref → extract pointer (index) → cast to PlatformWordType
+                            | TMemRef _ | TMemRefStatic _ | TStruct _ ->
+                                // Memref/struct → extract pointer (index) → cast to PlatformWordType.
+                                // TStruct (record types) serialize as memref<Nxi8> in MLIR but are
+                                // recalled as TStruct in the accumulator. At FFI boundaries, we extract
+                                // the base pointer — on SysV x86_64, structs >16 bytes are passed by
+                                // invisible reference (pointer in register), so this is ABI-correct.
                                 let extractSlot = ssas.[1 + 11*i]
                                 let castSlot = ssas.[1 + 11*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
@@ -547,7 +579,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                                 let! restResult = fold (i + 1) rest
                                 return ([], { SSA = ssa; Type = ty }) :: restResult
                     }
-                    fold 0 argPairs
+                    fold 0 argWithIds
                 let marshalOps = marshaledArgs |> List.collect fst
                 let vals = marshaledArgs |> List.map snd
                 let cArgTypes = vals |> List.map (fun v -> v.Type)
@@ -557,7 +589,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 let cRetType = marshalToCType platformWordTy internalRetType
 
                 // Emit external function declaration + call with C-boundary types
-                let! declOp = pFuncDecl ffiSymbol cArgTypes cRetType FuncVisibility.Private
+                let! declOp = pFuncDeclByval ffiSymbol cArgTypes cRetType FuncVisibility.Private byvalParams
                 let! callOp = pFuncCall (Some resultSSA) ffiSymbol vals cRetType
 
                 return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })

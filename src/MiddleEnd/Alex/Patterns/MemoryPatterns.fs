@@ -396,24 +396,20 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
             // String as memref - use memref operations
             match fieldName with
             | "Pointer" | "ptr" ->  // Accept both capitalized (old) and lowercase (CCS)
-                // Extract base pointer from memref descriptor as index, then cast to target type
-                let! state = getUserState
-                let targetTy =
-                    match fieldTy with
-                    | TIndex -> state.Platform.PlatformWordType  // TIndex → i64/i32 (portable!)
-                    | ty -> ty
-
-                match targetTy with
+                // Extract base pointer from memref descriptor as index.
+                // Returns TIndex (MLIR index) which is the canonical type for pointer values.
+                // Callers at FFI boundaries (pExternCallResolved) handle index→i64 conversion.
+                match fieldTy with
                 | TIndex ->
-                    // No cast needed - result is index
+                    // nativeptr<T> → TIndex: extract as index, no cast needed
                     let! extractOp = pExtractBasePtr resultSSA structSSA structTy
-                    return ([extractOp], TRValue { SSA = resultSSA; Type = targetTy })
+                    return ([extractOp], TRValue { SSA = resultSSA; Type = TIndex })
                 | _ ->
-                    // Cast index → targetTy (e.g., index → i64 for x86-64, index → i32 for ARM32)
+                    // Non-index target type: cast index → targetTy
                     let indexSSA = ssas.[0]  // Intermediate index from coeffects
                     let! extractOp = pExtractBasePtr indexSSA structSSA structTy
-                    let! castOp = pIndexCastS resultSSA indexSSA TIndex targetTy
-                    return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = targetTy })
+                    let! castOp = pIndexCastS resultSSA indexSSA TIndex fieldTy
+                    return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = fieldTy })
             | "Length" | "len" ->  // Accept both capitalized (old) and lowercase (CCS)
                 // Extract length using memref.dim (returns index type)
                 let dimIndexSSA = ssas.[0]  // Dim constant (0) from coeffects

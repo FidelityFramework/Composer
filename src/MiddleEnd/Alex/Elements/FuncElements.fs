@@ -32,7 +32,13 @@ let pFuncDef (name: string) (args: (SSA * MLIRType) list) (retTy: MLIRType)
 let pFuncDecl (name: string) (argTypes: MLIRType list) (retTy: MLIRType)
                   (visibility: FuncVisibility) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, visibility))
+        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, visibility, []))
+    }
+
+let pFuncDeclByval (name: string) (argTypes: MLIRType list) (retTy: MLIRType)
+                       (visibility: FuncVisibility) (byvalParams: ByvalParam list) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, visibility, byvalParams))
     }
 
 // ═══════════════════════════════════════════════════════════
