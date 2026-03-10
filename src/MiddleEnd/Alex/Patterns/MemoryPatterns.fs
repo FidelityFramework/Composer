@@ -699,8 +699,8 @@ let pMemRefStoreIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (info.Operation = "store") "Not MemRef.store"
         do! ensure (argIds.Length >= 3) "MemRef.store: Expected 3 args"
 
-        // Recall value argument
-        let! (_, valueSSA, _) = pRecallArgWithLoad argIds.[0]
+        // Recall value argument (valueType determines memref element type for TIndex destinations)
+        let! (_, valueSSA, valueType) = pRecallArgWithLoad argIds.[0]
 
         // Detect MemRef.add fusion on pointer argument
         let! (memrefSSA, fusedOffsetOpt, memrefType, fusionOps) = pDetectMemRefAddFusion argIds.[1]
@@ -715,11 +715,23 @@ let pMemRefStoreIntrinsic : PSGParser<MLIROp list * TransferResult> =
                     return (ops, ssa)
                 }
 
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+
         match memrefType with
         | TMemRef elemType
         | TMemRefStatic (_, elemType) ->
             let! (storeOps, result) = pMemRefStoreIndexed memrefSSA valueSSA offsetSSA elemType memrefType
             return (fusionOps @ indexOps @ storeOps, result)
+        | TIndex ->
+            // Pointer from NativePtr.ofNativeInt — need index→memref cast before store.
+            // Baker transforms NativePtr.write → MemRef.store, but ofNativeInt produces TIndex.
+            // Element type comes from the VALUE being stored (fully resolved, deterministic).
+            do! ensure (ssas.Length >= 2) $"pMemRefStore with cast: Expected 2 SSAs, got {ssas.Length}"
+            let castSSA = ssas.[0]
+            let! (castOps, effPtrSSA, effPtrType) = pEnsureMemRef castSSA memrefSSA memrefType valueType
+            let! (storeOps, result) = pMemRefStoreIndexed effPtrSSA valueSSA offsetSSA valueType effPtrType
+            return (fusionOps @ indexOps @ castOps @ storeOps, result)
         | _ ->
             return! fail (Message $"MemRef.store: expected memref destination type, got {memrefType}")
     }

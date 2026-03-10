@@ -637,7 +637,7 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 // Baker has transformed NativePtr → MemRef, these are the target operations
                 | IntrinsicModule.MemRef, "alloca" -> 1  // result memref only
                 | IntrinsicModule.MemRef, "load" -> 2    // potential index→memref cast + load result
-                | IntrinsicModule.MemRef, "store" -> 1   // returns unit, but witness requires SSA allocation
+                | IntrinsicModule.MemRef, "store" -> 2   // potential index→memref cast + unit result
                 | IntrinsicModule.MemRef, "add" -> 1     // marker: returns offset/index for memref operations
                 | IntrinsicModule.MemRef, "copy" -> 1    // memcpy returns void* (result pointer)
                 | IntrinsicModule.MemRef, _ -> 1         // safe default
