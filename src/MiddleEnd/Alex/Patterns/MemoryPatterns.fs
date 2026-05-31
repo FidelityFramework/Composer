@@ -968,6 +968,39 @@ let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
 //   set         — indexed write through raw pointer
 //   read        — scalar read from raw pointer
 
+/// NativePtr.toNativeInt: nativeptr<'T> → nativeint
+/// At MLIR level: memref → index via memref.extract_aligned_pointer_as_index.
+/// Inverse of ofNativeInt. Used to pass stack-allocated storage to FFI as nativeint.
+///
+/// SSA layout (1 SSA): [0] = result index
+let pNativePtrToNativeIntIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
+        do! ensure (info.Operation = "toNativeInt") "Not NativePtr.toNativeInt"
+        do! ensure (argIds.Length >= 1) "NativePtr.toNativeInt: Expected 1 arg"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 1) $"pNativePtrToNativeInt: Expected 1 SSA, got {ssas.Length}"
+        let resultSSA = ssas.[0]
+
+        // Recall the nativeptr argument (memref from stackalloc, or already index)
+        let! (_, ptrSSA, ptrType) = pRecallArgWithLoad argIds.[0]
+
+        let! state = getUserState
+        match ptrType with
+        | TMemRef _ | TMemRefStatic _ ->
+            // Extract aligned pointer as index — standard MLIR op that survives lowering
+            let! extractOp = pExtractBasePtr resultSSA ptrSSA ptrType
+            MLIRAccumulator.registerSSAType resultSSA TIndex state.Accumulator
+            return ([extractOp], TRValue { SSA = resultSSA; Type = TIndex })
+        | TIndex ->
+            // Already a raw pointer (index) — forward directly, no cast needed
+            MLIRAccumulator.registerSSAType ptrSSA TIndex state.Accumulator
+            return ([], TRValue { SSA = ptrSSA; Type = TIndex })
+        | _ ->
+            return! fail (Message $"NativePtr.toNativeInt: unexpected source type {ptrType} — expected memref or index")
+    }
+
 /// NativePtr.ofNativeInt: nativeint → nativeptr<'T>
 /// At MLIR level: index (raw C pointer) → memref<?xT> via unrealized_conversion_cast.
 /// The cast is resolved at LLVM lowering where both are bare pointers.

@@ -47,6 +47,7 @@ let private isScopeBoundary (node: SemanticNode) : bool =
     | SemanticKind.CaseElimination _ -> true
     | SemanticKind.TryWith _ -> true
     | SemanticKind.Binding (_, _, _, Some DeclRoot.HardwareModule) -> true
+    | SemanticKind.Binding (_, _, _, Some DeclRoot.KernelModule) -> true
     | _ -> false
 
 /// Debug tracing flag for visitAllNodes — set to true for detailed traversal logging
@@ -334,44 +335,26 @@ let runAllNanopasses
                     visitAllNodes combinedWitness nodeCtx node globalVisited
             | _ -> ()
 
-    // Visit structural roots from ModuleClassifications (semantically-ordered, not NodeId-ordered)
+    // Visit structural roots from ModuleClassifications (semantically-ordered, not NodeId-ordered).
     // This decouples traversal order from NodeId allocation order.
     //
-    // FPGA MODE: Only HardwareModule bindings are walk roots.
-    // Platform definitions (PinEndpoints, strings, metadata DUs) are compile-time metadata —
-    // they describe the hardware but don't produce hardware ops. The HardwareModuleWitness
-    // walks the step function transitively via VarRef following, reaching all helper functions.
-    let isFPGA = coeffects.TargetPlatform = Core.Types.Dialects.FPGA
-
-    let isHardwareModuleBinding (nodeId: NodeId) =
-        match SemanticGraph.tryGetNode nodeId graph with
-        | Some node ->
-            match node.Kind with
-            | SemanticKind.Binding (_, _, _, Some DeclRoot.HardwareModule) -> true
-            | _ -> false
-        | None -> false
-
+    // Root selection is uniform across all platforms. The walk visits every definition;
+    // scope boundaries (HardwareModule, KernelModule, Lambda, etc.) prevent auto-visiting
+    // children, letting scope-owning witnesses manage their own subtrees. Platform-specific
+    // filtering of any residual ops (e.g. helper functions that produce FuncOps on NPU)
+    // is handled downstream by MLIRGeneration, not by the walk itself.
     let classifications = graph.ModuleClassifications.Value
     for kvp in classifications do
         let moduleDefId = kvp.Key
         let classification = kvp.Value
-        if isFPGA then
-            // FPGA: Only process HardwareModule bindings as roots
-            for nodeId in classification.Definitions do
-                if isHardwareModuleBinding nodeId then
-                    processRoot nodeId
-            // ModuleDef node itself (structural container, for coverage validation)
-            processRoot moduleDefId
-        else
-            // CPU/MCU: Process all definitions in source order
-            // Module-init first (prologue bindings)
-            for nodeId in classification.ModuleInit do
-                processRoot nodeId
-            // Then definitions in source order (includes entry point)
-            for nodeId in classification.Definitions do
-                processRoot nodeId
-            // Finally the ModuleDef node itself (for coverage validation)
-            processRoot moduleDefId
+        // Module-init first (prologue bindings)
+        for nodeId in classification.ModuleInit do
+            processRoot nodeId
+        // Then definitions in source order (includes entry point)
+        for nodeId in classification.Definitions do
+            processRoot nodeId
+        // Finally the ModuleDef node itself (for coverage validation)
+        processRoot moduleDefId
 
 /// Main entry point: Execute all nanopasses and return accumulator
 let executeNanopasses

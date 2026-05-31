@@ -9,6 +9,7 @@ module Core.Types.Pipeline
 type BackEndArtifact =
     | NativeBinary of path: string
     | Verilog of path: string
+    | Xclbin of xclbinPath: string * instsPath: string
     | IntermediateOnly of format: string
 
 /// Context passed to a backend for compilation.

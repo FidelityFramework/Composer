@@ -112,19 +112,29 @@ let generate
     | (entryId, _) :: _ ->
         match transfer flattenedGraph entryId coeffects intermediatesDir with
         | Result.Ok (topLevelOps, _) ->
-            // Filter ops by target platform — FPGA output excludes CPU-only func.func ops
+            // Filter ops by target platform — FPGA/NPU exclude CPU-only func.func ops
             let platformOps =
                 match targetPlatform with
                 | Core.Types.Dialects.TargetPlatform.FPGA ->
                     topLevelOps |> List.filter (fun op ->
                         match op with MLIROp.FuncOp _ -> false | _ -> true)
+                | Core.Types.Dialects.TargetPlatform.NPU ->
+                    // NPU: keep only RawMLIR (the aie.device block from KernelModuleWitness)
+                    topLevelOps |> List.filter (fun op ->
+                        match op with MLIROp.RawMLIR _ -> true | _ -> false)
                 | _ -> topLevelOps
 
             // Apply MLIR nanopasses (MLIR→MLIR transformations)
             let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses platformOps platformResolution intermediatesDir
 
             // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
-            let mlirText = moduleToString "main" transformedOps
+            // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
+            let mlirText =
+                match targetPlatform with
+                | Core.Types.Dialects.TargetPlatform.NPU ->
+                    let opsText = opsToString transformedOps "  "
+                    sprintf "module {\n%s\n}" opsText
+                | _ -> moduleToString "main" transformedOps
 
             // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
             match intermediatesDir with

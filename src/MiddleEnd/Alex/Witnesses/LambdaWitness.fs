@@ -183,6 +183,11 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // so this branch should not be reached. If it is, return error.
             WitnessOutput.error "HardwareModule Lambda not yet supported"
 
+        | Some DeclRoot.KernelModule ->
+            // KernelModule Lambda — kernel bindings are RecordExprs (ElementKernel<'T>),
+            // not Lambdas. If a Lambda is tagged as KernelModule, it is an error.
+            WitnessOutput.error "KernelModule Lambda not yet supported"
+
         | None ->
             // Non-root Lambda: Generate FuncDef for module-level function
             // Check for ClosureLayout — determines if this is a closure (escaping lambda with captures)

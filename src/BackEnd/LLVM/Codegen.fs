@@ -63,7 +63,10 @@ let compileToNative
                     // -rdynamic exports all symbols to dynamic symbol table so that
                     // dlsym(RTLD_DEFAULT, "symbol") can find functions in the binary itself
                     // (required for Fidelity callback resolution via string-literal dlsym)
-                    // Console mode always links libc; additional libraries come from ExternLibraries
+                    //
+                    // Dynamic FidelityExtern libraries (library != "c") are NOT linked here;
+                    // they are loaded at runtime via dlopen/dlsym in the emitted MLIR.
+                    // Only statically-linked system libraries (libc, libdl) appear as -l flags.
                     let libs = if externLibraries.IsEmpty then "-lc" else "-lc " + libraryFlags
                     sprintf "-O0 -no-pie -rdynamic %s -o %s %s" objPath outputPath libs
                 | Freestanding | Embedded ->

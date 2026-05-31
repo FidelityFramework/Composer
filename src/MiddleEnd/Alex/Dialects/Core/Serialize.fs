@@ -450,6 +450,11 @@ let memrefOpToString (op: MemRefOp) : string =
         // NativePtr.ofNativeInt: index (platform pointer) → memref for typed access
         sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s"
             (ssaToString result) (ssaToString source) (typeToString destType)
+    | MemRefOp.MemRefToIndex (result, source, srcType) ->
+        // builtin.unrealized_conversion_cast: memref → raw pointer (index)
+        // NativePtr.toNativeInt: memref (stack alloc) → index for FFI boundary crossing
+        sprintf "%s = builtin.unrealized_conversion_cast %s : %s to index"
+            (ssaToString result) (ssaToString source) (typeToString srcType)
 
 /// Serialize top-level MLIROp to MLIR text
 let rec opToString (op: MLIROp) : string =
@@ -574,6 +579,7 @@ let rec opToString (op: MLIROp) : string =
     | MLIROp.CombOp cop -> combOpToString cop
     | MLIROp.HWOp hop -> hwOpToString opToString hop
     | MLIROp.SeqOp sop -> seqOpToString sop
+    | MLIROp.RawMLIR text -> text
     | _ ->
         // For now, return placeholder for unimplemented operations (CFOp, VectorOp, Block, Region)
         sprintf "// TODO: Serialize %A" op

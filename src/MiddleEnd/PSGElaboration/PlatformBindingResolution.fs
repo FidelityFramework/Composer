@@ -170,14 +170,18 @@ let analyze
     // Entry point elaboration is a PSG-level concern, not code generation
     let needsStart = (mode = Freestanding)
 
-    // Accumulate external library dependencies from resolved bindings
+    // Accumulate external library dependencies from resolved bindings.
+    // Only statically-linked libraries (library = "c") become linker flags (-lc).
+    // Dynamic libraries (library != "c") are loaded at runtime via dlopen/dlsym;
+    // they must NOT appear as -l flags since the symbols are resolved at runtime.
     let externLibs =
         bindings
         |> Map.toSeq
         |> Seq.choose (fun (_, binding) ->
             match binding.Resolved with
             | LibcCall _ -> Some "c"
-            | ExternCall (library, _) -> Some library
+            | ExternCall (library, _) when library = "c" -> Some library
+            | ExternCall _ -> None  // Dynamic: loaded via dlopen, not linked statically
             | Syscall _ | InlineAsm _ -> None)
         |> Set.ofSeq
 

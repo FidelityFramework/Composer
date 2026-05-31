@@ -19,7 +19,7 @@ let private witnessMemoryIntrinsic (ctx: WitnessContext) (node: SemanticNode) : 
         <|> pMemRefCopyIntrinsic <|> pMemRefAddIntrinsic
         <|> pArenaCreateIntrinsic <|> pArenaAllocIntrinsic
         <|> pArrayZeroCreateIntrinsic <|> pArrayGetIntrinsic <|> pArraySetIntrinsic <|> pArraySubIntrinsic
-        <|> pNativePtrOfNativeIntIntrinsic <|> pNativePtrSetIntrinsic <|> pNativePtrGetIntrinsic <|> pNativePtrReadIntrinsic
+        <|> pNativePtrToNativeIntIntrinsic <|> pNativePtrOfNativeIntIntrinsic <|> pNativePtrSetIntrinsic <|> pNativePtrGetIntrinsic <|> pNativePtrReadIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
     | None -> WitnessOutput.skip

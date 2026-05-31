@@ -621,6 +621,7 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
 
                 // NativePtr operations (direct pointer access — not transformed by Baker)
                 | IntrinsicModule.NativePtr, "stackalloc" -> 1   // alloca result
+                | IntrinsicModule.NativePtr, "toNativeInt" -> 1  // memref → index (unrealized_conversion_cast or no-op)
                 | IntrinsicModule.NativePtr, "ofNativeInt" -> 2  // unrealized_conversion_cast
                 | IntrinsicModule.NativePtr, "set" -> 3          // potential index→memref cast + index_cast + store
                 | IntrinsicModule.NativePtr, "get" -> 3          // potential index→memref cast + index_cast + load
@@ -651,31 +652,50 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 // Function call: 1 result + N potential type compatibility casts (static→dynamic memref)
                 // Argument count = Children.Length - 1 (first child is function)
                 let argCount = max 0 (node.Children.Length - 1)
-                // ExternCall FFI marshaling: option<T> return requires extra SSAs for
-                // C-level call (returns raw pointer) + null check + option construction.
-                // Detect FidelityExtern metadata on the target binding to identify ExternCalls.
-                let isExternCallWithOptionReturn =
+                // ExternCall FFI marshaling: detect FidelityExtern metadata on the target binding.
+                // Distinguishes static (library="c") from dynamic (library!="c") binding paths.
+                let externLibrary =
+                    match funcNode.Kind with
+                    | SemanticKind.VarRef (_, Some definitionId) ->
+                        match Map.tryFind definitionId ctx.Graph.Nodes with
+                        | Some bindingNode ->
+                            match Map.tryFind "FidelityExtern.Library" bindingNode.Metadata with
+                            | Some (Clef.Compiler.PSGSaturation.SemanticGraph.Types.MetadataValue.String lib) -> Some lib
+                            | _ -> None
+                        | None -> None
+                    | _ -> None
+                let isExternCall = externLibrary.IsSome
+                let isDynamicExtern = match externLibrary with Some lib -> lib <> "c" | None -> false
+                let isOptionReturn =
                     match node.Type with
-                    | NativeType.TApp(tycon, [_]) when tycon.Name = "option" || tycon.Name = "voption" ->
-                        match funcNode.Kind with
-                        | SemanticKind.VarRef (_, Some definitionId) ->
-                            match Map.tryFind definitionId ctx.Graph.Nodes with
-                            | Some bindingNode ->
-                                bindingNode.Metadata.ContainsKey "FidelityExtern.Library"
-                            | None -> false
-                        | _ -> false
+                    | NativeType.TApp(tycon, [_]) when tycon.Name = "option" || tycon.Name = "voption" -> true
                     | _ -> false
-                if isExternCallWithOptionReturn then
+                if isDynamicExtern && isOptionReturn then
+                    // Dynamic extern with option return:
+                    // 11 (dlopen/dlsym preamble, SSAs [0..10])
+                    // + 11 (option return handling, SSAs [11..21])
+                    // + 11 per arg (FFI marshaling, starting at SSA [22])
+                    26 + 11 * argCount
+                elif isDynamicExtern then
+                    // Dynamic extern with direct return:
+                    // 11 (dlopen/dlsym preamble, SSAs [0..10])
+                    // + 2 (result + potential return cast, SSAs [11..12])
+                    // + 11 per arg (FFI marshaling, starting at SSA [13])
+                    13 + 11 * argCount
+                elif isExternCall && isOptionReturn then
                     15 + 11 * argCount  // 11 base for option return handling (ssas[0..10])
                                         // + 11 per arg: option unwrap needs 11 SSAs (tag extract,
                                         // payload extract, cmp, select); memref/index use ≤2.
                                         // Unused SSAs are harmless — elided if not consumed (Pillar 1).
                 else
-                    // 1 for result + 11 per arg for FFI boundary marshaling
+                    // Static extern or regular function call:
+                    // 1 for result + 1 for potential return-side index.casts
+                    // (nativeint returns as platformWordTy at boundary, cast back to index)
+                    // + 11 per arg for FFI boundary marshaling
                     // (option unwrap=11, memref extract+cast=2, index cast=1)
                     // +6 for potential closure call
                     // Unused SSAs are harmless — elided if not consumed
-                    7 + 11 * argCount
+                    8 + 11 * argCount
             | _ -> 10  // Other applications
         | None -> 10
     | [] -> 5

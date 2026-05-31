@@ -21,6 +21,7 @@ open Alex.Elements.ArithElements
 open Alex.Elements.MemRefElements
 open Alex.Elements.IndexElements
 open Alex.Elements.MLIRAtomics
+open Alex.Patterns.LiteralPatterns  // deriveGlobalRef, deriveByteLength (for dynamic extern string constants)
 open PSGElaboration.PlatformConfig
 
 // ═══════════════════════════════════════════════════════════
@@ -352,11 +353,15 @@ let private recallArgs (argIds: NodeId list) : PSGParser<(SSA * MLIRType) list> 
         }
     loop argIds
 
-/// ExternCall resolved pattern — emits func.call for [<FidelityExtern>] bindings.
-/// Matches Application nodes with ExternCall in pre-computed coeffects.
+/// ExternCall resolved pattern — emits func.call for STATIC [<FidelityExtern>] bindings.
+/// Matches Application nodes with ExternCall(library="c") in pre-computed coeffects.
 /// Uses the C symbol name from the binding (not the Clef function name).
 ///
-/// FFI MARSHALING (Mar 2026): When the Fidelity-level return type differs from the
+/// STATIC vs DYNAMIC (Mar 2026): This pattern handles only statically-linked libraries
+/// (library = "c"). Dynamic libraries (library != "c") are handled by
+/// pDynamicExternCallResolved, which emits dlopen/dlsym/call_indirect sequences.
+///
+/// FFI MARSHALING: When the Fidelity-level return type differs from the
 /// C-level return type, this pattern inserts marshaling at the boundary:
 ///   - option<T> return → C returns nullable pointer (index); null-check + option construction
 ///   - Direct types → no marshaling needed (passthrough)
@@ -365,8 +370,8 @@ let private recallArgs (argIds: NodeId list) : PSGParser<(SSA * MLIRType) list> 
 /// genuine width demands. The pattern observes the ExternCall coeffect and the marshaling
 /// code elides naturally as the residual (Pillar 4: Elision).
 ///
-/// Discriminator: coeffect-based. If Platform.Bindings[nodeId] has ExternCall,
-/// PlatformWitness handles it. Otherwise, ApplicationWitness handles it.
+/// Discriminator: coeffect-based. If Platform.Bindings[nodeId] has ExternCall(library="c"),
+/// PlatformWitness handles it via this pattern. Dynamic externs are handled separately.
 ///
 /// SSA layout:
 ///   Direct return: [0] = result, [1..N] = FFI arg extraction (memref→index)
@@ -381,10 +386,10 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
         let! node = getCurrentNode
         let! state = getUserState
 
-        // Guard: check if this node has an ExternCall binding in coeffects
+        // Guard: check if this node has a STATIC ExternCall binding (library = "c")
         let (NodeId nodeIdInt) = node.Id
         match Map.tryFind nodeIdInt state.Platform.Bindings with
-        | Some { Resolved = ExternCall (_library, symbol) } ->
+        | Some { Resolved = ExternCall (library, symbol) } when library = "c" ->
             // FFI namespace prefix: all extern symbols get "ffi." prefix in MLIR
             // to avoid collisions with MLIR infrastructure symbols (e.g., @malloc
             // from finalize-memref-to-llvm). The reconcile-ffi-externs plugin
@@ -538,13 +543,14 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
             | _ ->
                 // DIRECT RETURN: type passes through with boundary marshaling
                 let platformWordTy = state.Platform.PlatformWordType
-                do! ensure (ssas.Length >= 1) $"pExternCallResolved: Expected at least 1 SSA, got {ssas.Length}"
+                do! ensure (ssas.Length >= 2) $"pExternCallResolved: Expected at least 2 SSAs, got {ssas.Length}"
                 let resultSSA = ssas.[0]
+                let returnCastSSA = ssas.[1]  // potential platformWordTy → index cast on return
 
                 // FFI argument marshaling: extract pointers from memref args,
                 // unwrap option-typed args (None→NULL, Some→payload), and
                 // cast TIndex values to PlatformWordType at the boundary.
-                // Each arg gets 11 SSA slots from coeffects (Pillar 1) starting at ssas.[1].
+                // Each arg gets 11 SSA slots from coeffects (Pillar 1) starting at ssas.[2].
                 let! marshaledArgs =
                     let rec fold i items = parser {
                         match items with
@@ -553,7 +559,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                             match ty with
                             | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
                                 // Option/DU at FFI boundary: unwrap via composed pattern
-                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (1 + 11*i)
+                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (2 + 11*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
                             | TMemRef _ | TMemRefStatic _ | TStruct _ ->
@@ -562,15 +568,15 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                                 // recalled as TStruct in the accumulator. At FFI boundaries, we extract
                                 // the base pointer — on SysV x86_64, structs >16 bytes are passed by
                                 // invisible reference (pointer in register), so this is ABI-correct.
-                                let extractSlot = ssas.[1 + 11*i]
-                                let castSlot = ssas.[1 + 11*i + 1]
+                                let extractSlot = ssas.[2 + 11*i]
+                                let castSlot = ssas.[2 + 11*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
                                 let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | TIndex ->
                                 // Index value → cast to PlatformWordType at boundary
-                                let castSlot = ssas.[1 + 11*i + 1]
+                                let castSlot = ssas.[2 + 11*i + 1]
                                 let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
@@ -592,8 +598,309 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 let! declOp = pFuncDeclByval ffiSymbol cArgTypes cRetType FuncVisibility.Private byvalParams
                 let! callOp = pFuncCall (Some resultSSA) ffiSymbol vals cRetType
 
-                return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })
-        | _ -> return! fail (Message "Not an ExternCall")
+                // Return-side demarshal: if the internal type is TIndex (nativeint),
+                // the call returned platformWordTy (i64). Cast back to index so
+                // the rest of the middle-end stays width-abstract until LLVM lowering.
+                match internalRetType with
+                | TIndex ->
+                    let! returnCastOp = pIndexCastS returnCastSSA resultSSA platformWordTy TIndex
+                    return (marshalOps @ [declOp; callOp; returnCastOp], TRValue { SSA = returnCastSSA; Type = TIndex })
+                | _ ->
+                    return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })
+        | _ -> return! fail (Message "Not a static ExternCall")
+    }
+
+// ═══════════════════════════════════════════════════════════
+// DYNAMIC EXTERN CALL PATTERN (dlopen/dlsym/call_indirect)
+// ═══════════════════════════════════════════════════════════
+
+/// Construct the shared-object filename from a library name.
+/// "xrt_coreutil" → "libxrt_coreutil.so"
+let private soName (library: string) : string =
+    sprintf "lib%s.so" library
+
+/// Dynamic extern call — emits dlopen/dlsym/call_indirect for runtime-resolved symbols.
+/// Handles FidelityExtern bindings where library != "c" (not statically linked).
+///
+/// At each call site the pattern emits:
+///   1. dlopen(lib_path, RTLD_LAZY) → handle
+///   2. dlsym(handle, symbol_name) → raw function pointer (i64)
+///   3. Cast i64 → index → typed function pointer (IndexToFunc)
+///   4. func.call_indirect through the typed pointer with marshaled args
+///
+/// String constants for the library path and symbol name are returned as
+/// pending globals (name, content, storageLength) for the witness to emit
+/// via tryEmitGlobal / GlobalString TopLevelOps.
+///
+/// dlopen is idempotent; calling it multiple times for the same library
+/// returns the same handle. Per-call overhead is acceptable for an MVP;
+/// a future caching pass can hoist dlopen/dlsym to module init.
+///
+/// SSA layout (direct return):
+///   [0]  = lib_memref   (memref.get_global for library path)
+///   [1]  = lib_ptr_idx  (memref.extract_aligned_pointer_as_index)
+///   [2]  = lib_ptr      (index.casts index → PlatformWordType)
+///   [3]  = dlopen_mode  (arith.constant RTLD_LAZY = 1)
+///   [4]  = handle       (func.call @ffi.dlopen)
+///   [5]  = sym_memref   (memref.get_global for symbol name)
+///   [6]  = sym_ptr_idx  (memref.extract_aligned_pointer_as_index)
+///   [7]  = sym_ptr      (index.casts index → PlatformWordType)
+///   [8]  = raw_ptr      (func.call @ffi.dlsym → PlatformWordType)
+///   [9]  = raw_ptr_idx  (index.casts PlatformWordType → index)
+///   [10] = func_ptr     (IndexToFunc: index → typed function pointer)
+///   [11] = result       (func.call_indirect result)
+///   [12] = return_cast  (potential return-side demarshal)
+///   [13 + 11*i ..] = per-arg FFI marshaling
+///
+/// SSA layout (option return):
+///   [0..10] = dlopen/dlsym preamble (same as direct return)
+///   [11] = option_memref  (final option result)
+///   [12] = raw_ret        (raw C return from call_indirect)
+///   [13] = null_const     (0 for null comparison)
+///   [14] = cmp_result     (ne comparison result)
+///   [15] = tag_ext        (i1 → i8 for tag)
+///   [16..17] = tag insert views
+///   [18..20] = payload insert views + offset
+///   [21] = alloca         (option heap alloc)
+///   [22 + 11*i ..] = per-arg FFI marshaling
+let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int) list * TransferResult> =
+    parser {
+        let! (_funcId, argIds) = pApplication
+        let! node = getCurrentNode
+        let! state = getUserState
+
+        let (NodeId nodeIdInt) = node.Id
+        match Map.tryFind nodeIdInt state.Platform.Bindings with
+        | Some { Resolved = ExternCall (library, symbol) } when library <> "c" ->
+            let platformWordTy = state.Platform.PlatformWordType
+            let! ssas = getNodeSSAs node.Id
+            let! argPairs = recallArgs argIds
+
+            let isOptionArgument (argId: NodeId) =
+                match Map.tryFind argId state.Graph.Nodes with
+                | Some argNode ->
+                    match argNode.Type with
+                    | NativeType.TApp(tycon, _) when tycon.Name = "option" || tycon.Name = "voption" -> true
+                    | _ -> false
+                | None -> false
+            let argWithIds = List.zip argIds argPairs
+
+            let byvalParams =
+                argWithIds
+                |> List.mapi (fun i (_argId, (_ssa, ty)) ->
+                    match ty with
+                    | TStruct _ when not (isOptionArgument (fst (argWithIds.[i]))) ->
+                        let size = mlirTypeSize ty
+                        if size > 16 then Some { ParamIndex = i; SizeBytes = size; AlignBytes = 8 }
+                        else None
+                    | _ -> None)
+                |> List.choose id
+
+            // ── dlopen/dlsym preamble (SSAs [0..10]) ──
+
+            // String constants: library path and symbol name
+            let libPath = soName library
+            let libGlobalName = deriveGlobalRef libPath
+            let libByteLen = deriveByteLength libPath
+            let libStorageLen = libByteLen + 1  // null sentinel
+            let libStorageTy = TMemRefStatic (libStorageLen, TInt (IntWidth 8))
+
+            let symGlobalName = deriveGlobalRef symbol
+            let symByteLen = deriveByteLength symbol
+            let symStorageLen = symByteLen + 1
+            let symStorageTy = TMemRefStatic (symStorageLen, TInt (IntWidth 8))
+
+            // Pending globals to emit as TopLevelOps (witness handles deduplication)
+            let pendingGlobals = [
+                (libGlobalName, libPath, libStorageLen)
+                (symGlobalName, symbol, symStorageLen)
+            ]
+
+            // SSAs [0..10]: dlopen/dlsym preamble
+            let libMemrefSSA  = ssas.[0]
+            let libPtrIdxSSA  = ssas.[1]
+            let libPtrSSA     = ssas.[2]
+            let dlopenModeSSA = ssas.[3]
+            let handleSSA     = ssas.[4]
+            let symMemrefSSA  = ssas.[5]
+            let symPtrIdxSSA  = ssas.[6]
+            let symPtrSSA     = ssas.[7]
+            let rawPtrSSA     = ssas.[8]
+            let rawPtrIdxSSA  = ssas.[9]
+            let funcPtrSSA    = ssas.[10]
+
+            // 1. Load library path string → extract pointer → cast to platform word
+            let! libGetGlobalOp = pMemRefGetGlobal libMemrefSSA libGlobalName libStorageTy
+            let! libExtractOp = pExtractBasePtr libPtrIdxSSA libMemrefSSA libStorageTy
+            let! libCastOp = pIndexCastS libPtrSSA libPtrIdxSSA TIndex platformWordTy
+
+            // 2. RTLD_LAZY = 1 (mode for dlopen)
+            let! modeOp = pConstI dlopenModeSSA 1L platformWordTy
+
+            // 3. Call dlopen — returns library handle as platform word
+            //    dlopen is FidelityExtern("c", "dlopen"), resolved statically via libc.
+            let dlopenArgs = [
+                { SSA = libPtrSSA; Type = platformWordTy }
+                { SSA = dlopenModeSSA; Type = platformWordTy }
+            ]
+            let! dlopenDeclOp = pFuncDecl "ffi.dlopen" [platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+            let! dlopenCallOp = pFuncCall (Some handleSSA) "ffi.dlopen" dlopenArgs platformWordTy
+
+            // 4. Load symbol name string → extract pointer → cast to platform word
+            let! symGetGlobalOp = pMemRefGetGlobal symMemrefSSA symGlobalName symStorageTy
+            let! symExtractOp = pExtractBasePtr symPtrIdxSSA symMemrefSSA symStorageTy
+            let! symCastOp = pIndexCastS symPtrSSA symPtrIdxSSA TIndex platformWordTy
+
+            // 5. Call dlsym — returns raw function pointer as platform word
+            let dlsymArgs = [
+                { SSA = handleSSA; Type = platformWordTy }
+                { SSA = symPtrSSA; Type = platformWordTy }
+            ]
+            let! dlsymDeclOp = pFuncDecl "ffi.dlsym" [platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
+            let! dlsymCallOp = pFuncCall (Some rawPtrSSA) "ffi.dlsym" dlsymArgs platformWordTy
+
+            // 6. Cast raw pointer (i64) → index → typed function pointer
+            let! ptrToIdxOp = pIndexCastS rawPtrIdxSSA rawPtrSSA platformWordTy TIndex
+
+            let preambleOps = [
+                dlopenDeclOp; dlsymDeclOp;
+                libGetGlobalOp; libExtractOp; libCastOp; modeOp; dlopenCallOp;
+                symGetGlobalOp; symExtractOp; symCastOp; dlsymCallOp; ptrToIdxOp
+            ]
+
+            // ── Dispatch: option return vs direct return ──
+
+            match node.Type with
+            | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "option" || tycon.Name = "voption" ->
+                // OPTION RETURN with dynamic binding
+                do! ensure (ssas.Length >= 22) $"pDynamicExternCallResolved (option): Expected at least 22 SSAs, got {ssas.Length}"
+                let resultSSA    = ssas.[11]
+                let rawRetSSA    = ssas.[12]
+                let nullConstSSA = ssas.[13]
+                let cmpSSA       = ssas.[14]
+                let tagExtSSA    = ssas.[15]
+                let tagViewSSA   = ssas.[16]
+                let tagZeroSSA   = ssas.[17]
+                let payOffsetSSA = ssas.[18]
+                let payViewSSA   = ssas.[19]
+                let payZeroSSA   = ssas.[20]
+                let allocaSSA    = ssas.[21]
+
+                // Marshal arguments (same logic as static extern)
+                let! marshaledArgs =
+                    let rec fold i items = parser {
+                        match items with
+                        | [] -> return []
+                        | (argId, (ssa, ty)) :: rest ->
+                            match ty with
+                            | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
+                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (22 + 11*i)
+                                let! restResult = fold (i + 1) rest
+                                return (ops, v) :: restResult
+                            | TMemRef _ | TMemRefStatic _ | TStruct _ ->
+                                let extractSlot = ssas.[22 + 11*i]
+                                let castSlot = ssas.[22 + 11*i + 1]
+                                let! extractOp = pExtractBasePtr extractSlot ssa ty
+                                let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
+                            | TIndex ->
+                                let castSlot = ssas.[22 + 11*i + 1]
+                                let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
+                            | _ ->
+                                let! restResult = fold (i + 1) rest
+                                return ([], { SSA = ssa; Type = ty }) :: restResult
+                    }
+                    fold 0 argWithIds
+                let marshalOps = marshaledArgs |> List.collect fst
+                let vals = marshaledArgs |> List.map snd
+                let cArgTypes = vals |> List.map (fun v -> v.Type)
+
+                let! internalRetType = pMapType innerTy
+                let cRetType = marshalToCType platformWordTy internalRetType
+                let! optionType = pMapType node.Type
+
+                // IndexToFunc: cast index → typed function pointer for call_indirect
+                let funcTyArgs = cArgTypes
+                let indexToFuncOp = MLIROp.FuncOp (FuncOp.IndexToFunc (funcPtrSSA, rawPtrIdxSSA, funcTyArgs, cRetType))
+
+                // call_indirect through resolved function pointer
+                let! callOp = pFuncCallIndirect (Some rawRetSSA) funcPtrSSA vals cRetType
+
+                // Option construction (same as static path)
+                let optionElemTy = TInt (IntWidth 8)
+                let optionSize = match optionType with TMemRefStatic (n, _) -> n | _ -> 9
+                let! allocaOp = pAllocStatic allocaSSA optionSize optionElemTy None
+                let! nullOp = pConstI nullConstSSA 0L cRetType
+                let! cmpOp = pCmpI cmpSSA ICmpPred.Ne rawRetSSA nullConstSSA cRetType
+                let! extOp = pExtUI tagExtSSA cmpSSA (TInt (IntWidth 1)) (TInt (IntWidth 8))
+                let! tagInsertOps = pTypedInsert allocaSSA tagExtSSA 0 tagViewSSA tagZeroSSA (TInt (IntWidth 8)) optionType
+                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
+
+                let allOps = preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; allocaOp; nullOp; cmpOp; extOp]
+                             @ tagInsertOps @ payInsertOps
+
+                return (allOps, pendingGlobals, TRValue { SSA = allocaSSA; Type = optionType })
+
+            | _ ->
+                // DIRECT RETURN with dynamic binding
+                do! ensure (ssas.Length >= 13) $"pDynamicExternCallResolved: Expected at least 13 SSAs, got {ssas.Length}"
+                let resultSSA = ssas.[11]
+                let returnCastSSA = ssas.[12]
+
+                // Marshal arguments
+                let! marshaledArgs =
+                    let rec fold i items = parser {
+                        match items with
+                        | [] -> return []
+                        | (argId, (ssa, ty)) :: rest ->
+                            match ty with
+                            | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
+                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (13 + 11*i)
+                                let! restResult = fold (i + 1) rest
+                                return (ops, v) :: restResult
+                            | TMemRef _ | TMemRefStatic _ | TStruct _ ->
+                                let extractSlot = ssas.[13 + 11*i]
+                                let castSlot = ssas.[13 + 11*i + 1]
+                                let! extractOp = pExtractBasePtr extractSlot ssa ty
+                                let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
+                            | TIndex ->
+                                let castSlot = ssas.[13 + 11*i + 1]
+                                let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
+                                let! restResult = fold (i + 1) rest
+                                return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
+                            | _ ->
+                                let! restResult = fold (i + 1) rest
+                                return ([], { SSA = ssa; Type = ty }) :: restResult
+                    }
+                    fold 0 argWithIds
+                let marshalOps = marshaledArgs |> List.collect fst
+                let vals = marshaledArgs |> List.map snd
+                let cArgTypes = vals |> List.map (fun v -> v.Type)
+
+                let! internalRetType = pMapType node.Type
+                let cRetType = marshalToCType platformWordTy internalRetType
+
+                // IndexToFunc: cast index → typed function pointer for call_indirect
+                let funcTyArgs = cArgTypes
+                let indexToFuncOp = MLIROp.FuncOp (FuncOp.IndexToFunc (funcPtrSSA, rawPtrIdxSSA, funcTyArgs, cRetType))
+
+                // call_indirect through resolved function pointer
+                let! callOp = pFuncCallIndirect (Some resultSSA) funcPtrSSA vals cRetType
+
+                // Return-side demarshal (same as static path)
+                match internalRetType with
+                | TIndex ->
+                    let! returnCastOp = pIndexCastS returnCastSSA resultSSA platformWordTy TIndex
+                    return (preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; returnCastOp], pendingGlobals, TRValue { SSA = returnCastSSA; Type = TIndex })
+                | _ ->
+                    return (preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp], pendingGlobals, TRValue { SSA = resultSSA; Type = cRetType })
+
+        | _ -> return! fail (Message "Not a dynamic ExternCall")
     }
 
 // ═══════════════════════════════════════════════════════════

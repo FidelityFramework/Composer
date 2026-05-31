@@ -130,6 +130,7 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/StructuralWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/HardwareModuleWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/KernelModuleWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/BindingWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/VarRefWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MutableAssignmentWitness.fs" />
@@ -164,6 +165,10 @@
       <Compile Include="BackEnd/CIRCT/Lowering.fs" />
 
       <Compile Include="BackEnd/CIRCT/Pipeline.fs" />
+
+      <!-- BackEnd - AIE -->
+      <Compile Include="BackEnd/AIE/Lowering.fs" />
+      <Compile Include="BackEnd/AIE/Pipeline.fs" />
 
       <!-- BackEnd - Artifact Verification (closed-loop HDL/constraint consistency) -->
       <Compile Include="BackEnd/ArtifactVerification.fs" />

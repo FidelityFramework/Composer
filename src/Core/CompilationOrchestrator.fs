@@ -221,6 +221,10 @@ let compileProject (options: CompilationOptions) : int =
                                 else
                                     Ok ()
                             | None -> Ok ()
+                        | Xclbin (xclbinPath, instsPath) ->
+                            printfn "Xclbin generated: %s" xclbinPath
+                            printfn "NPU instructions: %s" instsPath
+                            Ok ()
                         | IntermediateOnly fmt ->
                             printfn "Produced %s intermediate" fmt
                             Ok ())))

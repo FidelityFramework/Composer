@@ -198,6 +198,7 @@ type MemRefOp =
     | ReinterpretCastDynamic of SSA * SSA * int * SSA * MLIRType * MLIRType  // result, source, offset, sizeSSA, srcType, destType (dynamic size for memref reconstruction)
     | View of SSA * SSA * SSA * MLIRType * MLIRType                   // result, source, offsetSSA, srcType, destType (different element type: byte buffer → typed view)
     | IndexToMemRef of SSA * SSA * MLIRType                            // result, sourceIndex, destMemRefType (raw pointer → memref for NativePtr.ofNativeInt)
+    | MemRefToIndex of SSA * SSA * MLIRType                            // result, sourceMemRef, srcMemRefType (memref → raw pointer for NativePtr.toNativeInt)
 
 /// Arithmetic dialect operations
 type ArithOp =
@@ -342,6 +343,8 @@ type MLIROp =
     | CombOp of CombOp
     | HWOp of HWOp
     | SeqOp of SeqOp
+    // Raw MLIR text (dialect-opaque: AIE, GPU, etc.)
+    | RawMLIR of string
 
 /// Structured Control Flow (SCF) dialect operations
 and SCFOp =

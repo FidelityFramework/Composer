@@ -60,6 +60,9 @@ module HardwareModuleWitness = Alex.Witnesses.HardwareModuleWitness
 module LazyWitness = Alex.Witnesses.LazyWitness
 module SeqWitness = Alex.Witnesses.SeqWitness
 
+// Priority 6: Accelerator Kernel (NPU)
+module KernelModuleWitness = Alex.Witnesses.KernelModuleWitness
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════
@@ -77,7 +80,8 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
     let conditionalRegister condition np reg =
         if condition then NanopassRegistry.register np reg else reg
 
-    let isCPULike = targetPlatform <> FPGA  // CPU, MCU share memory/mutable semantics
+    let isCPULike = targetPlatform <> FPGA && targetPlatform <> NPU  // CPU, MCU share memory/mutable semantics
+    let isNPU = targetPlatform = NPU
 
     // First register leaf witnesses (literals, arithmetic, memory, etc.)
     // These witnesses don't need sub-graph traversal
@@ -153,15 +157,22 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
             // FPGA-only: HardwareModuleWitness must run BEFORE BindingWitness
             // (both match Binding nodes — HW witness is more specific)
             let hwNanopass =
-                if not isCPULike then
+                if not isCPULike && not isNPU then
                     [ HardwareModuleWitness.createNanopass (fun () -> lazyCombinator.Value) ]
                 else []
 
-            // Insert HW witness before BindingWitness in the leaf list
+            // NPU-only: KernelModuleWitness must run BEFORE BindingWitness
+            // (both match Binding nodes — Kernel witness is more specific)
+            let kernelNanopass =
+                if isNPU then
+                    [ KernelModuleWitness.createNanopass (fun () -> lazyCombinator.Value) ]
+                else []
+
+            // Insert HW/Kernel witness before BindingWitness in the leaf list
             let leaves =
                 leafRegistry.Nanopasses
                 |> List.collect (fun np ->
-                    if np.Name = "Binding" then hwNanopass @ [np]
+                    if np.Name = "Binding" then hwNanopass @ kernelNanopass @ [np]
                     else [np])
 
             // Append scope witnesses (receive combinator thunk for recursion)

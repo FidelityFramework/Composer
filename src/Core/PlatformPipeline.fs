@@ -15,4 +15,4 @@ let resolveBackEnd (targetPlatform: TargetPlatform) : BackEnd =
     | FPGA -> BackEnd.CIRCT.Pipeline.backend
     | CPU | MCU | TargetPlatform.Library -> BackEnd.LLVM.Pipeline.backend
     | GPU -> { Name = "GPU"; Compile = fun _ _ -> Error "GPU backend not yet implemented." }
-    | NPU -> { Name = "NPU"; Compile = fun _ _ -> Error "NPU backend not yet implemented." }
+    | NPU -> BackEnd.AIE.Pipeline.backend
