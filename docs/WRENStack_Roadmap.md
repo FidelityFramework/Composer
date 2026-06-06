@@ -109,7 +109,7 @@ See: Serena memory `mailboxprocessor_first_stage`
 
 ## Feature Inventory by PRD Category
 
-Features are organized by PRD category (see [PRDs/INDEX.md](./PRDs/INDEX.md) for complete mapping):
+Features are organized by PRD category (see [PRDs/README.md](./PRDs/README.md) for complete mapping):
 
 | PRD Category | Features Proven |
 |--------------|-----------------|
@@ -131,8 +131,9 @@ Features are organized by PRD category (see [PRDs/INDEX.md](./PRDs/INDEX.md) for
 | **T-01, T-02** | Threading primitives - Thread/Mutex coeffects |
 | **T-03 to T-05** | **MailboxProcessor - CAPSTONE** |
 | **R-01 to R-03** | Observable/Reactive - event streams |
+| **R-04 to R-06** | **Incremental\<'T\>** - self-adjusting computation (demand-driven change propagation, structural cutoff) |
 
-See: [PRDs/INDEX.md](./PRDs/INDEX.md) for detailed PRD specifications
+See: [PRDs/README.md](./PRDs/README.md) for detailed PRD specifications
 
 ## Dependency Map
 
@@ -218,6 +219,9 @@ See: [PRDs/INDEX.md](./PRDs/INDEX.md) for detailed PRD specifications
 - [ ] **R-01**: Observable foundations - basic event streams
 - [ ] **R-02**: Observable operators - map, filter, merge
 - [ ] **R-03**: Observable integration with Async/Actors
+- [ ] **R-04**: Incremental foundations - applicative dependency DAG, height-ordered stabilization, structural cutoff (CPU)
+- [ ] **R-05**: Incremental dynamism - bind/monadic subgraphs, dynamic height
+- [ ] **R-06**: Incremental integration - actor mapping, demand/Prospero, Observable fusion, hardware-target lowering (architectural)
 
 ### Phase H: WRENStack Template
 - [ ] Working WrenHello demonstration with actor backend
@@ -246,7 +250,7 @@ See: [PRDs/INDEX.md](./PRDs/INDEX.md) for detailed PRD specifications
 ## Related Documentation
 
 **PRDs** (authoritative feature specifications):
-- [PRDs/INDEX.md](./PRDs/INDEX.md) - Master PRD index with dependency graph
+- [PRDs/README.md](./PRDs/README.md) - Master PRD index with dependency graph
 
 **Architecture**:
 - [Architecture_Canonical.md](./Architecture_Canonical.md) - Two-layer CCS/Alex model

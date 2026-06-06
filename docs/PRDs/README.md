@@ -14,7 +14,7 @@
 | **I-xx** | IO | Sockets, WebSocket | I-01 to I-02 |
 | **D-xx** | Desktop | GTK, WebView | D-01 to D-02 |
 | **T-xx** | Threading | Threads, Mutex, Actors | T-01 to T-05 |
-| **R-xx** | Reactive | Observable, Rx operators | R-01 to R-03 |
+| **R-xx** | Reactive | Observable, Rx operators, Incremental | R-01 to R-06 |
 | **E-xx** | Embedded | USB, RTOS, LVGL | Future |
 
 ---
@@ -108,6 +108,9 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 | [R-01](R-01-ObservableFoundations.md) | Observable Foundations | 32 | Planned |
 | [R-02](R-02-ObservableOperators.md) | Observable Operators | 33 | Planned |
 | [R-03](R-03-ObservableIntegration.md) | Observable Integration | 34 | Planned |
+| [R-04](R-04-IncrementalFoundations.md) | Incremental Foundations | 35 | Planned |
+| [R-05](R-05-IncrementalDynamism.md) | Incremental Dynamism | 36 | Planned |
+| [R-06](R-06-IncrementalIntegration.md) | Incremental Integration | 37 | Planned |
 
 ### Embedded (E-xx) - MCU & Unikernel
 
@@ -162,11 +165,14 @@ Foundation (F-01 to F-10)
             │       ├── T-04 ActorReply ← T-03
             │       └── T-05 ParallelActors ← T-04
             │
-            └── Reactive (R-01 to R-03)
+            └── Reactive (R-01 to R-06)
                     │
                     ├── R-01 ObservableFoundations ← C-01, A-02
                     ├── R-02 ObservableOperators ← R-01, C-07
-                    └── R-03 ObservableIntegration ← R-02, T-03
+                    ├── R-03 ObservableIntegration ← R-02, T-03
+                    ├── R-04 IncrementalFoundations ← C-05, R-01, F-10
+                    ├── R-05 IncrementalDynamism ← R-04
+                    └── R-06 IncrementalIntegration ← R-05, R-03, T-03
 ```
 
 ---
