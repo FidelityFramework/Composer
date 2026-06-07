@@ -1,4 +1,4 @@
-# Composer: F# Native Compiler
+# Composer: Clef Compiler
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](Commercial.md)
@@ -10,7 +10,7 @@
 <em>Early development (Feb 2026: 3/16 samples working). Not production-ready.</em>
 </p>
 
-Ahead-of-time F# compiler producing native executables without managed runtime or garbage collection. Leverages [F# Native Compiler Services (CCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
+Ahead-of-time Clef compiler producing native executables without managed runtime or garbage collection. Leverages [Clef Compiler Services (CCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
 
 ## Current Status (February 2026)
 
@@ -34,12 +34,12 @@ See: `docs/PRDs/README.md` for full feature roadmap and status.
 
 ## Architecture
 
-Composer implements a true nanopass compiler architecture with ~25 distinct passes from F# source to native binary. Each pass performs a single, well-defined transformation on an intermediate representation.
+Composer implements a true nanopass compiler architecture with ~25 distinct passes from Clef source to native binary. Each pass performs a single, well-defined transformation on an intermediate representation.
 
 ### Nanopass Pipeline
 
 ```
-F# Source
+Clef Source
     ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ CCS (6 phases)                                             │
@@ -63,7 +63,7 @@ F# Source
 │ - BindingWitness: let bindings, mutable variables          │
 │ - LambdaWitness: function definitions                        │
 │ - OptionWitness, LazyWitness, SeqWitness: type constructors │
-│ - 9 additional witnesses for F# coverage                    │
+│ - 9 additional witnesses for Clef coverage                    │
 └─────────────────────────────────────────────────────────────┘
     ↓ Portable MLIR (memref, arith, func, index, scf)
 ┌─────────────────────────────────────────────────────────────┐
@@ -343,7 +343,7 @@ See: Serena memory `managed_mutability_feb2026_milestone` for complete details.
 Areas of interest:
 - MLIR dialect design for novel hardware targets
 - Memory optimization patterns (escape analysis, loop unrolling)
-- Nanopass transformations for advanced F# features
+- Nanopass transformations for advanced Clef features
 - Closure capture and higher-order function support
 - F* integration for proof-carrying code
 
@@ -353,7 +353,7 @@ Dual-licensed under Apache License 2.0 and Commercial License. See [Commercial.m
 
 ## Acknowledgments
 
-- **Don Syme and F# Contributors**: Quotations, active patterns, computation expressions enable self-hosting
+- **Don Syme and Clef Contributors**: Quotations, active patterns, computation expressions enable self-hosting
 - **MLIR Community**: Multi-level IR infrastructure
 - **LLVM Project**: Robust code generation
 - **Nanopass Framework**: Compiler architecture principles
