@@ -1,10 +1,10 @@
 # Farscape Assessment: Maturation Path for January Demo
 
-> **Document Purpose**: This assessment captures the current state of Farscape, identifies gaps blocking the January demo (CMSIS HAL binding generation for STM32L5 unikernel), and provides a prioritized maturation roadmap informed by Composer's architectural learnings.
+> **Document Purpose**: This assessment captures the earlier STM32L5-era state of Farscape before the binding pipeline matured. It remains useful as a historical record of the original CMSIS HAL planning, but it is no longer the current status document for Farscape capability.
 
 ## Executive Summary
 
-Farscape is a C/C++ binding generator that aims to produce Clef interop code from native headers. The architecture is sound: it uses [CppSharp](https://github.com/mono/CppSharp) (built on libclang) for parsing and has a reasonable pipeline from AST to code generation. However, **the core parsing functionality is currently non-functional**: all headers except a hardcoded cJSON.h example return empty declaration lists.
+At the time this assessment was written, Farscape was a C/C++ binding generator that aimed to produce Clef interop code from native headers. The architecture was sound: it used [CppSharp](https://github.com/mono/CppSharp) (built on libclang) for parsing and had a reasonable pipeline from AST to code generation. However, **the core parsing functionality was then non-functional**: all headers except a hardcoded cJSON.h example returned empty declaration lists.
 
 For the January demo goal of compiling Clef code that interfaces with CMSIS HAL on STM32L5, four gaps must be addressed:
 

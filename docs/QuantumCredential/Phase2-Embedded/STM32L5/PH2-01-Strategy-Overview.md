@@ -1,6 +1,8 @@
 # Integrated Demo Strategy: Desktop and Embedded Paths
 
 > **Purpose**: This document synthesizes the architectural requirements for demonstrating the Fidelity framework across two target environments: desktop (WebView-based UI) and embedded (STM32L5 QuantumCredential).
+>
+> **Historical Note**: This reflects the earlier STM32L5 bootstrap path. Farscape has since matured, so treat the NuttX-first discussion here as a pragmatic bridge, not the present-day ceiling for embedded support.
 
 ---
 
@@ -21,8 +23,8 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 | Aspect | What the "Cheat" Provides | What It Defers |
 |--------|---------------------------|----------------|
-| **Mechanism** | NuttX RTOS provides POSIX layer; Alex generates syscalls | Bare-metal CMSIS bindings via Farscape |
-| **Why it works** | NuttX exposes GPIO/ADC/USB as `/dev` character devices | The full quotation-based memory architecture |
+| **Mechanism** | NuttX RTOS provides a POSIX bootstrap layer; Alex generates syscalls | Bare-metal CMSIS bindings via Farscape |
+| **Why it works** | NuttX exposes GPIO/ADC/USB as `/dev` character devices | Direct hardware bindings and quotation-based memory |
 | **Binding surface** | Standard POSIX: `open`, `read`, `write`, `ioctl`, `close` | Hardware-specific register layouts |
 | **Risk level** | MEDIUM - requires NuttX port verification, unfamiliar territory | - |
 
@@ -89,7 +91,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: NuttX acts as a HAL shim. We don't need Farscape to generate CMSIS bindings because NuttX abstracts the hardware into POSIX character devices. This is a significant simplification - at the cost of 30-50KB RTOS overhead.
+**Key Insight**: NuttX acts as a HAL shim when we want the fastest bootstrap path. It is still useful for early bring-up, but Farscape now gives us a credible direct-binding path when we are ready to move closer to the hardware.
 
 ### Embedded QuantumCredential Demo (Bare-Metal Future Path)
 
@@ -195,7 +197,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 **Narrative**: "The same Fidelity compiler that builds desktop apps also targets embedded. We run Clef on an STM32L5, sampling hardware entropy and generating post-quantum credentials."
 
-**Key Shortcut**: NuttX provides POSIX abstraction, avoiding the need for Farscape-generated CMSIS bindings.
+**Key Shortcut**: NuttX provides POSIX abstraction, which is still a valid bootstrap choice. It no longer needs to be justified as a workaround for an unavailable Farscape path.
 
 **Timeline**: Requires NuttX porting, ARM target validation, PQC integration.
 

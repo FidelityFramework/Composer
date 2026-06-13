@@ -2,6 +2,8 @@
 
 This document outlines the vision for demonstrating Clef compiled through the Fidelity framework to hardware targets, covering two fundamentally different deployment models:
 
+> **Historical Note**: This roadmap reflects the earlier STM32L5-centered hardware plan. Farscape has since matured, and the RA6M5 path now carries the primary embedded planning focus.
+
 1. **QuantumCredential (STM32L5)** - True bare-metal unikernel, no OS
 2. **Keystation (Libre Sweet Potato)** - Native Linux application with FidelityUI
 

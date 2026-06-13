@@ -101,7 +101,7 @@ This document provides a comprehensive assessment of the Fidelity ecosystem and 
 
 **Required for Demo Day:**
 - PQC library bindings (Kyber/Dilithium from pq-crystals or liboqs)
-- Could be done manually if Farscape not ready
+- Prefer Farscape-generated bindings; manual fallback is only a contingency
 
 **Future (Post-Demo):**
 - GIR parsing for GTK4 bindings

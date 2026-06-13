@@ -105,7 +105,7 @@ The hardware platforms share identical analog front ends:
 
 This symmetry means the role distinction between credential generator and keystation is purely software-defined. Any device with the entropy circuit can serve as its own certificate authority, a capability exposed through the connected desktop interface for advanced users.
 
-The STM32L5 bare-metal path remains documented in the Phase2_STM32L5 subdirectory. That approach requires the full quotation-based memory architecture with Farscape-generated CMSIS bindings and represents the post-demo development trajectory.
+The STM32L5 bare-metal path remains documented in the Phase2_STM32L5 subdirectory as a historical reference. Farscape has since matured to the point where it can generate usable C and C++ bindings, so the remaining question is where we want to point that capability first.
 
 ## Document Index
 
@@ -127,7 +127,9 @@ The STM32L5 bare-metal path remains documented in the Phase2_STM32L5 subdirector
 
 ### Future Development
 
-**[Phase2_STM32L5/](./Phase2_STM32L5/)** preserves documentation for the bare-metal path: NuttX RTOS integration, Farscape-generated CMSIS bindings, and the complete quotation-based memory architecture operating without an OS layer.
+**[Phase2-Embedded/RA6M5/](./Phase2-Embedded/RA6M5/)** is the active embedded planning track for EK-RA6M5, covering the board-specific hardware, binding surface, entropy pipeline, and bootstrap options.
+
+**[Phase2_STM32L5/](./Phase2_STM32L5/)** preserves the earlier bare-metal path as a reference point: NuttX RTOS integration, Farscape-generated CMSIS bindings, and the complete quotation-based memory architecture operating without an OS layer.
 
 ## Fidelity Components Exercised
 

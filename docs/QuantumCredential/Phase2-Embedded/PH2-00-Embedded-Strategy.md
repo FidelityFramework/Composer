@@ -4,6 +4,16 @@
 
 Phase 2 targets bare-metal embedded platforms for production QuantumCredential devices. The primary target is the **Renesas RA6M5** evaluation kit, with STM32L5 as a secondary option.
 
+## Narrative Guardrails
+
+The documentation should keep three stories visible at the same time:
+
+- YoshiPi proves that Composer can ship a normal, garden-variety Linux app with a screen and ADC-backed hardware I/O.
+- RA6M5 proves that Composer can also drive a production embedded target with a stronger root of trust.
+- FreeRTOS stays an optional bridge, not the headline architecture, so the project does not drift into looking like a specialty DSL demo only.
+
+That balance matters because the platform story is part of the market story.
+
 ---
 
 ## Platform Priority
@@ -120,9 +130,12 @@ The Platform.Bindings pattern applies identically; only the binding implementati
 ```
 Phase2-Embedded/
 ├── PH2-00-Embedded-Strategy.md      ← This document
-├── PH2-01-RA6M5-Platform.md         ← Primary target details
-├── PH2-02-RA6M5-Security.md         ← TrustZone, Crypto Engine
-├── PH2-03-RA6M5-ADC-Bindings.md     ← 12-bit ADC integration
+├── RA6M5/
+│   ├── README.md                    ← RA6M5 track index
+│   ├── PH2-01-Strategy-Overview.md  ← Overall embedded plan
+│   ├── PH2-02-Hardware-Platform.md  ← Board and entropy hardware
+│   ├── PH2-03-Binding-Surface.md    ← FSP and hardware API surface
+│   └── PH2-04-Bootstrap-Options.md  ← FreeRTOS vs direct hardware
 └── STM32L5/                         ← Secondary target (on hold)
     ├── PH2-01-Strategy-Overview.md
     ├── PH2-02-Hardware-Platforms.md
@@ -153,9 +166,9 @@ The Clef application code remains largely unchanged; Platform.Bindings implement
 
 ## STM32L5 Status
 
-The STM32L5 documentation in `STM32L5/` remains valid but is on hold:
+The STM32L5 documentation in `STM32L5/` remains useful as an earlier bootstrap path, but it is no longer the primary planning target:
 
-- **Not abandoned**: The platform analysis and Farscape assessment remain useful
+- **Historical reference**: The platform analysis and Farscape assessment capture the earlier STM32L5 path
 - **Lower priority**: RA6M5's factory-provisioned HUK enables the sovereignty model that STM32L5 cannot match
 - **Different use case**: STM32L5 may suit applications where device-bound identity is not required
 - **Future option**: May revisit for cost-optimized variants or different product tiers
@@ -164,10 +177,10 @@ The STM32L5 documentation in `STM32L5/` remains valid but is on hold:
 
 ## Next Steps
 
-1. **PH2-01-RA6M5-Platform.md**: Document EK-RA6M5 board specifics
-2. **PH2-02-RA6M5-Security.md**: TrustZone partitioning for credential isolation
-3. **PH2-03-RA6M5-ADC-Bindings.md**: Platform.Bindings for FSP ADC driver
-4. Validate avalanche circuit compatibility with RA6M5 ADC input range
+1. **RA6M5/PH2-02-Hardware-Platform.md**: Document the board and entropy circuit
+2. **RA6M5/PH2-03-Binding-Surface.md**: Define the first FSP-backed binding surface
+3. **RA6M5/PH2-04-Bootstrap-Options.md**: Decide whether FreeRTOS buys enough time
+4. Validate avalanche circuit compatibility with RA6M5 ADC sampling
 
 ---
 

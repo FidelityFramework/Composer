@@ -125,14 +125,17 @@ Patent portfolio and technology foundations.
 | Document | Description |
 |----------|-------------|
 | [PH2-00-Embedded-Strategy](Phase2-Embedded/PH2-00-Embedded-Strategy.md) | Platform comparison and strategy |
-| [PH2-01-RA6M5-Platform](Phase2-Embedded/PH2-01-RA6M5-Platform.md) | EK-RA6M5 evaluation kit details |
-| [PH2-02-RA6M5-Security](Phase2-Embedded/PH2-02-RA6M5-Security.md) | TrustZone and Secure Crypto Engine |
+| [RA6M5/README](Phase2-Embedded/RA6M5/README.md) | RA6M5 track index |
+| [RA6M5 Strategy](Phase2-Embedded/RA6M5/PH2-01-Strategy-Overview.md) | Overall embedded plan |
+| [RA6M5 Hardware](Phase2-Embedded/RA6M5/PH2-02-Hardware-Platform.md) | Board and entropy hardware |
+| [RA6M5 Bindings](Phase2-Embedded/RA6M5/PH2-03-Binding-Surface.md) | FSP and hardware API surface |
+| [RA6M5 Bootstrap](Phase2-Embedded/RA6M5/PH2-04-Bootstrap-Options.md) | FreeRTOS vs direct hardware |
 
-**Secondary Target: STM32L5** (on hold)
+**Secondary Target: STM32L5** (on hold, historical reference)
 
 | Document | Description |
 |----------|-------------|
-| [STM32L5 Documentation](Phase2-Embedded/STM32L5/) | Preserved for future reference |
+| [STM32L5 Documentation](Phase2-Embedded/STM32L5/) | Preserved as an earlier bootstrap path |
 
 ---
 
@@ -181,7 +184,7 @@ The hardware (four independent avalanche diodes) implements a mathematical requi
 | **YoshiPi** | 1 | Development/Demo | 4-channel avalanche via MCP3004 ADC |
 | **Desktop Linux** | 1 | Compiler symmetry | Same code, simulated entropy |
 | **Renesas RA6M5** | 2 | Production (primary) | Internal 12-bit ADC, TrustZone |
-| **STM32L5** | 2 | Alternative (on hold) | Direct ADC, no OS |
+| **STM32L5** | 2 | Alternative (on hold) | Direct ADC, earlier bootstrap path |
 
 The same Composer-compiled Clef code runs on all platforms. Only `Platform.Bindings` differ.
 
