@@ -11,7 +11,7 @@ The RA6M5 is the preferred production target because it gives the project a stro
 - Hardware unique key support anchors device identity in silicon.
 - TrustZone separates secure and non-secure workloads.
 - Secure crypto hardware reduces the amount of sensitive software we need to carry.
-- The board has enough headroom to support entropy acquisition, crypto, and workload orchestration together.
+- The board has enough headroom to support sample acquisition, crypto, and workload orchestration together.
 
 ## Architecture Posture
 
@@ -31,10 +31,10 @@ The goal is to get real workloads onto the EK-RA6M5 with as little translation l
 
 That means:
 
-- preserve the entropy circuit semantics in software
+- preserve the sample-pipeline semantics in software
 - expose the device security features as first-class APIs
 - keep the binding layer explicit and auditable
-- avoid forcing the design through an STM32L5-shaped abstraction
+- keep the design aligned with a clean hardware abstraction
 
 ## Immediate Questions
 

@@ -44,7 +44,7 @@ Costs:
 
 Treat FreeRTOS as a bootstrap helper, not as the architectural destination.
 
-If the direct hardware path is already clear enough to support the entropy circuit and the device security functions, prefer that path.
+If the direct hardware path is already clear enough to support the sample front end and the device security functions, prefer that path.
 
 If the team needs a temporary scheduler and a simpler integration ramp, use FreeRTOS narrowly and plan the exit early.
 

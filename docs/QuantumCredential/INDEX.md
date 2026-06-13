@@ -130,6 +130,11 @@ Patent portfolio and technology foundations.
 | [RA6M5 Hardware](Phase2-Embedded/RA6M5/PH2-02-Hardware-Platform.md) | Board and entropy hardware |
 | [RA6M5 Bindings](Phase2-Embedded/RA6M5/PH2-03-Binding-Surface.md) | FSP and hardware API surface |
 | [RA6M5 Bootstrap](Phase2-Embedded/RA6M5/PH2-04-Bootstrap-Options.md) | FreeRTOS vs direct hardware |
+| [RA6M5 Taxonomy](Phase2-Embedded/RA6M5/PH2-05-Taxonomy-and-Farscape-Plan.md) | Thin-branch / leaf binding taxonomy |
+| [RA6M5 Leaf Descriptor](Phase2-Embedded/RA6M5/PH2-06-Leaf-Package-Descriptor.md) | Predictive shape of the board package |
+| [RA6M5 Module Map](Phase2-Embedded/RA6M5/PH2-07-Module-Binding-Map.md) | Precise branch/leaf/adapter module assignment |
+| [RA6M5 Naming Map](Phase2-Embedded/RA6M5/PH2-08-Naming-Conventions-and-Pilot-Map.md) | Canonical names plus Pilot namespace mapping |
+| [RA6M5 Pilot Blueprint](Phase2-Embedded/RA6M5/PH2-09-Pilot-TOML-Blueprint.md) | Draft Pilot TOML for the FSP binding pass |
 
 **Secondary Target: STM32L5** (on hold, historical reference)
 
