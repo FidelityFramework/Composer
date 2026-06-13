@@ -15,15 +15,17 @@ The RA6M5 is the preferred production target because it gives the project a stro
 
 ## Architecture Posture
 
-The RA6M5 path should be treated as a board-specific embedded platform, not as a generic CMSIS exercise.
+The RA6M5 path should be treated as a board-specific embedded platform.
 
 The practical layering is:
 
-1. Clef source and CCS compile the workload.
-2. Composer lowers the workload to native code.
-3. Farscape generates the hardware-facing bindings.
-4. Renesas FSP and board support code provide the operational surface.
-5. FreeRTOS is optional and only used if it speeds up bootstrap.
+1. Renesas FSP and board support code provide the operational surface.
+2. Farscape generates the hardware-facing bindings as a distinct library building step.
+
+3. Clef source and CCS compile the workload.
+4. Composer lowers the workload to native code.
+
+- FreeRTOS is optional and only used if it speeds up bootstrap. 
 
 ## Planning Goal
 
@@ -39,7 +41,7 @@ That means:
 ## Immediate Questions
 
 - Which portions of the workload need direct hardware access on day one?
-- Which parts can sit on top of a minimal runtime layer?
-- What should be modeled as bindings versus compiler intrinsics?
+- Which parts are shared and must have transitive connection between binding layers?
+- What should be modeled as long-lived bindings versus use case/application specific code?
 
 The remaining documents in this directory answer those questions in more detail.
