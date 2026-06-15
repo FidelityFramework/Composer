@@ -10,7 +10,7 @@ The documentation should keep three stories visible at the same time:
 
 - YoshiPi proves that Composer can ship a normal, garden-variety Linux app with a screen and ADC-backed hardware I/O.
 - RA6M5 proves that Composer can also drive a production embedded target with a stronger root of trust.
-- FreeRTOS stays an optional bridge, not the headline architecture, so the project does not drift into looking like a specialty DSL demo only.
+- The headline architecture is a **reactive unikernel** built from Clef-native concurrency lowered to a single core; an RTOS (FreeRTOS or Zephyr) stays an *optional bridge*, not the architecture, so the project does not drift into looking like a specialty DSL demo only.
 
 That balance matters because the platform story is part of the market story.
 
@@ -94,34 +94,71 @@ USB High Speed enables fast credential transfer without the USB Full Speed bottl
 
 ## Development Environment
 
-### Renesas FSP (Flexible Software Package)
+### The Clef-Native Direction
 
-The RA6M5 uses Renesas FSP rather than STM32's HAL. FSP provides:
+The RA6M5 track follows the same **direct register emission** model already proven by the STM32L5 standing-art samples (`samples/embedded/stm32l5-blinky/STM32L5.fs`, `samples/embedded/stm32l5-uart/STM32L5.UART.fs`): hand-written Clef defining register bases/offsets (RCC/GPIO MODER/BSRR/ODR) and using `Ptr.read<uint32>` / `Ptr.write` (Alloy.Memory) with type-safe enums. There is **no binding to a vendor HAL** and **no linking against vendor driver objects** — Clef lowers to the memory-mapped register layer (CMSIS) directly.
 
-- Hardware abstraction layer
-- Driver modules for all peripherals
-- Security driver for TrustZone and Crypto Engine
-- Integration with e2 studio IDE
+The layered architecture, top to bottom:
 
-### Zephyr RTOS Support
+```
+QuantumCredential application (Clef, reactive)
+        │
+Vendor port library (Clef, thin)   Fidelity.Platform.MCU.Renesas.RA6M5  /  ...ST.STM32L5
+   (clock/PLL, pin mux, peripheral config sequences, vector wiring)
+        │  uses
+Unified CMSIS HAL (Clef-native)    CMSIS-Core: NVIC / SysTick / SCB  +  register-poke primitives
+   (shared across all ARM Cortex-M; per-device register defs beneath, derivable from each vendor SVD)
+        │  lowers via
+Quotation-based memory → direct register emission
+   (Ptr.read / Ptr.write ; <@ { Region = Peripheral; Access = WriteOnly; Volatile } @>)
+        │
+Memory-mapped registers → single-core silicon
+```
 
-The RA6M5 has [first-class Zephyr RTOS support](https://docs.zephyrproject.org/latest/boards/renesas/ek_ra6m5/doc/index.html), providing an alternative to bare-metal or NuttX approaches.
+The "Unified CMSIS HAL" is a **Clef-native register layer**, not a binding to ARM's CMSIS C headers: CMSIS-Core (NVIC/SysTick/SCB) is genuinely common across all Cortex-M, while the per-device register addresses/bitfields are the reusable per-device substrate (derivable from each vendor's SVD). This matures the MCU story across the board — every Cortex-M target shares the same register layer and reactive runtime, not just the RA6M5 credential device.
+
+### Renesas FSP as a Ported Reference (not a binding target)
+
+Renesas FSP is an **imperative driver framework layered over CMSIS**. It is mined as a *roadmap* for higher-level concerns — never bound to, never linked against. We **port** FSP's domain knowledge into clean Clef-native code that lowers to CMSIS:
+
+- **Keep** — per-peripheral module decomposition, the catalogue of config knobs, lifecycle stages, datasheet-aligned vocabulary, and the `Fidelity.Platform.MCU.Renesas.RA…` namespace taxonomy (hand-authored, not generated from FSP).
+- **Reimplement over the Clef CMSIS HAL** — clock/PLL/CGC bring-up, pin mux (PFS as Clef data), per-peripheral register config/enable sequences, and NVIC/vector setup dispatched into Clef concurrency.
+- **Discard** — the `*_api_t` vtable / `_instance_t` / `_ctrl_t` / `_cfg_t` quartet, configurator codegen, RTOS glue, global ctrl handles, error-code + out-param style, manual init ordering, and callback function pointers.
+
+The principle is **keep the map, redraw the roads.** This is the **PORT** mode of Transcribe (agent-driven Clef-native reimplementation), distinct from the **BIND** mode used for large, well-factored C libraries (e.g. a USB device stack, or LVGL on display-equipped targets), ingested via the Farscape membrane → Clef binding + Alex lowering witness pairs. (The RA6M5 is a headless USB key with status LEDs; a phone provides its display surface over USB — see [D-02-Mobile-Companion](../Demo/D-02-Mobile-Companion.md).)
+
+### Reactive Runtime (replaces RTOS + callbacks)
+
+Concurrency is native to Clef and lowered to a single-core unikernel:
+
+- **Peripheral IRQ → `Observable`** (opaque push event source) instead of an ISR callback.
+- **Controller/credential state + derived outputs → `Incremental`** (demand-driven, cutoff-bounded, self-adjusting).
+- The model **normatively mandates Observable→Incremental fusion**: the PSG observer edge becomes the incremental staleness edge — no callback indirection, no heap bridge, no materialized subscription.
+- **`Async` → LLVM coroutine intrinsics** (compile-time state machines, *no runtime library*) — freestanding/unikernel-perfect.
+- **Subscriptions are region-scoped** (deterministic teardown with the arena; no GC/`IDisposable`).
+- The **unikernel scheduler *is* the Incremental stabilization loop.** Single-core is the ideal substrate for first standing this up.
+
+> **Forcing-function reality.** This reactive/concurrency model (Observable/Incremental/Actor Olivier-Prospero/Async/Signals/coeffects/BAREWire) is richly *specified* but largely *unimplemented* as CCS intrinsics today (NTUKind has only NTUlazy/NTUseq; IntrinsicModule registers Arena only; Alex has no actor/async/incremental witnesses). This MCU work is therefore the **forcing function** that first stands these intrinsics up — and single-core is the right place to do it.
+
+### RTOS / Zephyr as an Optional Bridge
+
+The RA6M5 has [first-class Zephyr RTOS support](https://docs.zephyrproject.org/latest/boards/renesas/ek_ra6m5/doc/index.html), and FreeRTOS remains available as a fallback bootstrap. These stay **optional bridges**, not the architecture: the headline path is the reactive unikernel. The current minimal C startup is salvageable as-is, but its vector table referencing FreeRTOS port symbols (`vPortSVCHandler` etc.) is a *separable* FreeRTOS coupling to be removed.
 
 ### Composer Integration Path
 
 ```
 Clef Source + CCS
        ↓
-   Composer/Alex
+   Composer/Alex   (Zipper + XParsec + Platform.Bindings)
        ↓
    MLIR (ARM Cortex-M33 target)
        ↓
    LLVM
        ↓
-   ELF Binary (linked with FSP drivers)
+   ELF Binary (Clef-native register emission + minimal C startup; no vendor driver linkage)
 ```
 
-The Platform.Bindings pattern applies identically; only the binding implementations differ.
+The Platform.Bindings pattern applies identically across targets (registered by `(OS, Arch, EntryPoint)`); only the per-device register definitions and config sequences differ.
 
 ---
 
@@ -134,14 +171,16 @@ Phase2-Embedded/
 │   ├── README.md                    ← RA6M5 track index
 │   ├── PH2-01-Strategy-Overview.md  ← Overall embedded plan
 │   ├── PH2-02-Hardware-Platform.md  ← Board and entropy hardware
-│   ├── PH2-03-Binding-Surface.md    ← FSP and hardware API surface
-│   └── PH2-04-Bootstrap-Options.md  ← FreeRTOS vs direct hardware
+│   ├── PH2-03-Binding-Surface.md    ← Clef-native CMSIS register surface
+│   └── PH2-04-Bootstrap-Options.md  ← Reactive unikernel vs RTOS bridge
 └── STM32L5/                         ← Secondary target (on hold)
     ├── PH2-01-Strategy-Overview.md
     ├── PH2-02-Hardware-Platforms.md
     ├── PH2-03-Farscape-Assessment.md
     └── PH2-04-UI-Options.md
 ```
+
+> The RA6M5 track now follows the **Clef-native CMSIS-HAL + reactive direction** described above: direct register emission (mirroring the STM32L5 standing art), FSP *ported* (not bound), concurrency expressed natively in Clef and lowered to a single-core reactive unikernel. The RA6M5 documents are being updated in place to preserve their lineage of thinking — the hardware/security content (Cortex-M33, HUK, TrustZone, SCE9, ADC) is architecture-neutral and carries forward unchanged.
 
 ---
 
@@ -178,9 +217,20 @@ The STM32L5 documentation in `STM32L5/` remains useful as an earlier bootstrap p
 ## Next Steps
 
 1. **RA6M5/PH2-02-Hardware-Platform.md**: Document the board and entropy circuit
-2. **RA6M5/PH2-03-Binding-Surface.md**: Define the first FSP-backed binding surface
-3. **RA6M5/PH2-04-Bootstrap-Options.md**: Decide whether FreeRTOS buys enough time
+2. **RA6M5/PH2-03-Binding-Surface.md**: Define the first Clef-native CMSIS register surface (extend the STM32L5 standing-art pattern to RA6M5; factor out unified CMSIS-Core)
+3. **RA6M5/PH2-04-Bootstrap-Options.md**: Frame the reactive unikernel as the headline path, with RTOS (FreeRTOS/Zephyr) as the optional bridge
 4. Validate avalanche circuit compatibility with RA6M5 ADC sampling
+
+### Open Questions (carried, not resolved here)
+
+These remain open for the RA6M5 track and its sibling design docs:
+
+1. **ISR / vector boundary** — hardware vectors carry no `void*` userdata, so the LVGL-style closure-via-userdata bridge does not transfer; ISR → `Observable` likely needs a captureless top-level handler bound to the vector slot, with peripheral state via the register HAL. Currently unspecified.
+2. **Secure world (SCE9 / HUK / TrustZone-M)** — HUK is reachable only via the SCE9 private bus, so pure register-poking may be insufficient; likely needs a thin secure-world call surface (central to the device's sovereignty premise).
+3. **Bind/port seam** — the exact line between the unified CMSIS HAL and the per-vendor port library.
+4. **Farscape's revised Renesas role** — ingesting the Renesas SVD/CMSIS-Device for register address/bitfield constants (not FSP headers), vs hand-authored constants.
+5. **Unikernel scheduler** — cooperative event loop (Incremental stabilization) vs preemption; cooperative is the likely fit for a single core.
+6. **Transcribe PORT-as-mode** — confirming PORT lands as a mode of Transcribe alongside BIND.
 
 ---
 

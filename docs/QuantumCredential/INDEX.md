@@ -88,7 +88,7 @@ The YoshiPi demonstration that visualizes entropy quality in real-time.
 | Document | Description |
 |----------|-------------|
 | [D-01-Demo-Strategy](Demo/D-01-Demo-Strategy.md) | Overall demonstration approach |
-| [D-02-Touch-Display-UI](Demo/D-02-Touch-Display-UI.md) | WREN-stack UI on touchscreen |
+| [D-02-Mobile-Companion](Demo/D-02-Mobile-Companion.md) | Phone-as-display companion app (USB; air-gapped credential exchange) |
 | [D-03-Entropy-Visualization](Demo/D-03-Entropy-Visualization.md) | Real-time epsilon and entropy display |
 
 ### P-xx: Performance
@@ -128,13 +128,13 @@ Patent portfolio and technology foundations.
 | [RA6M5/README](Phase2-Embedded/RA6M5/README.md) | RA6M5 track index |
 | [RA6M5 Strategy](Phase2-Embedded/RA6M5/PH2-01-Strategy-Overview.md) | Overall embedded plan |
 | [RA6M5 Hardware](Phase2-Embedded/RA6M5/PH2-02-Hardware-Platform.md) | Board and entropy hardware |
-| [RA6M5 Bindings](Phase2-Embedded/RA6M5/PH2-03-Binding-Surface.md) | FSP and hardware API surface |
-| [RA6M5 Bootstrap](Phase2-Embedded/RA6M5/PH2-04-Bootstrap-Options.md) | FreeRTOS vs direct hardware |
-| [RA6M5 Taxonomy](Phase2-Embedded/RA6M5/PH2-05-Taxonomy-and-Farscape-Plan.md) | Thin-branch / leaf binding taxonomy |
+| [RA6M5 Bindings](Phase2-Embedded/RA6M5/PH2-03-Binding-Surface.md) | Clef-native CMSIS register / hardware API surface |
+| [RA6M5 Bootstrap](Phase2-Embedded/RA6M5/PH2-04-Bootstrap-Options.md) | Reactive unikernel vs RTOS bridge |
+| [RA6M5 Taxonomy](Phase2-Embedded/RA6M5/PH2-05-Taxonomy-and-Farscape-Plan.md) | Port taxonomy (keep/reimplement/discard) + Farscape SVD role |
 | [RA6M5 Leaf Descriptor](Phase2-Embedded/RA6M5/PH2-06-Leaf-Package-Descriptor.md) | Predictive shape of the board package |
 | [RA6M5 Module Map](Phase2-Embedded/RA6M5/PH2-07-Module-Binding-Map.md) | Precise branch/leaf/adapter module assignment |
 | [RA6M5 Naming Map](Phase2-Embedded/RA6M5/PH2-08-Naming-Conventions-and-Pilot-Map.md) | Canonical names plus Pilot namespace mapping |
-| [RA6M5 Pilot Blueprint](Phase2-Embedded/RA6M5/PH2-09-Pilot-TOML-Blueprint.md) | Draft Pilot TOML for the FSP binding pass |
+| [RA6M5 Pilot Blueprint](Phase2-Embedded/RA6M5/PH2-09-Pilot-TOML-Blueprint.md) | Draft Pilot TOML for SVD / register-constant ingestion |
 
 **Secondary Target: STM32L5** (on hold, historical reference)
 
