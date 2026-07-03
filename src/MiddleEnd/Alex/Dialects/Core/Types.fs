@@ -154,16 +154,6 @@ type IndexCmpPred =
 // MEMORY ORDERING AND VISIBILITY
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Atomic ordering for memory operations (LLVM atomic semantics)
-type AtomicOrdering =
-    | NotAtomic                     // Non-atomic operation
-    | Unordered                     // Lowest level of atomicity
-    | Monotonic                     // Acquire/release semantics
-    | Acquire                       // Acquire barrier
-    | Release                       // Release barrier
-    | AcquireRelease                // Both acquire and release
-    | SequentiallyConsistent        // Strongest ordering
-
 /// Function visibility for external linking
 type FuncVisibility =
     | Public                        // Visible to all modules
