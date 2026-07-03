@@ -33,9 +33,20 @@ let compileToNative
     try
         let objPath = Path.ChangeExtension(llvmPath, ".o")
 
-        // Step 1: llc to compile LLVM IR to object file
-        // Note: -mcpu=native auto-detects host CPU features (AVX2, etc.) for SIMD optimization
-        let llcArgs = sprintf "-mcpu=native -O0 -filetype=obj %s -o %s" llvmPath objPath
+        // A target is "host" when it matches the machine we're running on. Only then
+        // is -mcpu=native meaningful; for a cross target (e.g. thumbv8m Cortex-M) it is
+        // both wrong and rejected by llc, so we drive codegen from the triple instead.
+        let isHostTarget = (targetTriple = getDefaultTarget())
+
+        // Step 1: llc to compile LLVM IR to object file.
+        // Host: -mcpu=native auto-detects host CPU features (AVX2, etc.) for SIMD.
+        // Cross: pass the triple via -mtriple and let it select a safe default CPU;
+        //        a specific -mcpu (e.g. cortex-m33) can be layered in later once the
+        //        platform tuple carries it.
+        let llcTargetArgs =
+            if isHostTarget then "-mcpu=native"
+            else sprintf "-mtriple=%s" targetTriple
+        let llcArgs = sprintf "%s -O0 -filetype=obj %s -o %s" llcTargetArgs llvmPath objPath
         let llcProcess = new System.Diagnostics.Process()
         llcProcess.StartInfo.FileName <- "llc"
         llcProcess.StartInfo.Arguments <- llcArgs
@@ -56,6 +67,13 @@ let compileToNative
                 |> List.map (sprintf "-l%s")
                 |> String.concat " "
 
+            // For a cross target, tell clang which target to link for. Empty for the
+            // host so the hosted link stays byte-identical to prior behavior. (Note:
+            // a bare-metal cross link also needs lld + a linker script; that is Phase 1
+            // and not wired here — this Phase 0 change only makes the triple reach the
+            // tools so thumbv8m round-trips through llc/clang.)
+            let clangTarget = if isHostTarget then "" else sprintf "-target %s " targetTriple
+
             let clangArgs =
                 match deploymentMode with
                 | Console ->
@@ -68,13 +86,13 @@ let compileToNative
                     // they are loaded at runtime via dlopen/dlsym in the emitted MLIR.
                     // Only statically-linked system libraries (libc, libdl) appear as -l flags.
                     let libs = if externLibraries.IsEmpty then "-lc" else "-lc " + libraryFlags
-                    sprintf "-O0 -no-pie -rdynamic %s -o %s %s" objPath outputPath libs
+                    sprintf "%s-O0 -no-pie -rdynamic %s -o %s %s" clangTarget objPath outputPath libs
                 | Freestanding | Embedded ->
                     // Use _start as entry point - it handles argc/argv and calls exit syscall
-                    sprintf "-O0 %s -o %s -nostdlib -static -ffreestanding -Wl,-e,_start" objPath outputPath
+                    sprintf "%s-O0 %s -o %s -nostdlib -static -ffreestanding -Wl,-e,_start" clangTarget objPath outputPath
                 | Library ->
                     let libs = if externLibraries.IsEmpty then "" else " " + libraryFlags
-                    sprintf "-O0 -shared %s -o %s%s" objPath outputPath libs
+                    sprintf "%s-O0 -shared %s -o %s%s" clangTarget objPath outputPath libs
 
             let clangProcess = new System.Diagnostics.Process()
             clangProcess.StartInfo.FileName <- "clang"
