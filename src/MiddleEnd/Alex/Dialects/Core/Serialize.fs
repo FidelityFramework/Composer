@@ -478,9 +478,6 @@ let rec opToString (op: MLIROp) : string =
                     let bvStr = bvs |> List.map (fun bv -> sprintf "%d:%d:%d" bv.ParamIndex bv.SizeBytes bv.AlignBytes) |> String.concat ","
                     sprintf " attributes {ffi.byval = \"%s\"}" bvStr
             sprintf "func.func private @%s(%s) -> %s%s" name paramsStr (typeToString retTy) attrsStr
-        | ExternDecl (name, paramTypes, retTy) ->
-            let paramsStr = paramTypes |> List.map typeToString |> String.concat ", "
-            sprintf "func.func private @%s(%s) -> %s" name paramsStr (typeToString retTy)
         | FuncCall (resultOpt, funcName, args, retTy) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString v.Type) |> String.concat ", "

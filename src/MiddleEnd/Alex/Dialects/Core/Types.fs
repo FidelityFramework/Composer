@@ -361,7 +361,6 @@ and FuncOp =
     // Function definition/declaration
     | FuncDef of string * (SSA * MLIRType) list * MLIRType * MLIROp list * FuncVisibility  // name, args, retType, body, visibility
     | FuncDecl of string * MLIRType list * MLIRType * FuncVisibility * ByvalParam list     // name, paramTypes, retType, visibility, byvalParams (external decl)
-    | ExternDecl of string * MLIRType list * MLIRType                                      // name, paramTypes, retType (backward compat)
     // Function calls
     | FuncCall of SSA option * string * Val list * MLIRType                                // result, func, args, retType
     | FuncCallIndirect of SSA option * SSA * Val list * MLIRType                           // result, callee, args, retType
