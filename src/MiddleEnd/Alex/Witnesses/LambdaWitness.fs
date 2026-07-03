@@ -653,8 +653,3 @@ let createNanopass (getCombinator: unit -> (WitnessContext -> SemanticNode -> Wi
     Witness = witnessLambdaWith getCombinator
 }
 
-/// Placeholder nanopass export - will be replaced by createNanopass call in registry
-let nanopass : Nanopass = {
-    Name = "Lambda"
-    Witness = fun _ _ -> WitnessOutput.error "Lambda nanopass not properly initialized - use createNanopass with Y-combinator"
-}
