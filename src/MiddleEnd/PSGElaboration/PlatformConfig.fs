@@ -159,18 +159,6 @@ let lookupBinding (nodeId: int) (result: PlatformResolutionResult) : BindingReso
 let hasBinding (nodeId: int) (result: PlatformResolutionResult) : bool =
     Map.containsKey nodeId result.Bindings
 
-/// Create an empty resolution result
-let empty (mode: RuntimeMode) (os: OSFamily) (arch: Architecture) : PlatformResolutionResult =
-    {
-        RuntimeMode = mode
-        TargetOS = os
-        TargetArch = arch
-        PlatformWordType = platformWordType arch
-        Bindings = Map.empty
-        ExternLibraries = Set.empty
-        NeedsStartWrapper = (mode = Freestanding)
-    }
-
 /// Resolve OS and architecture from PlatformContext.
 /// Uses PlatformId to determine OS/arch. The PlatformId now comes from
 /// binding metadata (arch field) when available, or path-string inference for legacy.
@@ -204,15 +192,3 @@ let resolveRuntimeMode
         | Core.Types.Dialects.DeploymentMode.Library -> Console
         | Core.Types.Dialects.DeploymentMode.Embedded -> Freestanding
 
-/// Build PlatformResolutionResult from CCS PlatformContext
-let fromPlatformContext (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext) (mode: RuntimeMode) : PlatformResolutionResult =
-    let (os, arch) = resolveOSArch ctx
-    {
-        TargetOS = os
-        TargetArch = arch
-        RuntimeMode = mode
-        PlatformWordType = platformWordType arch
-        Bindings = Map.empty
-        ExternLibraries = Set.empty
-        NeedsStartWrapper = (mode = Freestanding)
-    }
