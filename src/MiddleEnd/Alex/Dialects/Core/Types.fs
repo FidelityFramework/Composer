@@ -158,7 +158,6 @@ type IndexCmpPred =
 type FuncVisibility =
     | Public                        // Visible to all modules
     | Private                       // Visible only within module
-    | Internal                      // Visible within compilation unit
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MLIR OPERATIONS (for type-safe MLIR construction)
