@@ -1,9 +1,9 @@
-/// StringIntrinsicWitness - Witness String/NativeStr intrinsic operations
+/// StringIntrinsicWitness - Witness String intrinsic operations
 ///
 /// Composes per-operation parsers with <|> — no dispatch hub.
 /// Each parser self-checks via pIntrinsicApplication + ensure.
 ///
-/// NANOPASS: Handles String.* and NativeStr.* intrinsic applications.
+/// NANOPASS: Handles String.* intrinsic applications.
 module Alex.Witnesses.StringIntrinsicWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
@@ -17,7 +17,7 @@ let private witnessStringIntrinsic (ctx: WitnessContext) (node: SemanticNode) : 
     let combined =
         pStringLengthIntrinsic <|> pStringCharAtIntrinsic
         <|> pStringConcat2Intrinsic <|> pStringContainsIntrinsic
-        <|> pNativeStrFromPointerIntrinsic <|> pStringFromBytesIntrinsic
+        <|> pStringFromBytesIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
     | None -> WitnessOutput.skip

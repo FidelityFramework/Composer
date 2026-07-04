@@ -447,12 +447,12 @@ let memrefOpToString (op: MemRefOp) : string =
             (ssaToString result) (ssaToString source) (ssaToString offsetSSA) (typeToString srcType) (typeToString destType)
     | MemRefOp.IndexToMemRef (result, source, destType) ->
         // builtin.unrealized_conversion_cast: FFI boundary crossing (raw pointer → memref)
-        // NativePtr.ofNativeInt: index (platform pointer) → memref for typed access
+        // Internal index→memref seam (platform pointer as index → memref for typed access)
         sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s"
             (ssaToString result) (ssaToString source) (typeToString destType)
     | MemRefOp.MemRefToIndex (result, source, srcType) ->
         // builtin.unrealized_conversion_cast: memref → raw pointer (index)
-        // NativePtr.toNativeInt: memref (stack alloc) → index for FFI boundary crossing
+        // Internal memref→index seam (stack alloc → index for FFI boundary crossing)
         sprintf "%s = builtin.unrealized_conversion_cast %s : %s to index"
             (ssaToString result) (ssaToString source) (typeToString srcType)
 

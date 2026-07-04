@@ -208,32 +208,6 @@ multiplication table 3x3:
 """
 
 # =============================================================================
-# Sample 10b: Arena Memory Management (DMM Infrastructure)
-# Arena allocation, byref threading, NativePtr read/write
-# =============================================================================
-[[samples]]
-name = "10b_PointerOps"
-project = "PointerOps.fidproj"
-binary = "targets/pointerops"
-expected_output = """
-=== Arena Memory Test ===
---- Basic Allocation ---
-alloc and read: 42
-
---- Arena Threading ---
-a=10, b=20, c=30
-
---- Arena Mutation ---
-initial: 0
-after +1: 1
-after +10: 11
-
---- Independent Values ---
-x=100, y=200
-after x=999: x=999, y=200
-"""
-
-# =============================================================================
 # Sample 11: Closures
 # Lambdas, captured variables, arena-allocated state
 # =============================================================================

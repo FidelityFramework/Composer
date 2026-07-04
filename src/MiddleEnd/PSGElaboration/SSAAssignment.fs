@@ -619,23 +619,11 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 | IntrinsicModule.Bits, "htonl" | IntrinsicModule.Bits, "ntohl" -> 2  // byte swap uint32
                 | IntrinsicModule.Bits, _ -> 1             // bitcast operations
 
-                // NativePtr operations (direct pointer access — not transformed by Baker)
-                | IntrinsicModule.NativePtr, "stackalloc" -> 1   // alloca result
-                | IntrinsicModule.NativePtr, "toNativeInt" -> 1  // memref → index (unrealized_conversion_cast or no-op)
-                | IntrinsicModule.NativePtr, "ofNativeInt" -> 2  // unrealized_conversion_cast
-                | IntrinsicModule.NativePtr, "set" -> 3          // potential index→memref cast + index_cast + store
-                | IntrinsicModule.NativePtr, "get" -> 3          // potential index→memref cast + index_cast + load
-                | IntrinsicModule.NativePtr, "read" -> 3         // potential index→memref cast + index zero + load
-                | IntrinsicModule.NativePtr, "write" -> 3        // potential index→memref cast + index zero + store
-                | IntrinsicModule.NativePtr, "add" -> 1          // index arithmetic
-                | IntrinsicModule.NativePtr, op ->
-                    failwith $"SSAAssignment: Unhandled NativePtr operation '{op}' at node {NodeId.value node.Id}. Add an explicit SSA cost."
-
                 // NativeDefault.zeroed — FidelityExtern placeholder body (unreachable at runtime)
                 | IntrinsicModule.NativeDefault, _ -> 1
 
                 // MemRef operations (MLIR memref semantics)
-                // Baker has transformed NativePtr → MemRef, these are the target operations
+                // MemRef ops are Baker's synthesized internal memory vocabulary
                 | IntrinsicModule.MemRef, "alloca" -> 1  // result memref only
                 | IntrinsicModule.MemRef, "load" -> 2    // potential index→memref cast + load result
                 | IntrinsicModule.MemRef, "store" -> 2   // potential index→memref cast + unit result

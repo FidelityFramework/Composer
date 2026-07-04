@@ -73,10 +73,10 @@ let pStringFromBuffer (nodeId: NodeId) (bufferSSA: SSA) (bufferType: MLIRType) :
         return ([castOp], TRValue { SSA = resultSSA; Type = stringType })
     }
 
-/// Create substring from buffer pointer and length (CCS NativeStr.fromPointer contract)
+/// Create substring from buffer pointer and length (buffer+length substring contract)
 /// CCS contract (Intrinsics.fs:372): "creates a new memref<?xi8> with specified length"
 /// This is NOT a cast - it's a substring extraction via allocate + memcpy.
-/// When srcOffset is Some, the source pointer is adjusted by adding the offset (for NativePtr.add fusion).
+/// When srcOffset is Some, the source pointer is adjusted by adding the offset (MemRef.add fusion).
 /// SSA extracted from coeffects via nodeId (7 minimum, 8 when srcOffset provided):
 ///   [0] = resultBufferSSA (allocated memref<?xi8> with actual length)
 ///   [1] = srcPtrSSA (extract pointer from source buffer)
@@ -112,7 +112,7 @@ let pStringFromPointerWithLength (nodeId: NodeId) (bufferSSA: SSA) (lengthSSA: S
         let! extractDestPtr = pExtractBasePtr destPtrSSA resultBufferSSA resultTy
 
         // 2b. If srcOffset provided, adjust source pointer: adjusted = base_ptr + offset
-        // This handles NativePtr.add(buf, startPos) where we need to copy from buf[startPos]
+        // This handles MemRef.add(buf, startPos) where we need to copy from buf[startPos]
         let (effectiveSrcPtrSSA, adjustOps) =
             match srcOffset with
             | Some offsetSSA ->
@@ -456,29 +456,6 @@ let pStringContainsIntrinsic : PSGParser<MLIROp list * TransferResult> =
         return! pStringContains node.Id stringSSA charSSA charType stringType
     }
 
-/// NativeStr.fromPointer intrinsic — substring via allocate + memcpy
-/// Uses pDetectMemRefAddFusion on buffer arg for NativePtr.add fusion
-/// Uses pRecallArgWithLoad on length arg for TMemRef auto-load
-let pNativeStrFromPointerIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativeStr
-        do! ensure (info.Operation = "fromPointer") "Not NativeStr.fromPointer"
-        do! ensure (argIds.Length >= 2) "NativeStr.fromPointer: Expected 2 args"
-        let! node = getCurrentNode
-
-        // Detect MemRef.add fusion on buffer argument
-        let! (bufferSSA, fusedOffsetOpt, bufferType, fusionOps) = pDetectMemRefAddFusion argIds.[0]
-
-        // Recall length argument with auto-load
-        let! (lengthLoadOps, lengthSSA, _) = pRecallArgWithLoad argIds.[1]
-
-        // Call pattern with resolved buffer, length, and optional source offset
-        let! (ops, result) = pStringFromPointerWithLength node.Id bufferSSA lengthSSA bufferType fusedOffsetOpt
-        return (fusionOps @ lengthLoadOps @ ops, result)
-    }
-
-/// String.fromBytes intrinsic — convert byte[] to string
-/// Both byte[] and string are memref<?xi8>, so this is a zero-cost identity.
 /// The witness simply returns the input memref as-is.
 let pStringFromBytesIntrinsic : PSGParser<MLIROp list * TransferResult> =
     parser {

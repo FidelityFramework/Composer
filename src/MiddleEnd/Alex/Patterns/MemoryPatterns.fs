@@ -258,10 +258,10 @@ let pArraySet (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (value: SSA) (gep
 ///
 /// NativePtr.stackalloc<'T>(count) : nativeptr<'T>
 /// SSA extracted from coeffects via nodeId: [0] = result
-let pNativePtrStackAlloc (nodeId: NodeId) (count: int) : PSGParser<MLIROp list * TransferResult> =
+let pStackAlloca (nodeId: NodeId) (count: int) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 1) $"pNativePtrStackAlloc: Expected 1 SSA, got {ssas.Length}"
+        do! ensure (ssas.Length >= 1) $"pStackAlloca: Expected 1 SSA, got {ssas.Length}"
         let resultSSA = ssas.[0]
 
         let! state = getUserState
@@ -289,50 +289,6 @@ let pNativePtrStackAlloc (nodeId: NodeId) (count: int) : PSGParser<MLIROp list *
         | _ ->
             return! fail (Message $"NativePtr.stackalloc: expected nativeptr<'T> type, got {state.Current.Type}")
     }
-
-/// Build NativePtr.write pattern
-/// Writes a value to a pointer location
-///
-/// NativePtr.write (ptr: nativeptr<'T>) (value: 'T) : unit
-let pNativePtrWrite (valueSSA: SSA) (ptrSSA: SSA) (elemType: MLIRType) (indexSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        // Emit memref.store operation with index
-        let! indexOp = pConstI indexSSA 0L TIndex  // Index 0 for 1-element memref
-        let memrefType = TMemRefStatic (1, elemType)
-        let! storeOp = pStore valueSSA ptrSSA [indexSSA] elemType memrefType
-
-        return ([indexOp; storeOp], TRVoid)
-    }
-
-/// Build NativePtr.read pattern
-/// Reads a value from a pointer location
-///
-/// NativePtr.read (ptr: nativeptr<'T>) : 'T
-/// SSA extracted from coeffects via nodeId: [0] = indexZeroSSA, [1] = resultSSA
-let pNativePtrRead (nodeId: NodeId) (ptrSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 2) $"pNativePtrRead: Expected 2 SSAs, got {ssas.Length}"
-        let indexZeroSSA = ssas.[0]
-        let resultSSA = ssas.[1]
-
-        // Get result type from XParsec state (type of value being loaded)
-        let! state = getUserState
-        let arch = state.Platform.TargetArch
-        let resultType = mapNativeTypeWithGraphForArch arch state.Graph state.Current.Type
-
-        // Emit index constant for memref.load (always load from index 0 for scalar pointer read)
-        let! constOp = pConstI indexZeroSSA 0L TIndex
-
-        // Emit memref.load operation with index
-        let! loadOp = pLoad resultSSA ptrSSA [indexZeroSSA]
-
-        return ([constOp; loadOp], TRValue { SSA = resultSSA; Type = resultType })
-    }
-
-// ═══════════════════════════════════════════════════════════
-// ARENA OPERATIONS (F-02: Arena Allocation)
-// ═══════════════════════════════════════════════════════════
 
 /// Build Arena.create pattern
 /// Allocates an arena buffer on the stack
@@ -687,7 +643,7 @@ let pMemRefAllocaIntrinsic : PSGParser<MLIROp list * TransferResult> =
         | Some countNode ->
             match countNode.Kind with
             | SemanticKind.Literal (NativeLiteral.Int (value, _)) ->
-                return! pNativePtrStackAlloc node.Id (int value)
+                return! pStackAlloca node.Id (int value)
             | _ -> return! fail (Message $"MemRef.alloca: count must be a literal (node {countNodeId})")
         | None -> return! fail (Message $"MemRef.alloca: count node not found")
     }
@@ -968,178 +924,3 @@ let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
 //   set         — indexed write through raw pointer
 //   read        — scalar read from raw pointer
 
-/// NativePtr.toNativeInt: nativeptr<'T> → nativeint
-/// At MLIR level: memref → index via memref.extract_aligned_pointer_as_index.
-/// Inverse of ofNativeInt. Used to pass stack-allocated storage to FFI as nativeint.
-///
-/// SSA layout (1 SSA): [0] = result index
-let pNativePtrToNativeIntIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
-        do! ensure (info.Operation = "toNativeInt") "Not NativePtr.toNativeInt"
-        do! ensure (argIds.Length >= 1) "NativePtr.toNativeInt: Expected 1 arg"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 1) $"pNativePtrToNativeInt: Expected 1 SSA, got {ssas.Length}"
-        let resultSSA = ssas.[0]
-
-        // Recall the nativeptr argument (memref from stackalloc, or already index)
-        let! (_, ptrSSA, ptrType) = pRecallArgWithLoad argIds.[0]
-
-        let! state = getUserState
-        match ptrType with
-        | TMemRef _ | TMemRefStatic _ ->
-            // Extract aligned pointer as index — standard MLIR op that survives lowering
-            let! extractOp = pExtractBasePtr resultSSA ptrSSA ptrType
-            MLIRAccumulator.registerSSAType resultSSA TIndex state.Accumulator
-            return ([extractOp], TRValue { SSA = resultSSA; Type = TIndex })
-        | TIndex ->
-            // Already a raw pointer (index) — forward directly, no cast needed
-            MLIRAccumulator.registerSSAType ptrSSA TIndex state.Accumulator
-            return ([], TRValue { SSA = ptrSSA; Type = TIndex })
-        | _ ->
-            return! fail (Message $"NativePtr.toNativeInt: unexpected source type {ptrType} — expected memref or index")
-    }
-
-/// NativePtr.ofNativeInt: nativeint → nativeptr<'T>
-/// At MLIR level: index (raw C pointer) → memref<?xT> via unrealized_conversion_cast.
-/// The cast is resolved at LLVM lowering where both are bare pointers.
-///
-/// SSA layout (1 SSA): [0] = result memref
-let pNativePtrOfNativeIntIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
-        do! ensure (info.Operation = "ofNativeInt") "Not NativePtr.ofNativeInt"
-        do! ensure (argIds.Length >= 1) "NativePtr.ofNativeInt: Expected 1 arg"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 1) $"pNativePtrOfNativeInt: Expected 1 SSA, got {ssas.Length}"
-
-        // Recall the nativeint argument (raw pointer as index)
-        let! (_, ptrSSA, _) = pRecallArgWithLoad argIds.[0]
-
-        // nativeptr<T> maps to TIndex at function boundaries (same as nativeint).
-        // NativePtr.ofNativeInt is a type-level cast in Clef, not a value conversion.
-        // The index→memref conversion happens lazily inside NativePtr.get/set/read
-        // via pEnsureMemRef, avoiding memref at function call boundaries.
-        //
-        // Forward the input SSA directly — no MLIR operation needed.
-        // The allocated SSA (ssas.[0]) is unused (ofNativeInt cost could be 0,
-        // but keeping at 1 avoids SSA pool underflow edge cases).
-        let! state = getUserState
-        MLIRAccumulator.registerSSAType ptrSSA TIndex state.Accumulator
-
-        return ([], TRValue { SSA = ptrSSA; Type = TIndex })
-    }
-
-/// NativePtr.set: nativeptr<'T> → int → 'T → unit
-/// Indexed write through a raw pointer (memref from ofNativeInt).
-///
-/// SSA layout (1 SSA): [0] = index cast to TIndex
-let pNativePtrSetIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
-        do! ensure (info.Operation = "set") "Not NativePtr.set"
-        do! ensure (argIds.Length >= 3) "NativePtr.set: Expected 3 args (ptr, index, value)"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 3) $"pNativePtrSet: Expected 3 SSAs, got {ssas.Length}"
-        let ptrCastSSA = ssas.[0]   // potential index→memref cast
-        let indexCastSSA = ssas.[1]
-
-        // Recall args: ptr (may be index from function param or memref from ofNativeInt), index (int), value ('T)
-        let! (_, ptrSSA, ptrType) = pRecallArgWithLoad argIds.[0]
-        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
-        let! (_, valueSSA, valueType) = pRecallArgWithLoad argIds.[2]
-
-        // Ensure ptr is a memref (convert from index if needed)
-        // Element type = value type (what's being stored)
-        let! (castOps, effPtrSSA, effPtrType) = pEnsureMemRef ptrCastSSA ptrSSA ptrType valueType
-
-        // Cast index from int to TIndex (memref indexing requires index type)
-        let! indexCastOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
-
-        // Determine element type from the pointer's memref type
-        let storeElemType =
-            match effPtrType with
-            | TMemRef elemTy -> elemTy
-            | TMemRefStatic (_, elemTy) -> elemTy
-            | _ -> failwith "unreachable — pEnsureMemRef guarantees memref"
-
-        // Emit memref.store value, ptr[index]
-        let! storeOp = pStore valueSSA effPtrSSA [indexCastSSA] storeElemType effPtrType
-
-        return (castOps @ [indexCastOp; storeOp], TRVoid)
-    }
-
-/// NativePtr.get: nativeptr<'T> → int → 'T
-/// Indexed read from a raw pointer (memref from ofNativeInt).
-/// Symmetric counterpart of NativePtr.set.
-///
-/// SSA layout (2 SSAs): [0] = index cast to TIndex, [1] = load result
-let pNativePtrGetIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
-        do! ensure (info.Operation = "get") "Not NativePtr.get"
-        do! ensure (argIds.Length >= 2) "NativePtr.get: Expected 2 args (ptr, index)"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 3) $"pNativePtrGet: Expected 3 SSAs, got {ssas.Length}"
-        let ptrCastSSA = ssas.[0]   // potential index→memref cast
-        let indexCastSSA = ssas.[1]
-        let resultSSA = ssas.[2]
-
-        // Recall args: ptr (may be index from function param or memref from ofNativeInt), index (int)
-        let! (_, ptrSSA, ptrType) = pRecallArgWithLoad argIds.[0]
-        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
-
-        // Get result type from current node type (this is the element type)
-        let! state = getUserState
-        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-
-        // Ensure ptr is a memref (convert from index if needed)
-        let! (castOps, effPtrSSA, _) = pEnsureMemRef ptrCastSSA ptrSSA ptrType resultType
-
-        // Cast index from int to TIndex (memref indexing requires index type)
-        let! indexCastOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
-
-        // Load from memref at the given index
-        let! loadOp = pLoad resultSSA effPtrSSA [indexCastSSA]
-
-        return (castOps @ [indexCastOp; loadOp], TRValue { SSA = resultSSA; Type = resultType })
-    }
-
-/// NativePtr.read: nativeptr<'T> → 'T
-/// Scalar read from a raw pointer (memref from ofNativeInt) at index 0.
-///
-/// SSA layout (2 SSAs): [0] = index zero constant, [1] = load result
-let pNativePtrReadIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.NativePtr
-        do! ensure (info.Operation = "read") "Not NativePtr.read"
-        do! ensure (argIds.Length >= 1) "NativePtr.read: Expected 1 arg"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 3) $"pNativePtrRead: Expected 3 SSAs, got {ssas.Length}"
-        let ptrCastSSA = ssas.[0]   // potential index→memref cast
-        let indexZeroSSA = ssas.[1]
-        let resultSSA = ssas.[2]
-
-        // Recall pointer arg (may be index from function param or memref from ofNativeInt)
-        let! (_, ptrSSA, ptrType) = pRecallArgWithLoad argIds.[0]
-
-        // Get result type from current node type (this is the element type)
-        let! state = getUserState
-        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-
-        // Ensure ptr is a memref (convert from index if needed)
-        let! (castOps, effPtrSSA, _) = pEnsureMemRef ptrCastSSA ptrSSA ptrType resultType
-
-        // Index 0 constant for scalar read
-        let! constOp = pConstI indexZeroSSA 0L TIndex
-
-        // Load from memref at index 0
-        let! loadOp = pLoad resultSSA effPtrSSA [indexZeroSSA]
-
-        return (castOps @ [constOp; loadOp], TRValue { SSA = resultSSA; Type = resultType })
-    }

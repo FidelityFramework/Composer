@@ -674,8 +674,6 @@ let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     // Shift operators — integer only; signedness dispatched via NTUKind in pBinaryArithIntrinsic
     | IntrinsicModule.Operators, "op_LeftShift"   -> BinaryArith "shli"
     | IntrinsicModule.Operators, "op_RightShift"  -> BinaryArith "shr"   // resolved to shrsi/shrui per NTUKind
-    // Memory
-    | IntrinsicModule.NativePtr, op -> MemoryOp op
     // String
     | IntrinsicModule.String, op -> StringOp op
     // NOTE: Console is NOT an atomic operation - see fsnative-spec/spec/platform-bindings.md

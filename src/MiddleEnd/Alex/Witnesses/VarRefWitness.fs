@@ -139,7 +139,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         | Some (ssa, ty) ->
                             // Auto-load ONLY if the Binding is mutable (isMut from PSG).
                             // Mutable bindings hold memref<1xT> cells that need memref.load.
-                            // Immutable bindings (including NativePtr.stackalloc results) forward as-is.
+                            // Immutable bindings (including MemRef.alloca results) forward as-is.
                             if isMut then
                                 // Mutable cell — extract element type for auto-load
                                 let elemTypeOpt =

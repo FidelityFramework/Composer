@@ -186,8 +186,8 @@ type MemRefOp =
     | ReinterpretCast of SSA * SSA * int * int * MLIRType * MLIRType   // result, source, byteOffset, size, srcType, destType
     | ReinterpretCastDynamic of SSA * SSA * int * SSA * MLIRType * MLIRType  // result, source, offset, sizeSSA, srcType, destType (dynamic size for memref reconstruction)
     | View of SSA * SSA * SSA * MLIRType * MLIRType                   // result, source, offsetSSA, srcType, destType (different element type: byte buffer → typed view)
-    | IndexToMemRef of SSA * SSA * MLIRType                            // result, sourceIndex, destMemRefType (raw pointer → memref for NativePtr.ofNativeInt)
-    | MemRefToIndex of SSA * SSA * MLIRType                            // result, sourceMemRef, srcMemRefType (memref → raw pointer for NativePtr.toNativeInt)
+    | IndexToMemRef of SSA * SSA * MLIRType                            // result, sourceIndex, destMemRefType (internal index→memref seam: TNativePtr-as-index at closure/seq/FFI boundaries)
+    | MemRefToIndex of SSA * SSA * MLIRType                            // result, sourceMemRef, srcMemRefType (internal memref→index seam at FFI boundaries)
 
 /// Arithmetic dialect operations
 type ArithOp =
