@@ -477,14 +477,27 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     let castOp = MLIROp.FuncOp (FuncOp.FuncToIndex (layout.CodeAddrSSA, funcRefSSA, innerFuncParamTypes, returnType))
                     ctx.ScopeContext := ScopeContext.addOp castOp !ctx.ScopeContext
 
-                    // 2. Allocate closure struct — PULL allocation strategy from escape analysis coeffect
-                    // StackScoped → alloca (non-escaping closure), EscapesViaReturn → alloc (escaping closure)
+                    // 2. Allocate closure struct — PULL allocation strategy from escape analysis coeffect.
+                    // Four-point lifetime lattice (closure-representation.md §3.3):
+                    //   StackScoped    → alloca              (scope-bounded closure, stack)
+                    //   StaticLifetime → get_global          (program-lifetime closure, static storage, no heap)
+                    //   EscapesVia*    → alloc               (escaping closure, heap)
+                    // StaticLifetime references a module-level memref.global instead of allocating; the
+                    // GlobalMemref decl is emitted as a TopLevelOp (collected in staticGlobalDecls).
                     let closureTy = layout.ClosureStructType
                     let escapeKind = getEscapeKindOrDefault node.Id ctx.Coeffects.EscapeAnalysis
+                    // Per-closure static-storage symbol names (unique by node id). Only used on the
+                    // StaticLifetime path; the decls are threaded to the module root via TopLevelOps.
+                    let closureGlobalName = sprintf "__clef_closure_env_%d" nodeIdValue
+                    let pairGlobalName = sprintf "__clef_closure_pair_%d" nodeIdValue
+                    let mutable staticGlobalDecls : MLIROp list = []
                     let envAllocOp =
                         match escapeKind with
                         | StackScoped ->
                             MLIROp.MemRefOp (MemRefOp.Alloca (layout.ClosureUndefSSA, closureTy, None))
+                        | StaticLifetime ->
+                            staticGlobalDecls <- staticGlobalDecls @ [ MLIROp.GlobalMemref (closureGlobalName, closureTy) ]
+                            MLIROp.MemRefOp (MemRefOp.GetGlobal (layout.ClosureUndefSSA, closureGlobalName, closureTy))
                         | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
                             MLIROp.MemRefOp (MemRefOp.AllocStatic (layout.ClosureUndefSSA, closureTy, None))
                     let parentScope2 = ScopeContext.addOp envAllocOp !ctx.ScopeContext
@@ -607,6 +620,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         match escapeKind with
                         | StackScoped ->
                             MLIROp.MemRefOp (MemRefOp.Alloca (layout.PairUndefSSA, pairTy, None))
+                        | StaticLifetime ->
+                            staticGlobalDecls <- staticGlobalDecls @ [ MLIROp.GlobalMemref (pairGlobalName, pairTy) ]
+                            MLIROp.MemRefOp (MemRefOp.GetGlobal (layout.PairUndefSSA, pairGlobalName, pairTy))
                         | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
                             MLIROp.MemRefOp (MemRefOp.AllocStatic (layout.PairUndefSSA, pairTy, None))
                     ctx.ScopeContext := ScopeContext.addOp pairAllocOp !ctx.ScopeContext
@@ -630,7 +646,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     // Register closure pair in accumulator for BindingWitness/VarRefWitness to find
                     MLIRAccumulator.bindNode node.Id layout.PairUndefSSA pairTy ctx.Accumulator
 
-                    { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = layout.PairUndefSSA; Type = pairTy } }
+                    // On the StaticLifetime path, staticGlobalDecls carries the module-level
+                    // memref.global declarations backing this closure's env and pair; they ride
+                    // out as TopLevelOps to the module root. Empty on every other lifetime path.
+                    { InlineOps = []; TopLevelOps = staticGlobalDecls; Result = TRValue { SSA = layout.PairUndefSSA; Type = pairTy } }
 
                 | None ->
                     // No captures — plain named function, no closure construction needed

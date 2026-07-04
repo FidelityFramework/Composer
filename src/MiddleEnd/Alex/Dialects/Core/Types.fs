@@ -328,6 +328,7 @@ type MLIROp =
     | Region of MLIROp list                                         // blocks
     // Module-level declarations (backend-agnostic)
     | GlobalString of string * string * int                         // name, content, byteLength
+    | GlobalMemref of string * MLIRType                             // name, memrefType — zero-initialized static storage for a program-lifetime value (referenced via memref.get_global)
     // CIRCT hardware dialects (FPGA targets)
     | CombOp of CombOp
     | HWOp of HWOp

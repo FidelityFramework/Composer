@@ -31,6 +31,12 @@ type EscapeKind =
     | EscapesViaReturn
     /// Value escapes via byref/address-of — requires pinned or heap allocation
     | EscapesViaByRef
+    /// Value's lifetime is the whole program — placed in static storage (memref.global),
+    /// not the heap. This is the program-lifetime point of the four-point lifetime lattice:
+    /// a value constructed at global scope lives for the whole run and is never freed, so it
+    /// belongs in .bss-style static storage. On a target without a heap this is the only
+    /// non-stack placement available. See closure-representation.md §3.3.
+    | StaticLifetime
 
 /// What kind of allocating site produced this value
 type AllocSiteKind =
@@ -225,12 +231,15 @@ let analyzeAllocSite (siteId: NodeId) (name: string) (siteKind: AllocSiteKind) (
     // Find the enclosing function scope
     match findEnclosingFunction valueId graph with
     | None ->
-        // Global scope — must use heap
+        // Global scope — the value's lifetime is the whole program, so it belongs in
+        // static storage (memref.global), not the heap. This is the program-lifetime
+        // point of the four-point lifetime lattice: constructed once, held to program
+        // end, never freed. On a heap-free target this is the only non-stack placement.
         { NodeId = siteId
           Name = name
           SiteKind = siteKind
-          EscapeKind = EscapesViaReturn
-          Reason = "Global scope - no stack frame to allocate in" }
+          EscapeKind = StaticLifetime
+          Reason = "Global scope - program-lifetime, placed in static storage" }
 
     | Some scopeId ->
         // Check escape paths in order of specificity

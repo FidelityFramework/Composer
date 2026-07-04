@@ -448,8 +448,19 @@ let extractMemRefShape (ty: MLIRType) =
     | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
 
 /// Allocate memory for a constructed value — queries escape analysis coeffect
-/// PULL model: pattern pulls allocation decision from pre-computed coeffects
-/// StackScoped → memref.alloca (stack), EscapesViaReturn → memref.alloc (heap)
+/// PULL model: pattern pulls allocation decision from pre-computed coeffects.
+/// Four-point lifetime lattice (closure-representation.md §3.3):
+///   StackScoped    → memref.alloca (stack)
+///   StaticLifetime → program-lifetime, belongs in static storage (memref.global)
+///   EscapesVia*    → memref.alloc  (heap)
+///
+/// NOTE: the flat-closure path (LambdaWitness) already emits the StaticLifetime placement
+/// as a module-level memref.global + get_global. This DU/record allocation slot yields a
+/// single inline op through the parser and has no TopLevelOps channel wired here yet, so a
+/// StaticLifetime DU/record value currently takes the compile-time-sized static allocation
+/// (pAllocStatic) rather than a memref.global. That is a placement TODO, not a correctness
+/// hole: the value still survives return and is never freed. Wiring the module-level global
+/// for DU/record construction is the follow-up to the closure path.
 let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
@@ -457,6 +468,7 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
         match escapeKind with
         | StackScoped ->
             return! pUndef ssa ty
+        | StaticLifetime
         | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
             let count, elemType = extractMemRefShape ty
             return! pAllocStatic ssa count elemType None

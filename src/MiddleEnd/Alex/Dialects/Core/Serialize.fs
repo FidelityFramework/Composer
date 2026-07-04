@@ -515,6 +515,12 @@ let rec opToString (op: MLIROp) : string =
         let bytesWithSentinel = Array.append bytes [| 0uy |]
         let denseStr = bytesWithSentinel |> Array.map (sprintf "%d") |> String.concat ", "
         sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]>" name storageLength denseStr
+    | MLIROp.GlobalMemref (name, memrefType) ->
+        // Zero-initialized static storage for a program-lifetime value (the program-lifetime
+        // point of the lifetime lattice). Not `constant`: the closure struct is written into
+        // this storage at construction. `uninitialized` is correct because every read is
+        // preceded by the construction store; a heap-free target places this in .bss/Sram.
+        sprintf "memref.global \"private\" @%s : %s = uninitialized" name (typeToString memrefType)
     | MLIROp.IndexOp iop ->
         match iop with
         | IndexOp.IndexConst (result, value) ->
