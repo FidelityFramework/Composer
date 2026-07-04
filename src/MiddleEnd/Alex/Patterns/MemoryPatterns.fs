@@ -454,13 +454,14 @@ let extractMemRefShape (ty: MLIRType) =
 ///   StaticLifetime → program-lifetime, belongs in static storage (memref.global)
 ///   EscapesVia*    → memref.alloc  (heap)
 ///
-/// NOTE: the flat-closure path (LambdaWitness) already emits the StaticLifetime placement
-/// as a module-level memref.global + get_global. This DU/record allocation slot yields a
-/// single inline op through the parser and has no TopLevelOps channel wired here yet, so a
-/// StaticLifetime DU/record value currently takes the compile-time-sized static allocation
-/// (pAllocStatic) rather than a memref.global. That is a placement TODO, not a correctness
-/// hole: the value still survives return and is never freed. Wiring the module-level global
-/// for DU/record construction is the follow-up to the closure path.
+/// StaticLifetime is a program-lifetime DU/record: constructed once at global scope, held to
+/// program end, never freed. It is placed in a module-level memref.global and referenced inline
+/// via memref.get_global — the same static-storage mechanism the flat-closure path uses. Because
+/// a memref.global is only valid at module scope and this runs in the PSGParser layer, the decl
+/// is queued (deduped) on the shared accumulator via tryEmitGlobalMemref; the owning DU/record
+/// witness drains it into WitnessOutput.TopLevelOps for module-scope placement. On a heap-free
+/// target this is the only non-stack placement, so a program-lifetime DU/record no longer routes
+/// through the heap allocator.
 let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
@@ -468,7 +469,12 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
         match escapeKind with
         | StackScoped ->
             return! pUndef ssa ty
-        | StaticLifetime
+        | StaticLifetime ->
+            let count, elemType = extractMemRefShape ty
+            let storageTy = TMemRefStatic (count, elemType)
+            let globalName = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
+            MLIRAccumulator.tryEmitGlobalMemref globalName storageTy state.Accumulator
+            return! pMemRefGetGlobal ssa globalName storageTy
         | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
             let count, elemType = extractMemRefShape ty
             return! pAllocStatic ssa count elemType None

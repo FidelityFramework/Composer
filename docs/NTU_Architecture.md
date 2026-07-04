@@ -55,9 +55,9 @@ Posit arithmetic is selected automatically by the DTS representation selection l
 
 | NTU Qualifier | Meaning | MLIR Mapping |
 |---------------|---------|--------------|
-| `Default` | Implicit (stack or heap per escape) | default address space |
+| `Default` | Implicit; placed by the four-point lifetime lattice per escape analysis (scope→stack, region→arena, program-lifetime→static, dynamic→heap) | default address space |
 | `Stack` | Stack-allocated, lexically scoped | `alloca` |
-| `Global` | Global/static lifetime | `global` |
+| `Global` | Global/static (program-lifetime) storage — the `StaticLifetime` escape kind places program-lifetime values here rather than on the heap | `memref.global` + `get_global` |
 | `Shared` | GPU shared memory | `gpu.shared` |
 
 `NTUMemorySpace` qualifiers are attached to allocations during DMM coeffect analysis and consumed by Alex during MLIR emission.

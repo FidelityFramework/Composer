@@ -167,6 +167,16 @@ let rec visitAllNodes
             let updatedRootScope = ScopeContext.addOps output.TopLevelOps !visitedCtx.RootScopeContext
             visitedCtx.RootScopeContext := updatedRootScope
 
+        // Drain any module-level memref.global decls queued by a StaticLifetime allocation
+        // during this node's witnessing. A parser (e.g. pAllocValue for a program-lifetime
+        // DU/record) cannot place a module-scope decl itself, so it queues on the accumulator;
+        // draining centrally here routes them to RootScopeContext for every construction path
+        // (DU, Option, List, Map, Set, Result) without each witness having to remember.
+        let pendingStaticGlobals = MLIRAccumulator.drainPendingStaticGlobals visitedCtx.Accumulator
+        if not (List.isEmpty pendingStaticGlobals) then
+            let updatedRootScope = ScopeContext.addOps pendingStaticGlobals !visitedCtx.RootScopeContext
+            visitedCtx.RootScopeContext := updatedRootScope
+
         // Bind result if value (global binding)
         match output.Result with
         | TRValue v ->

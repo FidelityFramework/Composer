@@ -279,6 +279,8 @@ type MLIRAccumulator() =
     // Witnessing Coordination State (Dependent Transparency)
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)
     member val EmittedThunks: Set<string> = Set.empty with get, set              // Track emitted closure thunks (dedup _as_closure wrappers)
+    member val EmittedStaticGlobals: Set<string> = Set.empty with get, set        // Track emitted memref.global static-storage decls (program-lifetime values)
+    member val PendingStaticGlobals: MLIROp list = [] with get, set                // memref.global decls emitted by a parser, awaiting drain to TopLevelOps by the witness (module-scope placement)
     // NOTE: Function declarations now handled by MLIR Declaration Collection Pass (no coordination needed)
 
     // Deferred InlineOps: Partial app arguments whose InlineOps are suppressed at their
@@ -370,6 +372,24 @@ module MLIRAccumulator =
         else
             acc.EmittedThunks <- Set.add thunkName acc.EmittedThunks
             true
+
+    /// Register a module-level memref.global static-storage decl for a program-lifetime value,
+    /// deduplicated by symbol name. A memref.global is only valid at module scope, but this is
+    /// called from the PSGParser layer (which has no module-scope handle), so the decl is queued
+    /// in PendingStaticGlobals on the shared accumulator; the owning witness drains it to its
+    /// WitnessOutput.TopLevelOps (which the nanopass driver places at module root). The caller
+    /// emits the matching memref.get_global inline. Idempotent per symbol name.
+    let tryEmitGlobalMemref (name: string) (declType: MLIRType) (acc: MLIRAccumulator) : unit =
+        if not (Set.contains name acc.EmittedStaticGlobals) then
+            acc.EmittedStaticGlobals <- Set.add name acc.EmittedStaticGlobals
+            acc.PendingStaticGlobals <- MLIROp.GlobalMemref (name, declType) :: acc.PendingStaticGlobals
+
+    /// Drain any pending memref.global decls queued during parser emission, clearing the queue.
+    /// The witness routes the returned ops into WitnessOutput.TopLevelOps for module-scope placement.
+    let drainPendingStaticGlobals (acc: MLIRAccumulator) : MLIROp list =
+        let pending = acc.PendingStaticGlobals
+        acc.PendingStaticGlobals <- []
+        pending
 
     /// Store deferred InlineOps for a node (suppressed at original scope, re-emitted at saturated call site)
     let deferInlineOps (nodeId: NodeId) (ops: MLIROp list) (acc: MLIRAccumulator) =
