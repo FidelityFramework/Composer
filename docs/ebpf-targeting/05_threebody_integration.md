@@ -64,8 +64,8 @@ The claim that turns heads is not "it's fast." It is that **the fusion does not
 deform the computation.** Three properties, each traceable to standing framework
 art:
 
-1. **The number type crosses intact.** The close-encounter contract is posit32 +
-   512-bit quire, sealed at the force site (Tier 3 seal, per numeric-selection
+1. **The number type crosses intact.** The close-encounter contract is b-posit32 +
+   800-bit quire, sealed at the force site (Tier 3 seal, per numeric-selection
    §13). BAREWire carries that value across the L2 link as schema-verified,
    zero-copy bytes — the *same* representation the FPGA computed and the CPU
    integrator consumes. No re-encoding, no silent widening, no JSON-lossy
@@ -126,7 +126,7 @@ by design-time analysis.
                          │  Orchestrator (CPU actor, Clef→native)   │
                          │  timestep · regime classify · Prospero   │
                          └───▲───────────────▲──────────────▲───────┘
-        forces (posit+quire) │   telemetry    │   verdicts   │
+  forces (b-posit+quire) │   telemetry    │   verdicts   │
         BAREWire, zero-copy  │  (ring buffer)  │             │
                     ┌────────┴───────┐  ┌──────┴──────┐  ┌───┴────────┐
                     │  AF_XDP UMEM   │  │ ringbuf map │  │  GPU / NPU │
@@ -143,7 +143,7 @@ by design-time analysis.
 Two kernel-resident Clef→BPF artifacts (the XDP router; the probe set), both
 admissible by construction; two kernel/userspace zero-copy seams (AF_XDP rings for
 the data plane, a ring-buffer map for telemetry); one L2 weld that a sealed
-posit+quire value crosses without deformation.
+b-posit+quire value crosses without deformation.
 
 ## The eBPF hello progression comes first
 
@@ -167,8 +167,8 @@ B-05 is the synthesis, gated on ThreeBody's rebuild — not on eBPF.
 When B-05 is built, it inherits the numeric-selection guide's required
 corrections so the demo argues *for* the framework rather than against it:
 normalize to natural units (G = 1) so constants do not land in the wide-dynamic
-band that routes to IEEE; 512-bit quire (`n²/2` for posit32), not 800-bit;
-`es = 2`; a symplectic/time-reversible integrator with an independent
+band that routes to IEEE; 800-bit quire (fixed 25×32-bit vector for b-posit, independent of precision), not 512-bit;
+`eS = 5`; a symplectic/time-reversible integrator with an independent
 high-precision reference; conserved-quantity drift (energy, angular momentum, and
 the currently-omitted linear momentum) as the witnessed evidence. The eBPF layer
 does not touch the arithmetic; it routes and observes. But the synthesis demo is

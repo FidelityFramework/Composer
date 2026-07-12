@@ -343,13 +343,13 @@ Order chosen so each milestone is independently testable and the highest-risk re
 
 ## 13. The ThreeBody demonstrator (intended accuracy harness)
 
-The **ThreeBody** project (`/home/hhh/repos/ThreeBody`) is meant to be to numeric selection what HelloArty was to width inference: the end-to-end demonstrator of posit + quire vs. IEEE-754 accuracy. It is **not yet that** — currently documentation-only (empty `src/.gitkeep`, no `.clef`, no pipeline run), and its docs predate this design and carry drift the spec actively polices. Treat it as a *design proposal to rebuild*, with these guardrails:
+The **ThreeBody** project (`/home/hhh/repos/ThreeBody`) is meant to be to numeric selection what HelloArty was to width inference: the end-to-end demonstrator of b-posit + quire vs. IEEE-754 accuracy. It is **not yet that** — currently documentation-only (empty `src/.gitkeep`, no `.clef`, no pipeline run), and its docs predate this design and carry drift the spec actively polices. Treat it as a *design proposal to rebuild*, with these guardrails:
 
 - **Cite it (once built and corrected) only for what is true:** quire exactness against catastrophic cancellation (spec §10.2), witnessed by conserved-quantity drift — total energy, angular momentum, and especially **linear momentum** (exactly zero from rest → the tightest pure-arithmetic-drift sensor; the current design omits it). It is a **poor** example for "tapered precision near unity" and not a coverage example until normalization is shown.
 - **Normalize to natural units (G = 1)** and state the resulting ranges. Unnormalized SI puts `G ≈ 6.7e-11` into the `[1e-11, 1e30]` wide-dynamic band that routes to **IEEE, not posit** — so without normalization the demo argues against itself.
 - **Swap only the number type** across the entire force + integration path; do not confound representation with which subset got exact treatment.
 - **Use a symplectic, time-reversible integrator** (leapfrog/Verlet) and an independent high-precision reference trajectory; a non-symplectic method's own secular drift would dwarf the arithmetic signal.
-- **Scrub the audit-flagged drift before reuse:** 800-bit quire → **512-bit** (`n²/2` for posit32); delete the uncited "39% faster decode" claim; reconcile the b-posit config to **`es = 2`** (not `es = 5`); remove all "tapered precision near zero/the golden zone" framing.
+- **Scrub the audit-flagged drift before reuse:** reconcile the b-posit config to a **fixed 800-bit quire** (25×32-bit vector, independent of precision) with **`eS = 5`**; delete the uncited "39% faster decode" claim (cite instead Jonnalagadda et al.'s measured 79% power / 71% area / 60% latency decoder wins, arXiv:2603.01615); remove all "tapered precision near zero/the golden zone" framing.
 
 ### 13.1 Reversibility: live re-computation, not tape replay; certification, not identity
 
@@ -358,7 +358,7 @@ If ThreeBody is built as a **negative-types** showcase (typed reversibility) alo
 - **The reversal is live re-computation, never a replayed tape.** At turnaround you negate the momenta and re-run the *same forward operator* (`Φ⁻¹ = S∘Φ∘S`); the backward trajectory is recomputed on the fly, no forward-state history stored. Express it native-Clef: a lazy/thunk-driven reverse pass, region-allocated, with no materialized history buffer. This is the opposite of reverse-mode AD, which tapes a cotangent trace — do not equate them.
 - **The negative type *certifies*, it does not *constitute*, the reversal.** The integrator's reversibility is a time-symmetry of the map; the negative type would certify the inverse is structurally complete. Present `S`-conjugacy as "reconstructed from the pairing," never "running the integrator backward."
 - **Do not type the velocity flip as `Neg<Velocity>`.** That is value-level additive inverse (`−v`), not a backward-flowing dual. The negative type would ride the step's reverse (adjoint) channel: `SymplecticStep = { forward : State -> State ; adjoint : Neg<State> -> Neg<State> }`, with the N-step reverse as the type-level composition of adjoints.
-- **Both IEEE and posit type-check the contract.** A reversibility type is representation-agnostic; what differs is *numerical* reversibility (the measured residual after forward-then-back). The honest claim is **horizon extension, not a typed-contract violation**: posit+quire holds the reversal far longer than FP64; neither makes it exact.
+- **Both IEEE and posit type-check the contract.** A reversibility type is representation-agnostic; what differs is *numerical* reversibility (the measured residual after forward-then-back). The honest claim is **horizon extension, not a typed-contract violation**: b-posit+quire holds the reversal far longer than FP64; neither makes it exact.
 - **The quire shrinks the residual; it does not zero it.** Every step still rounds once, and chaos amplifies any residual. "Tracks / returns near" is honest; "bit-reversible" is not — that needs fixed-point/integer invertible steps.
 
 ### 13.2 The demo as a curve, with the right panes
@@ -366,8 +366,8 @@ If ThreeBody is built as a **negative-types** showcase (typed reversibility) alo
 Show the **reversal-residual-vs-N curve**, not a single tuned freeze-frame:
 
 - **IEEE FP64** — large, fast-growing residual.
-- **posit32 + quire** — small, slowly-growing (the headline).
+- **b-posit32 + quire** — small, slowly-growing (the headline).
 - **fixed-point** — the bit-exact limiting case (the spec offers fixed-point as a selectable representation).
 - **FP64 + Kahan summation** — the load-bearing control: the quire is exact compensated summation in the limit, so a skeptic will say Kahan closes the gap. Run this pane and set the thesis strength from the *measured* result. The posit edge that survives Kahan is cancellation in the single subtraction `qᵢ−qⱼ` and in `1/r²`, and posit32 winning there is a genuine taper+accumulation result.
 
-Overlay a design-time **"reversal contract: typechecked ✓"** badge on *both* panes (the structural contract holds for IEEE and posit alike), above the runtime residual curve where only posit+quire tracks — separating *structural* reversibility (type, both) from *numerical* reversibility (arithmetic, posit).
+Overlay a design-time **"reversal contract: typechecked ✓"** badge on *both* panes (the structural contract holds for IEEE and posit alike), above the runtime residual curve where only b-posit+quire tracks — separating *structural* reversibility (type, both) from *numerical* reversibility (arithmetic, posit).
