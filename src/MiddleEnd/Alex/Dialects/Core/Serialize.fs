@@ -289,6 +289,49 @@ let seqOpToString (op: SeqOp) : string =
             sprintf "%s = seq.compreg %s, %s : %s"
                 (ssaToString result) (ssaToString input) (ssaToString clk) (typeToString ty)
 
+/// Serialize an SMT dialect type to MLIR text
+let smtTypeToString (ty: SMTType) : string =
+    match ty with
+    | SMTBool -> "!smt.bool"
+    | SMTInt -> "!smt.int"
+    | SMTBV w -> sprintf "!smt.bv<%d>" w
+
+/// Serialize SMTOp to MLIR text (verification modules)
+let smtOpToString (opToString: MLIROp -> string) (op: SMTOp) : string =
+    match op with
+    | SMTSolver body ->
+        let bodyStr = body |> List.map opToString |> String.concat "\n    "
+        sprintf "smt.solver () : () -> () {\n    %s\n  }" bodyStr
+    | SMTSetLogic logic ->
+        sprintf "smt.set_logic \"%s\"" logic
+    | SMTDeclareFun (result, name, ty) ->
+        sprintf "%s = smt.declare_fun \"%s\" : %s" (ssaToString result) name (smtTypeToString ty)
+    | SMTIntConstant (result, value) ->
+        sprintf "%s = smt.int.constant %d" (ssaToString result) value
+    | SMTBVConstant (result, value, width) ->
+        sprintf "%s = smt.bv.constant #smt.bv<%d> : !smt.bv<%d>" (ssaToString result) value width
+    | SMTIntAdd (result, lhs, rhs) ->
+        sprintf "%s = smt.int.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
+    | SMTIntSub (result, lhs, rhs) ->
+        sprintf "%s = smt.int.sub %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
+    | SMTIntCmp (result, pred, lhs, rhs) ->
+        let predStr =
+            match pred with
+            | SmtLt -> "lt" | SmtLe -> "le" | SmtGt -> "gt" | SmtGe -> "ge"
+        sprintf "%s = smt.int.cmp %s %s, %s" (ssaToString result) predStr (ssaToString lhs) (ssaToString rhs)
+    | SMTEq (result, lhs, rhs, ty) ->
+        sprintf "%s = smt.eq %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (smtTypeToString ty)
+    | SMTAnd (result, operands) ->
+        sprintf "%s = smt.and %s" (ssaToString result) (operands |> List.map ssaToString |> String.concat ", ")
+    | SMTOr (result, operands) ->
+        sprintf "%s = smt.or %s" (ssaToString result) (operands |> List.map ssaToString |> String.concat ", ")
+    | SMTNot (result, operand) ->
+        sprintf "%s = smt.not %s" (ssaToString result) (ssaToString operand)
+    | SMTAssert operand ->
+        sprintf "smt.assert %s" (ssaToString operand)
+    | SMTCheck ->
+        "smt.check sat {} unknown {} unsat {}"
+
 /// Serialize MemRefOp to MLIR text
 let memrefOpToString (op: MemRefOp) : string =
     match op with
@@ -582,6 +625,7 @@ let rec opToString (op: MLIROp) : string =
     | MLIROp.CombOp cop -> combOpToString cop
     | MLIROp.HWOp hop -> hwOpToString opToString hop
     | MLIROp.SeqOp sop -> seqOpToString sop
+    | MLIROp.SMTOp sop -> smtOpToString opToString sop
     | MLIROp.RawMLIR text -> text
     | _ ->
         // For now, return placeholder for unimplemented operations (CFOp, VectorOp, Block, Region)

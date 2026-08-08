@@ -225,6 +225,9 @@ let compileProject (options: CompilationOptions) : int =
                             printfn "Xclbin generated: %s" xclbinPath
                             printfn "NPU instructions: %s" instsPath
                             Ok ()
+                        | GpuCodeObject path ->
+                            printfn "GPU code object generated: %s" path
+                            Ok ()
                         | IntermediateOnly fmt ->
                             printfn "Produced %s intermediate" fmt
                             Ok ())))

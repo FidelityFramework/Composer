@@ -62,7 +62,7 @@ kinds of work, discharged at different stages:
   ([04](04_admissibility_as_proof_obligations.md)).
 - **The legibility half** is emission discipline: the witness/pattern layer emits
   only idioms from a curated, verifier-recognizable vocabulary, and the MLIR
-  SMT-dialect translation-validation pass (the dual-pass architecture's build-time
+  SMT-dialect translation-validation pass (the staged-discharge architecture's build-time
   re-discharge — see `clef-lang-site: docs/internals/verification/proofs-to-silicon.md`)
   rejects any transformation that would deform a certified guard. Where clang
   users fight their optimizer, Fidelity's optimizer is contractually bound to

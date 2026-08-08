@@ -33,11 +33,11 @@ is upcoming work.** The graduated model is designed as:
 | **Tier 3** | restricted probabilistic / nonlinear | SMT + library lemmas proved once | higher |
 | **Tier 4** | relational / probabilistic (constant-time, crypto) | pRHL checker + proof-assistant kernel | highest |
 
-The proof dispatch is **dual-pass**: obligations are discharged at design time
+The proof dispatch is **staged**: obligations are discharged at design time
 (weakest-precondition reading, surfaced live through the Lattice language server)
 and **re-validated at each MLIR lowering pass** through the SMT-dialect
 translation-validation mechanism (the consequence-rule reading — every lowering
-must preserve what was proven). This dual coupling of a *front-end (design-time)*
+must preserve what was proven). This coupling of a *front-end (design-time)*
 and *middle-end (build-time)* proof dispatch is the subject of a pending patent;
 its stated payoff is not only safer computation graphs but graphs **better
 optimized for "the braid"** — the structure that carries delimited continuations
@@ -157,7 +157,7 @@ lifetime promotion. That is why the proof half composes from standing art rather
 than requiring new theory: the target is adversarial, but the analysis is the one
 the framework was built to perform.
 
-## The dual-pass, made concrete for a BPF program
+## The staged discharge, made concrete for a BPF program
 
 1. **Design time (front end).** As the developer writes an XDP filter, the PSG
    accrues coeffects; the language server discharges the Tier-1 classifications
@@ -197,7 +197,7 @@ harder braid demonstration later — same handshake, decidable payload.
   obligations are squarely in the fragment that integration targets first, so eBPF
   is a *driver* for it, not blocked behind something more distant.
 - **The SMT-dialect obligation as an in-IR operation.** Named as current focus in
-  the framework's own status notes; the build-time half of the dual-pass depends
+  the framework's own status notes; the build-time half of the staged discharge depends
   on it. Until it lands, the design-time half plus the external oracle already
   gives a working (if less airtight) admissibility story.
 - **Nothing at Tier 3/4.** eBPF admissibility deliberately requires none of the

@@ -314,6 +314,17 @@ type CombOp =
 type SeqOp =
     | SeqCompreg of SSA * SSA * SSA * (SSA * SSA) option * MLIRType    // result, input, clk, (resetSignal, resetValue) option, type
 
+/// SMT dialect types (upstream `smt` dialect, adopted from CIRCT).
+/// Used ONLY inside verification modules — never mixes with program value types.
+type SMTType =
+    | SMTBool
+    | SMTInt
+    | SMTBV of int          // bit-vector width
+
+/// Integer comparison predicates for smt.int.cmp
+type SMTCmpPred =
+    | SmtLt | SmtLe | SmtGt | SmtGe
+
 /// Top-level MLIR operation (all dialects)
 /// Single-phase execution with nested accumulators - no scope markers needed
 type MLIROp =
@@ -333,6 +344,8 @@ type MLIROp =
     | CombOp of CombOp
     | HWOp of HWOp
     | SeqOp of SeqOp
+    // SMT dialect (verification modules — proof obligations as IR)
+    | SMTOp of SMTOp
     // Raw MLIR text (dialect-opaque: AIE, GPU, etc.)
     | RawMLIR of string
 
@@ -391,3 +404,22 @@ and HWOp =
     // Aggregate constant (hw.aggregate_constant) — zero-initialize structs
     | HWAggregateConstant of SSA * MLIRType
       // result, structType (all fields zero-initialized)
+
+/// SMT dialect operations (upstream `smt` dialect — proof obligations as IR).
+/// Emitted into verification modules by SMTTransfer; exported to SMT-LIB via
+/// mlir-translate --export-smtlib. Solver-neutral: any SMT-LIB solver dispatches.
+and SMTOp =
+    | SMTSolver of MLIROp list                      // smt.solver () : () -> () { body }
+    | SMTSetLogic of string                         // smt.set_logic "QF_LIA"
+    | SMTDeclareFun of SSA * string * SMTType       // result, name (exported verbatim), type
+    | SMTIntConstant of SSA * int64                 // smt.int.constant
+    | SMTBVConstant of SSA * int64 * int            // result, value, width
+    | SMTIntAdd of SSA * SSA * SSA                  // result, lhs, rhs
+    | SMTIntSub of SSA * SSA * SSA                  // result, lhs, rhs
+    | SMTIntCmp of SSA * SMTCmpPred * SSA * SSA     // result, predicate, lhs, rhs
+    | SMTEq of SSA * SSA * SSA * SMTType            // result, lhs, rhs, operand type
+    | SMTAnd of SSA * SSA list                      // result, operands (variadic)
+    | SMTOr of SSA * SSA list                       // result, operands (variadic)
+    | SMTNot of SSA * SSA                           // result, operand
+    | SMTAssert of SSA                              // assert a !smt.bool value
+    | SMTCheck                                      // smt.check sat {} unknown {} unsat {}

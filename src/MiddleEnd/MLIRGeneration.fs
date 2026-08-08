@@ -65,12 +65,21 @@ let generate
     let platformResolution = PSGElaboration.PlatformBindingResolution.analyze flattenedGraph runtimeMode os arch
     let escapeAnalysis = PSGElaboration.EscapeAnalysis.analyzeGraph flattenedGraph
 
+    // Proof obligations coeffect — facts observed from the saturated PSG.
+    // Design-time form serialized below; build-time form emitted via SMTTransfer.
+    // Demand-driven: only computed when intermediates are kept (its only consumers).
+    let proofObligations =
+        match intermediatesDir with
+        | Some _ -> PSGElaboration.ProofObligations.analyze flattenedGraph
+        | None -> PSGElaboration.ProofObligations.empty
+
     // Serialize coeffects if keeping intermediates
     match intermediatesDir with
     | Some dir ->
         PSGElaboration.PreprocessingSerializer.serializeAll
             dir ssaAssignment mutability yieldStates patternBindings strings
             ssaAssignment.DeclarationRootLambdas flattenedGraph
+        PSGElaboration.ProofObligations.serialize dir proofObligations
     | None -> ()
 
     // Compute FPGA pin mapping coeffect (FPGA targets only)
@@ -143,6 +152,13 @@ let generate
                 File.WriteAllText(finalPath, mlirText)
                 if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
                     printfn "[Alex] Wrote final MLIR: 10_output.mlir"
+                // SMT verification module — parallel residual from the proof
+                // obligations coeffect (same shape as XDC from pin mapping)
+                if not (List.isEmpty proofObligations.Obligations) then
+                    let smtPath = Path.Combine(dir, "09_obligations.mlir")
+                    File.WriteAllText(smtPath, Alex.Traversal.SMTTransfer.transfer proofObligations + "\n")
+                    if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                        printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Obligations.Length
             | None -> ()
 
             // XDC transfer — parallel residual from pin mapping coeffect (FPGA only)

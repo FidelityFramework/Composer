@@ -54,6 +54,7 @@
       <Compile Include="MiddleEnd/PSGElaboration/MutabilityAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/EscapeAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/StringCollection.fs" />
+      <Compile Include="MiddleEnd/PSGElaboration/ProofObligations.fs" />
       <!-- Platform Config (depends on PlatformTypes) -->
       <Compile Include="MiddleEnd/PSGElaboration/PlatformConfig.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PlatformBindingResolution.fs" />
@@ -146,6 +147,7 @@
       <!-- Alex Traversal - MLIR Transfer via Zipper + XParsec (pull model) -->
       <Compile Include="MiddleEnd/Alex/Traversal/MLIRTransfer.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/XDCTransfer.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/SMTTransfer.fs" />
 
       <!-- Alex Pipeline Types -->
       <Compile Include="MiddleEnd/Alex/Pipeline/CompilationTypes.fs" />
@@ -169,6 +171,10 @@
       <!-- BackEnd - AIE -->
       <Compile Include="BackEnd/AIE/Lowering.fs" />
       <Compile Include="BackEnd/AIE/Pipeline.fs" />
+
+      <!-- BackEnd - GPU -->
+      <Compile Include="BackEnd/GPU/Lowering.fs" />
+      <Compile Include="BackEnd/GPU/Pipeline.fs" />
 
       <!-- BackEnd - Artifact Verification (closed-loop HDL/constraint consistency) -->
       <Compile Include="BackEnd/ArtifactVerification.fs" />
