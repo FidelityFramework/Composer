@@ -1,5 +1,5 @@
 /// CCS Integration Layer
-/// Thin interface between Composer and F# Native Compiler Services.
+/// Thin interface between Composer and the Clef Compiler Service (CCS).
 ///
 /// CCS provides:
 /// - Native type checking with types attached during construction
