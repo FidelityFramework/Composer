@@ -115,7 +115,12 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
                     TIndex  // Fallback for other cases
     match ty with
     | NativeType.TApp(tycon, args) -> mapTyCon tycon args
-    | NativeType.TNum(carrier, _) -> mapTyCon carrier []
+    // The carrier is read through the one carrier read; an unresolved carrier variable is a
+    // checker failure surfaced here, never a width chosen by Composer.
+    | NativeType.TNum(carrier, _) ->
+        match CarrierRef.tryConstructor carrier with
+        | Some tc -> mapTyCon tc []
+        | None -> failwithf "mapCaptureType: unresolved carrier variable in numeric type '%s'; CCS must resolve it" (formatType ty)
     | NativeType.TFun _ ->
         // Closures are uniform pairs: {code_ptr: index, env_ptr: index} = memref<2xindex>
         // Must match mapNativeTypeForArch so pClosureCall sees the correct type

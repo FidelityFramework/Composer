@@ -17,7 +17,9 @@ hardening step of the plan (§5); a rule is green when both of its programs repo
     targets/         vet.sh transcripts (vet.<name>.stdout, vet.<name>.stderr); ignored by git
 ```
 
-Rules with no reject program (UoM-8, W-3, W-6, NS-4) have only `accept/`. W-3 is the differential
+Rules with no reject program (UoM-8, UoM-10, W-3, W-6, NS-4) have only `accept/`. UoM-10 (added with
+CS-6) is the generalisation row the sequence recommended: `let id (x: float<'u>) = x` used at `float<m>`
+and `float<s>`, its scheme `float<'u> -> float<'u>`. W-3 is the differential
 row: one `Program.clef` under two `.fidproj` platform contexts (Linux x86_64 and a Cortex-M33
 descriptor), one table row each.
 
@@ -42,4 +44,9 @@ dotnet build /home/hhh/repos/Composer/src/Composer.fsproj   # vet.sh never build
   step-3 schemes land. NS-2/reject and NS-3/reject were rejected before only by an arity accident on
   annotated leaves; they are accepted until step 8 supplies the range coeffect, and their rows stay
   step-8-pending.
+- 2026-09-04, after CS-5 (one spelling table): 17 of 45. NS-4/accept is green because `float64` is now a
+  type spelling (the explicit IEEE-64 seal), not because step 8's design-time witness exists.
+- 2026-09-04, after CS-6 (carrier variables, operator schemes, generalisation): 24 of 46; `vet.sh --through 2`
+  judges 10 of 10. NS-1/reject moved back to accept as foreseen: the interim operator type that rejected it is
+  gone, and its own rule waits on step 8.
 

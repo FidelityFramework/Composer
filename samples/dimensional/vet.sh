@@ -73,7 +73,7 @@ fi
 echo
 
 # Plan §3 order. Rules found on disk but not listed here are appended alphabetically.
-ORDER="UoM-1 UoM-2 UoM-3 UoM-4 UoM-5 UoM-6 UoM-7 UoM-8 UoM-9 W-1 W-2 W-3 W-4 W-5 W-6 NS-1 NS-2 NS-3 NS-4 M-1 M-2 M-3 M-4 M-5"
+ORDER="UoM-1 UoM-2 UoM-3 UoM-4 UoM-5 UoM-6 UoM-7 UoM-8 UoM-9 UoM-10 W-1 W-2 W-3 W-4 W-5 W-6 NS-1 NS-2 NS-3 NS-4 M-1 M-2 M-3 M-4 M-5"
 
 rules=""
 for r in $ORDER; do

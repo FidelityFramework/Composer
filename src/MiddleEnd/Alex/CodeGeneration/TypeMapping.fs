@@ -312,7 +312,12 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
 
     match ty with
     | NativeType.TApp(tycon, args) -> mapTyCon tycon args
-    | NativeType.TNum(carrier, _) -> mapTyCon carrier []
+    // The carrier is read through the one carrier read; a carrier variable the checker left
+    // unresolved is a checker failure surfaced here, never a width chosen by Composer.
+    | NativeType.TNum(carrier, _) ->
+        match CarrierRef.tryConstructor carrier with
+        | Some tc -> mapTyCon tc []
+        | None -> failwithf "mapNativeTypeForArch: unresolved carrier variable in numeric type '%s'; CCS must resolve it" (formatType ty)
 
     | NativeType.TFun _ ->
         // Closures: {codePtr: ptr, envPtr: ptr} - homogeneous, use memref array
@@ -672,8 +677,9 @@ let private mapLeafTypeForPlatform (platform: TargetPlatform) (arch: Architectur
     match platform with
     | FPGA ->
         match ty with
-        | NativeType.TApp(tycon, _) | NativeType.TNum(tycon, _) ->
-            match tycon.NTUKind with
+        | NativeType.TApp _ | NativeType.TNum _ ->
+            // The numeric carrier's kind is read through the one carrier read (Types.tryGetNTUKind).
+            match Types.tryGetNTUKind ty with
             | Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
             | Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register)) ->
                 TInt (IntWidth 0)  // Abstract: width from interval analysis
