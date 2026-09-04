@@ -52,7 +52,7 @@ This document catalogs every major Clef language feature against CCS (Clef Compi
 |---------|-------------|---------|-------|
 | `bool` | ✅ | `NTUbool` | 1 byte |
 | `char` | ✅ | `NTUchar` | UTF-32 code point (4 bytes), not UTF-16 like .NET |
-| `string` | ✅ | `NTUstring` | UTF-8 fat pointer `{ptr, length}` - NOT `System.String` |
+| `string` | ✅ | `NTUstring` | UTF-8 `memref<?xi8>` view `{base, extent}` - NOT `System.String` |
 | `unit` | ✅ | `NTUunit` | Zero-sized type |
 | `obj` | ❌ | N/A | **Eliminated** - no universal base type. Use SRTP for polymorphism |
 | `exn` / `Exception` | 🚧 | Reference | Native exception type (limited, see Exceptions section) |
@@ -123,7 +123,7 @@ This document catalogs every major Clef language feature against CCS (Clef Compi
 
 | Feature | CCS Status | Notes |
 |---------|-------------|-------|
-| Single-dimensional `'T[]` | ✅ | Fat pointer `{ptr, length}` |
+| Single-dimensional `'T[]` | ✅ | Fat pointer `{base, extent}` |
 | Array creation `[| 1; 2; 3 |]` | ✅ | |
 | Array indexing `arr.[i]` | ✅ | |
 | Array slicing `arr.[1..3]` | ✅ | |

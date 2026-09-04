@@ -157,10 +157,10 @@ and gather kernels:
 2. `Array.length` is typed but has no elision — the enclosing function emits
    `func.return` with zero operands against a declared result
 3. array-typed *parameters* through Baker/PSG are unproven: SSA
-   pre-assignment for a fat pointer, and the calling convention
+   pre-assignment for a buffer view, and the calling convention
 
 On (3) the recommendation is that `array<'T>` pass as a single `memref`
-value rather than `{ptr, len}` scalars, because a memref descriptor already
+value rather than `{base, extent}` scalars, because a memref descriptor already
 carries the extent — which is exactly what lets the same parameter cross to
 a device kernel unchanged. That would make the array the substrate-crossing
 construct and leave the thunk host-side, where its memo cell belongs: many

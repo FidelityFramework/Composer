@@ -420,7 +420,7 @@ let main () =
     GTK.main ()
 ```
 
-**Implementation**: WebKitGTK FFI bindings from Fidelity.Platform. HTML string passed as native string (UTF-8 fat pointer). Widget hierarchy managed through GTK container API.
+**Implementation**: WebKitGTK FFI bindings from Fidelity.Platform. HTML string passed as native string (UTF-8 `memref<?xi8>` view). Widget hierarchy managed through GTK container API.
 
 ---
 

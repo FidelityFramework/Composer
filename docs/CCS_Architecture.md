@@ -110,13 +110,13 @@ The `nativeptr<'T>` row is compat surface. Per the spec (`clef-lang-spec/spec/ff
 | `float32` | `NTUfloat32` | f32 |
 | `bool` | `NTUbool` | i1 |
 | `char` | `NTUchar` | u32 (UTF-32 code point) |
-| `string` | `NTUstring` | fat pointer `{ptr<u8>, length: i64}` |
+| `string` | `NTUstring` | `memref<?xi8>`: the buffer is the string, its length the memref's dimension; no fat-pointer struct |
 | `unit` | `NTUunit` | zero-sized |
 
 **Important**: `int` in Clef follows ML/Rust semantics (platform word = 64-bit on x86_64), not
 .NET's 32-bit `System.Int32`. Use `int32` for explicit 32-bit values.
 
-**Important**: `string` is a UTF-8 fat pointer, not `System.String`. `char` is a UTF-32 code
+**Important**: `string` is a UTF-8 `memref<?xi8>` view, not `System.String`. `char` is a UTF-32 code
 point (4 bytes), not .NET's UTF-16 `System.Char`.
 
 DTS extends NTU numerics with dimensional annotations. A `float<newtons>` has NTUKind `NTUfloat64`

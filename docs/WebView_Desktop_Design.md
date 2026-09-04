@@ -392,7 +392,7 @@ Webview expects null-terminated C strings. With string (native semantics):
 
 ```fsharp
 let setTitle w title =
-    // string is null-terminated (UTF-8 fat pointer)
+    // string is null-terminated (UTF-8 `memref<?xi8>` view)
     // Pass pointer directly, valid for duration of call
     setWebviewTitle w title
 ```

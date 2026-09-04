@@ -80,7 +80,7 @@ Consider what CCS actually does:
 | Clef Construct | CCS Denotation |
 |----------------|----------------|
 | `42` | NTUint64 with value 42 |
-| `"hello"` | NTUstring: fat pointer `{ptr<u8>, length: i64}` |
+| `"hello"` | NTUstring: `memref<?xi8>` (the buffer is the string; no fat-pointer struct) |
 | `fun x -> x + 1` | NTUfun: function type with native calling convention |
 | `3.0<m/s²>` | NTUfloat64 + dimensional vector `(1, -2, 0, ...)` |
 | `let mutable x = 0` | PSG node with ArenaAffinity, escape classification |

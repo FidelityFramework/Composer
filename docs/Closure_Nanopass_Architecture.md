@@ -46,7 +46,7 @@ MLIR type of env: memref<N x i8> where N = sum of capture byte sizes
 | Variable Kind | Capture Mode | In Struct | Semantics |
 |---|---|---|---|
 | Immutable `let x = ...` | ByValue | `T` | Copy value |
-| Mutable `let mutable x = ...` | ByRef | `ptr<T>` | Pointer to alloca |
+| Mutable `let mutable x = ...` | ByRef | `memref<1xT>` | A view of the binding's storage cell, never a raw pointer |
 
 ### 3.3 Extended Struct Layouts
 

@@ -325,7 +325,7 @@ let inline Write s = WritableString $ s
 When we call `Console.Write "hello"`:
 - Syntax sees: `App [op_Dollar, WritableString, "hello"]`
 - Types resolve: `$` → `WritableString.op_Dollar(WritableString, string)` → `writeString`
-- Note: With CCS, `string` has native semantics (UTF-8 fat pointer) - no separate overloads needed
+- Note: With CCS, `string` has native semantics (UTF-8 `memref<?xi8>` view) - no separate overloads needed
 
 ### The Solution
 
