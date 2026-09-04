@@ -1,0 +1,13 @@
+# Expected outcome for W-3/accept. Read by vet.sh; keys are one-line strings.
+# Differential row: the same Program.clef is compiled under both .fidproj files in this leaf
+# (W-3.x86_64.fidproj: Linux x86_64, Dimensions Pointer 64 / Register 64; W-3.cortex-m33.fidproj: the
+# EK-RA6M5 Cortex-M33 descriptor, Dimensions Pointer 32 / Register 32, the descriptor platform-bindings.md
+# lines 469-475 names). Both must compile; vet.sh judges the verdict of each. The layouts below are the
+# design's expectation for the LayoutHint CCS records (plan W-3, design note (g)); vet.sh reports but does
+# not yet read them.
+rule = "a seal at a platform boundary comes from the platform description, resolved in CCS at saturation, never in the witness"
+verdict = "accept"
+code = ""
+pending = "step 7"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 6
+layout_x86_64 = "Addr at 8 bytes; Tag at 4 bytes"
+layout_cortex_m33 = "Addr at 4 bytes; Tag at 4 bytes"

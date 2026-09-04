@@ -1,0 +1,14 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+// astronomicalDistance<m>: the comparisons bound the value to the range [1e-11, 1e72] (width-inference.md §2, a comparison bounds the branch).
+let astronomicalDistance (d: float<m>) : float<m> =
+    if d < 1e-11<m> then 1e-11<m>
+    elif d > 1e72<m> then 1e72<m>
+    else d
+
+[<EntryPoint>]
+let main _ = 0

@@ -1,0 +1,5 @@
+# Expected outcome for UoM-4/reject. Read by vet.sh; keys are one-line strings.
+rule = "an unannotated numeric literal is dimensionless (float = float<1>); a dimensionless factor scales without changing dimension"
+verdict = "reject"
+code = "CCS8040"
+pending = "step 3"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 3

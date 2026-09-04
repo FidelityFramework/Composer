@@ -1,0 +1,16 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let computeForce (m1: float<kg>) (m2: float<kg>) (r: float<m>) =
+    let g = 6.674e-11<m^3 kg^-1 s^-2>
+    g * m1 * m2 / (r * r)
+let f = computeForce 1.0<kg> 1.0<kg> 1.0<m>
+let check : float<N> = f
+
+[<EntryPoint>]
+let main _ =
+    let _ = check
+    0

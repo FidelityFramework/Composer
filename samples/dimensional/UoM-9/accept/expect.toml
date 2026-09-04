@@ -1,0 +1,6 @@
+# Expected outcome for UoM-9/accept. Read by vet.sh; keys are one-line strings.
+rule = "the paper's example infers its result without a return annotation"
+verdict = "accept"
+code = ""
+pending = "step 3"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 3
+scheme = "float<kg> -> float<kg> -> float<m> -> float<kg m / s^2>"  # inferred; N expands to kg m s^-2 (design note a.3)

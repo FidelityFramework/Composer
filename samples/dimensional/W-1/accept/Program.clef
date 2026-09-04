@@ -1,0 +1,16 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let a = 1 + 1L
+let b = 1L + 2L
+let h (x: int64) = x + 1L
+
+[<EntryPoint>]
+let main _ =
+    let _ = a
+    let _ = b
+    let _ = h 3L
+    0

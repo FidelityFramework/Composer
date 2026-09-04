@@ -1,0 +1,5 @@
+# Expected outcome for W-4/accept. Read by vet.sh; keys are one-line strings.
+rule = "no silent default: an integer whose range is unobservable and that carries no seal from any source is a diagnostic"
+verdict = "accept"
+code = ""
+pending = "step 7"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 7

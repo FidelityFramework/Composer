@@ -1,0 +1,6 @@
+# Expected outcome for UoM-8/accept. Read by vet.sh; keys are one-line strings.
+rule = "generalisation: a dimension-polymorphic function is used at two dimensions"
+verdict = "accept"
+code = ""
+pending = "step 2"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 2
+scheme = "float<'u> -> float<'v> -> float<'u 'v>"  # the inferred scheme, one body (design note (g))

@@ -1,0 +1,12 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let a : float<m s> = 2.0<m> * 3.0<s>
+
+[<EntryPoint>]
+let main _ =
+    let _ = a
+    0

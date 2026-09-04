@@ -1,0 +1,8 @@
+# Expected outcome for NS-4/accept. Read by vet.sh; keys are one-line strings.
+rule = "a covering-but-suboptimal seal compiles and is witnessed with the representation the open argmin would have chosen"
+verdict = "accept"
+code = ""
+pending = "step 8"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 8
+family = "numeric-selection"  # the code is allocated with the D3 mapping table (plan NS rows); until then an empty code means: any error CCS code
+platform = "posit"  # as NS-2: no descriptor declares a posit representation yet; the x86_64 descriptor stands in
+info = "CCS8014"  # the design-time Info the accept is witnessed with (design note (f)); reported, not judged

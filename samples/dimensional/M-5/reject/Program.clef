@@ -1,0 +1,14 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let f (b: array<int, 4, Stack>) = b
+let s : array<int, 4, Sram> = [| 0; 0; 0; 0 |]
+let r = f s
+
+[<EntryPoint>]
+let main _ =
+    let _ = r
+    0

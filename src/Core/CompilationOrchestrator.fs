@@ -55,17 +55,25 @@ let private runFrontEnd (projectPath: string) : Result<ProjectCheckResult, strin
 /// When warnaserror is set, warnings (from reachable code) promote to errors.
 let private requireCleanDiagnostics (warnaserror: bool) (project: ProjectCheckResult) : Result<ProjectCheckResult, string> =
     let projectDir = Some project.Options.ProjectDirectory
-    let diagnostics = project.CheckResult.Diagnostics
 
-    // Emit all diagnostics with colored formatting (warnaserror elevates warnings to errors)
-    let (errors, warnings, infos) = CLI.Output.emitAllDiagnostics warnaserror projectDir diagnostics
-    CLI.Output.emitSummary errors warnings infos
-
-    // Short-circuit on errors (includes elevated warnings when warnaserror is set)
-    if errors > 0 then
-        Error (sprintf "Compilation failed with %d error(s)" errors)
+    // A file that failed to parse is a hard error: the checker produced no graph for it, so its
+    // absence would otherwise surface far downstream as a witness failure with no diagnostic.
+    let parseErrors = CLI.Output.emitParseErrors projectDir project.ParseErrors
+    if parseErrors > 0 then
+        CLI.Output.emitSummary parseErrors 0 0
+        Error (sprintf "Compilation failed with %d parse error(s)" parseErrors)
     else
-        Ok project
+        let diagnostics = project.CheckResult.Diagnostics
+
+        // Emit all diagnostics with colored formatting (warnaserror elevates warnings to errors)
+        let (errors, warnings, infos) = CLI.Output.emitAllDiagnostics warnaserror projectDir diagnostics
+        CLI.Output.emitSummary errors warnings infos
+
+        // Short-circuit on errors (includes elevated warnings when warnaserror is set)
+        if errors > 0 then
+            Error (sprintf "Compilation failed with %d error(s)" errors)
+        else
+            Ok project
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 2: MiddleEnd (Alex + PSGElaboration)

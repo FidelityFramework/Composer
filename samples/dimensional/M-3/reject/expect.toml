@@ -1,0 +1,6 @@
+# Expected outcome for M-3/reject. Read by vet.sh; keys are one-line strings.
+rule = "access is part of identity, no subtyping: a ReadWrite handle where ReadOnly is required passes only through Ptr.asReadOnly"
+verdict = "reject"
+code = "CCS8022"
+count = "2"  # the code must appear at least this many times (one per reject site)
+pending = "step 5"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 5

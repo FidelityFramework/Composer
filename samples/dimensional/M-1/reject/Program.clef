@@ -1,0 +1,10 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let w (p: Ptr<byte, Flash, ReadOnly>) = Ptr.write p 0uy
+
+[<EntryPoint>]
+let main _ = 0

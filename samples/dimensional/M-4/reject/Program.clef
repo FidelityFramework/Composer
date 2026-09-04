@@ -1,0 +1,14 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let f (p: Ptr<int, Peripheral, ReadWrite>) = Ptr.read p
+let call () =
+    let buffer : array<int, 4, Stack> = [| 0; 0; 0; 0 |]
+    let stackPtr : Ptr<int, Stack, ReadWrite> = Ptr.ofArray buffer
+    f stackPtr
+
+[<EntryPoint>]
+let main _ = call ()

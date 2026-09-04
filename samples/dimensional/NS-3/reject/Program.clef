@@ -1,0 +1,15 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+// Binding claim (Tier 2, library): the range a Fidelity.Physics binding would declare for speedOfLight,
+// [2.99e8, 3.0e8] m/s. No library carries a range claim today and no surface form writes one (plan D6),
+// so the claim is stated here and the literal the dataflow proves lies outside it.
+let speedOfLight : float<m/s> = 3.5e8<m/s>
+
+[<EntryPoint>]
+let main _ =
+    let _ = speedOfLight
+    0

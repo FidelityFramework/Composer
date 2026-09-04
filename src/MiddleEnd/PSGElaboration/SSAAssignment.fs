@@ -42,7 +42,6 @@ let private literalExpansionCost (lit: NativeLiteral) : int =
     | NativeLiteral.Decimal _ -> 1
     | NativeLiteral.ByteArray _ -> 1
     | NativeLiteral.UInt16Array _ -> 1
-    | NativeLiteral.BigInt _ -> 1
 
 /// Minimal NativeType to MLIRType mapping for capture slots
 /// This is a subset of TypeMapping.mapNativeType, inlined here to avoid

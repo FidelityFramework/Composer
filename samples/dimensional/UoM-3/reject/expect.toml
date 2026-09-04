@@ -1,0 +1,5 @@
+# Expected outcome for UoM-3/reject. Read by vet.sh; keys are one-line strings.
+rule = "division subtracts exponent vectors"
+verdict = "reject"
+code = "CCS8040"
+pending = "step 3"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 3

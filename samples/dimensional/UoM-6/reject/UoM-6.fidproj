@@ -1,0 +1,22 @@
+# Dimensional vet program (Dimensional_Vetting_Plan.md §3, Dimensional_Step1_2_Design.md §(g)).
+# Cloned from BAREWire/samples/RoundTrip/RoundTrip.fidproj: name, description and source list
+# adjusted; the barewire dependency dropped (the vet programs open nothing beyond the prelude).
+# Compiled by vet.sh in this directory; never by tests/regression/Runner.fsx.
+
+[package]
+name = "UoM-6-reject"
+version = "0.1.0"
+description = "UoM-6 reject: comparison requires equal dimensions"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+
+[build]
+sources = [
+    "Program.clef"
+]
+output = "vet"
+output_kind = "console"

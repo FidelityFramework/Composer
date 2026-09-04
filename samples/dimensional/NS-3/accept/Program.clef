@@ -1,0 +1,13 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+// Binding claim (Tier 2, library): [2.99e8, 3.0e8] m/s; the literal is contained.
+let speedOfLight : float<m/s> = 2.998e8<m/s>
+
+[<EntryPoint>]
+let main _ =
+    let _ = speedOfLight
+    0

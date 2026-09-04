@@ -1,0 +1,13 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+type Pair = { Addr: nativeint; Tag: int32 }
+let p = { Addr = 0n; Tag = 1 }
+
+[<EntryPoint>]
+let main _ =
+    let _ = p
+    0

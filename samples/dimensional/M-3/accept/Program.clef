@@ -1,0 +1,14 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let coerce () =
+    let buffer : array<int, 4, Stack> = [| 0; 0; 0; 0 |]
+    let rw : Ptr<int, Stack, ReadWrite> = Ptr.ofArray buffer
+    let ro : Ptr<int, Stack, ReadOnly> = Ptr.asReadOnly rw
+    Ptr.read ro
+
+[<EntryPoint>]
+let main _ = coerce ()

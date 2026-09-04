@@ -1,0 +1,7 @@
+# Expected outcome for NS-3/accept. Read by vet.sh; keys are one-line strings.
+rule = "tier disagreement: an observed dataflow range not contained in the binding claim is a diagnostic, never a change to the binding range"
+verdict = "accept"
+code = ""
+pending = "step 8"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 8
+family = "numeric-selection"  # the code is allocated with the D3 mapping table (plan NS rows); until then an empty code means: any error CCS code
+claim = "speedOfLight : float<m/s> in [2.99e8, 3.0e8]"

@@ -1,0 +1,13 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let x : uint8 = 300
+let c (counter: uint32) : int8 = counter % 1000
+
+[<EntryPoint>]
+let main _ =
+    let _ = x
+    0

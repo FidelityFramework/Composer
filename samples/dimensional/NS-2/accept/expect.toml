@@ -1,0 +1,7 @@
+# Expected outcome for NS-2/accept. Read by vet.sh; keys are one-line strings.
+rule = "coverage-empty: no offered representation covers the dimensional range"
+verdict = "accept"
+code = ""
+pending = "step 8"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 8
+family = "numeric-selection"  # the code is allocated with the D3 mapping table (plan NS rows); until then an empty code means: any error CCS code
+platform = "offers f64"  # the Linux x86_64 descriptor

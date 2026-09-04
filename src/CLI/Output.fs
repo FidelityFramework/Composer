@@ -126,6 +126,23 @@ let emitAllDiagnostics (warnaserror: bool) (projectDir: string option) (diagnost
     else
         (List.length errors, List.length warnings, List.length infos)
 
+/// Emit the parse errors of a project: one error line per message, in the diagnostic line format,
+/// so a file that failed to parse is reported and counted like any other error. The parser's messages
+/// carry their own position text; they carry no CCS code yet, because the lexer and parser family
+/// takes its CCS codes with the step-4 mapping table (Dimensional_Vetting_Plan.md D3), and no code is
+/// minted here in the meantime. Returns the number of error lines emitted.
+let emitParseErrors (projectDir: string option) (parseErrors: Map<string, string list>) : int =
+    parseErrors
+    |> Map.toList
+    |> List.sumBy (fun (file, messages) ->
+        // The message is already located ("file(line,col): text", NativeService.parseString);
+        // print it with the project-relative path so the line reads like every other diagnostic.
+        let path = relativizePath projectDir file
+        messages
+        |> List.iter (fun message ->
+            eprintfn "%s %s" (c errorColor "error:") (message.Replace(file, path)))
+        List.length messages)
+
 /// Emit a summary line after diagnostics.
 let emitSummary (errors: int) (warnings: int) (infos: int) =
     if errors > 0 || warnings > 0 || infos > 0 then

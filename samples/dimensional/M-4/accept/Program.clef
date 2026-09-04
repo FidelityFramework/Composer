@@ -1,0 +1,11 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let f (p: Ptr<int, Peripheral, ReadWrite>) = Ptr.read p
+let gpioReg : Ptr<int, Peripheral, ReadWrite> = Ptr.ofAddress 0x48000000UL
+
+[<EntryPoint>]
+let main _ = f gpioReg

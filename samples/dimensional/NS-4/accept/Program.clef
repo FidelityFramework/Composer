@@ -1,0 +1,14 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+// A float64 seal on a near-unity range [0.5, 2.0]; on a posit target the open argmin would choose the posit.
+let nearUnity (x: float64) : float64 =
+    if x < 0.5 then 0.5
+    elif x > 2.0 then 2.0
+    else x
+
+[<EntryPoint>]
+let main _ = 0

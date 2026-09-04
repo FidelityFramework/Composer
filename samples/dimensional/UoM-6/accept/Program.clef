@@ -1,0 +1,12 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let b = if 1.0<m> < 2.0<m> then 1 else 0
+
+[<EntryPoint>]
+let main _ =
+    let _ = b
+    0

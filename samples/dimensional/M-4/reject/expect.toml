@@ -1,0 +1,5 @@
+# Expected outcome for M-4/reject. Read by vet.sh; keys are one-line strings.
+rule = "region is invariant: an enumeration sort unified by equality"
+verdict = "reject"
+code = "CCS8100"
+pending = "step 5"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 5
