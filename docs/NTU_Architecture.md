@@ -169,7 +169,7 @@ type NTUKind =
 /// Platform-resolved type layout (erased at runtime)
 type NTULayout = {
     Kind: NTUKind
-    /// Erased - only for type checking, resolved by Alex
+    /// Resolved by CCS at saturation from the platform description; never erased, it is part of type identity
     AssumedSize: int option
     AssumedAlignment: int option
 }
