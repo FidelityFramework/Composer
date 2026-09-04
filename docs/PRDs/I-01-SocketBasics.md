@@ -1,5 +1,7 @@
 # I-01: Socket I/O Basics
 
+> **Surface note (2026-09).** `nativeptr<'T>`, `NativePtr.*`, `voidptr`, and `FSharp.NativeInterop` are not denotable in Clef source (spec `ffi-boundary.md` §1, `special-attributes-and-types.md`; `TNativePtr` is compiler-internal only). Where this PRD shows them, it records the pre-strip surface the code was written against; the settled surfaces are the opaque `Ptr<'T, 'Region, 'Access>` handle in the interior and `CHandle<'T>` at the C boundary, with buffers as bounded arrays and captures as `memref` views.
+
 > **Sample**: `23_SocketBasics` | **Status**: Planned | **Depends On**: A-01-19 (Async), A-04-22 (Regions)
 
 ## 1. Executive Summary

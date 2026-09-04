@@ -277,7 +277,7 @@ module Touch =
     /// Read touch position (for entropy mixing)
     let readTouchEvent (fd: int) : (int * int) option =
         let event = NativeArray.stackalloc<InputEvent> 1
-        let bytesRead = readInputEvent fd (NativePtr.toNativeInt event)
+        let bytesRead = readInputEvent fd event
         if bytesRead = sizeof<InputEvent> then
             if event.[0].type_ = EV_ABS then
                 Some (int event.[0].code, event.[0].value)

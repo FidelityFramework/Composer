@@ -104,7 +104,7 @@ This RA6M5 track is the **forcing function** that first stands these intrinsics 
 
 These are carried deliberately and not resolved here.
 
-1. **ISR / interrupt-vector boundary.** Hardware vectors carry **no `void*` userdata slot**, so the closure-via-userdata bridge used for C library callbacks (the LVGL `(cb, user_data)` idiom) does **not** transfer to the IRQ → `Observable` edge. The likely shape is a **captureless top-level Clef handler bound directly to the vector-table slot** (a bare `code_ptr`, no captured environment), with peripheral state reached through the register HAL rather than a captured env. The exact mechanism that turns a vector slot into an `Observable` push source is currently unspecified.
+1. **ISR / interrupt-vector boundary.** Hardware vectors carry **no `void*` userdata slot**, so the closure-via-userdata bridge used for C library callbacks (the LVGL `(cb, user_data)` idiom) does **not** transfer to the IRQ → `Observable` edge. The likely shape is a **captureless top-level Clef handler bound directly to the vector-table slot** (a bare function symbol in the vector slot, no captured environment), with peripheral state reached through the register HAL rather than a captured env. The exact mechanism that turns a vector slot into an `Observable` push source is currently unspecified.
 
 2. **Unikernel scheduler — cooperative vs. preemptive.** The reactive model points at a **cooperative** event loop (Incremental stabilization driven by interrupt wakeups), which is the natural single-core fit and avoids preemptive context-switch reasoning. Whether any preemption is ever warranted (e.g. a hard-real-time deadline that cannot wait for stabilization to quiesce) is left open. Cooperative is the working assumption.
 

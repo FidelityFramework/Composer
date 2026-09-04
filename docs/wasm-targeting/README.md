@@ -16,7 +16,7 @@ WebAssembly is not JavaScript. The two targets share deployment contexts — bro
 The WASM story in Fidelity triangulates across three axes that are worth keeping separate even though they interact constantly:
 
 1. **Pathway**: the compilation path inside Composer that produces WASM. Two coexisting pathways exist: LLVM WASM and MLIR WAMI. They differ in what they preserve from the source and in what runtime features they require.
-2. **Continuation handling**: how DCont semantics (async, actors, computation expressions, all unified as delimited continuations in Clef) survive the lowering to WASM. Two coexisting strategies exist: DCont-via-Coroutines (state machine lowering) and DCont-Native (via WebAssembly's Stack Switching proposal). Pathway and strategy are related but not identical; both pathways can use either strategy depending on what the target runtime supports.
+2. **Continuation handling**: how the suspension form Alex witnesses from the saturated PSG (async, actors, computation expressions, all one recipe in Clef) is realized on WASM. Two backend realizations exist: the state machine as witnessed, and a backend leg that transliterates the witnessed frame into WebAssembly's Stack Switching instructions. Pathway and realization are related but not identical; both pathways can use either realization depending on what the target runtime supports.
 3. **Deployment context**: where the WASM artifact actually runs. Cloudflare Workers is the focus here because it sits in an interesting architectural position between pure JavaScript Workers and full Containers — WASM is the middle tier of a step-graded compute model that the framework can target deliberately. Browsers and standalone WASM runtimes are adjacent deployment contexts that the same artifacts can reach.
 
 This document walks each axis in turn, then shows the matrix.
@@ -76,51 +76,33 @@ The architecture encodes this as a target-profile decision, the same mechanism t
 
 ## Axis 2: Continuation Handling
 
-DCont (delimited continuations) is the unifying abstraction for async, actors, and computation expressions in Clef. Every continuation-bearing construct compiles through the DCont MLIR dialect. What differs by target is how DCont ops are lowered into the target's execution model.
+Every continuation-bearing construct in Clef — `async`, actor `receive`, any computation expression — is settled on the Program Semantic Graph at saturation by one suspension recipe: the region is split at its cuts into segments, each cut's live-across set becomes a slot in a frame of literal extent, and every cut carries an edge to its delimiter. Alex witnesses that structure as standard dialects only: a discriminant, a byte frame with static views, and `scf.index_switch` over the discriminant. No continuation dialect exists above the witness boundary ([Delimited_Continuations_Architecture.md](../Delimited_Continuations_Architecture.md); spec `dcont-representation.md`). What differs by target is how that witnessed form is realized below the boundary.
 
-### Strategy 1: DCont-via-Coroutines (State Machine Reification)
+### Realization 1: The State Machine as Witnessed
 
-On targets that lack native stack-switching primitives, DCont ops lower through LLVM coroutine infrastructure. Each `dcont.shift` becomes a coroutine suspension point; the coroutine frame becomes the reified continuation. At the WASM emission layer, the coroutine frame is an explicit struct living in linear memory, and suspension is explicit state assignment followed by return-to-caller.
-
-This is the strategy the LLVM WASM pathway uses. It is also the strategy WAMI uses when targeting a runtime without stack switching — WAMI can fall back to state-machine lowering if the target profile demands it. The work on LLVM coroutine emission is not throwaway; it is a production-tested implementation substrate for DCont on any target that lacks native support.
+On targets without native stack switching, the witnessed form runs as written. The frame is an explicit struct in linear memory; suspension is a discriminant store followed by return-to-caller; resume loads the discriminant and switches to the segment. This is the LLVM WASM pathway's realization, and it is also what the WAMI pathway uses on a runtime without stack switching.
 
 Tradeoffs:
 - Works on every WASM runtime.
-- Reifies the coroutine frame into memory; suspension touches memory on every step.
-- Loses some optimization opportunities that true stack switching would preserve (inlining across suspension points, stack-allocated continuation state).
+- The frame lives in memory; suspension touches memory on every step.
+- Some optimizations true stack switching would preserve (inlining across cuts, engine-managed continuation state) are unavailable.
 
-### Strategy 2: DCont-Native (WebAssembly Stack Switching)
+### Realization 2: Stack Switching as a Backend Leg
 
-On targets with stack switching, DCont ops lower directly to the stack-switching primitives. Suspension is a native operation; resumption is native; the continuation is a first-class runtime value handled by the WASM engine rather than by explicit user-code state machines.
+On targets with stack switching, a backend leg — below the witness boundary, in the target's own vocabulary — transliterates the witnessed frame and discriminant into the runtime's continuation primitive. Suspension becomes a native operation, resumption native, and the continuation a first-class runtime value handled by the engine.
 
 The WebAssembly Stack Switching proposal introduces:
-- `cont.new` — create a continuation
-- `cont.bind` — pre-bind arguments
-- `cont.suspend` — suspend and yield a tag value
-- `cont.resume` — resume a continuation
+- `cont.new` (proposal instruction) — create a continuation
+- `cont.bind` (proposal instruction) — pre-bind arguments
+- `cont.suspend` (proposal instruction) — suspend and yield a tag value
+- `cont.resume` (proposal instruction) — resume a continuation
 
-These are the WASM-native equivalents of the `shift`/`reset`/`resume` primitives Clef's DCont dialect exposes at the source level. The mapping is direct; no reification needed.
+These are the target's instructions, expressed upward by the leg; the front end never emits them, and the witnessed form is unchanged whichever realization the target profile selects.
 
 Tradeoffs:
 - Preserves continuation structure at the runtime level.
-- Enables optimization patterns LLVM coroutines cannot express (zero-cost suspension when no state needs to be saved, engine-managed continuation pool).
+- Enables patterns the state machine cannot express (zero-cost suspension when no state needs saving, an engine-managed continuation pool).
 - Requires runtime support (V8 behind flags, Wasmtime experimental, not universal).
-
-### Strategy Selection Is Orthogonal to Pathway
-
-A common confusion: pathway (LLVM vs. WAMI) and strategy (coroutines vs. stack switching) seem like they should be bundled. They are not.
-
-- LLVM WASM can, in principle, emit WASM that uses stack switching through LLVM's WASM backend — LLVM has partial support for the proposal. In practice, coroutines are simpler and more mature.
-- WAMI can lower DCont to either stack switching (preferred, when available) or coroutine-style state machines (fallback, for runtimes without stack switching).
-
-The matrix is:
-
-| Pathway | Default strategy | Fallback strategy |
-|:--------|:----------------|:------------------|
-| LLVM WASM | Coroutines (state machines) | — |
-| WAMI | Stack switching (when target supports) | Coroutines |
-
-Alex's target-profile logic determines which combination is active. The PSG codata carries the runtime capability flags; the backend choice follows from those flags.
 
 ## Axis 3: Cloudflare's Step-Graded Compute
 
@@ -172,7 +154,7 @@ What this tier costs:
 
 - **Copy-in/copy-out overhead at the JS/WASM boundary.** WASM operates in its own linear memory, separate from the JavaScript heap that holds the Worker's request/response objects, environment bindings, and KV/R2/Queue values. Any data moving between JavaScript and WASM has to be copied across the boundary. For a Worker that spends most of its time shuffling small values between Cloudflare bindings and the response — a routing decision, a header check, a KV lookup — the copy cost can dominate whatever the WASM saves in compute. Cloudflare's 2018 guidance named this explicitly: "Code that mostly interacts with external objects without doing any serious 'number crunching' likely does not benefit from WASM." The implication for Fidelity is that the right Tier 2 candidates are code paths that pull a single batch of data into WASM memory, do substantial compute on it, and return a single result — not code paths that make many small round trips across the boundary.
 - **Cold start grows.** WASM modules have to be instantiated on cold start. For small modules, the overhead is negligible; for large modules (multi-MB), it is significant. Cloudflare caches compiled WASM between requests for the same Worker, but the first hit after a deploy pays the full cost.
-- **No stack switching currently.** Workers' isolates run WASM without the stack-switching feature enabled. This means WASM in Workers today must use the DCont-via-Coroutines strategy for continuation-bearing code. The WAMI pathway targeting Workers would fall back to state machines.
+- **No stack switching currently.** Workers' isolates run WASM without the stack-switching feature enabled. This means WASM in Workers today runs continuation-bearing code as the witnessed state machine (Realization 1). The WAMI pathway targeting Workers uses the same realization.
 - **Same isolate constraints.** WASM in a Worker is still inside a V8 isolate. No SharedArrayBuffer across isolates; no traditional filesystem; no raw sockets; I/O still goes through Cloudflare-provided bindings.
 - **Size and compile budget.** Cloudflare enforces module size and compile-time budgets. Very large WASM modules (hundreds of MB) do not fit; extremely complex modules may exceed the compile-time limit.
 
@@ -225,7 +207,7 @@ The conservative framing in this document — "LLVM WASM + Coroutines for now, W
 
 **The implication for Fidelity.** Stack Switching is not a niche capability that will serve one corner of WASM deployment. It is the standards-track answer for continuation support across every WASM runtime that will matter — browsers, Node.js, Wasmtime, WasmEdge, Cloudflare Workers, embedded WASM runtimes. Once Phase 4 completes and implementations ship broadly (timeline plausible for 2027, aggressive cases possible sooner), *delimited continuations become a runtime-native capability everywhere WASM runs*.
 
-Fidelity's DCont dialect, the WAMI lowering from DCont to stack-switching ops, and the actor/async/computation-expression unification through DCont are all positioned for this convergence. When the proposal reaches broad availability, Composer's WASM output does not need a strategy change; the same DCont ops lower to the same stack-switching instructions, and the runtime carries the continuation work that was previously reified into state machines.
+The suspension recipe on the PSG, the witnessed frame-and-discriminant form, and the actor/async/computation-expression unification through one recipe are all positioned for this convergence. When the proposal reaches broad availability, Composer's WASM output does not change; the WAMI backend leg transliterates the same witnessed frame into the stack-switching instructions, and the runtime carries the continuation work that the state-machine realization performs in memory.
 
 **What this changes in the near-term plan.** Three things:
 
@@ -246,7 +228,7 @@ The WebAssembly Stack Switching explainer uses language like "concurrent task ex
 **"Concurrency" in the Stack Switching explainer is cooperative concurrency, not parallelism.** The explainer's task scheduler example runs `$task_0` through `$task_n` on a single thread, interleaved via voluntary suspension:
 
 - The scheduler picks a task.
-- The task runs until it hits a suspension point (an I/O op, a yield, a `cont.suspend`).
+- The task runs until it hits a suspension point (an I/O op, a yield — a `cont.suspend` in the proposal's instruction set).
 - Control returns to the scheduler, which picks another task — possibly the same one if it's ready to resume, possibly a different one.
 - Many tasks make progress over time. None of them execute simultaneously on separate cores. One thread, interleaved computation.
 
@@ -269,7 +251,7 @@ Data parallelism does not suffer from the constraints task parallelism does beca
 
 This matters because SIMD is genuinely common in the workload shapes where Tier 2 pays off. Numeric kernels, codec hot paths, and bit-packed low-precision inference are all naturally SIMD-friendly. The section below on Composer's memory marshaling expands on why this is a particularly strong combination.
 
-**Why this matches Fidelity's DCont unification.** The DCont dialect provides delimited continuations — suspend/resume primitives that express cooperative concurrency. A Clef actor inside a Durable Object can handle many in-flight operations (awaiting messages, storage reads, inter-DO fetches) on the DO's single thread. The actor does not need parallelism to have concurrency; it needs suspension. DCont provides that. Stack Switching provides it at the WASM level. The two abstractions match.
+**Why this matches Fidelity's continuation unification.** The suspension recipe provides delimited continuations — suspend/resume as graph structure, witnessed as a state machine, expressing cooperative concurrency. A Clef actor inside a Durable Object can handle many in-flight operations (awaiting messages, storage reads, inter-DO fetches) on the DO's single thread. The actor does not need parallelism to have concurrency; it needs suspension. DCont provides that. Stack Switching provides it at the WASM level. The two abstractions match.
 
 **What this means for Workers architecture decisions.** When a workload genuinely needs *task parallelism* — multiple cores executing different code simultaneously — the answer is not "WASM in a Worker." The answer is "Containers" (Tier 3), where real OS threads and full process semantics are available, or splitting the workload across multiple Workers that communicate via BAREWire frames. WASM-in-Worker does not lift the single-thread constraint; it lets WASM code participate in the same cooperative concurrency that JavaScript already has, and it adds access to data parallelism through SIMD.
 
@@ -323,7 +305,7 @@ Pulling the three axes together:
 | WAMI + Stack Switching + WASM-in-Worker | Future (gated on Cloudflare) | The payoff scenario: WAMI preserving DCont structure into Cloudflare's WASM runtime |
 | WAMI + Stack Switching + Browser | Future (gated on engine) | V8 stack-switching behind flag; Firefox and Safari not yet shipped |
 
-The "future" rows are not abstract. The WebAssembly Stack Switching proposal is in Phase 3 as of early 2026, which means it is on track for standardization. Cloudflare tracks WebAssembly proposals closely and has historically enabled features soon after they reach Phase 4. Composer's architecture is preparing for the scenario where Stack Switching is broadly available: the WAMI pathway is being scoped, the DCont dialect already exposes the right primitives, and the target-profile mechanism can switch strategies without requiring source code changes.
+The "future" rows are not abstract. The WebAssembly Stack Switching proposal is in Phase 3 as of early 2026, which means it is on track for standardization. Cloudflare tracks WebAssembly proposals closely and has historically enabled features soon after they reach Phase 4. Composer's architecture is preparing for the scenario where Stack Switching is broadly available: the WAMI pathway is being scoped, the witnessed frame already carries exactly what a continuation primitive needs, and the target-profile mechanism can select the realization without requiring source code changes.
 
 ## Where BAREWire Fits
 

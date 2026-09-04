@@ -218,13 +218,13 @@ The nested lambdas are continuations. This observation has profound implications
 
 **Why this matters for Fidelity:**
 
-Computation expressions already express the control flow patterns that the DCont (delimited continuations) dialect needs:
+Computation expressions already express the control-flow structure the PSG settles at saturation — no dialect is needed to carry it:
 
-| Pattern | Compilation Target |
-|---------|-------------------|
-| Sequential effects (`async`, state) | DCont dialect - preserves continuations |
-| Parallel pure (`validated`, reader) | Inet dialect - compiles to data flow |
-| Mixed | Both dialects with analysis-driven splitting |
+| Pattern | Saturated form on the PSG | Witnessed as |
+|---------|---------------------------|--------------|
+| Sequential effects (`async`, state) | suspension recipe: segments at cuts, a frame, a delimiter edge | `scf.index_switch` over a discriminant, standard dialects only |
+| Parallel pure (`validated`, reader) | net structure: hyperedges over enumerated source sets | data flow (`scf.parallel` where the pathway supports it) |
+| Mixed | both, split at the effect boundary by saturation | both of the above |
 
 The MLIR builder itself is a computation expression:
 

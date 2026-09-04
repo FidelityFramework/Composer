@@ -394,7 +394,7 @@ Webview expects null-terminated C strings. With string (native semantics):
 let setTitle w title =
     // string is null-terminated (UTF-8 fat pointer)
     // Pass pointer directly, valid for duration of call
-    setWebviewTitle w (NativePtr.toNativeInt title.Pointer)
+    setWebviewTitle w title
 ```
 
 For callback responses:
@@ -402,7 +402,7 @@ For callback responses:
 let respondToCallback w id result =
     // Result string must remain valid until webview_return completes
     use resultStr = String.withNullTerminator result
-    returnWebview w id 0 (NativePtr.toNativeInt resultStr.Pointer)
+    returnWebview w id 0 resultStr
     // resultStr deallocated after call completes
 ```
 

@@ -1,5 +1,9 @@
 # C-07: Sequence Operations
 
+> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
+
+> **Surface note (2026-09).** `nativeptr<'T>`, `NativePtr.*`, `voidptr`, and `FSharp.NativeInterop` are not denotable in Clef source (spec `ffi-boundary.md` §1, `special-attributes-and-types.md`; `TNativePtr` is compiler-internal only). Where this PRD shows them, it records the pre-strip surface the code was written against; the settled surfaces are the opaque `Ptr<'T, 'Region, 'Access>` handle in the interior and `CHandle<'T>` at the C boundary, with buffers as bounded arrays and captures as `memref` views.
+
 > **Sample**: `16_SeqOperations` | **Status**: Planned | **Depends On**: C-06 (SimpleSeq), C-05 (Lazy), C-02 (HOFs), C-01 (Closures)
 
 ---
@@ -23,7 +27,7 @@ These files contain the patterns that C-07 MUST compose from:
 
 | File | Purpose | Key Exports to Study |
 |------|---------|---------------------|
-| `SeqWitness.fs` | Seq struct creation & MoveNext | `seqStructTypeFull`, `witnessSeqCreateFull`, `witnessMoveNextWhileBased`, `WhileBasedMoveNextInfo`, `YieldBlockInfo` |
+| `SeqWitness.fs` | Seq struct creation & MoveNext | `seqStructTypeFull`, `witnessSeqCreateFull`, `witnessMoveNextWhileBased`, `WhileBasedMoveNextInfo`, `YieldBlockInfo` — interim: the two-shape recognizer and its info records are superseded by the suspension recipe (spec `seq-representation.md` §6; `Delimited_Continuations_Architecture.md`) |
 | `LazyWitness.fs` | Lazy thunk pattern (simpler precursor) | `lazyStructType`, `witnessLazyCreate`, `witnessLazyForce` |
 | `LambdaWitness.fs` | Flat closure construction | `buildClosureConstruction`, `buildCaptureExtractionOps`, `witness` |
 

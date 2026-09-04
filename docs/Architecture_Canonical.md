@@ -25,7 +25,7 @@
 │  - Parses Clef source (SynExpr, SynModule)                │
 │  - Type checking with NTUKind native types              │
 │  - SRTP resolution during type checking                 │
-│  - Intrinsic modules: Sys.*, NativePtr.*, Console.*    │
+│  - Intrinsic modules: Sys.*, Ptr.*, Console.*      │
 │  - PSG CONSTRUCTION with intrinsic markers              │
 │                                                         │
 │  OUTPUT: PSG with native types, intrinsics marked       │

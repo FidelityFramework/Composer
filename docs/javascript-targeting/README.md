@@ -30,7 +30,7 @@ This subfolder answers a different set of questions:
 
 ## Companion Subfolder
 
-- [wasm-targeting/](../wasm-targeting/) — the WASM story as a distinct target family, with the two pathways (LLVM WASM and WAMI/MLIR WASM), the DCont-via-Coroutines vs. DCont-Native (Stack Switching / JSPI) continuation strategies, and Cloudflare's step-graded compute model where WASM sits between pure JS Workers and Containers. Start there when the question is "should this compute go in a Worker or a WASM-in-Worker or a Container" rather than "should this compute be authored in F# or Clef."
+- [wasm-targeting/](../wasm-targeting/) — the WASM story as a distinct target family, with the two pathways (LLVM WASM and WAMI/MLIR WASM), the two backend realizations of the witnessed suspension form (state machine vs. stack switching / JSPI as a backend leg), and Cloudflare's step-graded compute model where WASM sits between pure JS Workers and Containers. Start there when the question is "should this compute go in a Worker or a WASM-in-Worker or a Container" rather than "should this compute be authored in F# or Clef."
 
 ## Position in the Broader Docs
 

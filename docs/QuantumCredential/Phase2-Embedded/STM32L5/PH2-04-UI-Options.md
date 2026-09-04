@@ -511,10 +511,10 @@ module QuantumCredentialUSB =
     let sendCommand (device: Device) (cmd: Command) : Result<Response, Error> =
         use buffer = stackalloc<byte> 64
         serializeCommand cmd buffer
-        let written = hidWrite device.Handle (NativePtr.toNativeInt buffer) 64
+        let written = hidWrite device.Handle buffer 64
         if written < 0 then Error WriteFailed
         else
-            let read = hidReadTimeout device.Handle (NativePtr.toNativeInt buffer) 64 1000
+            let read = hidReadTimeout device.Handle buffer 64 1000
             if read < 0 then Error ReadFailed
             else Ok (parseResponse buffer read)
 ```

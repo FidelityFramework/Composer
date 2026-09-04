@@ -74,7 +74,7 @@ All detection is correct. The `PartialApplicationInfo` knows:
 
 ClosurePatterns provides:
 - `pFlatClosure`: Build env buffer + uniform pair from captures
-- `pClosureCall` / `pClosureCallIndirect`: Extract code_ptr + env, call with prepended env
+- `pClosureCall` / `pClosureCallIndirect`: call with prepended env (interim: today they extract a code pointer from the buffer through a cast; the settled call is `func.call_indirect %fn(%env, …)` on the pair)
 - `pExtractCaptures`: Load captures from env buffer at byte offsets
 
 This infrastructure is the right shape for PAP closures — the only difference is what goes into the env buffer.
@@ -88,7 +88,7 @@ A partial application `f x₁ x₂` where `f` takes `x₁ x₂ x₃ x₄` produc
 ```
 PAP Closure for `f x₁ x₂`:
 ┌──────────────────────────────────────────┐
-│ code_ptr: pointer to PAP_thunk_f_2       │
+│ fn: PAP_thunk_f_2  (the function-value half; not stored in env) │
 ├──────────────────────────────────────────┤
 │ capture_0: x₁  (first supplied arg)      │
 │ capture_1: x₂  (second supplied arg)     │
@@ -106,10 +106,7 @@ PAP_thunk_f_2(env, x₃, x₄):
 
 The PAP thunk is a **generated forwarding function** — it reconstructs the full argument list and delegates to the original flattened function.
 
-**Uniform pair representation** (same as regular closures):
-```
-memref<2xindex> = [code_ptr_as_index, env_ptr_as_index]
-```
+**Uniform pair representation** (same as regular closures): two SSA values `(fn, env)`, never packed and never cast — the multi-value form of spec `closure-representation.md` §6.3. (The `memref<2xindex>` index-pair packing the code carries today is the interim encoding, retired by `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`.)
 
 This means PAP closures and regular closures have the **same calling convention** — callers don't need to distinguish them.
 

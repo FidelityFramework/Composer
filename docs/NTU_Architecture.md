@@ -67,7 +67,7 @@ Posit arithmetic is selected automatically by the DTS representation selection l
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Clef Application Code                                   │
-│  int, uint, nativeint, nativeptr<'T>                    │
+│  int, uint, nativeint, Ptr<'T, 'Region, 'Access>                    │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -91,7 +91,7 @@ Posit arithmetic is selected automatically by the DTS representation selection l
 | `int` | `NTUint` |
 | `uint` | `NTUuint` |
 | `nativeint` | `NTUnint` |
-| `nativeptr<'T>` | `NTUptr<'T>` |
+| `Ptr<'T, 'Region, 'Access>` (`nativeptr` not denotable) | `NTUptr<'T>` |
 | `int32` | `NTUint32` |
 | `int64` | `NTUint64` |
 | `float` | `NTUfloat64` |

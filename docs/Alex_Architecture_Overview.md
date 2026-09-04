@@ -189,7 +189,7 @@ Lazy.force x
 IfThenElse(
     cond = x.computed,
     thenBranch = x.value,
-    elseBranch = Call(x.code_ptr, x.captures)
+    elseBranch = Call(x.thunk, x.env)   // thunk is the function-value half of the lazy pair
 )
 
 // ControlFlowWitness handles the IfThenElse node

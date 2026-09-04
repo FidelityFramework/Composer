@@ -27,17 +27,19 @@ Clef Native uses **MLKit-style flat closures** where all captured variables are 
 ### 3.1 Flat Closure Structure
 
 ```
-Closure Structure (byte-level memref)
+Closure = (fn, env)
+fn:  func.constant @lambda_impl — the function-value half, never stored in env
+env: environment (byte-level memref)
 ┌─────────────────────────────────────────────────────────┐
-│ code_ptr (TIndex): pointer to lambda implementation     │
-├─────────────────────────────────────────────────────────┤
 │ capture_0: T₀  (value for ByValue, pointer for ByRef)   │
 │ capture_1: T₁                                           │
 │ ...                                                     │
 └─────────────────────────────────────────────────────────┘
 
-MLIR type: memref<N x i8> where N = sum of field byte sizes
+MLIR type of env: memref<N x i8> where N = sum of capture byte sizes
 ```
+
+(Interim: the code today writes a `code_ptr` word at offset 0 of the buffer and reads it back through a cast; that is the retired encoding, and it is removed by `clef/docs/fidelity/phg/Closure_Retooling_Plan.md` steps 4–5.)
 
 ### 3.2 Capture Modes
 
@@ -50,11 +52,13 @@ MLIR type: memref<N x i8> where N = sum of field byte sizes
 
 The same byte-level struct pattern supports three contexts:
 
-| Context | Layout | Extraction Base Index |
+| Context | Environment layout | Extraction Base Index |
 |---|---|---|
-| RegularClosure | `{code_ptr, cap₀, cap₁, ...}` | 1 |
-| LazyThunk | `{computed, value, code_ptr, cap₀, ...}` | 3 |
-| SeqGenerator | `{state, current, code_ptr, cap₀, ...}` | 3 |
+| RegularClosure | `{cap₀, cap₁, ...}` | 0 |
+| LazyThunk | `{computed, value, cap₀, ...}` | 2 |
+| SeqGenerator | `{state, current, cap₀, ...}` | 2 |
+
+(Interim: the code's base indices are 1/3/3 because it still stores the code pointer; they become 0/2/2 with the retooling.)
 
 ## 4. Why Flat: the Finiteness Lemma
 

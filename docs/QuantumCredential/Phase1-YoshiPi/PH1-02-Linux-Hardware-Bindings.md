@@ -163,7 +163,7 @@ module GPIO =
         request.[0].default_values.[0] <- byte initialValue
         request.[0].lines <- 1u
 
-        let result = ioctl chipFd GPIO_GET_LINEHANDLE_IOCTL (NativePtr.toNativeInt request)
+        let result = ioctl chipFd GPIO_GET_LINEHANDLE_IOCTL request
         if result < 0 then -1
         else request.[0].fd
 
@@ -171,7 +171,7 @@ module GPIO =
     let setValue (lineFd: int) (value: int) : int =
         let data = NativeArray.stackalloc<GpioHandleData> 1
         data.[0].values.[0] <- byte value
-        ioctl lineFd GPIOHANDLE_SET_LINE_VALUES (NativePtr.toNativeInt data)
+        ioctl lineFd GPIOHANDLE_SET_LINE_VALUES data
 
     /// Request a GPIO line as input
     let requestInput (chipFd: int) (line: int) : int =
@@ -180,14 +180,14 @@ module GPIO =
         request.[0].flags <- GPIOHANDLE_REQUEST_INPUT
         request.[0].lines <- 1u
 
-        let result = ioctl chipFd GPIO_GET_LINEHANDLE_IOCTL (NativePtr.toNativeInt request)
+        let result = ioctl chipFd GPIO_GET_LINEHANDLE_IOCTL request
         if result < 0 then -1
         else request.[0].fd
 
     /// Get input line value
     let getValue (lineFd: int) : int =
         let data = NativeArray.stackalloc<GpioHandleData> 1
-        let result = ioctl lineFd GPIOHANDLE_GET_LINE_VALUES (NativePtr.toNativeInt data)
+        let result = ioctl lineFd GPIOHANDLE_GET_LINE_VALUES data
         if result < 0 then -1
         else int data.[0].values.[0]
 ```
@@ -248,7 +248,7 @@ module IIO =
         else
             // Read ASCII digits
             let buffer = NativeArray.stackalloc<byte> 16
-            let bytesRead = readBytes fd (NativePtr.toNativeInt buffer) 16
+            let bytesRead = readBytes fd buffer 16
 
             closeDevice fd |> ignore
 
@@ -263,7 +263,7 @@ module IIO =
         if fd < 0 then 0.0f
         else
             let buffer = NativeArray.stackalloc<byte> 32
-            let bytesRead = readBytes fd (NativePtr.toNativeInt buffer) 32
+            let bytesRead = readBytes fd buffer 32
             closeDevice fd |> ignore
 
             if bytesRead <= 0 then 0.0f
@@ -330,7 +330,7 @@ module IIO.Buffered =
         if fd < 0 then -1
         else
             let bytesWanted = count * 2  // 16-bit samples
-            let bytesRead = readBytes fd (NativePtr.toNativeInt buffer) bytesWanted
+            let bytesRead = readBytes fd buffer bytesWanted
             closeDevice fd |> ignore
             bytesRead / 2  // Return sample count
 ```
@@ -396,12 +396,12 @@ module USBGadget =
 
     /// Write credential data to USB
     let writeCredential (fd: int) (data: NativeArray<byte>) : int =
-        writeBytes fd (NativePtr.toNativeInt data) data.Length
+        writeBytes fd data data.Length
 
     /// Read acknowledgment from desktop
     let readAck (fd: int) : int =
         let buffer = NativeArray.stackalloc<byte> 16
-        readBytes fd (NativePtr.toNativeInt buffer) 16
+        readBytes fd buffer 16
 ```
 
 ### Desktop Side
@@ -419,7 +419,7 @@ module CredentialReceiver =
     /// Read credential from YoshiPi
     let readCredential (fd: int) (maxLen: int) : NativeArray<byte> =
         let buffer = NativeArray.stackalloc<byte> maxLen
-        let bytesRead = readBytes fd (NativePtr.toNativeInt buffer) maxLen
+        let bytesRead = readBytes fd buffer maxLen
         buffer  // Caller handles actual length
 ```
 

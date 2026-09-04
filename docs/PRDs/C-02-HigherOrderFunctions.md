@@ -1,5 +1,7 @@
 # C-02: Higher-Order Functions
 
+> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
+
 > **Sample**: `12_HigherOrderFunctions` | **Status**: Planned | **Depends On**: C-01 (Closures)
 
 ## 1. Executive Summary

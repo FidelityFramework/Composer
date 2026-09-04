@@ -1,21 +1,17 @@
-/// MLIRNanopass - Structural MLIR-to-MLIR transformations
+/// MLIRNanopass - Post-witness declaration collection
 ///
-/// This module establishes the foundation for dual witness infrastructure:
-/// - Current: PSG → MLIR (via witnesses)
-/// - Future: MLIR → MLIR (via nanopasses) → DCont/Inet dialects
+/// The one MLIR-to-MLIR step the middle end performs: collect the external
+/// functions the witnessed ops call and emit their declarations. Nothing
+/// semantic happens here. Everything that decides program structure —
+/// suspension, closures, net structure, layout, obligations — is settled in
+/// the PSG at saturation and witnessed as standard dialects; there is no
+/// middle-end lowering to any continuation or net dialect, and no dialect
+/// above the witness boundary for one to target (docs/Thin_Middle_End_Design.md).
 ///
-/// ARCHITECTURAL PRINCIPLES:
+/// PRINCIPLES:
 /// 1. Platform-agnostic - no hardcoded backend assumptions
-/// 2. Structural transformations - like PSG nanopasses
-/// 3. Composable - each pass handles one concern
-/// 4. SSA isolation - fresh SSA generation contained to this layer
-///
-/// LONG-TERM VISION:
-/// This is the FIRST component of dual witness infrastructure. Future passes will include:
-/// - DCont lowering (sequential/effectful patterns → stack-based async)
-/// - Inet lowering (parallel/pure patterns → graph reduction)
-/// - Backend targeting (portable dialects → LLVM/SPIR-V/WebAssembly/custom)
-/// - Hybrid optimization (mix DCont/Inet based on purity analysis)
+/// 2. Structural - a fold over the op stream, like a PSG nanopass
+/// 3. SSA isolation - fresh SSA generation, if any, contained to this layer
 module Alex.Pipeline.MLIRNanopass
 
 open Alex.Dialects.Core.Types
@@ -135,15 +131,12 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
 /// CURRENT PASS:
 /// - Declaration Collection (emit FuncDecl for external functions)
 ///
-/// FUTURE PASSES (aligned with DCont/Inet Duality vision):
-/// - DCont Lowering (async {} → dcont dialect, stack-based continuations)
-/// - Inet Lowering (query {} → inet dialect, parallel graph reduction)
-/// - Hybrid Optimization (mix DCont/Inet based on purity analysis)
-/// - Backend Targeting (portable dialects → LLVM/SPIR-V/WebAssembly/custom)
-///
-/// ARCHITECTURAL NOTE:
-/// This is the integration point for eventual TableGen-based transformations.
-/// Future vision: Generate TableGen in MiddleEnd, use it to transform dialects.
+/// This is the only MLIR→MLIR transformation in the middle end, and it stays the
+/// only one. Suspension (async/seq/receive), closures, and interaction-net
+/// structure are settled in the PSG by Baker recipes at saturation and witnessed
+/// as standard dialects (func, memref, arith, scf, index). There is no DCont or
+/// Inet lowering here and no dialect above the witness boundary for one to target.
+/// See docs/Thin_Middle_End_Design.md and docs/Delimited_Continuations_Architecture.md.
 let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (intermediatesDir: string option) : MLIROp list =
     // Declaration Collection Pass
     //

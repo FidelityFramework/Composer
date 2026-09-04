@@ -96,7 +96,7 @@ Alex/platform bindings at code generation time; CCS enforces type *identity*, no
 | `int` | `NTUint` | i64 | i32 |
 | `uint` | `NTUuint` | u64 | u32 |
 | `nativeint` | `NTUnint` | i64 | i32 |
-| `nativeptr<'T>` | `NTUptr<'T>` | 8 bytes | 4 bytes |
+| `Ptr<'T, 'Region, 'Access>` (`nativeptr` not denotable) | `NTUptr<'T>` | 8 bytes | 4 bytes |
 
 The `nativeptr<'T>` row is compat surface. Per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing: confined to the generated Layer 1/2 membrane, counted as the TCB metric, and regenerated out of generated code at the corpus-wide regeneration horizon. The reason it cannot stay surface is the finiteness lemma in `Closure_Nanopass_Architecture.md` Section 4; the boundary contract that replaces it is C-01 PRD Section 6.7.
 
@@ -200,6 +200,11 @@ All of these are computed *before* the graph traversal that generates MLIR:
 | SSA pre-assignment | SSA identifier for each node's result | MLIR emission |
 | Dimensional resolution | Physical dimension, representation | Representation selection |
 | Target reachability | Per-target reachability bitvector | Code generation filtering |
+| Proof obligations | Obligation nodes with `Constrains`/`Resides` hyperedges; ledger and SMT-LIB2 emitted from the graph | `ObligationDischarge` (CCS) → cvc5; Composer's `SMTTransfer` re-derives the same anchors from the artifact for twin pairing |
+| Platform residence | Declared spaces and buffers, read structurally from the `PlatformDescription` record | Obligation recipes; `Buffer.*` annotations the witness reads |
+| Layout as joint constraint | Arity-*n* layout hyperedges (consecutive placement, extent) whose consequence is projected onto the placed nodes | Witness reads the projection; never computes placement |
+
+**Status (2026-09).** Capture analysis, proof obligations, platform residence, and layout hyperedges are computed in CCS today. Emission strategy, lifetime requirements, SSA pre-assignment, dimensional resolution, and target reachability are still computed in Composer's `PSGElaboration` and are scheduled to move into CCS as hyperedge consequences, closure layout first (`clef/docs/fidelity/phg/Closure_Retooling_Plan.md`). Until a row moves, the Composer computation is interim and the graph is the authority wherever it already carries the fact.
 
 The Zipper traversal in Alex is **purely navigational** — it observes pre-computed coeffects and
 emits the corresponding MLIR. It does not compute, infer, or decide.
@@ -219,8 +224,8 @@ Because the PSG persists, Lattice surfaces compilation-internal analysis as inte
 
 | Layer | Responsibility | Does NOT |
 |---|---|---|
-| **CCS** | DTS inference, DMM coeffects, NTU type universe, PSG construction, editor services | Generate code or know targets |
-| **Composer** | Receives PSG, applies lowering nanopasses, MLIR generation | Re-derive types or coeffects |
+| **CCS** | DTS inference, DMM coeffects, NTU type universe, PSG construction as a hypergraph (obligation residency, platform residence, layout as joint constraint), editor services | Generate code or know targets |
+| **Composer** | Receives PSG, applies lowering nanopasses, MLIR generation | Re-derive types, coeffects, obligations, or layout the graph already carries |
 | **Alex/Zipper** | Traverses PSG, emits MLIR via platform bindings | Pattern-match on names, re-infer |
 | **Fidelity.Platform** | Resolves NTU widths, posit configs, syscall numbers per target | Typecheck or infer |
 | **Lattice** | Language server consuming live PSG for design-time services | Drive compilation |

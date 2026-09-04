@@ -9,7 +9,7 @@ In functional programming theory, **effects** describe what a computation does t
 In the Fidelity compiler, **Coeffect Analysis** extends this concept to encompass all metadata computation that informs lowering strategies. This includes:
 - SSA assignment (variable lifetimes and versions)
 - Mutability analysis (which bindings are mutable, which are addressed)
-- Yield state tracking (for sequence expressions)
+- Yield state tracking (for sequence expressions) — interim; superseded by the suspension recipe, which settles segments and frame slots on the graph at saturation ([Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md))
 - Pattern binding analysis (for match expressions)
 - String table construction (for string literals)
 
@@ -44,6 +44,10 @@ Coeffect analysis computes information about existing structure:
 │ Happens BEFORE lower │     │ Happens BEFORE lower │
 └──────────────────────┘     └──────────────────────┘
 ```
+
+### Hyperedge Enrichment: Structure Over F
+
+Since the hypergraph landed in CCS (2026-09) there is a third class, and it is enrichment, not analysis. A recipe over the hyperedge set $F$ creates **nodes and edges**: an obligation node whose `Constrains` edge names the storages it governs, a `Resides` edge from a buffer to the platform space that declares it, a layout edge whose source set is every literal it places. Its consequence reaches the witness only as annotations projected onto the governed nodes (the transport rule, spec `program-hypergraph.md` §5) — the witness never queries $F$. What used to be authored as a coeffect in this repository (the readln buffer capacity, the consecutive placement of string literals, the closure layout) is, class by class, becoming a consequence of $F$ settled in CCS; the coeffect table above shrinks as that happens, and nothing in it is authoritative where the graph already carries the fact.
 
 ## Why Coeffects Matter for Fidelity
 

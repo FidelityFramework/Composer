@@ -22,7 +22,7 @@ CCS → PSG → Baker → Alex
   │
   ├── LLVM WASM:   Alex → MLIR → LLVM IR → llc --target=wasm32
   │
-  └── WAMI:        Alex → WAMI dialects (SsaWasm/Wasm) → direct WASM emission
+  └── WAMI:        Alex → standard dialects → WAMI backend leg (below the witness boundary) → direct WASM emission
   │
   ▼  (common)
 .wasm module (WASM MVP + feature set matching target runtime profile)
@@ -108,7 +108,7 @@ A unikernel, as the term is normally used, is a single-purpose OS image: the app
 
 The elements:
 
-**The "kernel" is the DCont scheduler.** In conventional programming, a kernel provides threads, scheduling, synchronization primitives, I/O orchestration, and memory management. A WASM module with stack-switching support can provide all of these except threads (which require host cooperation) within its own linear memory and continuation machinery. The DCont dialect's `shift`/`reset`/`resume` primitives lower to stack-switching ops (WAMI pathway) or state machines (LLVM pathway); either way, the WASM module holds a run queue of continuations, a scheduler that selects the next continuation to resume, and the suspension points where cooperative yields happen. This is a cooperative scheduler written in Clef, lowered through Alex, emitted as WASM — not a library the programmer bolts on.
+**The "kernel" is the continuation scheduler.** In conventional programming, a kernel provides threads, scheduling, synchronization primitives, I/O orchestration, and memory management. A WASM module with stack-switching support can provide all of these except threads (which require host cooperation) within its own linear memory and continuation machinery. The suspension form Alex witnesses from the saturated PSG — a discriminant, a frame, `scf.index_switch` — runs as a state machine (LLVM pathway) or is transliterated by the WAMI backend leg into stack-switching instructions; either way, the WASM module holds a run queue of continuations, a scheduler that selects the next continuation to resume, and the suspension points where cooperative yields happen. This is a cooperative scheduler written in Clef, lowered through Alex, emitted as WASM — not a library the programmer bolts on.
 
 **Memory is compiler-managed.** The memory-marshaling discussion from [README.md](./README.md)'s SIMD section — layout ownership, alignment control, AoS/SoA transposition, bit-packed representations — applies to the unikernel case too. The "heap manager" inside the WASM module doesn't need to be general-purpose because Composer knows the allocation patterns at compile time. Arena allocation, region-based memory, stack allocation where lifetimes fit — all of this is compiler-planned rather than programmer-managed. For many Fidelity workloads, there is no dynamic heap at all; memory usage is statically bounded because the type system's dimensional types and escape analysis have resolved the lifetimes.
 
@@ -199,7 +199,7 @@ The pattern is uniform: each "executor" is a WASM instance, each instance runs a
 
 **5. Beyond Cloudflare matters for the framework's generality.** Fidelity.CloudEdge is the current visible deployment, but the same WASM emission and unikernel execution model should work on Wasmtime (for private/on-prem deployments), on browsers (for serverless-in-the-client patterns), on embedded runtimes (for IoT), and on Component Model hosts (for composable microservice architectures). The strategic value of the compilation work is proportional to how many of these substrates the same artifacts actually serve.
 
-**6. The Stack Switching convergence described in [README.md](./README.md) is what makes all of this clean.** Today, the DCont scheduler inside a WASM module has to be implemented via coroutine-style state machines. Once Stack Switching ships broadly, the scheduler becomes runtime-native — the module uses `cont.new`, `cont.suspend`, `cont.resume` primitives directly, and the runtime does the scheduling work. The unikernel thinking doesn't require Stack Switching to be viable, but Stack Switching makes the implementation much cleaner and the performance substantially better.
+**6. The Stack Switching convergence described in [README.md](./README.md) is what makes all of this clean.** Today, the continuation scheduler inside a WASM module runs as the witnessed state machine. Once Stack Switching ships broadly, the scheduler becomes runtime-native — the WAMI backend leg transliterates the same frame and discriminant into the proposal's `cont.new`/`cont.suspend`/`cont.resume` instructions, and the runtime does the scheduling work. The unikernel thinking doesn't require Stack Switching to be viable, but Stack Switching makes the implementation much cleaner and the performance substantially better.
 
 ## Cross-References
 

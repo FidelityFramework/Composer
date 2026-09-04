@@ -1,5 +1,7 @@
 # C-04: Core Collections and Range Expressions
 
+> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
+
 > **Sample**: `13a_Collections` | **Status**: Planned | **Depends On**: C-01 (Closures), C-03 (Recursion)
 
 **Foundation for Eager Collections and Idiomatic Clef Syntax**: This PRD establishes the core collection types and range expressions that BAREWire and most Clef programs require. Unlike Seq (lazy, pull-based), these are eager, fully-materialized data structures.
@@ -1030,23 +1032,23 @@ let m3 = Map.add "c" 3 m1  // m1 is STILL UNCHANGED
 
 If `Map.add` mutated in place, we'd lose purity → lose parallelization opportunities.
 
-## 15. DCont/INet Dialect Integration
+## 15. Suspension and Net Structure on the PSG
 
-When Delimited Continuations (DCont) and Interaction Net (INet) dialects arrive:
+Collections sit inside computation expressions, and both halves of that composition are settled on the PSG at saturation — not by dialects in the middle end:
 
 ```fsharp
 let processData = async {
-    let! data = fetchFromDB()           // Effect: DCont dialect
-    let transformed =                    // Pure: INet dialect (parallel)
+    let! data = fetchFromDB()           // a cut: the suspension recipe splits here
+    let transformed =                    // pure: net structure, parallel by construction
         data
         |> List.map transform
         |> List.filter valid
         |> List.fold combine initial
-    do! saveResults transformed          // Effect: DCont dialect
+    do! saveResults transformed          // a cut
 }
 ```
 
-Pure collection pipelines compile to INet for parallel execution; effectful boundaries use DCont.
+The `let!`/`do!` sites are cuts of the suspension recipe (Delimited_Continuations_Architecture.md §3–7): segments, a frame, a delimiter edge, witnessed as `scf.index_switch` over a discriminant. The pure pipeline between them is net structure in the hypergraph — hyperedges over the enumerated collection operations — whose parallelism is a consequence of that structure and is witnessed as data flow. Neither half is a dialect; both are standard `func`/`memref`/`arith`/`scf`/`index` at the boundary.
 
 ## 16. Vector Dialect Specification
 

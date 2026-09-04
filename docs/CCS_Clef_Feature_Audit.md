@@ -197,8 +197,8 @@ This document catalogs every major Clef language feature against CCS (Clef Compi
 
 | Type | CCS Status | NTUKind | Notes |
 |------|-------------|---------|-------|
-| `nativeptr<'T>` | ✅ | `NTUptr` | Raw native pointer |
-| `voidptr` | ✅ | `NTUptr` | Void pointer |
+| `nativeptr<'T>` | ❌ stripped (not denotable; `TNativePtr` compiler-internal) | — | Use `Ptr<'T, 'Region, 'Access>` |
+| `voidptr` | ❌ stripped (not denotable) | — | Use `CHandle<'T>` at the C boundary |
 | `byref<'T>` | ✅ | `NTUptr` | Mutable reference |
 | `inref<'T>` | ✅ | `NTUptr` | Read-only reference |
 | `outref<'T>` | ✅ | `NTUptr` | Write-only reference |
@@ -208,14 +208,14 @@ This document catalogs every major Clef language feature against CCS (Clef Compi
 
 | Operation | CCS Status | Notes |
 |-----------|-------------|-------|
-| `NativePtr.stackalloc<'T> n` | ✅ | Stack allocation |
-| `NativePtr.get`, `NativePtr.set` | ✅ | Index-based access |
-| `NativePtr.read`, `NativePtr.write` | ✅ | Direct access |
-| `NativePtr.add`, `NativePtr.sub` | ✅ | Pointer arithmetic |
-| `NativePtr.toNativeInt` | ✅ | Convert to address |
-| `NativePtr.ofNativeInt` | ✅ | Convert from address |
-| `NativePtr.copy` | ✅ | Byte-copy via memref ops |
-| `NativePtr.fill` | ✅ | Byte-fill via memref ops |
+| `NativePtr.stackalloc<'T> n` | ❌ stripped | `stackalloc<'T> n` yields a bounded stack array |
+| `NativePtr.get`, `NativePtr.set` | ❌ stripped | array indexing on the bounded array |
+| `NativePtr.read`, `NativePtr.write` | ❌ stripped | `!p` / `p := v` on a `Ptr` handle (access-kind checked) |
+| `NativePtr.add`, `NativePtr.sub` | ❌ stripped | `Ptr.field` / bounded indexing; no raw arithmetic |
+| `NativePtr.toNativeInt` | ❌ stripped | the pathway commits the address at the extern boundary |
+| `NativePtr.ofNativeInt` | ❌ stripped | `Ptr.ofAddress` for declared peripheral regions |
+| `NativePtr.copy` | ❌ stripped | `memref.copy` from array/`Ptr` operations |
+| `NativePtr.fill` | ❌ stripped | array fill |
 | `&&expr` (address-of) | ✅ | Byref generation |
 | `fixed` expression | 🚧 | Partial support |
 
@@ -641,7 +641,7 @@ These features inherently require the .NET Base Class Library and cannot be supp
 | Regular expressions | ❌ | No System.Text.RegularExpressions |
 | `String.Split`, `String.Join` | 🚧 | Basic support |
 
-**String Representation**: CCS strings are UTF-8 fat pointers `{ptr: nativeptr<byte>, length: int}`, NOT `System.String`. This is more memory-efficient and compatible with native APIs.
+**String Representation**: CCS strings are `memref<?xi8>` (the buffer *is* the string; no fat-pointer struct), NOT `System.String`. This is more memory-efficient and compatible with native APIs.
 
 ---
 

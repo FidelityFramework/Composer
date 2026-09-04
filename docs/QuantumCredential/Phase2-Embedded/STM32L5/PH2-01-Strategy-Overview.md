@@ -233,8 +233,8 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 module Platform.Bindings =
     let openDevice (path: string) : int = Unchecked.defaultof<int>
     let closeDevice (fd: int) : int = Unchecked.defaultof<int>
-    let read (fd: int) (buffer: nativeptr<byte>) (count: int) : int = Unchecked.defaultof<int>
-    let write (fd: int) (buffer: nativeptr<byte>) (count: int) : int = Unchecked.defaultof<int>
+    let read (fd: int) (buffer: array<byte, 'n, Stack>) (count: int) : int = Unchecked.defaultof<int>
+    let write (fd: int) (buffer: array<byte, 'n, Stack>) (count: int) : int = Unchecked.defaultof<int>
     let ioctl (fd: int) (cmd: int) (arg: nativeint) : int = Unchecked.defaultof<int>
 
 // Application code
@@ -242,7 +242,7 @@ module QuantumCredential =
     let readEntropy () =
         let fd = Platform.Bindings.openDevice "/dev/adc0"n
         let buffer = NativeArray.stackalloc<uint16> 256
-        let bytesRead = Platform.Bindings.read fd (NativePtr.ofArray buffer) 512
+        let bytesRead = Platform.Bindings.read fd buffer 512
         Platform.Bindings.closeDevice fd
         buffer
 ```

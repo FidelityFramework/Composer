@@ -1,5 +1,7 @@
 # T-03: MailboxProcessor Basic Actor
 
+> **Surface note (2026-09).** `nativeptr<'T>`, `NativePtr.*`, `voidptr`, and `FSharp.NativeInterop` are not denotable in Clef source (spec `ffi-boundary.md` §1, `special-attributes-and-types.md`; `TNativePtr` is compiler-internal only). Where this PRD shows them, it records the pre-strip surface the code was written against; the settled surfaces are the opaque `Ptr<'T, 'Region, 'Access>` handle in the interior and `CHandle<'T>` at the C boundary, with buffers as bounded arrays and captures as `memref` views.
+
 > **Sample**: `29_BasicActor` | **Status**: Planned | **Depends On**: C-01-28 (All Prior Features)
 
 ## 1. Executive Summary

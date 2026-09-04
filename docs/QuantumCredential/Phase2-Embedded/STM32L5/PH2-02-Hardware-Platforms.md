@@ -232,7 +232,7 @@ type GPIO_TypeDef = {
 }
 
 // Direct memory-mapped access
-let GPIOA : nativeptr<GPIO_TypeDef> = NativePtr.ofNativeInt 0x42020000n
+let GPIOA : Ptr<GPIO_TypeDef, Peripheral, ReadWrite> = Ptr.ofAddress 0x42020000n
 ```
 
 ### USB on Unikernel
