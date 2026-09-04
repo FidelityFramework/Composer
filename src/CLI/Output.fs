@@ -140,7 +140,8 @@ let emitParseErrors (projectDir: string option) (parseErrors: Map<string, string
         let path = relativizePath projectDir file
         messages
         |> List.iter (fun message ->
-            eprintfn "%s %s" (c errorColor "error:") (message.Replace(file, path)))
+            // The message reads "CCS0NNN: file(line,col): text"; print it as "error CCS0NNN: ..."
+            eprintfn "%s %s" (c errorColor "error") (message.Replace(file, path)))
         List.length messages)
 
 /// Emit a summary line after diagnostics.
