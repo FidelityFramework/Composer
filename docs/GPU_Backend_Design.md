@@ -88,7 +88,11 @@ precisely why it lowers: a `nativeptr` parameter arrives as a bare `index`
 carrying neither extent nor address space, and the ROCDL pipeline cannot
 legalise it — measured at 17 unresolved `index → memref` casts on the first
 attempt. In the generated wrapper the buffers are genuine `memref` values the
-toolchain can place and size.
+toolchain can place and size. Those 17 casts are the finiteness lemma of
+`Closure_Nanopass_Architecture.md` Section 4 read operationally: a bare index
+carries no extent for any judgment or any legaliser to close over, which is
+why the spec demotes `nativeptr` to internal `TNativePtr` plumbing and
+length-carried `memref` takes its place at every surface.
 
 Kernel entry is located by trailing dotted segment (`FIDELITY_GPU_KERNEL`,
 default `kernel`); ambiguity and absence are both diagnostics that list the

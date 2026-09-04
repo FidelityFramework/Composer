@@ -1,0 +1,18 @@
+[package]
+name = "RecordSurface"
+version = "0.1.0"
+description = "Record surface: nested record arrays through a let-bound field, record literal inference by exact field set, module value with local bindings, short-circuit boolean operators"
+authors = ["SpeakEZ Technologies, Inc."]
+license = "MIT"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+# Types and operations are CCS intrinsics - no external library needed
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["RecordSurface.fs"]
+output = "recordsurface"
+output_kind = "console"

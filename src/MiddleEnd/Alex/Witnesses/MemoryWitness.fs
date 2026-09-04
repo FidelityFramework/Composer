@@ -15,6 +15,7 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemoryPatterns
 open Alex.Patterns.MemRefPatterns
+open XParsec.Combinators  // <|>
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -26,6 +27,15 @@ let private witnessMemory (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
     // Skip intrinsic nodes - ApplicationWitness handles intrinsic applications
     match node.Kind with
     | SemanticKind.Intrinsic _ -> WitnessOutput.skip
+    | _ ->
+
+    // Array indexers and literals: IndexGet / IndexSet / ArrayExpr on array-typed expressions
+    match node.Kind with
+    | SemanticKind.IndexGet _ | SemanticKind.IndexSet _ | SemanticKind.ArrayExpr _ ->
+        let combined = pIndexGetArray <|> pIndexSetArray <|> pBuildArrayLiteral
+        match tryMatchWithDiagnostics combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error diagnostic -> WitnessOutput.error $"Array indexer/literal: {diagnostic}"
     | _ ->
 
     // AddressOf — alloca + store to get a memref (pointer) to a value

@@ -8,6 +8,8 @@ This PRD implements a WebSocket echo server - demonstrating the WebSocket protoc
 
 **Key Insight**: WebSocket is an application-level protocol. The implementation uses socket primitives (I-01) plus byte manipulation (regions, NativePtr) plus string handling.
 
+> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 ## 2. Language Feature Specification
 
 ### 2.1 WebSocket Handshake

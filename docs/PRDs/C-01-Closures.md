@@ -475,6 +475,26 @@ The marshaling boundary is ONE-WAY and EXPLICIT:
 
 This is the same principle as `pSysWrite`: the syscall boundary extracts `memref.extract_aligned_pointer_as_index` + `index.casts i64`, but the string value inside Clef is always a fat pointer (memref + length).
 
+### 6.7 The Boundary Contract as a Joint Constraint
+
+The three scenarios of Section 6.1 read as separate marshaling problems, but they are instances of one constraint with three parties: the Clef type of the crossing value, the C ABI contract it must meet on the far side, and the owner of its lifetime. Each scenario strains a different party. The callback direction (6.2) strains the lifetime owner, because the environment handed to C as userdata must outlive the registration. The function pointer direction (6.3) strains the Clef type, because a raw address must be readmitted as a callable value. The struct direction (6.4) strains the ABI contract, because a memref must present itself as the raw pointer C expects. No two parties determine the third, so the claim each crossing makes is irreducibly joint.
+
+For callback surfaces, the constraint classifies by the lifetime plumbing the C API offers:
+
+| Tier | C Surface Shape | Marshaling Obligation |
+|---|---|---|
+| A | `userdata` plus destroy hook | Full closure; environment arena-hoisted; the destroy hook releases it; nothing for the application to manage |
+| B | `userdata`, no destroy hook | Full closure; registration returns a linear handle whose consumption (disconnect, destroy) releases the environment |
+| C | No `userdata` | Closed functions only; the boundary type requires an empty environment |
+
+Tier A is the GLib shape: the destroy hook is C's own acknowledgment that callbacks are closures with lifetimes, and wiring it makes release automatic. Tier B is the Wayland listener shape, where registration, every invocation, and release form one lifetime claim that no single call site can witness, so the registration handle carries the claim as a linear value. Tier C is where the flat representation pays off structurally: a flat closure with an empty environment is a bare code pointer, arity analysis already certifies which lambdas qualify, and the boundary type demands the property instead of assuming it.
+
+The jointness dictates the representation. A boundary contract is one hyperedge, a single edge whose participant set spans all of its sites: the extern declaration, the marshaled arguments, the lifetime owner, and the ABI contract, with tier and byte contract carried in the annotation. Encoding the contract as pairwise edges asserts strictly less, because each binary edge can be discharged in isolation while the joint claim fails; the Tier B lifetime is exactly such a claim, and it is never lowered to binary edges.
+
+The representation also makes the boundary auditable. Lowering resolves the deferred casts that a closure crossing creates, and those cast-resolution statistics reconcile against the boundary obligations the graph records as discharged. A cast with no contract is a crossing the front end never saw; a contract with no cast is an obligation that never reached mechanism. The contract is therefore a decidability condition, not housekeeping: a crossing with enumerated participants, a flat environment of known extent, and a single release site is exactly what keeps the boundary judgment inside the finiteness lemma of `Closure_Nanopass_Architecture.md` Section 4, and the provable region of the computation graph stays closed only while every crossing has that form.
+
+All of this is future work in the same sense as Section 10.8: the trampoline generation deferred there is the mechanism that discharges these contracts, and the contract representation given here is what that mechanism discharges against. Both attach after application-surface lowering completes. The promotion of boundary edges to hyperedges is specified in the PHG addendum to `PSG_Nanopass_Architecture.md`; the saturation leaf the contract anchors to is described in D-01 Section 4.2; the interior forms that arrive at this fence are enumerated in Section 14.
+
 ## 7. Lazy and Seq Extensions
 
 ### 7.1 Lazy Thunk (C-05)
@@ -721,6 +741,7 @@ let testBoundaryMarshal () =
 ///
 /// NOTE: This is future work — requires trampoline generation.
 /// Documenting the pattern here so the PRD covers the full edge.
+/// The interior form that reaches this boundary is specified in Section 14.
 ```
 
 ## 11. Files to Create/Modify
@@ -760,3 +781,230 @@ let testBoundaryMarshal () =
 - **C-06/C-07**: Sequences — reuses closure struct for MoveNext state machine
 - **A-01 to A-03**: Async — uses closures for continuation callbacks
 - **T-03 to T-05**: MailboxProcessor — synthesizes closures + async + threading
+
+## 14. The Closure Saturation Form Family
+
+This section specifies the saturated representation of environments as a family of forms. Each form is selected by a condition that is decidable at saturation. Each interior form is expressible in standard MLIR dialects. Each materializing form carries verification conditions stated as formulas over literals, dischargeable by SMT proof dispatch. Status is stated plainly at each point: the two-pass capture and layout machinery of Section 4 and the sample corpus of Sections 8 and 10 are the present state; the saturation recipes, the PSG proof dispatch, and the smt-dialect re-check are design. Section 14.7 itemizes which is which.
+
+### 14.1 The Environment as the General Object
+
+Fan-out lowers a capturing lambda to five kinds of PSG structure:
+
+| Structure | Content |
+|---|---|
+| Code reference | The symbol of the implementation function |
+| Capture nodes | One per captured binding; each carries a mode, ByValue or ByRef, read from the mutability coeffect (Section 2.2) |
+| Environment node | Ordered; its frontier is its child list; field order is child order |
+| Escape-class edge | Places the environment in the escape order: local, downward, or region-escaping |
+| Release site | The node at which the environment's storage is released |
+
+The environment node is the general object. Three instances share it:
+
+1. **Closure environment**: the captures of a lambda.
+2. **DCont continuation frame**: the captures are the variables live across a suspension point.
+3. **Actor state cell**: the state record an actor carries between message receipts.
+
+One fold-in rule serves all three. The rule reads the capture modes, the escape class, and the field sizes, then selects a form from the family in Section 14.2. Nothing in the rule is specific to lambdas.
+
+### 14.2 The Form Family and Its Selection at Saturation
+
+| # | Form | Saturation condition | Representation |
+|---|---|---|---|
+| 1 | Vacant | Capture set is empty | Bare code reference; no environment; the arity gate's case, and the form Section 6.7 Tier C demands |
+| 2 | Unmaterialized | Callee known at every application site; no escape | Captures dissolve to SSA arguments; zero bytes |
+| 3 | Stack flat | All captures ByValue; escape is downward only | Byte buffer of literal extent on the stack |
+| 4 | Mixed ByRef | At least one capture is ByRef | Mutable captures held as region-scoped references |
+| 5 | Region escaping | Environment is returned or stored | Materialization in the target region's arena; release at region end |
+| 6 | Large capture | A ByValue field exceeds the target-parameterized size class | Per-field policy; see below |
+| 7 | Descriptor shared | Environment crosses a memory fabric | BAREWire descriptor; fields region-scoped by construction |
+
+Forms 1 and 2 are terminal: they materialize nothing. Forms 4, 5, and 6 refine form 3 and compose with each other; a single environment can be Mixed ByRef and Region escaping at once.
+
+**Large capture policy.** The decision is per field. A field below the size class is copied. A field above it is demoted to a region-scoped reference. The size class is a target parameter, so the policy is inference with zero annotation in the common case. A binding-level attribute overrides the inference per binding. Every override is checked, and an override that would introduce chain-scoped sharing is rejected.
+
+**Descriptor shared status.** This form is specified now and implemented at the memory-fabrics horizon. It is design. Its admissibility argument is structural: BAREWire descriptor fields are region-scoped by construction.
+
+**Fence packing is not a form.** Packing a closure into words for a C crossing is a boundary event under the Section 6.7 contract. It occurs only at the fence and never defines an interior representation.
+
+**Safe for space bounds the family.** Following Shao & Appel (1994) and Perconti & Ahmed (2019) (Section 12), a form is admissible only if the environment's reachable set equals its field list and its lifetime equals its region bounds. Chain-scoped sharing, a field that retains an enclosing environment, is inadmissible. This restates the flat-closure decision of Section 2.3 as an admissibility bound on the whole family.
+
+### 14.3 Full Expression in Standard MLIR Primitives
+
+Every interior form in Section 14.2 is expressible with the `func`, `memref`, and `arith` dialects only. No LLVM dialect, no pointer type, no custom dialect. This subsection demonstrates the claim primitive by primitive.
+
+**Code value.** `func.constant @f : (T...) -> R` produces a function-typed SSA value; the verifier requires that `@f` resolve to a `func.func` of that exact type. Known-callee application sites use direct `func.call @f(...)`; the arity gate certifies these sites. Unknown-callee application uses `func.call_indirect %fn(%args)`. All three operations are standard `func` dialect.
+
+**Materialized heterogeneous environment.** The environment is a 1-D byte buffer of literal extent plus one typed view per field. The MLIR memref dialect documentation defines the primitive: "The 'view' operation extracts an N-D contiguous memref with empty layout map with arbitrary element type from a 1-D contiguous memref with empty layout map of i8 element type," and it requires "a single dynamic byte-shift operand" that shifts the base pointer to produce "the resulting contiguous memref view with identity layout." The primitive's own precondition is a 1-D i8 source with identity layout and a byte shift. That is exactly the saturated environment's shape: byte extent literal in the type, field offsets literal, materialized as `arith.constant` byte shifts. The standard dialect already contains the elaborated form; nothing needs to be invented.
+
+```mlir
+%env = memref.alloca() : memref<8xi8>
+%c0  = arith.constant 0 : index
+%f0  = memref.view %env[%c0][] : memref<8xi8> to memref<1xi32>
+```
+
+The result of `memref.view` has identity layout, so an environment view carved from an arena buffer is itself a valid base for field views. The construction is closed under the primitive's own precondition.
+
+**ByRef fields.** A reference field is a typed view into the region's arena buffer: `memref.get_global` fetches the buffer, and `memref.view` at the hoisted cell's offset yields the typed cell. A reference is a static symbol plus a byte offset. Provenance is static. No pointer type appears anywhere in the interior.
+
+**The closure value.** A closure value is two SSA values traveling together: the function value and the environment buffer. They are passed and returned as ordinary multiple values. No packing, no casts, no new dialect. Packing into words happens only at the FFI fence, under the Section 6.7 boundary contract. The two-pass machinery of Section 4 currently extracts captures and prepends them as explicit arguments (Section 4.3.2); the pair convention here is the saturated target of the recipe migration (Section 14.7). The fence contract is identical under both conventions.
+
+**Correspondence.**
+
+| Saturated PSG structure | Standard MLIR construct | What the verifier checks structurally |
+|---|---|---|
+| Code reference | `func.constant @f : (T...) -> R` | Symbol resolves to a `func.func` of the stated type |
+| Known-callee application | `func.call @f(...)` | Operand and result types match the callee signature |
+| Unknown-callee application | `func.call_indirect %fn(...)` | Operand and result types match the function type of `%fn` |
+| Environment node, extent E | `memref.alloca() : memref<Exi8>` or an arena view | E is a literal in the type |
+| Field (off, size, T) | `memref.view %env[%off][] : memref<Exi8> to memref<1xT>` | Source is 1-D i8 with identity layout; result is typed with identity layout |
+| ByRef referent | `memref.get_global @r` plus `memref.view` at the cell offset | Symbol resolves to a `memref.global` of the stated type |
+| Closure value | Two SSA values `(%fn, %env)` in multi-value signatures | Function type agreement at definitions, calls, and returns |
+| Release site | Region end; not an MLIR construct | Checked in the PSG, not by the MLIR verifier |
+
+The MLIR verifier checks types and layout preconditions. It cannot bound a byte-shift operand against the source extent, because the operand is dynamic in the op's definition. The verification conditions of Section 14.4 close exactly that gap, over the same literals.
+
+### 14.4 Verification Conditions per Form
+
+For a materializing form with fields f_0 .. f_(n-1) in frontier order, offsets off_i, sizes size_i, padding pad, and extent E, all literals at saturation:
+
+| VC | Formula | Fragment | Discharge |
+|---|---|---|---|
+| VC-EXT, extent bound | size_0 + ... + size_(n-1) + pad = E, with E literal | QF_LIA | Ground arithmetic over literals |
+| VC-DIS, disjointness and coverage | for all i < j: off_i + size_i <= off_j; and off_(n-1) + size_(n-1) <= E | QF_LIA | Finite conjunction over literals |
+| VC-REG, region ordering | for each reference field f_i with referent region r_i: lifetime(r_i) >= lifetime(r_env) | None; lattice | Order check in the escape order; no solver |
+| VC-REL, single release | count(releaseSites(env)) = 1 | None; graph | Graph check |
+| VC-APP, application type agreement | for every application site s: typeof(callee_s) = the carried function type | EUF, structural | Congruence check; no quantifiers |
+
+The discharge point is fixed: at saturation, over the PSG, before witnessing. Each form discharges its applicable subset. Vacant and Unmaterialized discharge VC-APP only. Stack flat adds VC-EXT and VC-DIS. Mixed ByRef adds VC-REG. Region escaping adds VC-REL. Large capture reruns VC-EXT and VC-DIS after per-field demotion. Descriptor shared satisfies VC-REG by construction.
+
+### 14.5 The Two-Sided Check: PSG Dispatch and the MLIR smt Dialect
+
+**Status: design.** This subsection follows the standing plan for SMT annotations: each obligation generates its own PSG node with dependency edges to the structures it constrains, and dispatch runs over those nodes. The MLIR side is contingent on the pending MLIR/CIRCT smt dialect scoping study.
+
+The check has two sides:
+
+1. **PSG side, at saturation.** The Section 14.4 conditions are dispatched over PSG literals before witnessing. This is the discharge of record.
+2. **MLIR side, after witnessing.** The same layout formulas are re-read off the witnessed MLIR. The literals are already in the artifact: E is the static memref shape, off_i is the `arith.constant` operand of each view, size_i is each view's result type. The formulas are encoded as smt dialect operations (`smt.declare_fun`, `smt.assert`, `smt.check` over `!smt.int` or bitvectors) and re-dispatched. The witnessed artifact is therefore re-checkable without trusting the emitter.
+
+Encoding discipline: declare a symbol per derived quantity, assert its definition as read from the artifact, assert the negation of the conjoined conditions, and expect unsat. The smt module is a verification artifact beside the program, not part of it. Section 14.6 lists the concrete encoding for the worked example.
+
+Audit consequence: the check is per obligation, per site, machine-checkable. Every obligation node names its site and its formulas; the MLIR re-check re-derives the same formulas from the artifact. The reconciliation counters of the interim cast-resolution pass (Section 6.7) are superseded by exact correspondence: obligations and assertions match one for one, and any mismatch identifies its site.
+
+### 14.6 Worked Example: The Counter End to End
+
+The counter of Sections 2.1 and 8.1: one mutable int capture, and the closure escapes to the caller. The manual arena plumbing in Section 2.1 is the hand-written form of what the region machinery performs here. This trace is the design target of the recipe migration; the literals below are the saturated output for one instance.
+
+```fsharp
+let makeCounter (start: int) : (unit -> int) =
+    let mutable count = start
+    fun () ->
+        count <- count + 1
+        count
+```
+
+**Fan-out.** Code reference `@counter_impl`. One capture node for `count`. One ordered environment node `env0` with frontier `[count]`. One escape-class edge: region-escaping, target region `r0`. One release site: the end of `r0`.
+
+**Coeffects.** `count` is mutable, so the mode is ByRef. The lambda is returned, so the class is escaping. The target region is `r0`, the caller's arena.
+
+**Fold-in selection.** The capture set is nonempty: not Vacant. The closure is applied through a returned value, so the callee is unknown at the application site: not Unmaterialized. A ByRef capture is present: Mixed ByRef. The environment escapes: Region escaping. Selected form: Mixed ByRef composed with Region escaping.
+
+**Layout, all literals.** Region `r0` has extent 16. The hoisted cell `c0` (i64, 8 bytes) sits at region offset 0. The environment `env0` sits at region offset 8 with extent E = 8. The environment has one field `f0` at off_0 = 0, size_0 = 8, type i64. Its content is the byte offset of `c0` inside `r0`, which is 0 for this instance; the offset is data because instances differ, while the buffer symbol is static. pad = 0. Unit erases at the interior, so the implementation takes only the environment.
+
+**Witnessed listing, standard dialects only.**
+
+```mlir
+memref.global "private" @r0 : memref<16xi8> = uninitialized
+
+func.func private @counter_impl(%env: memref<8xi8>) -> i64 {
+  %z     = arith.constant 0 : index
+  %f0    = memref.view %env[%z][] : memref<8xi8> to memref<1xi64>      // field f0: off_0 = 0, size_0 = 8
+  %off   = memref.load %f0[%z] : memref<1xi64>                         // byte offset of c0 in r0
+  %offx  = arith.index_cast %off : i64 to index
+  %arena = memref.get_global @r0 : memref<16xi8>
+  %cell  = memref.view %arena[%offx][] : memref<16xi8> to memref<1xi64>
+  %cur   = memref.load %cell[%z] : memref<1xi64>
+  %one   = arith.constant 1 : i64
+  %next  = arith.addi %cur, %one : i64
+  memref.store %next, %cell[%z] : memref<1xi64>
+  func.return %next : i64
+}
+
+func.func private @makeCounter(%start: i64) -> ((memref<8xi8>) -> i64, memref<8xi8>) {
+  %arena = memref.get_global @r0 : memref<16xi8>
+  %z     = arith.constant 0 : index
+  %cell  = memref.view %arena[%z][] : memref<16xi8> to memref<1xi64>   // c0 at region offset 0
+  memref.store %start, %cell[%z] : memref<1xi64>
+  %c8    = arith.constant 8 : index
+  %env   = memref.view %arena[%c8][] : memref<16xi8> to memref<8xi8>   // env0 at region offset 8, E = 8
+  %f0    = memref.view %env[%z][] : memref<8xi8> to memref<1xi64>      // f0 at off_0 = 0
+  %ref   = arith.constant 0 : i64                                      // c0's byte offset in r0
+  memref.store %ref, %f0[%z] : memref<1xi64>
+  %fn    = func.constant @counter_impl : (memref<8xi8>) -> i64
+  func.return %fn, %env : (memref<8xi8>) -> i64, memref<8xi8>
+}
+```
+
+Application site, both callee kinds:
+
+```mlir
+%fn, %env = func.call @makeCounter(%start) : (i64) -> ((memref<8xi8>) -> i64, memref<8xi8>)
+%r1 = func.call_indirect %fn(%env) : (memref<8xi8>) -> i64
+```
+
+**The VC set instantiated.**
+
+- VC-EXT: size_0 + pad = E instantiates to 8 + 0 = 8. Holds.
+- VC-DIS: n = 1, so the pairwise clause is vacuous; coverage instantiates to off_0 + size_0 <= E, that is 0 + 8 <= 8. Holds.
+- Region fit, the same formula family one level up: 0 + 8 <= 16 for `c0` and 8 + 8 <= 16 for `env0`. Holds.
+- VC-REG: lifetime(r0) >= lifetime(r0). Holds reflexively; the cell and the environment share one region.
+- VC-REL: releaseSites(env0) = { end of r0 }; count = 1. Holds.
+- VC-APP: the carried type is (memref<8xi8>) -> i64; the callee type at the one application site is (memref<8xi8>) -> i64. Equal.
+
+Every literal in these formulas appears in the listing: 8 from `memref<8xi8>`, 16 from `memref<16xi8>`, 0 from `%z`, 8 from `%c8`, and size_0 = 8 from `memref<1xi64>`.
+
+**smt-dialect re-check of the two layout formulas (design).** Read off the witnessed listing: E = 8 from the type of `%env`, off_0 = 0 from the byte shift of the view producing `%f0`, size_0 = 8 from that view's result type `memref<1xi64>`. Validity is checked by asserting the negation and expecting unsat.
+
+```mlir
+smt.solver() : () -> () {
+  %E     = smt.declare_fun "E" : !smt.int
+  %c8    = smt.int.constant 8
+  %defE  = smt.eq %E, %c8 : !smt.int          // E = 8, read from memref<8xi8>
+  smt.assert %defE
+  %off0  = smt.int.constant 0                 // byte shift of the f0 view
+  %sz0   = smt.int.constant 8                 // extent of memref<1xi64>
+  %pad   = smt.int.constant 0
+  %sizes = smt.int.add %sz0, %pad
+  %vc1   = smt.eq %sizes, %E : !smt.int       // VC-EXT: size_0 + pad = E
+  %end0  = smt.int.add %off0, %sz0
+  %vc2   = smt.int.cmp le %end0, %E           // VC-DIS: off_0 + size_0 <= E
+  %both  = smt.and %vc1, %vc2
+  %neg   = smt.not %both
+  smt.assert %neg                             // assert the negation; expect unsat
+  smt.check sat { smt.yield } unknown { smt.yield } unsat { smt.yield }
+  smt.yield
+}
+```
+
+`%vc1` encodes VC-EXT and `%vc2` encodes VC-DIS coverage, instantiated with the artifact's own literals. The fragment is QF_LIA over `!smt.int`. An equivalent encoding over `!smt.bv<64>` uses the `smt.bv` operations; every term here is a small nonnegative literal, so the two encodings agree.
+
+### 14.7 Status and Sequencing
+
+Plain accounting. The present state is the two-pass machinery and the sample corpus. Everything else in this section is design.
+
+| Item | Status | Basis |
+|---|---|---|
+| Two-pass capture analysis and closure layout in Alex (Sections 4.1, 4.2, 4.3) | DONE | Present state; Phases 2 and 3 of Section 9 |
+| Witness integration and validation samples (Sections 8 and 10) | IN PROGRESS | Present state; tracked in Section 9 Phases 4 and 7 |
+| Recipe migration: closure elaboration and saturation as Baker recipes | PENDING | Design; this section is its specification |
+| Form selection (Section 14.2) and VC dispatch (Section 14.4) at saturation | PENDING | Design; part of the recipe migration |
+| smt-dialect re-check of witnessed MLIR (Sections 14.5, 14.6) | PENDING | Design; contingent on the MLIR/CIRCT smt dialect scoping study |
+| Descriptor shared form (Section 14.2, form 7) | PENDING | Design; memory-fabrics horizon |
+
+The recipe migration is the work item:
+
+- [ ] Move closure elaboration and saturation into Baker's recipes, ending the closure exception
+- [ ] Select forms per Section 14.2 at saturation
+- [ ] Dispatch the Section 14.4 conditions over the PSG before witnessing
+- [ ] Witness the pair convention of Section 14.3 from saturated forms
+
+Sequencing: the smt re-check follows the scoping study, and the descriptor form follows the memory-fabrics work. Packing at the fence stays governed by the boundary contract of Section 6.7, and the trampoline generation deferred in Section 10.8 is the mechanism that packs these forms at that fence.

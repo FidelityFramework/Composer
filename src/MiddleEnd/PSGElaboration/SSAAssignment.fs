@@ -631,6 +631,20 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
                 | IntrinsicModule.MemRef, "copy" -> 1    // memcpy returns void* (result pointer)
                 | IntrinsicModule.MemRef, _ -> 1         // safe default
                 | IntrinsicModule.Array, _ -> 10           // array ops
+                | IntrinsicModule.Operators, ("op_Equality" | "op_Inequality") ->
+                    // Structural equality on strings / byte arrays (pStringEquality) needs 16 SSAs
+                    let firstArgIsMemRef =
+                        match node.Children with
+                        | _ :: argId :: _ ->
+                            match Map.tryFind argId ctx.Graph.Nodes with
+                            | Some argNode ->
+                                match argNode.Type with
+                                | NativeType.TApp (tycon, _) when tycon.NTUKind = Some NTUKind.NTUstring -> true
+                                | NativeType.TApp (tycon, _) when tycon.Name = "array" || tycon.Name = "Array" -> true
+                                | _ -> false
+                            | None -> false
+                        | _ -> false
+                    if firstArgIsMemRef then 16 else 5
                 | IntrinsicModule.Operators, _ -> 5        // arithmetic
                 | IntrinsicModule.Convert, _ -> 3          // type conversions
                 | IntrinsicModule.Math, _ -> 5             // math functions
@@ -808,6 +822,24 @@ let private computeSeqExprSSACost (graph: SemanticGraph) (bodyId: NodeId) (captu
     // + 2 per internal state (const zero + InsertValue)
     5 + numCaptures + (numInternalState * 2)
 
+/// A module-level value binding realized as a program-lifetime slot (memref.global):
+/// a direct ModuleDef member (ModuleInit of its module classification), EmissionStrategy.MainPrologue,
+/// and a non-Lambda value. Mirrors TransferTypes.ModuleValues.isSlotBinding.
+let private isModuleValueSlotBinding (graph: SemanticGraph) (node: SemanticNode) : bool =
+    match node.Kind with
+    | SemanticKind.Binding _ when node.EmissionStrategy = EmissionStrategy.MainPrologue ->
+        let isModuleMember =
+            graph.ModuleClassifications.Value
+            |> Map.exists (fun _ classification -> List.contains node.Id classification.ModuleInit)
+        isModuleMember &&
+        (match node.Children with
+         | childId :: _ ->
+             match Map.tryFind childId graph.Nodes with
+             | Some child -> (match child.Kind with SemanticKind.Lambda _ -> false | _ -> true)
+             | None -> false
+         | [] -> false)
+    | _ -> false
+
 /// Get the number of SSAs needed for a node based on its STRUCTURE
 /// This is the key function - it analyzes actual instance structure, not just kind
 let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
@@ -853,17 +885,21 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.IndexGet _ -> 2
     | SemanticKind.IndexSet _ -> 1
     | SemanticKind.AddressOf _ -> 3  // alloca, zero-index, extract-base-ptr
-    | SemanticKind.VarRef _ ->
+    | SemanticKind.VarRef (_, defIdOpt) ->
         // Value-position is a pre-computed coeffect. Function VarRefs in value position
-        // need 7 SSAs (closure pair construction). All others need 2.
+        // need 7 SSAs (closure pair construction). References to module-level value slots
+        // need 3 (get_global + zero + load). All others need 2.
         if Set.contains node.Id ctx.ValuePosition.FunctionVarRefsInValuePosition then 7
-        else 2
+        else
+            match defIdOpt |> Option.bind (fun d -> Map.tryFind d ctx.Graph.Nodes) with
+            | Some def when isModuleValueSlotBinding ctx.Graph def -> 3
+            | _ -> 2
     | SemanticKind.TupleGet _ -> 4  // Struct field extraction: offset + view + zero + result (pass-through uses 0 but over-allocate for safety)
     | SemanticKind.FieldGet _ -> 4  // View-based: offset + view + zero + result (for TStruct records)
-    | SemanticKind.FieldSet _ -> 2  // Offset constant + store
-    | SemanticKind.Set _ -> 1  // For module-level mutable address operation
+    | SemanticKind.FieldSet _ -> 3  // Offset constant + typed view + zero index (pRecordFieldSet)
+    | SemanticKind.Set _ -> 2  // zero index; plus get_global when the target is a module-level slot
     | SemanticKind.TraitCall _ -> 1
-    | SemanticKind.ArrayExpr _ -> 20
+    | SemanticKind.ArrayExpr elements -> 2 + List.length elements  // size constant + alloc + one index per element (pBuildArrayLiteral)
     | SemanticKind.ListExpr _ -> 20
     // PatternBinding needs SSAs for tuple element extraction via pRecordFieldGet:
     // offset + view + zero + result = 4
@@ -977,8 +1013,8 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.InterpolatedString _ -> true
     // Set needs SSAs for module-level mutable address operations
     | SemanticKind.Set _ -> true
-    | SemanticKind.FieldSet _ -> false
-    | SemanticKind.IndexSet _ -> false
+    | SemanticKind.FieldSet _ -> true   // offset/view/zero SSAs for the in-place store (pRecordFieldSet)
+    | SemanticKind.IndexSet _ -> true   // index cast SSA for the store (pIndexSetArray)
     | SemanticKind.NamedIndexedPropertySet _ -> false
     | SemanticKind.WhileLoop _ -> false
     | SemanticKind.ForLoop _ -> false
@@ -993,6 +1029,7 @@ let private producesValue (kind: SemanticKind) : bool =
     | SemanticKind.TypeAnnotation _ -> true  // Passes through the inner value
     | SemanticKind.PatternBinding _ -> true  // Pattern binding introduces a variable
     | SemanticKind.Error _ -> false
+    | SemanticKind.Obligation _ -> false  // Off the emission spine: cited through F, never witnessed
 
 /// Result of SSA assignment pass
 type SSAAssignment = {
@@ -1032,7 +1069,11 @@ let rec private assignFunctionBody
                 | Some child ->
                     match child.EmissionStrategy with
                     | EmissionStrategy.SeparateFunction _ -> false  // Skip, parent handles it
-                    | EmissionStrategy.MainPrologue -> false  // Skip, main handles it
+                    | EmissionStrategy.MainPrologue ->
+                        // A module-level value slot is assigned by Pass 1 (main's prologue). A
+                        // binding nested inside such a slot's initializer (`let a = ... in {..}`)
+                        // also carries MainPrologue but is an ordinary local of the initializer.
+                        not (isModuleValueSlotBinding ctx.Graph child)
                     | EmissionStrategy.Inline -> true
                 | None -> true)
 
@@ -1220,7 +1261,7 @@ let rec private assignFunctionBody
         // to the actually-emitted SSA value.
         // Mutable bindings need their own SSAs for memref.alloca + initialization.
         // ─────────────────────────────────────────────────────────────────────
-        | SemanticKind.Binding (_name, isMutable, _isRec, _declRoot) when not isMutable ->
+        | SemanticKind.Binding (_name, isMutable, _isRec, _declRoot) when not isMutable && not (isModuleValueSlotBinding ctx.Graph node) ->
             if not (List.isEmpty node.Children) then
                 let childId = List.head node.Children
                 match Map.tryFind (NodeId.value childId) scopeAfterChildren.Assignments with
@@ -1503,9 +1544,11 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
     // PASS 1: Module-level VALUE bindings (emitted in main's prologue)
     // These share main's SSA namespace, so process them first and continue counter
     // ═══════════════════════════════════════════════════════════════════════════
+    // Module-level value bindings from EVERY module: they are all initialized in the entry
+    // point's prologue (slots), so they all live in main's SSA namespace.
     let moduleLevelValueBindings =
         match mainLambdaIdOpt with
-        | Some mainId -> findModuleLevelValueBindings graph mainId
+        | Some _ -> findAllModuleLevelValueBindings graph
         | None -> findAllModuleLevelValueBindings graph
 
     // Assign SSAs to module-level value bindings

@@ -22,12 +22,12 @@ open Alex.Traversal.NanopassArchitecture
 // PUBLIC API
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Transfer PSG to MLIR via parallel nanopass execution
+/// Transfer PSG to MLIR via nanopass execution
 ///
 /// ARCHITECTURE:
 /// 1. Initialize witness registry (all witnesses register their nanopasses)
-/// 2. Execute all nanopasses in parallel via IcedTasks
-/// 3. Reactive envelope collects results as they arrive (random order OK)
+/// 2. Run every nanopass over one post-order traversal of the PSG
+/// 3. Envelope collects the witness outputs
 /// 4. Return cohesive MLIR graph
 ///
 /// NO DISPATCH LOGIC - Each nanopass traverses the entire PSG, witnessing only

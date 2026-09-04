@@ -186,6 +186,14 @@ compiler verifies statically and that downstream stages trust without re-verific
 | `ReturnEscape` | Value must be allocated in caller's arena | Return type analysis confirms escape |
 | `ByRefEscape` | Reference's origin scope must be preserved | Alias analysis tracks origin |
 
+Discriminated-union construction is itself a recognized escape site in this lattice. Storing
+a closure as a DU payload stores a reference to the closure's environment inside the DU
+block, and the block's storage class may exceed the current scope, so the capture
+classifies at or above `ReturnEscape`: the environment is promoted to a class whose
+lifetime dominates every DU block that references it. This is the analysis-side
+counterpart of the spec's rule that constructing a DU with a closure-valued payload is an
+escape point for that closure (`discriminated-union-representation.md` §8.2).
+
 When a value's **required lifetime** (determined by how it is used) exceeds its
 **tentative lifetime** (determined by where it is defined), the value is **promoted**
 to a longer-lived region. This promotion is not a silent optimization. It is recorded

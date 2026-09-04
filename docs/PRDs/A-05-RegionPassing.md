@@ -12,6 +12,8 @@ This PRD covers passing regions as function parameters and tracking which region
 
 ### 2.1 Region as Parameter
 
+> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 ```fsharp
 let allocateBuffer (r: Region) (size: int) : nativeptr<byte> =
     Region.alloc<byte> r size

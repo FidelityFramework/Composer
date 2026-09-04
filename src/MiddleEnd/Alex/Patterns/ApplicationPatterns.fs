@@ -23,6 +23,7 @@ open Alex.Elements.MemRefElements // pExtractBasePtr (FFI boundary memref→inde
 open Core.Types.Dialects         // TargetPlatform
 open Alex.CodeGeneration.TypeMapping
 open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad (monadic TMemRef auto-load)
+open Alex.Patterns.StringPatterns // pStringEquality (structural = / <> on strings)
 
 // ═══════════════════════════════════════════════════════════
 // APPLICATION PATTERNS (Function Calls)
@@ -234,6 +235,19 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
         | _ ->
             // CPU/MCU: standard MLIR arithmetic (arith dialect) — no extension needed
             let resultSSA = ssas.[0]
+            // Shift amounts are typed `int` (platform word) by the front end while the shifted
+            // operand keeps its own width; MLIR shifts require equal widths, so bring the
+            // amount to the operand's width (spare SSA [1] from the 5-SSA operator pool).
+            let! (shiftAmountOps, rhsSSA) =
+                match operation, lhsType, rhsType with
+                | ("shli" | "shrui" | "shrsi"), TInt (IntWidth lw), TInt (IntWidth rw) when lw <> rw && ssas.Length >= 2 ->
+                    parser {
+                        let! castOp =
+                            if rw > lw then pTruncI ssas.[1] rhsSSA rhsType lhsType
+                            else pExtUI ssas.[1] rhsSSA rhsType lhsType
+                        return ([castOp], ssas.[1])
+                    }
+                | _ -> preturn ([], rhsSSA)
             let! op =
                 match operation, lhsType with
                 | "add", TFloat _ -> pAddF resultSSA lhsSSA rhsSSA lhsType
@@ -254,7 +268,7 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
                 | "divu", _ -> pDivUI resultSSA lhsSSA rhsSSA lhsType
                 | "remu", _ -> pRemUI resultSSA lhsSSA rhsSSA lhsType
                 | _ -> fail (Message $"Unknown binary arithmetic operation: {operation} on {lhsType}")
-            return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = lhsType })
+            return (lhsLoadOps @ rhsLoadOps @ shiftAmountOps @ [op], TRValue { SSA = resultSSA; Type = lhsType })
     }
 
 /// Generic comparison pattern wrapper (PULL model)
@@ -336,6 +350,11 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
                 return (lhsLoadOps @ rhsLoadOps @ extOps @ [op], TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
 
         | _ ->
+            // Strings and byte arrays (memref<?xi8>): structural equality via length + memcmp
+            match lhsType, predName with
+            | (TMemRef _ | TMemRefStatic _), ("eq" | "ne") ->
+                return! pStringEquality nodeId lhsSSA rhsSSA lhsType rhsType (predName = "ne")
+            | _ ->
             // CPU: type-dependent dispatch (int vs float)
             let resultSSA = ssas.[0]
             let! op =
@@ -442,11 +461,24 @@ let pTypeConversion (nodeId: NodeId)
         let! state = getUserState
         let dstType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
 
+        // Widening follows the SOURCE type's signedness: an unsigned source (byte, uint16,
+        // uint32, uint64, size_t) zero-extends, a signed source sign-extends. MLIR carries
+        // no signedness, so the Clef type of the argument is the only witness to it.
+        let sourceIsUnsigned =
+            match Clef.Compiler.PSGSaturation.SemanticGraph.Core.SemanticGraph.tryGetNode argIds.[0] state.Graph with
+            | Some argNode ->
+                match Types.tryGetNTUKind argNode.Type with
+                | Some (NTUKind.NTUuint _) | Some NTUKind.NTUsize | Some NTUKind.NTUbool | Some NTUKind.NTUchar -> true
+                | _ -> false
+            | None -> false
+
         if srcType = dstType then
             return (loadOps, TRValue { SSA = srcSSA; Type = srcType })
         else
             let! convOp =
                 match srcType, dstType with
+                | TInt srcW, TInt dstW when srcW < dstW && sourceIsUnsigned ->
+                    pExtUI resultSSA srcSSA srcType dstType
                 | TInt srcW, TInt dstW when srcW < dstW ->
                     pExtSI resultSSA srcSSA srcType dstType
                 | TInt _, TInt _ ->

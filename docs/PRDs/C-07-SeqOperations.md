@@ -376,6 +376,8 @@ memref.store %code_ptr, %moveNext_ref[%c0] : memref<1xindex>
 
 Use existing `Application` with `IntrinsicInfo` marking:
 
+> **Membrane note.** The `NativePtr` intrinsic module recorded in this PRD is membrane plumbing, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 ```fsharp
 // In SemanticGraph.fs
 type IntrinsicModule =

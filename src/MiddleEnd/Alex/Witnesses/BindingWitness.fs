@@ -54,6 +54,24 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         // Partial application binding - no MLIR emitted
                         // Saturated call sites use the coeffect to emit direct calls
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                    // Module-level value: initialize its program-lifetime slot (memref.global).
+                    // References reload from the slot in whatever function they occur.
+                    elif ModuleValues.isSlotBinding ctx.Graph node then
+                        // The initializer may be a block (`let a = ... in { ... }`): its value is
+                        // the last value node of the block, not the block node itself.
+                        let initValueId = findLastValueNode valueId ctx.Graph
+                        match MLIRAccumulator.recallNode initValueId ctx.Accumulator with
+                        | Some (valueSSA, _) ->
+                            let valueTy = mapType node.Type ctx
+                            let globalName = ModuleValues.globalName name node.Id
+                            match tryMatchWithDiagnostics (pGlobalSlotInit node.Id globalName valueSSA valueTy)
+                                          ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                            | Result.Ok ((ops, result), _) ->
+                                { InlineOps = ops; TopLevelOps = []; Result = result }
+                            | Result.Error diagnostic ->
+                                WitnessOutput.error $"Module value '{name}': {diagnostic}"
+                        | None ->
+                            WitnessOutput.error $"Module value '{name}': Initial value not yet witnessed"
                     // Check if binding is mutable
                     elif isMut then
                         // MUTABLE BINDING: Allocate memref and initialize

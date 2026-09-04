@@ -129,6 +129,15 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                 { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
                             | None ->
                                 WitnessOutput.error $"VarRef '{name}': Failed to build closure pair for named function"
+                    elif ModuleValues.isSlotBinding ctx.Graph bindingNode then
+                        // Module-level value: reload from its slot (valid in any function)
+                        let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> name
+                        let valueTy = mapType bindingNode.Type ctx
+                        let globalName = ModuleValues.globalName bindingName bindingId
+                        match tryMatchWithDiagnostics (pGlobalSlotLoad node.Id globalName valueTy)
+                                      ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error diagnostic -> WitnessOutput.error $"VarRef '{name}': {diagnostic}"
                     elif Set.contains bindingId ctx.Coeffects.CurryFlattening.PartialAppBindings then
                         // Partial application binding - no value SSA available
                         // ApplicationWitness handles saturated calls through the coeffect

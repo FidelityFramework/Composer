@@ -51,6 +51,8 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
+**`NativePtr.*` status:** The intrinsic module listed above is compat surface, not a design commitment. Per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing, confined to the generated Layer 1/2 membrane, counted as the TCB metric, and regenerated out at the corpus-wide regeneration horizon. The finiteness argument for why it cannot remain surface is [Closure_Nanopass_Architecture.md](./Closure_Nanopass_Architecture.md) Section 4; the boundary contract it folds into is [C-01 PRD](./PRDs/C-01-Closures.md) Section 6.7.
+
 **CCS-First Architecture:** Types and operations ARE the compiler, not library code:
 - **CCS**: Defines NTUKind types, provides intrinsic modules, builds PSG with intrinsics marked
 - **Alex**: Traverses PSG → generates MLIR → LLVM → native binary

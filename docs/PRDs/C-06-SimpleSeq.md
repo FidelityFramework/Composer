@@ -349,6 +349,8 @@ let checkForEach
 
 #### 4.8.1 The Type Representation Duality
 
+> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 Types like `Seq<T>`, `Lazy<T>`, `nativeptr<T>`, and `byref<T>` exist in **TWO representations** within CCS:
 
 | Representation | Source | Example | Memory Model |

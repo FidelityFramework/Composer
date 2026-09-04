@@ -1,7 +1,9 @@
 /// ControlFlowPatterns - Structured control flow constructions
 ///
 /// PUBLIC: Witnesses use these to emit control flow operations (If, While, For, Switch).
-/// All control flow constructions compose SCFElements and CFElements.
+/// All control flow constructions compose SCFElements: structured control flow
+/// only, the witnessed vocabulary (Thin_Middle_End_Design 22). Unstructured
+/// `cf` is what `scf` lowers to below the boundary, never emitted here.
 module Alex.Patterns.ControlFlowPatterns
 
 open XParsec
@@ -11,7 +13,6 @@ open Alex.XParsec.PSGCombinators
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.SCFElements  // pSCFIf, pSCFWhile, pSCFFor
-open Alex.Elements.CFElements   // pSwitch
 open Alex.Elements.CombElements // pCombICmp, pCombMux (FPGA combinational logic)
 open Alex.Elements.ArithElements // pTruncI, pExtSI (FPGA width harmonization)
 open Alex.Elements.MLIRAtomics  // pConstI (tag literal constants)
@@ -184,24 +185,6 @@ let pBuildForLoop (lower: SSA) (upper: SSA) (step: SSA) (bodyOps: MLIROp list) :
     parser {
         let! forOp = pSCFFor lower upper step bodyOps
         return [forOp]
-    }
-
-// ═══════════════════════════════════════════════════════════
-// CONTROL FLOW (CF)
-// ═══════════════════════════════════════════════════════════
-
-/// Switch statement via CF.Switch
-let pSwitch (flag: SSA) (flagTy: MLIRType) (defaultOps: MLIROp list)
-            (cases: (int64 * MLIROp list) list) : PSGParser<MLIROp list> =
-    parser {
-        // Convert case ops to block refs (would need actual block construction)
-        // For now, placeholder structure
-        let defaultBlock = BlockRef "default"
-        let caseBlocks = cases |> List.map (fun (value, _) ->
-            (value, BlockRef $"case_{value}", []))
-
-        let! switchOp = Alex.Elements.CFElements.pSwitch flag flagTy defaultBlock [] caseBlocks
-        return [switchOp]
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -516,9 +499,16 @@ let pBuildMatchElimination
                     | None -> preturn []
 
                 // Step 2: Build nested scf.if chain — compare scrutinee against each constant
-                // SSA layout: [0] = result, then 2 per non-final arm (constLit + cmp)
+                // SSA layout: [0] = result, then 2 per non-final arm (constLit + cmp),
+                // then one result SSA per nested (inner) scf.if. Every scf.if in the chain
+                // needs its own result SSA: the inner ifs live in the else regions of the
+                // outer ones, and an SSA name cannot be defined twice along that path.
                 let mutable ssaOffset = 1
                 let (lastArmOps, _, _) = arms.[numArms - 1]
+                let innerResultBase = 1 + 2 * (numArms - 1)
+                let levelResultSSA (i: int) =
+                    if i = 0 then (match result with Some (r, _) -> r | None -> allSSAs.[0])
+                    else allSSAs.[innerResultBase + (i - 1)]
 
                 let lastArmElseOps =
                     match result with
@@ -557,12 +547,13 @@ let pBuildMatchElimination
                                 armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
 
                         match result with
-                        | Some (resultSSA, resultType) ->
-                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (resultSSA, resultType)))
+                        | Some (_, resultType) ->
+                            let thisResultSSA = levelResultSSA i
+                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (thisResultSSA, resultType)))
                             // Each intermediate output becomes the else body of the next outer scf.if,
-                            // so it must end with scf.yield. The outermost result's trailing yield
-                            // is stripped below (it goes in the function body, not a region).
-                            [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [(resultSSA, resultType)])]
+                            // so it must end with scf.yield of this level's result. The outermost
+                            // trailing yield is stripped below (it goes in the function body, not a region).
+                            [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [(thisResultSSA, resultType)])]
                         | None ->
                             let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
                             [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [])]
@@ -619,9 +610,17 @@ let pBuildMatchElimination
                         recallAll 0 []
                     | None -> preturn []
 
-                // Step 3: Build nested scf.if chain from inside-out
+                // Step 3: Build nested scf.if chain from inside-out.
+                // SSA layout after tag extraction: 2 per non-final arm (tagLit + cmp), then one
+                // result SSA per nested (inner) scf.if. Inner ifs live in the else regions of the
+                // outer ones, so each level needs its own result name and each else region must
+                // terminate with a yield of that level's result.
                 let mutable ssaOffset = tagExtractEnd
                 let (lastArmOps, _, _) = arms.[numArms - 1]
+                let innerResultBase = tagExtractEnd + 2 * (numArms - 1)
+                let levelResultSSA (i: int) =
+                    if i = 0 then (match result with Some (r, _) -> r | None -> allSSAs.[0])
+                    else allSSAs.[innerResultBase + (i - 1)]
 
                 let lastArmElseOps =
                     match result with
@@ -631,7 +630,7 @@ let pBuildMatchElimination
                     | None ->
                         lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
 
-                let outerOps =
+                let nestedOps =
                     List.foldBack (fun i currentElseOps ->
                         let (armOps, _, arm) = arms.[i]
                         let tagIndex = getArmTagIndex i arm.Pattern
@@ -652,13 +651,18 @@ let pBuildMatchElimination
                                 armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
 
                         match result with
-                        | Some (resultSSA, resultType) ->
-                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (resultSSA, resultType)))
-                            [tagLitOp; cmpOp; ifOp]
+                        | Some (_, resultType) ->
+                            let thisResultSSA = levelResultSSA i
+                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (thisResultSSA, resultType)))
+                            [tagLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [(thisResultSSA, resultType)])]
                         | None ->
                             let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
-                            [tagLitOp; cmpOp; ifOp]
+                            [tagLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [])]
                     ) [0 .. numArms - 2] lastArmElseOps
+
+                // Strip the trailing yield from the outermost ops — those go in the
+                // function body, not inside an scf.if region.
+                let outerOps = nestedOps |> List.take (nestedOps.Length - 1)
 
                 let allOps = tagExtractOps @ outerOps
 

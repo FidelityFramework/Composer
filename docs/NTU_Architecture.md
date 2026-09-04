@@ -97,6 +97,8 @@ Posit arithmetic is selected automatically by the DTS representation selection l
 | `float` | `NTUfloat64` |
 | `float32` | `NTUfloat32` |
 
+The `nativeptr<'T>` mapping is compat surface, retained for the transition. Per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing: confined to the generated Layer 1/2 membrane, counted as the TCB metric, and regenerated out at the corpus-wide regeneration horizon. See the finiteness lemma in `Closure_Nanopass_Architecture.md` Section 4 and the boundary contract in C-01 PRD Section 6.7 for what replaces it by use-class.
+
 ## Type Identity vs Type Width
 
 **Key Insight**: Type WIDTH is an erased assumption, not part of type identity.

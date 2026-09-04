@@ -254,39 +254,6 @@ type IndexOp =
     | IndexCastU of SSA * SSA * MLIRType * MLIRType    // result, operand, srcType, destType (unsigned)
     | IndexSizeOf of SSA * MLIRType                   // result, type
 
-/// Vector dialect operations
-type VectorOp =
-    | Broadcast of SSA * SSA * MLIRType                                     // result, source, resultType
-    | Extract of SSA * SSA * int list                                       // result, vector, position
-    | Insert of SSA * SSA * SSA * int list                                  // result, source, dest, position
-    | ExtractStrided of SSA * SSA * int list * int list * int list          // result, vector, offsets, sizes, strides
-    | InsertStrided of SSA * SSA * SSA * int list * int list                // result, source, dest, offsets, strides
-    | ShapeCast of SSA * SSA * MLIRType                                     // result, source, resultType
-    | Transpose of SSA * SSA * int list                                     // result, vector, transp
-    | FlattenTranspose of SSA * SSA                                         // result, vector
-    | ReductionAdd of SSA * SSA * SSA option                                // result, vector, acc
-    | ReductionMul of SSA * SSA * SSA option                                // result, vector, acc
-    | ReductionAnd of SSA * SSA                                             // result, vector
-    | ReductionOr of SSA * SSA                                              // result, vector
-    | ReductionXor of SSA * SSA                                             // result, vector
-    | ReductionMinSI of SSA * SSA                                           // result, vector
-    | ReductionMinUI of SSA * SSA                                           // result, vector
-    | ReductionMaxSI of SSA * SSA                                           // result, vector
-    | ReductionMaxUI of SSA * SSA                                           // result, vector
-    | ReductionMinF of SSA * SSA                                            // result, vector
-    | ReductionMaxF of SSA * SSA                                            // result, vector
-    | FMA of SSA * SSA * SSA * SSA                                          // result, lhs, rhs, acc
-    | Splat of SSA * SSA * MLIRType                                         // result, value, resultType
-    | VectorLoad of SSA * SSA * SSA list                                    // result, basePtr, indices
-    | VectorStore of SSA * SSA * SSA list                                   // valueToStore, basePtr, indices
-    | MaskedLoad of SSA * SSA * SSA list * SSA * SSA                        // result, basePtr, indices, mask, passthru
-    | MaskedStore of SSA * SSA * SSA list * SSA                             // valueToStore, basePtr, indices, mask
-    | Gather of SSA * SSA * SSA * SSA * SSA * SSA                           // result, basePtr, indices, indexVec, mask, passthru
-    | Scatter of SSA * SSA * SSA * SSA * SSA                                // valueToStore, basePtr, indices, indexVec, mask
-    | CreateMask of SSA * SSA list                                          // result, operands
-    | ConstantMask of SSA * int list                                        // result, maskDimSizes
-    | Print of SSA * string option                                          // source, punctuation
-
 /// CIRCT Combinational Logic Dialect (pure, stateless operations)
 /// Maps to hw/comb dialect — synthesizable combinational logic for FPGA targets
 type CombOp =
@@ -331,14 +298,12 @@ type MLIROp =
     | MemRefOp of MemRefOp
     | ArithOp of ArithOp
     | SCFOp of SCFOp
-    | CFOp of CFOp
     | FuncOp of FuncOp
     | IndexOp of IndexOp
-    | VectorOp of VectorOp
     | Block of string * MLIROp list                                 // label, ops
     | Region of MLIROp list                                         // blocks
     // Module-level declarations (backend-agnostic)
-    | GlobalString of string * string * int                         // name, content, byteLength
+    | GlobalString of name: string * content: string * byteLength: int * obligations: string list  // obligations: anchor names of the obligations constraining this storage (PHG 2.4b), reified as {clef.obligations = [...]}
     | GlobalMemref of string * MLIRType                             // name, memrefType — zero-initialized static storage for a program-lifetime value (referenced via memref.get_global)
     // CIRCT hardware dialects (FPGA targets)
     | CombOp of CombOp
@@ -358,14 +323,6 @@ and SCFOp =
     | Condition of SSA * SSA list                             // cond, args
 
 /// Control Flow (CF) dialect operations - unstructured control flow
-and CFOp =
-    | Assert of SSA * string                                                      // cond, msg
-    | Br of BlockRef * Val list                                                   // dest, destOperands
-    | CondBr of SSA * BlockRef * Val list * BlockRef * Val list * (int * int) option  // cond, trueDest, trueOps, falseDest, falseOps, weights
-    | Switch of SSA * MLIRType * BlockRef * Val list * (int64 * BlockRef * Val list) list  // flag, flagTy, default, defaultOps, cases
-
-/// By-value struct parameter metadata for FFI boundary marshaling.
-/// At the C ABI level, structs > 16 bytes (SysV x86_64 MEMORY class) must be
 /// passed via `byval` — the struct data goes on the stack, not in a register.
 and ByvalParam = { ParamIndex: int; SizeBytes: int; AlignBytes: int }
 

@@ -8,6 +8,8 @@
 
 ## Callback Handling Approaches
 
+> **Membrane note.** The `nativeint` and `nativeptr` appearances in this document are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of `PRDs/C-01-Closures.md` Section 6.7.
+
 The webview C API uses function pointers for callbacks:
 
 ```c

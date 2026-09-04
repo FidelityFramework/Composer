@@ -219,6 +219,8 @@ This document catalogs every major Clef language feature against CCS (Clef Compi
 | `&&expr` (address-of) | ✅ | Byref generation |
 | `fixed` expression | 🚧 | Partial support |
 
+**`NativePtr.*` status**: The ✅ marks above record compat surface, not a stable API. Per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing: confined to the generated Layer 1/2 membrane, counted as the TCB metric, replaced by use-class, and regenerated out at the corpus-wide regeneration horizon. See `Closure_Nanopass_Architecture.md` Section 4 (the finiteness lemma) and C-01 PRD Section 6.7 (the boundary contract).
+
 ---
 
 ## 4. Functions and Closures

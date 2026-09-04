@@ -357,12 +357,12 @@ module MLIRAccumulator =
 
     /// Try to emit a global string (returns Some op if not already emitted, None if duplicate)
     /// This implements dependent transparency coordination: witnesses check before emitting module-level declarations
-    let tryEmitGlobal (name: string) (content: string) (byteLength: int) (acc: MLIRAccumulator) : MLIROp option =
+    let tryEmitGlobal (name: string) (content: string) (byteLength: int) (obligations: string list) (acc: MLIRAccumulator) : MLIROp option =
         if Set.contains name acc.EmittedGlobals then
             None  // Already emitted by another witness
         else
             acc.EmittedGlobals <- Set.add name acc.EmittedGlobals
-            Some (MLIROp.GlobalString (name, content, byteLength))
+            Some (MLIROp.GlobalString (name, content, byteLength, obligations))
 
     /// Check if a thunk wrapper has already been emitted (returns true if NEW, false if duplicate)
     /// Parallel to tryEmitGlobal: module-level thunk declarations are emitted once per function name.
@@ -506,6 +506,45 @@ type WitnessContext = {
     GlobalVisited: ref<Set<NodeId>>  // Global visited set (shared across all nanopasses and function bodies)
     TraversalVisited: ref<Set<NodeId>>  // Traversal visited set: global on CPU, per-function on FPGA
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODULE-LEVEL VALUE SLOTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A module-level `let` value (EmissionStrategy.MainPrologue, not a function) lives in a
+/// program-lifetime slot: a one-element memref.global. Its initializer runs in the entry
+/// point's prologue and every reference, in any function, reloads from the slot, so no SSA
+/// value ever crosses a function boundary. Function values (Lambda children) are emitted as
+/// functions and are not slots.
+module ModuleValues =
+    /// True when the binding node is a module-level value that is realized as a slot: a direct
+    /// member of a ModuleDef (the ModuleInit set of its module's classification) whose value is
+    /// not a function. A binding nested inside a module-level value's initializer also carries
+    /// MainPrologue (it is outside every function) but is a local of that initializer, not a slot.
+    let isSlotBinding (graph: SemanticGraph) (bindingNode: SemanticNode) : bool =
+        match bindingNode.Kind with
+        | SemanticKind.Binding _ when bindingNode.EmissionStrategy = EmissionStrategy.MainPrologue ->
+            let isModuleMember =
+                graph.ModuleClassifications.Value
+                |> Map.exists (fun _ classification -> List.contains bindingNode.Id classification.ModuleInit)
+            isModuleMember &&
+            (match bindingNode.Children with
+             | childId :: _ ->
+                 match Clef.Compiler.PSGSaturation.SemanticGraph.Core.SemanticGraph.tryGetNode childId graph with
+                 | Some child ->
+                     match child.Kind with
+                     | SemanticKind.Lambda _ -> false
+                     | _ -> true
+                 | None -> false
+             | [] -> false)
+        | _ -> false
+
+    /// The memref.global symbol for a slot: readable name plus the binding's node id for uniqueness.
+    let globalName (bindingName: string) (bindingId: NodeId) : string =
+        let sanitized =
+            bindingName
+            |> String.map (fun c -> if System.Char.IsLetterOrDigit c || c = '_' then c else '_')
+        sprintf "__clef_module_value_%s_%d" sanitized (NodeId.value bindingId)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COEFFECT ACCESSORS (Convenience functions)

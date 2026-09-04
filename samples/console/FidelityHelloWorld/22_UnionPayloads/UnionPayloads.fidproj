@@ -1,0 +1,18 @@
+[package]
+name = "UnionPayloads"
+version = "0.1.0"
+description = "Union payloads: string and record payloads, a self-referencing union, an and-group, option patterns at two payload types, an apostrophe in a function name"
+authors = ["SpeakEZ Technologies, Inc."]
+license = "MIT"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+# Types and operations are CCS intrinsics - no external library needed
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["UnionPayloads.fs"]
+output = "unionpayloads"
+output_kind = "console"

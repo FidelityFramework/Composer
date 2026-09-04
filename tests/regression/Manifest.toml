@@ -531,3 +531,137 @@ expected_output = """
 malloc succeeded
 free completed
 """
+
+# =============================================================================
+# Sample 18: Generalization
+# Let-polymorphism: generic top-level functions instantiated at several types (monomorphization), generic option
+# =============================================================================
+[[samples]]
+name = "18_Generalization"
+project = "Generalization.fidproj"
+binary = "targets/generalization"
+expected_output = """
+=== Generalization Test ===
+firstOf int: 5
+firstOf string: x
+firstOf record: 3
+firstOf empty: 42
+applyTwice incr 1: 3
+applyTwice dbl 3: 12
+wrap int: 5
+wrap string: s
+"""
+
+# =============================================================================
+# Sample 19: ModuleValues
+# Module-level values across modules and functions, mutable module value, qualified member access
+# =============================================================================
+[[samples]]
+name = "19_ModuleValues"
+project = "ModuleValues.fidproj"
+binary = "targets/modulevalues"
+expected_output = """
+=== Module Values Test ===
+rodata name: rodata
+rodata capacity: 4096
+wordSize: 8
+first of all: rodata
+total capacity: 8392704
+bump 1: 8
+bump 2: 16
+counter: 16
+k: 42
+useK 1: 43
+"""
+
+# =============================================================================
+# Sample 20: ArraySurface
+# Array.length, array literals, indexers, Array.blit, for loops, arrays of records
+# =============================================================================
+[[samples]]
+name = "20_ArraySurface"
+project = "ArraySurface.fidproj"
+binary = "targets/arraysurface"
+expected_output = """
+=== Array Surface Test ===
+count [|1;2;3|]: 3
+first: 1
+sum bytes: 16
+d0: 7
+triangle 4: 6
+countdown 3: 6
+blit dst[3]: 6
+points[1].Y: 4
+points length: 2
+a, b, c
+y
+"""
+
+# =============================================================================
+# Sample 21: RecordsAndTags
+# Field assignment through a parameter, enum union field, nested matches, string-tag equality, byte widening, a user type shadowing a spliced abbreviation
+# =============================================================================
+[[samples]]
+name = "21_RecordsAndTags"
+project = "RecordsAndTags.fidproj"
+binary = "targets/recordsandtags"
+expected_output = """
+=== Records and Tags Test ===
+writer position: 2
+writer byte 1: 4
+isAsk Ask: true
+isAsk Reply: false
+index Reply: 2
+weight Leaf 7: 7
+weight Pair 2 3: 5
+weight Empty: 0
+name 2: two
+name 9: many
+defaults isArena: true
+stack isArena: false
+differs x y: true
+differs x x: false
+defaults name: arena
+"""
+
+# =============================================================================
+# Sample 22: UnionPayloads
+# String and record union payloads, a self-referencing union, an and-group of a record and a union, option patterns at two payload types, an apostrophe in a function name
+# =============================================================================
+[[samples]]
+name = "22_UnionPayloads"
+project = "UnionPayloads.fidproj"
+binary = "targets/unionpayloads"
+expected_output = """
+=== Union Payloads Test ===
+size (P "u8"): 2
+size (F 16): 16
+size (Q 3): 3
+depth (build 3): 10
+count nested: 3
+half' 10: 5
+half' 7: -1
+scale' 1.5: 3
+scale' -1.0: -1
+"""
+
+# =============================================================================
+# Sample 23: RecordSurface
+# Nested record arrays through a let-bound field, record literal inference by exact field set, a module value with local bindings and calls, short-circuit || and &&
+# =============================================================================
+[[samples]]
+name = "23_RecordSurface"
+project = "RecordSurface.fidproj"
+binary = "targets/recordsurface"
+expected_output = """
+=== Record Surface Test ===
+sum positions: 7
+N count: 3
+F extra: 5
+linux spaces: 2
+linux total: 8392704
+orDiv 0 0: true
+andDiv 0 0: false
+orDiv 1 2: true
+andDiv 1 2: true
+"""

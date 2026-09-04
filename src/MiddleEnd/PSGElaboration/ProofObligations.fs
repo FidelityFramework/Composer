@@ -15,9 +15,9 @@
 /// Refutation style throughout: each obligation is a named Boolean anchor;
 /// its definition and its NEGATION are asserted. `unsat` = obligation HOLDS.
 ///
-/// Scope (initial): string-literal storage discipline and data-layout facts
-/// for literals written in the entry compilation unit: the strings the
-/// developer typed, carrying their exact source positions.
+/// Scope (initial): string-literal storage discipline, data-layout facts,
+/// and concatenation copy bounds over EVERY reachable site — entry unit and
+/// platform library alike — each carrying its exact source position.
 module PSGElaboration.ProofObligations
 
 open System.IO
@@ -41,6 +41,12 @@ type ObligationBody =
     /// consecutive layout of the given storages is pairwise disjoint
     /// and spans exactly `span` bytes
     | ConsecutiveLayout of storages: int list * span: int
+    /// String.concat2 copy discipline: for ANY operand lengths a, b >= 0
+    /// (pinned to a concrete value where the operand is a literal), the two
+    /// copy windows [0,a) and [a,a+b) lie within the (a+b)-byte allocation.
+    /// The window shape is the pStringConcat2 emission contract; the operand
+    /// lengths are graph facts where the graph has them.
+    | ConcatCopyBound of leftLen: int option * rightLen: int option
 
 /// A proof obligation recorded in the PSG
 type Obligation = {
@@ -95,7 +101,7 @@ let private fmtRange (r: SourceRange) : string =
     sprintf "%s:%d:%d" r.File r.Start.Line r.Start.Column
 
 /// Compute the obligation coeffect from the saturated PSG.
-/// Observes reachable string literals in the entry compilation unit;
+/// Observes every reachable string literal and concatenation site;
 /// the emission invariants (NUL reservation, view trimming) come from
 /// the same contract LiteralPatterns emits under.
 let analyze (graph: SemanticGraph) : ObligationSet =
@@ -110,15 +116,19 @@ let analyze (graph: SemanticGraph) : ObligationSet =
 
     if entryFile = "" then { Obligations = [] } else
 
-    // The strings the developer wrote, in source order, deduplicated by content
+    // EVERY reachable string literal, wherever it lives: entry unit and platform
+    // library alike. Reachable literals are exactly the strings the emission
+    // will place, so a literal outside this set reaching the artifact is a
+    // compiler bug the artifact cross-check will catch. Entry-unit strings
+    // first (source order), then library strings, deduplicated by content.
     let userLiterals =
         graph.Nodes.Values
-        |> Seq.filter (fun n -> n.IsReachable && n.Range.File = entryFile)
+        |> Seq.filter (fun n -> n.IsReachable)
         |> Seq.choose (fun n ->
             match n.Kind with
             | SemanticKind.Literal (NativeLiteral.String s) -> Some (s, n.Range)
             | _ -> None)
-        |> Seq.sortBy (fun (_, r) -> r.Start.Line, r.Start.Column)
+        |> Seq.sortBy (fun (_, r) -> (if r.File = entryFile then 0 else 1), r.File, r.Start.Line, r.Start.Column)
         |> Seq.distinctBy fst
         |> Seq.toList
 
@@ -161,6 +171,67 @@ let analyze (graph: SemanticGraph) : ObligationSet =
                     Refs = ["CWE-170"]
                     Body = NulSentinel 0 } ]
 
+    // Concatenation sites: reachable String.concat2 applications in the entry
+    // unit. The graph settles the output length (a + b) and, where an operand
+    // is a literal, its concrete byte length; the copy-window shape is the
+    // pStringConcat2 emission contract, stated here as a symbolic theorem
+    // quantified over every run.
+    let rec intrinsicOf (id: NodeId) : IntrinsicInfo option =
+        match Map.tryFind id graph.Nodes with
+        | Some f ->
+            match f.Kind with
+            | SemanticKind.Intrinsic info -> Some info
+            | SemanticKind.TypeAnnotation (inner, _) -> intrinsicOf inner
+            | _ -> None
+        | None -> None
+
+    let literalOperand (id: NodeId) : (int * string) option =
+        match Map.tryFind id graph.Nodes with
+        | Some n ->
+            match n.Kind with
+            | SemanticKind.Literal (NativeLiteral.String s) ->
+                Some (StringCollection.deriveByteLength s, s)
+            | _ -> None
+        | None -> None
+
+    let concatSites =
+        graph.Nodes.Values
+        |> Seq.filter (fun n -> n.IsReachable)
+        |> Seq.choose (fun n ->
+            match n.Kind with
+            | SemanticKind.Application (funcId, [leftId; rightId]) ->
+                match intrinsicOf funcId with
+                | Some info when info.Module = IntrinsicModule.String && info.Operation = "concat2" ->
+                    Some (n.Range, literalOperand leftId, literalOperand rightId)
+                | _ -> None
+            | _ -> None)
+        |> Seq.sortBy (fun (r, _, _) -> r.Start.Line, r.Start.Column)
+        |> Seq.toList
+
+    let concats =
+        // slug from a literal operand where one exists; uniquified in source order
+        let seen = System.Collections.Generic.Dictionary<string, int>()
+        [ for (range, left, right) in concatSites do
+            let baseSlug =
+                match right, left with
+                | Some (_, c), _ | _, Some (_, c) -> sprintf "concat_%s" (slug c)
+                | None, None -> "concat_dynamic"
+            let n = match seen.TryGetValue baseSlug with | true, c -> c + 1 | _ -> 1
+            seen[baseSlug] <- n
+            let name = if n = 1 then baseSlug else sprintf "%s_%d" baseSlug n
+            let pin tag = function
+                | Some (len, c) -> sprintf ", with %s = %d (%s)" tag len (describe c)
+                | None -> ""
+            yield { Id = name
+                    Kind = "concat-copy-bound"
+                    Logic = "QF_LIA"
+                    Statement =
+                        sprintf "for ANY operand lengths a, b >= 0%s%s, the two copy windows of this concatenation ([0,a) then [a,a+b)) lie within its (a+b)-byte allocation: a symbolic theorem over all runs, not a constant check"
+                            (pin "a" left) (pin "b" right)
+                    Source = fmtRange range
+                    Refs = ["CWE-787"; "CWE-131"]
+                    Body = ConcatCopyBound (left |> Option.map fst, right |> Option.map fst) } ]
+
     let layout =
         match userLiterals with
         | [] | [_] -> []
@@ -170,12 +241,12 @@ let analyze (graph: SemanticGraph) : ObligationSet =
             [ { Id = "layout_user_strings"
                 Kind = "memory-map-disjointness"
                 Logic = "QF_LIA"
-                Statement = sprintf "the %d user string storages, laid out consecutively, occupy pairwise-disjoint ranges spanning exactly %d bytes" storages.Length span
-                Source = sprintf "%s (all reachable string literals)" (Path.GetFileName entryFile)
+                Statement = sprintf "the %d reachable string storages, laid out consecutively, occupy pairwise-disjoint ranges spanning exactly %d bytes" storages.Length span
+                Source = "all reachable string literals, entry unit and platform library"
                 Refs = ["CWE-787"; "CWE-125"]
                 Body = ConsecutiveLayout (storages, span) } ]
 
-    { Obligations = perString @ layout }
+    { Obligations = perString @ layout @ concats }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DESIGN-TIME FORM: SMT-LIB rendering (serialization of pre-computed facts)
@@ -211,7 +282,20 @@ let private bodyToSmtLib (id: string) (body: ObligationBody) : string list =
         @ [ sprintf "(assert (= %s (and %s (= (+ %s %d) (+ %s %d)))))"
                 id (String.concat " " disjoint) bases[n-1] sizes[n-1] bases[0] span
             sprintf "(assert (not %s))" id ]
-
+    | ConcatCopyBound (leftLen, rightLen) ->
+        let pin name = function
+            | Some n -> [ sprintf "(assert (= %s %d))" name n ]
+            | None -> []
+        [ "(declare-const len_l Int)"
+          "(declare-const len_r Int)"
+          "(declare-const alloc Int)"
+          "(assert (>= len_l 0))"
+          "(assert (>= len_r 0))" ]
+        @ pin "len_l" leftLen
+        @ pin "len_r" rightLen
+        @ [ "(assert (= alloc (+ len_l len_r)))"
+            sprintf "(assert (= %s (and (<= len_l alloc) (<= (+ len_l len_r) alloc))))" id
+            sprintf "(assert (not %s))" id ]
 /// Render the full obligation set as a solver-ready SMT-LIB artifact.
 /// One scope per obligation; `unsat` on every (check-sat) = all obligations hold.
 let toSmtLib (obs: ObligationSet) : string =

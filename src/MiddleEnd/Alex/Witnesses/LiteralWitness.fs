@@ -45,9 +45,16 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
             // Use trace-enabled variant to capture full execution path
             match tryMatchWithTrace stringPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (((inlineOps, globalName, strContent, storageLength), result), _, _trace) ->
+                // The obligations constraining this literal, projected onto the node
+                // at saturation (Obligation.Anchors, PHG 2.4a); reified on the global
+                // the witness emits (2.4b). Read, not computed.
+                let anchors =
+                    match Map.tryFind ObligationMetadata.Anchors node.Metadata with
+                    | Some (MetadataValue.StringList names) -> names
+                    | _ -> []
                 // Success - emit GlobalString via coordination (dependent transparency)
                 let topLevelOps =
-                    match MLIRAccumulator.tryEmitGlobal globalName strContent storageLength ctx.Accumulator with
+                    match MLIRAccumulator.tryEmitGlobal globalName strContent storageLength anchors ctx.Accumulator with
                     | Some globalOp -> [globalOp]
                     | None -> []  // Already emitted by another witness
                 { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }

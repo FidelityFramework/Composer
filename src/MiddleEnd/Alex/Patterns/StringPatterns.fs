@@ -406,6 +406,70 @@ let pStringConcat2 (nodeId: NodeId) (str1SSA: SSA) (str2SSA: SSA) (str1Type: MLI
     }
 
 // ═══════════════════════════════════════════════════════════
+// STRING EQUALITY (structural: same length and same bytes)
+// ═══════════════════════════════════════════════════════════
+
+/// `a = b` / `a <> b` on strings (and byte arrays): compare lengths, then bytes via memcmp.
+/// Strings are memref<?xi8>, so `arith.cmpi` cannot compare them; this is the structural
+/// equality Clef's `=` means for them.
+///
+/// Emits:
+///   %c0 = arith.constant 0 : index
+///   %l1 = memref.dim %a, %c0 ; %l2 = memref.dim %b, %c0
+///   %sameLen = arith.cmpi eq, %l1, %l2 : index
+///   %r = scf.if %sameLen -> (i1) {
+///       %p1 = extract_aligned_pointer_as_index %a ; %p2 = ... %b
+///       %n = index.casts %l1 : index to i64
+///       %c = func.call @memcmp(%p1, %p2, %n) : (i64, i64, i64) -> i32
+///       %z = arith.cmpi eq, %c, 0 : i32
+///       scf.yield %z
+///   } else { scf.yield false }
+///   (%r = xori %r, 1 for inequality)
+///
+/// SSA layout (16 SSAs):
+///   [0] = result, [1] = c0, [2] = len1, [3] = len2, [4] = sameLen,
+///   [5] = ptr1 (index), [6] = ptr2 (index), [7] = ptr1 word, [8] = ptr2 word, [9] = n word,
+///   [10] = memcmp result (i32), [11] = zero (i32), [12] = bytesEq (i1), [13] = false (i1),
+///   [14] = if result (inequality only), [15] = one (i1, inequality only)
+let pStringEquality (nodeId: NodeId) (lhsSSA: SSA) (rhsSSA: SSA) (lhsType: MLIRType) (rhsType: MLIRType) (negate: bool)
+                    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 16) $"pStringEquality: Expected 16 SSAs, got {ssas.Length}"
+        let! state = getUserState
+        let wordTy = state.Platform.PlatformWordType
+        let i1 = TInt (IntWidth 1)
+        let i32 = TInt (IntWidth 32)
+        let resultSSA = ssas.[0]
+        let! c0 = pConstI ssas.[1] 0L TIndex
+        let! len1 = pMemRefDim ssas.[2] lhsSSA ssas.[1] lhsType
+        let! len2 = pMemRefDim ssas.[3] rhsSSA ssas.[1] rhsType
+        let sameLen = MLIROp.ArithOp (ArithOp.CmpI (ssas.[4], ICmpPred.Eq, ssas.[2], ssas.[3], TIndex))
+        let! ptr1 = pExtractBasePtr ssas.[5] lhsSSA lhsType
+        let! ptr2 = pExtractBasePtr ssas.[6] rhsSSA rhsType
+        let! ptr1w = pIndexCastS ssas.[7] ssas.[5] TIndex wordTy
+        let! ptr2w = pIndexCastS ssas.[8] ssas.[6] TIndex wordTy
+        let! nw = pIndexCastS ssas.[9] ssas.[2] TIndex wordTy
+        let memcmpArgs = [ { SSA = ssas.[7]; Type = wordTy }; { SSA = ssas.[8]; Type = wordTy }; { SSA = ssas.[9]; Type = wordTy } ]
+        let! memcmpCall = pFuncCall (Some ssas.[10]) "memcmp" memcmpArgs i32
+        let! memcmpDecl = pFuncDecl "memcmp" [wordTy; wordTy; wordTy] i32 FuncVisibility.Private
+        let! zero32 = pConstI ssas.[11] 0L i32
+        let bytesEq = MLIROp.ArithOp (ArithOp.CmpI (ssas.[12], ICmpPred.Eq, ssas.[10], ssas.[11], i32))
+        let thenOps = [ptr1; ptr2; ptr1w; ptr2w; nw; memcmpDecl; memcmpCall; zero32; bytesEq; MLIROp.SCFOp (SCFOp.Yield [(ssas.[12], i1)])]
+        let! falseOp = pConstI ssas.[13] 0L i1
+        let elseOps = [falseOp; MLIROp.SCFOp (SCFOp.Yield [(ssas.[13], i1)])]
+        let ifResultSSA = if negate then ssas.[14] else resultSSA
+        let! ifOp = pSCFIf ssas.[4] thenOps (Some elseOps) (Some (ifResultSSA, i1))
+        let prefix = [c0; len1; len2; sameLen; ifOp]
+        if negate then
+            let! oneOp = pConstI ssas.[15] 1L i1
+            let notOp = MLIROp.ArithOp (ArithOp.XorI (resultSSA, ssas.[14], ssas.[15], i1))
+            return (prefix @ [oneOp; notOp], TRValue { SSA = resultSSA; Type = i1 })
+        else
+            return (prefix, TRValue { SSA = resultSSA; Type = i1 })
+    }
+
+// ═══════════════════════════════════════════════════════════
 // COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
 // ═══════════════════════════════════════════════════════════
 
@@ -454,6 +518,17 @@ let pStringContainsIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (_, stringSSA, stringType) = pRecallArgWithLoad argIds.[0]
         let! (_, charSSA, charType) = pRecallArgWithLoad argIds.[1]
         return! pStringContains node.Id stringSSA charSSA charType stringType
+    }
+
+/// String.toBytes intrinsic — identity on the memref.
+/// A Clef string is a length-carried memref<?xi8>; its UTF-8 bytes are the same memref.
+let pStringToBytesIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
+        do! ensure (info.Operation = "toBytes") "Not String.toBytes"
+        do! ensure (argIds.Length >= 1) "String.toBytes: Expected 1 arg"
+        let! (_, stringSSA, stringType) = pRecallArgWithLoad argIds.[0]
+        return ([], TRValue { SSA = stringSSA; Type = stringType })
     }
 
 /// The witness simply returns the input memref as-is.

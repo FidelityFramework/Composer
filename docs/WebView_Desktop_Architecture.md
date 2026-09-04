@@ -335,6 +335,8 @@ The Fidelity framework enforces strict layer separation between platform-agnosti
 
 ### Fidelity.Platform: Platform-Agnostic Bindings
 
+> **Membrane note.** The `nativeint` and `nativeptr` appearances in this document are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of `PRDs/C-01-Closures.md` Section 6.7.
+
 Fidelity.Platform defines the **interface** for platform bindings without any platform-specific code:
 
 ```fsharp

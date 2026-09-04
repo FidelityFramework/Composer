@@ -99,6 +99,8 @@ Messages are discriminated unions (already supported via F-05+).
 
 ### 4.1 Actor Structure
 
+> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 ```fsharp
 type MailboxProcessor<'Msg> = {
     Queue: MessageQueue<'Msg>  // Thread-safe queue

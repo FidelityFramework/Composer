@@ -289,7 +289,7 @@ CCS recognizes `[<FidelityExtern>]` on function declarations and preserves the m
 
 ### 4.2 Baker: No Special Handling
 
-Baker saturation treats extern declarations as leaf nodes. No decomposition needed.
+Baker saturation treats extern declarations as leaf nodes. No decomposition needed. The leaf node is also where the future joint constraint attaches: what saturation passes through untouched today is the anchor for the boundary hyperedge described in C-01 Section 6.7 and in the PHG addendum to `PSG_Nanopass_Architecture.md`, and it is deferred with them.
 
 ### 4.3 PlatformBindingResolution Nanopass
 

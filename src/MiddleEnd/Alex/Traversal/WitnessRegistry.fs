@@ -14,6 +14,7 @@ module Alex.Traversal.WitnessRegistry
 open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.TransferTypes
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Core.Types.Dialects  // TargetPlatform
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -143,7 +144,13 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
             fun ctx node ->
                 let rec tryWitnesses witnesses =
                     match witnesses with
-                    | [] -> WitnessOutput.skip
+                    | [] ->
+                        // No witness handled this node. Inside a function body a silent skip
+                        // leaves the node's value unbound; the enclosing Lambda then either
+                        // fails later with a confusing message or fabricates a result. Report
+                        // the coverage gap here, exactly as the top-level combiner does.
+                        let kindLine = (sprintf "%A" node.Kind).Split('\n').[0]
+                        WitnessOutput.error (sprintf "No witness handled node %d — Kind: %s. Type: %A" (NodeId.value node.Id) kindLine node.Type)
                     | nanopass :: rest ->
                         match nanopass.Witness ctx node with
                         | output when output.Result = TRSkip -> tryWitnesses rest

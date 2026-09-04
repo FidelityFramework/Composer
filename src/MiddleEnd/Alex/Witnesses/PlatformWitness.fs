@@ -25,11 +25,16 @@ let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : Witness
     // Dynamic externs (library != "c") use dlopen/dlsym/call_indirect.
     match tryMatch pDynamicExternCallResolved ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((inlineOps, pendingGlobals, result), _) ->
-        // Emit GlobalString for each pending global (deduplicated via accumulator)
+        // Emit GlobalString for each pending global (deduplicated via accumulator).
+        // These are the extern boundary's strings -- the dlopen path and dlsym
+        // symbol -- synthesized here from the binding with no literal node in the
+        // graph, so no obligation cites them and they carry no anchors. That is a
+        // recorded gap at the FFI fence (Witness_Boundary_Audit 4g; C-01 6.7), not
+        // something to fill in below the graph.
         let topLevelOps =
             pendingGlobals
             |> List.choose (fun (name, content, storageLen) ->
-                MLIRAccumulator.tryEmitGlobal name content storageLen ctx.Accumulator)
+                MLIRAccumulator.tryEmitGlobal name content storageLen [] ctx.Accumulator)
         { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
     | None ->
         // Fall back to static patterns (syscalls + static extern calls)

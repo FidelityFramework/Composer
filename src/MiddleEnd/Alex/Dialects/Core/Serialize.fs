@@ -7,6 +7,13 @@ module Alex.Dialects.Core.Serialize
 
 open Alex.Dialects.Core.Types
 
+/// MLIR symbol names are bare identifiers ([A-Za-z_][A-Za-z0-9_$.]*). A Clef function name may
+/// carry an apostrophe (`process'`), which is legal in F# and in the linked ELF symbol but not
+/// in a bare MLIR id; it is spelled `$` in the symbol (a character no Clef name contains).
+let symbolName (name: string) : string =
+    name |> String.map (fun c -> if c = '\'' then '$' elif System.Char.IsLetterOrDigit c || c = '_' || c = '.' || c = '$' then c else '_')
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE SERIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
@@ -509,7 +516,7 @@ let rec opToString (op: MLIROp) : string =
         | FuncDef (name, args, retTy, body, _visibility) ->
             let argsStr = args |> List.map (fun (ssa, ty) -> sprintf "%s: %s" (ssaToString ssa) (typeToString ty)) |> String.concat ", "
             let bodyStr = body |> List.map opToString |> String.concat "\n    "
-            sprintf "func.func @%s(%s) -> %s {\n    %s\n}" name argsStr (typeToString retTy) bodyStr
+            sprintf "func.func @%s(%s) -> %s {\n    %s\n}" (symbolName name) argsStr (typeToString retTy) bodyStr
         | FuncDecl (name, paramTypes, retTy, _visibility, byvalParams) ->
             let paramsStr = paramTypes |> List.map typeToString |> String.concat ", "
             let attrsStr =
@@ -520,13 +527,13 @@ let rec opToString (op: MLIROp) : string =
                     // Format: "idx:size:align,idx:size:align,..."
                     let bvStr = bvs |> List.map (fun bv -> sprintf "%d:%d:%d" bv.ParamIndex bv.SizeBytes bv.AlignBytes) |> String.concat ","
                     sprintf " attributes {ffi.byval = \"%s\"}" bvStr
-            sprintf "func.func private @%s(%s) -> %s%s" name paramsStr (typeToString retTy) attrsStr
+            sprintf "func.func private @%s(%s) -> %s%s" (symbolName name) paramsStr (typeToString retTy) attrsStr
         | FuncCall (resultOpt, funcName, args, retTy) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString v.Type) |> String.concat ", "
             match resultOpt with
-            | Some result -> sprintf "%s = func.call @%s(%s) : (%s) -> %s" (ssaToString result) funcName argSSAs argTypes (typeToString retTy)
-            | None -> sprintf "func.call @%s(%s) : (%s) -> %s" funcName argSSAs argTypes (typeToString retTy)
+            | Some result -> sprintf "%s = func.call @%s(%s) : (%s) -> %s" (ssaToString result) (symbolName funcName) argSSAs argTypes (typeToString retTy)
+            | None -> sprintf "func.call @%s(%s) : (%s) -> %s" (symbolName funcName) argSSAs argTypes (typeToString retTy)
         | FuncCallIndirect (resultOpt, callee, args, retTy) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString v.Type) |> String.concat ", "
@@ -534,7 +541,7 @@ let rec opToString (op: MLIROp) : string =
             | Some result -> sprintf "%s = func.call_indirect %s(%s) : (%s) -> %s" (ssaToString result) (ssaToString callee) argSSAs argTypes (typeToString retTy)
             | None -> sprintf "func.call_indirect %s(%s) : (%s) -> %s" (ssaToString callee) argSSAs argTypes (typeToString retTy)
         | FuncConstant (result, funcName, funcTy) ->
-            sprintf "%s = func.constant @%s : %s" (ssaToString result) funcName (typeToString funcTy)
+            sprintf "%s = func.constant @%s : %s" (ssaToString result) (symbolName funcName) (typeToString funcTy)
         | IndexToFunc (result, source, argTypes, retTy) ->
             let funcTyStr =
                 let argsStr = argTypes |> List.map typeToString |> String.concat ", "
@@ -550,14 +557,22 @@ let rec opToString (op: MLIROp) : string =
             | Some value, Some ty -> sprintf "func.return %s : %s" (ssaToString value) (typeToString ty)
             | Some value, None -> sprintf "func.return %s" (ssaToString value)
             | None, _ -> "func.return"
-    | MLIROp.GlobalString (name, content, storageLength) ->
+    | MLIROp.GlobalString (name, content, storageLength, obligations) ->
         // Emit memref.global (portable MLIR) with null sentinel byte for C interop.
         // Clef strings are (ptr, length) — the sentinel is a storage detail invisible
         // to the type system, ensuring .Pointer yields C-compatible null-terminated data.
         let bytes = System.Text.Encoding.UTF8.GetBytes(content)
         let bytesWithSentinel = Array.append bytes [| 0uy |]
         let denseStr = bytesWithSentinel |> Array.map (sprintf "%d") |> String.concat ", "
-        sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]>" name storageLength denseStr
+        // The obligations constraining this storage, reified on the op as a
+        // discardable attribute (PHG paper 2.4b). The artifact carries the
+        // correspondence explicitly; the artifact-side check reads it here
+        // rather than reconstructing it by matching content.
+        let attrs =
+            match obligations with
+            | [] -> ""
+            | names -> sprintf " {clef.obligations = [%s]}" (names |> List.map (sprintf "\"%s\"") |> String.concat ", ")
+        sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]>%s" name storageLength denseStr attrs
     | MLIROp.GlobalMemref (name, memrefType) ->
         // Zero-initialized static storage for a program-lifetime value (the program-lifetime
         // point of the lifetime lattice). Not `constant`: the closure struct is written into
@@ -628,7 +643,7 @@ let rec opToString (op: MLIROp) : string =
     | MLIROp.SMTOp sop -> smtOpToString opToString sop
     | MLIROp.RawMLIR text -> text
     | _ ->
-        // For now, return placeholder for unimplemented operations (CFOp, VectorOp, Block, Region)
+        // Placeholder for operations with no serializer yet (Block, Region)
         sprintf "// TODO: Serialize %A" op
 
 /// Serialize a list of operations with proper indentation

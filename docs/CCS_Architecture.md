@@ -98,6 +98,8 @@ Alex/platform bindings at code generation time; CCS enforces type *identity*, no
 | `nativeint` | `NTUnint` | i64 | i32 |
 | `nativeptr<'T>` | `NTUptr<'T>` | 8 bytes | 4 bytes |
 
+The `nativeptr<'T>` row is compat surface. Per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing: confined to the generated Layer 1/2 membrane, counted as the TCB metric, and regenerated out of generated code at the corpus-wide regeneration horizon. The reason it cannot stay surface is the finiteness lemma in `Closure_Nanopass_Architecture.md` Section 4; the boundary contract that replaces it is C-01 PRD Section 6.7.
+
 ### Fixed-Width Types
 
 | Clef Type | NTUKind | Always |

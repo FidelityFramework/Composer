@@ -87,6 +87,20 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 | Result.Error diagnostic -> WitnessOutput.error $"TupleExpr: {diagnostic}"
         | _ ->
 
+        // FieldSet on a TStruct record: r.Field <- v
+        match node.Kind with
+        | SemanticKind.FieldSet (structId, fieldName, valueId) ->
+            match MLIRAccumulator.recallNode structId ctx.Accumulator, MLIRAccumulator.recallNode valueId ctx.Accumulator with
+            | Some (structSSA, (TStruct _ as structTy)), Some (valueSSA, _) ->
+                match tryMatchWithDiagnostics (pRecordFieldSet node.Id structSSA fieldName structTy valueSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"RecordFieldSet '{fieldName}': {diagnostic}"
+            | Some (_, structTy), Some _ ->
+                WitnessOutput.error $"FieldSet '{fieldName}': target is not a record (type {structTy})"
+            | None, _ -> WitnessOutput.error $"FieldSet '{fieldName}': record value not yet witnessed"
+            | _, None -> WitnessOutput.error $"FieldSet '{fieldName}': value not yet witnessed"
+        | _ ->
+
         // Try FieldGet on TStruct
         match tryMatch pFieldGet ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Some ((structId, fieldName), _) ->

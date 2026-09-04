@@ -79,7 +79,6 @@
       <Compile Include="MiddleEnd/Alex/Traversal/NanopassArchitecture.fs" />
 
       <!-- Alex CodeGeneration - TypeSizing uses TypeMapping (moved earlier) -->
-      <Compile Include="MiddleEnd/Alex/CodeGeneration/TypeSizing.fs" />
 
       <!-- Alex XParsec - Composable PSG pattern matchers -->
       <Compile Include="MiddleEnd/Alex/XParsec/PSGCombinators.fs" />
@@ -90,10 +89,8 @@
       <Compile Include="MiddleEnd/Alex/Elements/MemRefElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/ArithElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/SCFElements.fs" />
-      <Compile Include="MiddleEnd/Alex/Elements/CFElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/FuncElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/IndexElements.fs" />
-      <Compile Include="MiddleEnd/Alex/Elements/VectorElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/CombElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/HWElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/SeqElements.fs" />
@@ -199,8 +196,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FSharp.Core" Version="10.0.101" />
-    <PackageReference Include="IcedTasks" Version="0.11.7" />
+    <PackageReference Include="FSharp.Core" Version="10.1.400" />
     <!-- CCS: F# Native Compiler Services (native type universe) -->
     <ProjectReference Include="../../clef/src/Compiler/Clef.Compiler.Service.fsproj" />
     <!-- TUI foundation (Color/Style types now, full TUI later) -->

@@ -258,26 +258,43 @@ let pSysRead (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTyp
         return ([readDecl; extractOp; castOp; dimConstOp; dimOp; capacityCastOp; readCall], TRValue { SSA = resultSSA; Type = platformWordTy })
     }
 
-/// Build Sys.readline pattern — read line from fd, return trimmed string
-/// Allocates a 1024-byte buffer, calls read(), creates result subview trimmed of newline.
+/// Build Sys.readline pattern — read line from fd, return the framed line.
+/// The buffer capacity and the delimiter trim are READ from the site's
+/// Buffer.* annotation, which the CCS obligation pass projected from the
+/// platform's declared `consoleReadln` schema (BAREWire docs/11: three
+/// observers, one truth). This witness authors no number. A site without the
+/// annotation is a compiler fault, not a default.
 ///
 /// SSA layout (14 SSAs):
-///   [0]  = bufferSSA (memref.alloc 1024xi8)
+///   [0]  = bufferSSA (memref.alloc <capacity>xi8)
 ///   [1]  = buf_ptr_index (extract base pointer)
 ///   [2]  = buf_ptr_word (index.casts to platform word)
-///   [3]  = capacity_const (1024 as platform word)
+///   [3]  = capacity_const (declared capacity as platform word)
 ///   [4]  = bytesReadSSA (func.call read result)
 ///   [5]  = bytesReadIndex (index.casts from platform word to index)
 ///   [6]  = oneConst (constant 1 as index)
 ///   [7]  = trimmedLen (bytes_read - 1, trims newline)
 ///   [8]  = resultSSA (memref.subview of buffer[0..trimmedLen])
-///   [9]  = sizeConst (1024 as index for alloc)
+///   [9]  = sizeConst (declared capacity as index for alloc)
 ///   [10] = zeroConst (constant 0 as index for subview offset)
 ///   [11] = oneStrideConst (constant 1 as index for subview stride)
 ///   [12] = readDeclSlot (read function decl)
 ///   [13] = (reserved)
-let pSysReadline (nodeId: NodeId) (fdSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
+let pSysReadline (node: SemanticNode) (fdSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
     parser {
+        let nodeId = node.Id
+        // The declared buffer, projected onto this site by CCS Pass 5.
+        let capacity =
+            match Map.tryFind BufferMetadata.Capacity node.Metadata with
+            | Some (MetadataValue.Int64 c) -> Some c
+            | _ -> None
+        let trimDelimiter =
+            match Map.tryFind BufferMetadata.TrimDelimiter node.Metadata with
+            | Some (MetadataValue.Bool b) -> b
+            | _ -> false
+        do! ensure capacity.IsSome
+                $"pSysReadline: site {NodeId.value nodeId} carries no Buffer.Capacity annotation; the platform's consoleReadln declaration was not cross-applied"
+        let capacity = capacity.Value
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 12) $"pSysReadline: Expected 12 SSAs, got {ssas.Length}"
 
@@ -301,16 +318,16 @@ let pSysReadline (nodeId: NodeId) (fdSSA: SSA) : PSGParser<MLIROp list * Transfe
         // Resolve target function name from pre-computed binding coeffects
         let callTarget = resolveCallTarget nodeId "read" state.Platform
 
-        // 1. Allocate 1024-byte read buffer on heap
-        let! sizeOp = pConstI sizeConst 1024L TIndex
+        // 1. Allocate the declared buffer
+        let! sizeOp = pConstI sizeConst capacity TIndex
         let! allocOp = pAlloc bufferSSA sizeConst (TInt (IntWidth 8))
 
         // 2. Extract pointer for read syscall
         let! extractOp = pExtractBasePtr buf_ptr_index bufferSSA bufferType
         let! castPtrOp = pIndexCastS buf_ptr_word buf_ptr_index TIndex platformWordTy
 
-        // 3. Capacity as platform word
-        let! capacityOp = pConstI capacity_const 1024L platformWordTy
+        // 3. Declared capacity as platform word
+        let! capacityOp = pConstI capacity_const capacity platformWordTy
 
         // 4. Call read(fd, buffer, capacity)
         let readArgs = [
@@ -321,9 +338,10 @@ let pSysReadline (nodeId: NodeId) (fdSSA: SSA) : PSGParser<MLIROp list * Transfe
         let! readCall = pFuncCall (Some bytesReadSSA) callTarget readArgs platformWordTy
         let! readDecl = pFuncDecl callTarget [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
 
-        // 5. Convert bytes read to index, subtract 1 for newline
+        // 5. Convert bytes read to index; trim the framing delimiter iff the
+        //    declared schema says it is trimmed (Framing.Delimited, TrimDelimiter)
         let! castBytesOp = pIndexCastS bytesReadIdx bytesReadSSA platformWordTy TIndex
-        let! oneOp = pConstI oneConst 1L TIndex
+        let! oneOp = pConstI oneConst (if trimDelimiter then 1L else 0L) TIndex
         let trimOp = MLIROp.ArithOp (ArithOp.SubI (trimmedLen, bytesReadIdx, oneConst, TIndex))
 
         // 6. SubViewCopy: subview + alloc + copy → fresh contiguous buffer for FFI
@@ -939,5 +957,5 @@ let pSysReadlineIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (argIds.Length >= 1) "Sys.readline: Expected 1 arg"
         let! node = getCurrentNode
         let! (_, fdSSA, _) = pRecallArgWithLoad argIds.[0]
-        return! pSysReadline node.Id fdSSA
+        return! pSysReadline node fdSSA
     }

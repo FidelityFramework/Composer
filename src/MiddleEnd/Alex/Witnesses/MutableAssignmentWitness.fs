@@ -27,6 +27,28 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
         // targetId is a VarRef node. VarRef now auto-loads (returns loaded value).
         // For assignment, we need the MEMREF ADDRESS from the underlying binding.
         // Navigate: targetId (VarRef) → bindingId (Binding) → recall memref from accumulator.
+        // Module-level mutable value: store into its slot (valid in any function)
+        let slotTarget =
+            match SemanticGraph.tryGetNode targetId ctx.Graph with
+            | Some { Kind = SemanticKind.VarRef (_, Some bindingId) } ->
+                match SemanticGraph.tryGetNode bindingId ctx.Graph with
+                | Some bindingNode when ModuleValues.isSlotBinding ctx.Graph bindingNode -> Some (bindingId, bindingNode)
+                | _ -> None
+            | _ -> None
+        match slotTarget with
+        | Some (bindingId, bindingNode) ->
+            match MLIRAccumulator.recallNode valueId ctx.Accumulator with
+            | Some (valueSSA, _) ->
+                let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> "value"
+                let valueTy = mapType bindingNode.Type ctx
+                let globalName = ModuleValues.globalName bindingName bindingId
+                match tryMatchWithDiagnostics (pGlobalSlotStore node.Id globalName valueSSA valueTy)
+                              ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"Module value assignment: {diagnostic}"
+            | None -> WitnessOutput.error "Module value assignment: Value not yet witnessed"
+        | None ->
+
         let memrefResult =
             match SemanticGraph.tryGetNode targetId ctx.Graph with
             | Some { Kind = SemanticKind.VarRef (_, Some bindingId) } ->

@@ -28,6 +28,24 @@ let drainTypeMappingErrors () : string list =
     typeMappingErrors.Clear()
     errors
 
+/// The target platform the current compilation lowers to. Set once by MLIRGeneration
+/// before any type is mapped. It decides representations that differ per target but are
+/// reached through platform-agnostic entry points (mapNativeTypeForArch): the enum DU tag.
+let mutable private currentTargetPlatform : TargetPlatform option = None
+
+/// Record the target platform for representation decisions made during type mapping.
+let setTargetPlatform (platform: TargetPlatform) : unit =
+    currentTargetPlatform <- Some platform
+
+/// Representation of a nullary-cases-only DU (an enumeration) for the current target.
+/// FPGA: abstract TTag (platform elision picks the width). CPU/MCU: a one-byte memref,
+/// the same shape every other DU has, so construction, tag extraction and field storage
+/// share one path.
+let private enumTagRepresentation (caseCount: int) : MLIRType =
+    match currentTargetPlatform with
+    | Some FPGA -> TTag caseCount
+    | _ -> TMemRefStatic (1, TInt (IntWidth 8))
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE SIZE COMPUTATION (for DU slot sizing)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -55,6 +73,15 @@ let rec mlirTypeSizeForArch (arch: Architecture) (ty: MLIRType) : int =
 /// Compute max payload size in bytes for heterogeneous DUs
 let maxPayloadBytes (arch: Architecture) (ty1: MLIRType) (ty2: MLIRType) : int =
     max (mlirTypeSizeForArch arch ty1) (mlirTypeSizeForArch arch ty2)
+
+/// Physical storage type of a value: records and tuples are semantic TStruct values whose
+/// storage is a byte memref of the struct's size (the size RecordWitness allocates and the
+/// size FieldGet views assume). Every container element type (array element, option payload,
+/// slot element) must use this physical type so that all uses of a record agree on its size.
+let physicalStorageType (arch: Architecture) (ty: MLIRType) : MLIRType =
+    match ty with
+    | TStruct fields -> TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSizeForArch arch t), TInt (IntWidth 8))
+    | t -> t
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NTUKind DIRECT MAPPING (for literals)
@@ -247,8 +274,8 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                         // This is the CORRECT portable representation for WASM and other backends
                         TMemRefStatic (size, TInt (IntWidth 8))
                     | TypeLayout.Inline (_size, _align) when tycon.CaseCount > 0 ->
-                        // Small enum DU: abstract tag type — platform elision decides concrete width
-                        TTag tycon.CaseCount
+                        // Small enum DU: abstract tag on FPGA, one-byte memref on CPU/MCU
+                        enumTagRepresentation tycon.CaseCount
                     | TypeLayout.Inline (size, _align) when size > 0 ->
                         // C-style integer enum (CaseCount = 0, known size): map to integer of matching width
                         TInt (IntWidth (size * 8))
@@ -463,6 +490,53 @@ let calculateFieldOffsetForArch (arch: Architecture) (nativeType: NativeType) (f
 // GRAPH-AWARE TYPE MAPPING (for record types)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Case payloads of a user union type, from its TypeDef node (None for records, options,
+/// abbreviations and primitives).
+let private tryGetUnionCases (typeName: string) (graph: SemanticGraph) : (string * (string option * NativeType) list) list option =
+    match SemanticGraph.recallType typeName graph with
+    | Some nodeId ->
+        match SemanticGraph.tryGetNode nodeId graph with
+        | Some node ->
+            match node.Kind with
+            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SemanticKind.TypeDef (_, Clef.Compiler.PSGSaturation.SemanticGraph.Types.TypeDefKind.UnionDef cases, _) -> Some cases
+            | _ -> None
+        | None -> None
+    | None -> None
+
+/// Bytes one union case payload occupies at offset 1 of the union's memory (pDUCase stores it
+/// there, pExtractDUPayload reads it back). A scalar is stored by value; every memory-backed
+/// value (string, array, record, tuple, option, union) is stored as its memref descriptor, whose
+/// size does not depend on the pointee, so a union that mentions itself through a payload needs
+/// no recursion here.
+let private unionPayloadSlotBytes (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : int =
+    let wordBytes = intWidthBytes (platformWordWidth arch)
+    let descriptorBytes = 5 * wordBytes
+    match ty with
+    | NativeType.TApp (tycon, _) when tycon.FieldCount > 0 -> descriptorBytes
+    | NativeType.TApp (tycon, _) when (SemanticGraph.tryGetRecordFields tycon.Name graph).IsSome -> descriptorBytes
+    | NativeType.TApp (tycon, _) when (tryGetUnionCases tycon.Name graph).IsSome -> descriptorBytes
+    | NativeType.TApp _ ->
+        let mapped = try Some (mapNativeTypeForArch arch ty) with _ -> None
+        match mapped with
+        | Some (TStruct _ | TMemRef _ | TMemRefStatic _ | TMemRefScalar _) | None -> descriptorBytes
+        | Some other -> mlirTypeSizeForArch arch other
+    | NativeType.TTuple _ -> descriptorBytes
+    | NativeType.TFun _ -> 2 * wordBytes
+    | _ -> descriptorBytes
+
+/// CPU/MCU representation of a user union: a byte tag at offset 0 and the widest case payload
+/// slot at offset 1. The front end's Inline layout counts a string or record payload as one
+/// pointer, but the emitted store at offset 1 is the payload's memref descriptor (five words),
+/// so the slot is sized from the emitted representation, not from the front end's estimate.
+/// A union of nullary cases only is an enumeration tag.
+let private unionRepresentation (arch: Architecture) (graph: SemanticGraph) (cases: (string * (string option * NativeType) list) list) : MLIRType =
+    let maxPayload =
+        cases
+        |> List.map (fun (_, fields) -> fields |> List.sumBy (fun (_, fty) -> unionPayloadSlotBytes arch graph fty))
+        |> List.max
+    if maxPayload = 0 then enumTagRepresentation (List.length cases)
+    else TMemRefStatic (1 + maxPayload, TInt (IntWidth 8))
+
 /// Map a NativeType to MLIRType with architecture awareness, using graph lookup for record field types.
 /// This is the principled approach per spec type-representation-architecture.md:
 /// record fields are looked up via tryGetRecordFields, not guessed from layout.
@@ -491,8 +565,26 @@ let rec mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph
             let mlirFields = fields |> List.map (fun (name, fieldTy) -> (name, mapNativeTypeWithGraphForArch arch graph fieldTy))
             TStruct mlirFields
         | None ->
-            // Not a record - use standard mapping with architecture
-            mapNativeTypeForArch arch ty
+            match tryGetUnionCases tycon.Name graph with
+            | Some cases when not (List.isEmpty cases) && currentTargetPlatform <> Some FPGA ->
+                // User union: sized from the emitted payload representation
+                unionRepresentation arch graph cases
+            | _ ->
+            // Containers: the element/payload type must be the graph-aware PHYSICAL type, so an
+            // array of records (or an option of a record) agrees with the record's own storage.
+            match tycon.Name, args with
+            | ("array" | "Array"), [elemTy] ->
+                TMemRef (physicalStorageType arch (mapNativeTypeWithGraphForArch arch graph elemTy))
+            | ("option" | "voption"), [innerTy] ->
+                let innerMlir = physicalStorageType arch (mapNativeTypeWithGraphForArch arch graph innerTy)
+                TMemRefStatic (1 + mlirTypeSizeForArch arch innerMlir, TInt (IntWidth 8))
+            | "Result", [okTy; errTy] ->
+                let okMlir = physicalStorageType arch (mapNativeTypeWithGraphForArch arch graph okTy)
+                let errMlir = physicalStorageType arch (mapNativeTypeWithGraphForArch arch graph errTy)
+                TMemRefStatic (1 + max (mlirTypeSizeForArch arch okMlir) (mlirTypeSizeForArch arch errMlir), TInt (IntWidth 8))
+            | _ ->
+                // Not a record - use standard mapping with architecture
+                mapNativeTypeForArch arch ty
     | NativeType.TTuple(elements, _) ->
         // Tuples are materialized as TStruct with positional field names on all platforms.
         let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), mapNativeTypeWithGraphForArch arch graph e)
@@ -620,7 +712,25 @@ let rec mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (
                         TStruct [("tag", TInt (IntWidth 1)); ("value", innerMlir)]
                     | _ -> mapLeafTypeForPlatform platform arch ty
                 | _ -> mapLeafTypeForPlatform platform arch ty
-            | _ -> mapLeafTypeForPlatform platform arch ty
+            | _ ->
+                match tryGetUnionCases tycon.Name graph with
+                | Some cases when not (List.isEmpty cases) ->
+                    // User union: sized from the emitted payload representation
+                    unionRepresentation arch graph cases
+                | _ ->
+                // CPU/MCU containers: element/payload types are the graph-aware PHYSICAL types,
+                // so an array of records or an option of a record agrees with the record's storage.
+                match tycon.Name, args with
+                | ("array" | "Array"), [elemTy] ->
+                    TMemRef (physicalStorageType arch (recurse elemTy))
+                | ("option" | "voption"), [innerTy] ->
+                    let innerMlir = physicalStorageType arch (recurse innerTy)
+                    TMemRefStatic (1 + mlirTypeSizeForArch arch innerMlir, TInt (IntWidth 8))
+                | "Result", [okTy; errTy] ->
+                    let okMlir = physicalStorageType arch (recurse okTy)
+                    let errMlir = physicalStorageType arch (recurse errTy)
+                    TMemRefStatic (1 + max (mlirTypeSizeForArch arch okMlir) (mlirTypeSizeForArch arch errMlir), TInt (IntWidth 8))
+                | _ -> mapLeafTypeForPlatform platform arch ty
     | NativeType.TTuple(elements, _) ->
         // Tuples are materialized as TStruct with positional field names on all platforms.
         // CPU uses memref alloca + byte-offset stores; FPGA uses hw.struct_create.

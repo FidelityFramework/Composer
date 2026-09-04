@@ -1,0 +1,18 @@
+[package]
+name = "Generalization"
+version = "0.1.0"
+description = "Let-polymorphism: generic top-level functions instantiated at several types"
+authors = ["SpeakEZ Technologies, Inc."]
+license = "MIT"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+# Types and operations are CCS intrinsics - no external library needed
+platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["Generalization.fs"]
+output = "generalization"
+output_kind = "console"

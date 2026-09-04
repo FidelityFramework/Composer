@@ -1,0 +1,10 @@
+=== Record Surface Test ===
+sum positions: 7
+N count: 3
+F extra: 5
+linux spaces: 2
+linux total: 8392704
+orDiv 0 0: true
+andDiv 0 0: false
+orDiv 1 2: true
+andDiv 1 2: true

@@ -1,0 +1,11 @@
+=== Module Values Test ===
+rodata name: rodata
+rodata capacity: 4096
+wordSize: 8
+first of all: rodata
+total capacity: 8392704
+bump 1: 8
+bump 2: 16
+counter: 16
+k: 42
+useK 1: 43

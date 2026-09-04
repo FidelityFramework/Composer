@@ -932,6 +932,176 @@ let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
         return ([offsetCastOp; countCastOp; subviewCopyOp], TRValue { SSA = resultSSA; Type = sourceType })
     }
 
+
+/// Array.length intrinsic — memref.dim on dimension 0, cast to the platform int
+/// 'T[] -> int
+///
+/// SSA layout (3 SSAs):
+///   [0] = dimConstSSA (index 0)
+///   [1] = lenIndexSSA (memref.dim result, index)
+///   [2] = resultSSA (index.casts to int)
+let pArrayLengthIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
+        do! ensure (info.Operation = "length") "Not Array.length"
+        do! ensure (argIds.Length >= 1) "Array.length: Expected 1 arg"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 3) $"pArrayLength: Expected 3 SSAs, got {ssas.Length}"
+        let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
+        let! state = getUserState
+        let intTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
+        let! dimConstOp = pConstI ssas.[0] 0L TIndex
+        let! dimOp = pMemRefDim ssas.[1] arraySSA ssas.[0] arrayType
+        let! castOp = pIndexCastS ssas.[2] ssas.[1] TIndex intTy
+        return ([dimConstOp; dimOp; castOp], TRValue { SSA = ssas.[2]; Type = intTy })
+    }
+
+/// Physical storage type of an element (TypeMapping.physicalStorageType).
+let private physicalElementType (arch: Architecture) (elemTy: MLIRType) : MLIRType =
+    physicalStorageType arch elemTy
+
+/// Array.blit intrinsic — byte copy between two arrays via memcpy
+/// 'T[] -> int -> 'T[] -> int -> int -> unit  (source, sourceIndex, target, targetIndex, count)
+///
+/// SSA layout (10 SSAs):
+///   [0] = srcBaseIdx (extract_aligned_pointer_as_index source)
+///   [1] = dstBaseIdx (extract_aligned_pointer_as_index target)
+///   [2] = srcBase (index.casts to platform word)
+///   [3] = dstBase (index.casts to platform word)
+///   [4] = elemSizeSSA (constant element size in bytes)
+///   [5] = srcOffset (sourceIndex * elemSize)
+///   [6] = dstOffset (targetIndex * elemSize)
+///   [7] = byteCount (count * elemSize)
+///   [8] = srcPtr (srcBase + srcOffset)
+///   [9] = dstPtr (dstBase + dstOffset)
+let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
+        do! ensure (info.Operation = "blit") "Not Array.blit"
+        do! ensure (argIds.Length >= 5) "Array.blit: Expected 5 args"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 10) $"pArrayBlit: Expected 10 SSAs, got {ssas.Length}"
+        let! (_, srcSSA, srcType) = pRecallArgWithLoad argIds.[0]
+        let! (_, srcIdxSSA, idxType) = pRecallArgWithLoad argIds.[1]
+        let! (_, dstSSA, dstType) = pRecallArgWithLoad argIds.[2]
+        let! (_, dstIdxSSA, _) = pRecallArgWithLoad argIds.[3]
+        let! (_, countSSA, _) = pRecallArgWithLoad argIds.[4]
+        let! state = getUserState
+        let arch = state.Platform.TargetArch
+        let wordTy = state.Platform.PlatformWordType
+        let elemTy =
+            match srcType with
+            | TMemRef t | TMemRefStatic (_, t) -> t
+            | _ -> TInt (IntWidth 8)
+        let elemSize = int64 (mlirTypeSizeForArch arch (physicalElementType arch elemTy))
+        let! srcBaseIdxOp = pExtractBasePtr ssas.[0] srcSSA srcType
+        let! dstBaseIdxOp = pExtractBasePtr ssas.[1] dstSSA dstType
+        let! srcBaseOp = pIndexCastS ssas.[2] ssas.[0] TIndex wordTy
+        let! dstBaseOp = pIndexCastS ssas.[3] ssas.[1] TIndex wordTy
+        let! elemSizeOp = pConstI ssas.[4] elemSize idxType
+        let srcOffsetOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[5], srcIdxSSA, ssas.[4], idxType))
+        let dstOffsetOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[6], dstIdxSSA, ssas.[4], idxType))
+        let byteCountOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[7], countSSA, ssas.[4], idxType))
+        let srcPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[8], ssas.[2], ssas.[5], wordTy))
+        let dstPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[9], ssas.[3], ssas.[6], wordTy))
+        let! (copyOps, _) = pMemCopy ssas.[9] ssas.[8] ssas.[7]
+        let ops =
+            [srcBaseIdxOp; dstBaseIdxOp; srcBaseOp; dstBaseOp; elemSizeOp;
+             srcOffsetOp; dstOffsetOp; byteCountOp; srcPtrOp; dstPtrOp] @ copyOps
+        return (ops, TRVoid)
+    }
+
+// ═══════════════════════════════════════════════════════════
+// ARRAY INDEXER AND LITERAL PATTERNS (non-intrinsic node kinds)
+// ═══════════════════════════════════════════════════════════
+
+/// Indexer read `arr.[i]` on an array-typed expression (SemanticKind.IndexGet).
+/// Same elision as Array.get: index cast + memref.load.
+///
+/// SSA layout (2 SSAs): [0] = indexCastSSA, [1] = resultSSA
+let pIndexGetArray : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.IndexGet (arrId, idxId) ->
+            let! (_, arraySSA, arrayType) = pRecallArgWithLoad arrId
+            match arrayType with
+            | TMemRef elemTy | TMemRefStatic (_, elemTy) ->
+                let! (_, indexSSA, indexType) = pRecallArgWithLoad idxId
+                let! ssas = getNodeSSAs node.Id
+                do! ensure (ssas.Length >= 2) $"pIndexGetArray: Expected 2 SSAs, got {ssas.Length}"
+                let! state = getUserState
+                let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph node.Type
+                let physical = physicalElementType state.Platform.TargetArch resultType
+                do! ensure (physical = elemTy) $"IndexGet: element type {elemTy} does not match result type {resultType} (string indexing is String.charAt)"
+                let! castOp = pIndexCastS ssas.[0] indexSSA indexType TIndex
+                let! loadOp = pLoad ssas.[1] arraySSA [ssas.[0]]
+                return ([castOp; loadOp], TRValue { SSA = ssas.[1]; Type = resultType })
+            | _ -> return! fail (Message $"IndexGet: expected an array (memref), got {arrayType}")
+        | _ -> return! fail (Message "Expected IndexGet")
+    }
+
+/// Indexer write `arr.[i] <- v` on an array-typed expression (SemanticKind.IndexSet).
+/// Same elision as Array.set: index cast + memref.store.
+///
+/// SSA layout (1 SSA): [0] = indexCastSSA
+let pIndexSetArray : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.IndexSet (arrId, idxId, valId) ->
+            let! (_, arraySSA, arrayType) = pRecallArgWithLoad arrId
+            match arrayType with
+            | TMemRef elemTy | TMemRefStatic (_, elemTy) ->
+                let! (_, indexSSA, indexType) = pRecallArgWithLoad idxId
+                let! (_, valueSSA, _) = pRecallArgWithLoad valId
+                let! ssas = getNodeSSAs node.Id
+                do! ensure (ssas.Length >= 1) $"pIndexSetArray: Expected 1 SSA, got {ssas.Length}"
+                let! castOp = pIndexCastS ssas.[0] indexSSA indexType TIndex
+                let! storeOp = pStore valueSSA arraySSA [ssas.[0]] elemTy arrayType
+                return ([castOp; storeOp], TRVoid)
+            | _ -> return! fail (Message $"IndexSet: expected an array (memref), got {arrayType}")
+        | _ -> return! fail (Message "Expected IndexSet")
+    }
+
+/// Array literal `[| a; b; c |]` (SemanticKind.ArrayExpr): heap allocation plus one store per element.
+/// The allocation mirrors Array.zeroCreate so literals and created arrays share one representation.
+///
+/// SSA layout (2 + N SSAs): [0] = sizeSSA (index constant N), [1] = arraySSA (memref.alloc), [2+i] = index constant i
+let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! node = getCurrentNode
+        match node.Kind with
+        | SemanticKind.ArrayExpr elemIds ->
+            let n = List.length elemIds
+            let! ssas = getNodeSSAs node.Id
+            do! ensure (ssas.Length >= 2 + n) $"pBuildArrayLiteral: Expected {2 + n} SSAs, got {ssas.Length}"
+            let! state = getUserState
+            let arch = state.Platform.TargetArch
+            let! elemType =
+                match node.Type with
+                | NativeType.TApp (tycon, [innerTy]) when tycon.Name = "array" || tycon.Name = "Array" ->
+                    preturn (physicalElementType arch (mapNativeTypeWithGraphForArch arch state.Graph innerTy))
+                | other -> fail (Message $"ArrayExpr: expected an array type, got {other}")
+            let arrayType = TMemRef elemType
+            let! sizeOp = pConstI ssas.[0] (int64 n) TIndex
+            let! allocOp = pAlloc ssas.[1] ssas.[0] elemType
+            let! storeOpLists =
+                elemIds
+                |> List.mapi (fun i elemId ->
+                    parser {
+                        let! (_, valueSSA, _) = pRecallArgWithLoad elemId
+                        let! idxOp = pConstI ssas.[2 + i] (int64 i) TIndex
+                        let! storeOp = pStore valueSSA ssas.[1] [ssas.[2 + i]] elemType arrayType
+                        return [idxOp; storeOp]
+                    })
+                |> sequence
+            return (sizeOp :: allocOp :: List.concat storeOpLists, TRValue { SSA = ssas.[1]; Type = arrayType })
+        | _ -> return! fail (Message "Expected ArrayExpr")
+    }
+
 // ═══════════════════════════════════════════════════════════
 // NativePtr INTRINSIC PARSERS (untransformed by Baker)
 // ═══════════════════════════════════════════════════════════

@@ -12,7 +12,7 @@
 module Alex.Witnesses.ControlFlowWitness
 
 /// Set to true for detailed control flow traversal tracing
-let mutable private traceEnabled = false
+let mutable private traceEnabled = System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_CONTROLFLOW") = "1"
 let private trace fmt = Printf.kprintf (fun s -> if traceEnabled then printfn "%s" s) fmt
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types

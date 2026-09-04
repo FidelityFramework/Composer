@@ -1,0 +1,16 @@
+=== Records and Tags Test ===
+writer position: 2
+writer byte 1: 4
+isAsk Ask: true
+isAsk Reply: false
+index Reply: 2
+weight Leaf 7: 7
+weight Pair 2 3: 5
+weight Empty: 0
+name 2: two
+name 9: many
+defaults isArena: true
+stack isArena: false
+differs x y: true
+differs x x: false
+defaults name: arena

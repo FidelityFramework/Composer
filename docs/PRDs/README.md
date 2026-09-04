@@ -120,6 +120,18 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 | E-02 | RTOS Integration | Future | Planned |
 | E-03 | LVGL Basics | Future | Planned |
 
+### Second Horizon - Admitted Papers
+
+Three working papers are admitted to the future reach, at the second horizon or beyond. The work each sets out is primarily PSG and hypergraph engineering, carried through the Alex coeffect and codata architecture.
+
+| Paper | Named Reach | Depends On | Status |
+|-------|-------------|------------|--------|
+| FPS | "Fixed-Point Scaffolding": three axes meeting at a node (compilation, joint-constraint, verification-strength) | C-01, C-02, C-05, R-04 to R-06 | Future |
+| NFT | "Negative and Fractional Types": the duality dimension as a fourth axis, its η/ε pairing carried as PSG codata, companion treatment in [Negative_Fractional_Types_Architecture.md](../Negative_Fractional_Types_Architecture.md) | C-01, C-02, C-05, R-04 to R-06 | Future |
+| ADM | "Adaptive Domain Models": the geometric product as a joint constraint, with grade inference deriving the non-zero Cayley table entries at design time and eliminating the structurally zero entries from the compiled computation | C-01, C-02, C-05, R-04 to R-06 | Future |
+
+This reach is load-bearing on the closure, lazy, and incremental families: the flat-closure finiteness lemma (C-01), the lazy slot class (C-05), and incremental cutoff by environment closedness (R-04 to R-06) are the members beneath it, and its guarantees hold exactly as far as those three hold. The geometric-algebra reach shares the same members and adds the grade and blade-support coeffects.
+
 ---
 
 ## Dependency Graph

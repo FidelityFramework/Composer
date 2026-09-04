@@ -124,8 +124,8 @@ let pConstF (ssa: SSA) (value: float) (ty: MLIRType) : PSGParser<MLIROp> =
     }
 
 /// GlobalString - module-level string constant
-let pGlobalString (name: string) (content: string) (byteLength: int) : PSGParser<MLIROp> =
+let pGlobalString (name: string) (content: string) (byteLength: int) (obligations: string list) : PSGParser<MLIROp> =
     parser {
-        return GlobalString (name, content, byteLength)
+        return GlobalString (name, content, byteLength, obligations)
     }
 

@@ -152,6 +152,8 @@ Platform operations defined in CCS as compiler intrinsics:
 - `NativePtr.write(ptr: nativeptr<'T>, value: 'T): unit` — store
 - `NativePtr.stackalloc(count: nativeint): nativeptr<'T>` — stack allocation (memref.alloca)
 
+The `NativePtr` module is compat surface. Per the Clef spec (`ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing: confined to the generated Layer 1/2 membrane, counted as the TCB metric, replaced by use-class, and regenerated out at the corpus-wide regeneration horizon. See [docs/Closure_Nanopass_Architecture.md](docs/Closure_Nanopass_Architecture.md) Section 4 and [docs/PRDs/C-01-Closures.md](docs/PRDs/C-01-Closures.md) Section 6.7.
+
 **String (`String` + `NativeStr` modules):**
 - `String.length(s: memref<?xi8>): int` — memref.dim extraction
 - `String.concat2(s1: memref<?xi8>, s2: memref<?xi8>): memref<?xi8>` — allocate + memcpy

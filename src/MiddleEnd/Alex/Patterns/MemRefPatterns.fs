@@ -16,6 +16,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.MemRefElements
 open Alex.Elements.IndexElements  // pIndexConst
 open Alex.Dialects.Core.Types
+open Alex.CodeGeneration.TypeMapping  // mlirTypeSizeForArch
 
 // ═══════════════════════════════════════════════════════════
 // MUTABLE VARIABLE PATTERNS
@@ -105,6 +106,73 @@ let pStoreMutableVariable (nodeId: int) (memrefSSA: SSA) (valueSSA: SSA) (elemTy
 
         let ops = [zeroOp; storeOp]
         return (ops, TRVoid)
+    }
+
+// ═══════════════════════════════════════════════════════════
+// MODULE-LEVEL VALUE SLOTS (program-lifetime static storage)
+// ═══════════════════════════════════════════════════════════
+
+/// Physical storage type of a value with semantic type `ty`: records and tuples are
+/// semantic TStruct values whose storage is a byte memref of the struct's size.
+let slotElementType (arch: Architecture) (ty: MLIRType) : MLIRType =
+    physicalStorageType arch ty
+
+/// Initialize a module-level value slot: declare the one-element memref.global (queued for
+/// module-scope placement), take its address, store the initial value.
+///
+/// Emits:
+///   %slot = memref.get_global @name : memref<1x{elem}>
+///   %c0 = arith.constant 0 : index
+///   memref.store %value, %slot[%c0]
+///
+/// SSA layout (2 SSAs): [0] = slotSSA, [1] = zeroSSA
+/// Returns: the slot as a mutable cell (TMemRef elem) — references reload through pGlobalSlotLoad.
+let pGlobalSlotInit (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 2) $"pGlobalSlotInit: Expected at least 2 SSAs, got {ssas.Length}"
+        let! state = getUserState
+        let elemTy = slotElementType state.Platform.TargetArch valueTy
+        let slotTy = TMemRefStatic (1, elemTy)
+        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy state.Accumulator
+        let! getOp = pMemRefGetGlobal ssas.[0] globalName slotTy
+        let! zeroOp = pIndexConst ssas.[1] 0L
+        let! storeOp = pStore valueSSA ssas.[0] [ssas.[1]] elemTy slotTy
+        return ([getOp; zeroOp; storeOp], TRValue { SSA = ssas.[0]; Type = TMemRef elemTy })
+    }
+
+/// Reload a module-level value from its slot. Valid in any function: the slot is a global.
+///
+/// SSA layout (3 SSAs): [0] = slotSSA, [1] = zeroSSA, [2] = valueSSA
+let pGlobalSlotLoad (nodeId: NodeId) (globalName: string) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 3) $"pGlobalSlotLoad: Expected at least 3 SSAs, got {ssas.Length}"
+        let! state = getUserState
+        let elemTy = slotElementType state.Platform.TargetArch valueTy
+        let slotTy = TMemRefStatic (1, elemTy)
+        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy state.Accumulator
+        let! getOp = pMemRefGetGlobal ssas.[0] globalName slotTy
+        let! zeroOp = pIndexConst ssas.[1] 0L
+        let! loadOp = pLoadFrom ssas.[2] ssas.[0] [ssas.[1]] elemTy
+        return ([getOp; zeroOp; loadOp], TRValue { SSA = ssas.[2]; Type = valueTy })
+    }
+
+/// Store into a module-level value slot (`Module.value <- v` on a mutable module-level binding).
+///
+/// SSA layout (2 SSAs): [0] = slotSSA, [1] = zeroSSA
+let pGlobalSlotStore (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 2) $"pGlobalSlotStore: Expected at least 2 SSAs, got {ssas.Length}"
+        let! state = getUserState
+        let elemTy = slotElementType state.Platform.TargetArch valueTy
+        let slotTy = TMemRefStatic (1, elemTy)
+        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy state.Accumulator
+        let! getOp = pMemRefGetGlobal ssas.[0] globalName slotTy
+        let! zeroOp = pIndexConst ssas.[1] 0L
+        let! storeOp = pStore valueSSA ssas.[0] [ssas.[1]] elemTy slotTy
+        return ([getOp; zeroOp; storeOp], TRVoid)
     }
 
 // ═══════════════════════════════════════════════════════════

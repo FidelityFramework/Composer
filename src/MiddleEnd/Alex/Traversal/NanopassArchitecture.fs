@@ -1,7 +1,6 @@
-/// NanopassArchitecture - Parallel nanopass framework
+/// NanopassArchitecture - Nanopass framework
 ///
-/// Each witness = one nanopass (complete PSG traversal)
-/// Nanopasses run in parallel via IcedTasks
+/// Each witness = one nanopass, run over a single post-order PSG traversal
 /// Results overlay/fold into cohesive MLIR graph
 module Alex.Traversal.NanopassArchitecture
 
@@ -51,7 +50,7 @@ let private isScopeBoundary (node: SemanticNode) : bool =
     | _ -> false
 
 /// Debug tracing flag for visitAllNodes — set to true for detailed traversal logging
-let mutable private traceTraversal = false
+let mutable private traceTraversal = System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1"
 
 /// Check if a binding is a function definition (first child is a Lambda).
 /// Used on FPGA to distinguish function bindings (compiled once as hw.module)
@@ -353,13 +352,35 @@ let runAllNanopasses
     // children, letting scope-owning witnesses manage their own subtrees. Platform-specific
     // filtering of any residual ops (e.g. helper functions that produce FuncOps on NPU)
     // is handled downstream by MLIRGeneration, not by the walk itself.
+    //
+    // CPU/MCU with an entry point: module-level value bindings (MainPrologue) are program-
+    // lifetime slots initialized in the entry point's prologue, so the entry point is walked
+    // FIRST and its LambdaWitness visits every module's ModuleInit bindings inside main's
+    // body scope. By the time the per-module roots are walked those bindings are already
+    // visited. Without an entry point (library, FPGA, NPU) the original order applies.
     let classifications = graph.ModuleClassifications.Value
+    let isCPULike =
+        coeffects.TargetPlatform <> Core.Types.Dialects.FPGA && coeffects.TargetPlatform <> Core.Types.Dialects.NPU
+    let entryLambdaIds =
+        coeffects.DeclarationRootLambdas
+        |> Map.toList
+        |> List.choose (fun (id, dr) -> if dr = DeclRoot.EntryPoint then Some (NodeId id) else None)
+    let prologueInEntry = isCPULike && not (List.isEmpty entryLambdaIds)
+    if prologueInEntry then
+        for lambdaId in entryLambdaIds do
+            match SemanticGraph.tryGetNode lambdaId graph with
+            | Some lambdaNode ->
+                match lambdaNode.Parent with
+                | Some parentId -> processRoot parentId
+                | None -> processRoot lambdaId
+            | None -> ()
     for kvp in classifications do
         let moduleDefId = kvp.Key
         let classification = kvp.Value
-        // Module-init first (prologue bindings)
-        for nodeId in classification.ModuleInit do
-            processRoot nodeId
+        // Module-init first (prologue bindings) — unless the entry point's prologue owns them
+        if not prologueInEntry then
+            for nodeId in classification.ModuleInit do
+                processRoot nodeId
         // Then definitions in source order (includes entry point)
         for nodeId in classification.Definitions do
             processRoot nodeId

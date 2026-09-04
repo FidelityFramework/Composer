@@ -1,0 +1,10 @@
+=== Union Payloads Test ===
+size (P "u8"): 2
+size (F 16): 16
+size (Q 3): 3
+depth (build 3): 10
+count nested: 3
+half' 10: 5
+half' 7: -1
+scale' 1.5: 3
+scale' -1.0: -1

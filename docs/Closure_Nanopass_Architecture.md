@@ -56,7 +56,24 @@ The same byte-level struct pattern supports three contexts:
 | LazyThunk | `{computed, value, code_ptr, cap₀, ...}` | 3 |
 | SeqGenerator | `{state, current, code_ptr, cap₀, ...}` | 3 |
 
-## 4. Coeffect — ClosureLayout
+## 4. Why Flat: the Finiteness Lemma
+
+Flat closure is foundational to the entire structure of the Fidelity Framework: it is the **finiteness lemma** the proof stack rests on. Because the capture set is enumerated (CCS, Section 2), the layout is fixed, and every field is assigned an offset (Alex, Sections 3 and 5), a closure's reachability frontier is exactly its field list. The memory-safety judgments the PSG emits therefore quantify over finite, enumerated structure: liveness is a field list, extent is a literal, release is a single site. That keeps verification conditions in the quantifier-free fragment that discharges at Tier 2 and Tier 3.
+
+Two representation choices lose the lemma:
+
+| Choice | Failure Mode | Scope of Loss |
+|---|---|---|
+| Linked environments | Unbounded reachability through environment chains; recursive heap predicates; interactive proof territory | Transitive |
+| `nativeptr` | Authority forged from an integer opens the frame: anything may alias anything; the judgment degrades to assumption | Global |
+
+The FFI boundary (Section 7) is memory-safe and bounded exactly when every crossing has enumerated participants (the hyperedge's source set), carries a flat closure of known extent, and releases exactly once. The provable region of the computation graph is closed precisely when every crossing has that form. An unwitnessed cast is an open edge in the boundary of the provable region.
+
+**`nativeptr`'s exit**: per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing. It is confined to the generated Layer 1/2 membrane and counted as the TCB metric; replaced by use-class (closure environments to the flat closure primitive of Section 3, handles to `CHandle` and branded types, buffers and strings to length-carried memref and bounded arrays, registers to `Mmio`, shared regions to `Ptr<'T, Region, Access>` with BAREWire descriptors); removed from generated code at the corpus-wide regeneration. The audit equation (cast-resolution statistics reconciled against discharged boundary obligations, C-01 PRD Section 6.7) verifies no unwitnessed cast survives.
+
+**Proof-theoretic lineage.** The finiteness lemma is the proof shape MLKit's region discipline formalized: a type-and-effect system whose soundness theorem bounds what a computation can reach by static structure (Tofte & Talpin, "Region-Based Memory Management", Information and Computation 132(2), 1997), made compiler-inferred by the region inference algorithm (Tofte & Birkedal, "A Region Inference Algorithm", ACM TOPLAS 20(4), 1998) and kept safe under collection in Elsman, "Garbage Collection Safety for Region-based Memory Management" (TLDI 2003). Safe-for-space closure conversion is the closure-specific instance of the same bound (Shao & Appel, "Space-Efficient Closure Representations", LFP 1994; "Efficient and Safe-for-Space Closure Conversion", ACM TOPLAS 22(1), 2000). The lemma inherits that lineage and narrows it: where the region calculus bounds reachability by effect annotations over region variables, the flat closure bounds it by the enumerated field list itself.
+
+## 5. Coeffect — ClosureLayout
 
 All closure layout information is pre-computed during SSAAssignment (Four Pillars: Codata/Coeffects). Witnesses observe the result.
 
@@ -82,7 +99,7 @@ type ClosureLayout = {
 }
 ```
 
-## 5. Pipeline Flow
+## 6. Pipeline Flow
 
 ```
 Clef Source
@@ -132,7 +149,7 @@ MLIR (memref, arith, func dialects — portable)
 mlir-opt → mlir-translate → llc → linker → Native Binary
 ```
 
-## 6. FFI Boundary
+## 7. FFI Boundary
 
 Closures are Clef-internal. At the C boundary:
 - **memref → raw pointer**: `pExtractBasePtr` (memref.extract_aligned_pointer_as_index)
@@ -141,7 +158,7 @@ Closures are Clef-internal. At the C boundary:
 
 See C-01 PRD Section 6 for full boundary marshaling specification.
 
-## 7. References
+## 8. References
 
 - Shao & Appel (1994), "Space-Efficient Closure Representations"
 - MLKit Programming with Regions (Tofte, Elsman)

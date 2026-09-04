@@ -1,0 +1,9 @@
+=== Generalization Test ===
+firstOf int: 5
+firstOf string: x
+firstOf record: 3
+firstOf empty: 42
+applyTwice incr 1: 3
+applyTwice dbl 3: 12
+wrap int: 5
+wrap string: s

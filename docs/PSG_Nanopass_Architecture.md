@@ -466,6 +466,7 @@ Each nanopass adds edges to the PSG. As the edge vocabulary grows, we're buildin
 | Continuation | `ControlFlow` | Async join hyperedge |
 | Environment | `Captures` | Closure context hyperedge |
 | Effect | `EffectOrdering` | Effect chain hyperedge |
+| Platform Binding | `ExternCall` | Extern boundary hyperedge (extern declaration, marshaled arguments, lifetime owner, ABI contract) |
 
 When multiple edges share the same semantic relationship, they can be promoted to a hyperedge:
 
@@ -484,6 +485,8 @@ let hyperedge = {
     Direction = Definition def
 }
 ```
+
+The extern boundary row is where promotion stops being optional. A callback crossing makes one lifetime claim across its participants: the environment handed to C must be released exactly once, after the last invocation the C side will ever make. That claim is irreducibly joint, and pairwise edges assert strictly less: an edge from declaration to argument, or from registration to release, can each hold while the joint claim fails. Saturation preserves the distinction by construction, because a hyperedge fires only when all of its source nodes are elaborated; jointness survives elaboration exactly when the contract is carried as one hyperedge, and is severed the moment it is decomposed into binary edges. Carried this way, the boundary also closes the provable region of the computation graph: per the finiteness lemma in `Closure_Nanopass_Architecture.md` Section 4, the region is closed precisely when every crossing is a hyperedge with enumerated participants, a flat environment of known extent, and a single release site, and an unwitnessed cast is an open edge in its boundary.
 
 ## Targeting Multiple Architectures
 
@@ -525,7 +528,9 @@ Each nanopass intermediate we output today becomes training data for the learnin
 
 1. **Current**: Nanopass architecture with binary edges (implemented)
 2. **Near-term**: Edge query helpers for Zipper traversal
-3. **Mid-term**: Hyperedge promotion for multi-way relationships
-4. **Long-term**: Temporal PHG with compilation learning
+3. **Mid-term**: Hyperedge promotion for multi-way relationships, the extern boundary among them
+4. **Long-term**: Temporal PHG with compilation learning, and the reach the working papers set out: in "Fixed-Point Scaffolding", three axes meeting at a node (compilation, joint-constraint, verification-strength); in "Negative and Fractional Types", the duality dimension as a fourth, parallel to those three
+
+The fourth entry is PSG and hypergraph engineering, second horizon or beyond: η morphisms creating dual pairs, ε morphisms annihilating them, and hyperedges pairing positive and negative cells, with Baker's elaboration carrying the type-level pairing as codata for the Alex coeffect and codata analyses to read. It rests on the flat-closure finiteness lemma, the lazy slot class, and incremental cutoff by environment closedness, and none of it holds if they do not. A third working paper, "Adaptive Domain Models", is admitted at the same second-horizon placement with the geometric product as a joint constraint: grade inference derives the non-zero Cayley table entries at design time and eliminates the structurally zero entries from the compiled computation, joint-constraint engineering in the same sense as the extern boundary above. The design position is that this Cayley elimination generalizes past AI: the same compile-time joint resolution informs UI rendering and astrophysics computation, the Fidelity.UI over TMPL line of work.
 
 The nanopass infrastructure we're building today is the foundation for this evolution. Each small, single-purpose pass is a step toward the unified PHG representation that will enable Fidelity to target the full spectrum of computing architectures—from traditional CPUs to the novel dataflow processors that are reshaping the industry.

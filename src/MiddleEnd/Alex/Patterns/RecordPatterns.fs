@@ -210,6 +210,42 @@ let pBuildRecordCopyWith
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// RECORD FIELD ASSIGNMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Store a value into a named field of a TStruct record: `r.Field <- v`.
+/// Records are memref-backed, so the store mutates the record in place and is
+/// visible through every reference to it (including a parameter).
+///
+/// SSA layout (3 SSAs): [offset, view, zero]
+let pRecordFieldSet
+    (nodeId: NodeId)
+    (structSSA: SSA)
+    (fieldName: string)
+    (structTy: MLIRType)
+    (valueSSA: SSA)
+    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! ssas = getNodeSSAs nodeId
+        match structTy with
+        | TStruct fields ->
+            match structFieldLookup fields fieldName with
+            | Some (fieldIdx, fieldType) ->
+                do! ensure (ssas.Length >= 3) $"pRecordFieldSet: Expected 3 SSAs, got {ssas.Length}"
+                let offsetSSA = ssas.[0]
+                let viewSSA   = ssas.[1]
+                let zeroSSA   = ssas.[2]
+                let byteOffset = structFieldByteOffset fields fieldIdx
+                let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize t), TInt (IntWidth 8))
+                let! storeOps = pTypedInsertView structSSA valueSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
+                return (storeOps, TRVoid)
+            | None ->
+                return! fail (Message $"pRecordFieldSet: Unknown field '{fieldName}' in TStruct")
+        | _ ->
+            return! fail (Message $"pRecordFieldSet: Expected TStruct, got {structTy}")
+    }
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RECORD FIELD ACCESS
 // ═══════════════════════════════════════════════════════════════════════════
 

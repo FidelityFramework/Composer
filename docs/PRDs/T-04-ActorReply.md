@@ -95,6 +95,8 @@ let balance = bank.PostAndReply(fun reply -> GetBalance reply)
 
 ### 4.1 Reply Channel Structure
 
+> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 ```fsharp
 type AsyncReplyChannel<'Reply> = {
     ResultSlot: nativeptr<'Reply>  // Where result is stored

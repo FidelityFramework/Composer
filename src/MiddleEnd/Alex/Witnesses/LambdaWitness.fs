@@ -104,6 +104,23 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
             let bodyScopeRef = ref bodyScope
 
+            // PROLOGUE: module-level value bindings of every module (in module order) are
+            // initialized here, inside the entry point's body scope, into their program-
+            // lifetime slots. Their SSAs were assigned in main's namespace (SSAAssignment
+            // Pass 1). Dependencies between them resolve through the VarRef cross-reference
+            // visit in visitAllNodes, in this same scope.
+            if ctx.Coeffects.TargetPlatform <> Core.Types.Dialects.FPGA && ctx.Coeffects.TargetPlatform <> Core.Types.Dialects.NPU then
+                for kvp in ctx.Graph.ModuleClassifications.Value do
+                    for initId in kvp.Value.ModuleInit do
+                        match SemanticGraph.tryGetNode initId ctx.Graph with
+                        | Some initNode when initNode.IsReachable && not (Set.contains initId !ctx.TraversalVisited) ->
+                            match focusOn initId ctx.Zipper with
+                            | Some initZipper ->
+                                let initCtx = { ctx with Zipper = initZipper; ScopeContext = bodyScopeRef }
+                                visitAllNodes combinator initCtx initNode ctx.TraversalVisited
+                            | None -> ()
+                        | _ -> ()
+
             // Witness body nodes with child scope context
             match SemanticGraph.tryGetNode bodyId ctx.Graph with
             | Some bodyNode ->
@@ -137,7 +154,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | None ->
                     // Check if Lambda returns unit - if so, None is expected (TRVoid)
                     match innerReturnNativeType with
-                    | NativeType.TApp ({ NTUKind = Some NTUunit }, []) ->
+                    | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
                         // Unit-returning function - no result SSA is expected
                         (None, expectedReturnType)
                     | _ ->
@@ -416,6 +433,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun
             let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
+            if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
+                printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
+                    funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
             let rawReturnType = mapType innerReturnNativeType2 ctx
             let returnType =
                 match bodyResult with
@@ -428,7 +448,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some (ssa, _) -> Some ssa
                 | None ->
                     match innerReturnNativeType2 with
-                    | NativeType.TApp ({ NTUKind = Some NTUunit }, []) ->
+                    | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
                         None
                     | _ ->
                         let bodyNodeKindStr =

@@ -56,6 +56,8 @@ The BAREWire protocol, protected by patent US 63/786,247 ("System and Method for
 
 ### Platform Binding Pattern
 
+> **Membrane note.** The `nativeint` appearances in these phase documents are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `../Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of `../PRDs/C-01-Closures.md` Section 6.7.
+
 The demo validates the Platform.Bindings pattern where CCS defines hardware access signatures without implementation, and Alex provides platform-specific MLIR emission. This separation ensures that application code remains hardware-agnostic while enabling aggressive platform-specific optimization:
 
 ```fsharp

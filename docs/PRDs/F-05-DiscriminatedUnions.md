@@ -278,6 +278,8 @@ cd samples/console/FidelityHelloWorld/05_AddNumbers
 
 ## 9. Architectural Lessons
 
+> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+
 1. **Byte-Level Representation**: DUs use `memref<Nxi8>` — no LLVM struct types needed. `memref.view` provides typed access to payload bytes.
 2. **Two Access Operations**: `memref.reinterpret_cast` for same-element-type (tag), `memref.view` for different-element-type (payload). This distinction is an MLIR semantic constraint.
 3. **Expression-Valued scf.if**: Pattern matches that return values need `scf.yield` in each branch. The ControlFlowWitness determines this by checking `node.Type` for non-unit.

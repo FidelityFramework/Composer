@@ -1,0 +1,12 @@
+=== Array Surface Test ===
+count [|1;2;3|]: 3
+first: 1
+sum bytes: 16
+d0: 7
+triangle 4: 6
+countdown 3: 6
+blit dst[3]: 6
+points[1].Y: 4
+points length: 2
+a, b, c
+y
