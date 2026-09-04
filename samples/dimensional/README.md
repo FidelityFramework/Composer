@@ -32,3 +32,14 @@ dotnet build /home/hhh/repos/Composer/src/Composer.fsproj   # vet.sh never build
 
 `vet.sh` never calls `tests/regression/Runner.fsx`. The RoundTrip native gate
 (`BAREWire/samples/RoundTrip`, diffed against `expected.txt`) runs alongside it, by hand.
+
+## Baseline readings
+
+- 2026-09-04, before any changeset: 4 of 45 rows match.
+- 2026-09-04, after CS-4 (the numeric type carries its dimension; the unifier solves measures): 16 of 45.
+  Read with care: UoM-2, UoM-3, UoM-4 and UoM-9 rejects and NS-1/reject are green because the interim
+  `'T -> 'T -> 'T` operator type rejects `*` and `/` between different measures; they move again when the
+  step-3 schemes land. NS-2/reject and NS-3/reject were rejected before only by an arity accident on
+  annotated leaves; they are accepted until step 8 supplies the range coeffect, and their rows stay
+  step-8-pending.
+

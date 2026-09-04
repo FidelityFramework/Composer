@@ -50,8 +50,9 @@ let private literalExpansionCost (lit: NativeLiteral) : int =
 /// especially for PlatformWord types like int which depend on target architecture.
 let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType =
     let wordWidth = platformWordWidth arch
-    match ty with
-    | NativeType.TApp(tycon, args) ->
+    /// One type-constructor table for both the `TApp` and the `TNum` forms (as in TypeMapping):
+    /// a numeric type is read off its carrier exactly as the arity-0 `TApp` was.
+    let mapTyCon (tycon: TypeConRef) (args: NativeType list) : MLIRType =
         // FIRST: Check Layout + NTUKind for platform-aware type mapping
         // This mirrors TypeMapping.mapNativeType to ensure consistency
         match tycon.Layout, tycon.NTUKind with
@@ -112,6 +113,9 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
                     TIndex  // Records are passed by pointer
                 else
                     TIndex  // Fallback for other cases
+    match ty with
+    | NativeType.TApp(tycon, args) -> mapTyCon tycon args
+    | NativeType.TNum(carrier, _) -> mapTyCon carrier []
     | NativeType.TFun _ ->
         // Closures are uniform pairs: {code_ptr: index, env_ptr: index} = memref<2xindex>
         // Must match mapNativeTypeForArch so pClosureCall sees the correct type

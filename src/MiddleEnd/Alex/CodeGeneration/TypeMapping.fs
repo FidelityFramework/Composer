@@ -162,8 +162,10 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         | other -> other
 
     let wordWidth = platformWordWidth arch
-    match ty with
-    | NativeType.TApp(tycon, args) ->
+    /// One type-constructor table for both the `TApp` and the `TNum` forms: a numeric type is
+    /// read off its carrier (the tycon, with its NTUKind and layout) exactly as the arity-0
+    /// `TApp` was. Composer reads; it decides no width here.
+    let mapTyCon (tycon: TypeConRef) (args: NativeType list) : MLIRType =
         let tyconLayout = stripQualifiedLayout tycon.Layout
         // FIRST: Check NTU layout for types that have it - this is the authoritative source
         // for platform-dependent types like int (PlatformWord)
@@ -307,6 +309,10 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                         failwithf "Qualified layout should have been normalized before mapping: %s" tycon.Name
                     | TypeLayout.Inline _ ->
                         failwithf "Unknown inline type '%s' with no fields" tycon.Name
+
+    match ty with
+    | NativeType.TApp(tycon, args) -> mapTyCon tycon args
+    | NativeType.TNum(carrier, _) -> mapTyCon carrier []
 
     | NativeType.TFun _ ->
         // Closures: {codePtr: ptr, envPtr: ptr} - homogeneous, use memref array
@@ -515,7 +521,7 @@ let private unionPayloadSlotBytes (arch: Architecture) (graph: SemanticGraph) (t
     | NativeType.TApp (tycon, _) when tycon.FieldCount > 0 -> descriptorBytes
     | NativeType.TApp (tycon, _) when (SemanticGraph.tryGetRecordFields tycon.Name graph).IsSome -> descriptorBytes
     | NativeType.TApp (tycon, _) when (tryGetUnionCases tycon.Name graph).IsSome -> descriptorBytes
-    | NativeType.TApp _ ->
+    | NativeType.TApp _ | NativeType.TNum _ ->
         let mapped = try Some (mapNativeTypeForArch arch ty) with _ -> None
         match mapped with
         | Some (TStruct _ | TMemRef _ | TMemRefStatic _ | TMemRefScalar _) | None -> descriptorBytes
@@ -666,7 +672,7 @@ let private mapLeafTypeForPlatform (platform: TargetPlatform) (arch: Architectur
     match platform with
     | FPGA ->
         match ty with
-        | NativeType.TApp(tycon, _) ->
+        | NativeType.TApp(tycon, _) | NativeType.TNum(tycon, _) ->
             match tycon.NTUKind with
             | Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
             | Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register)) ->
