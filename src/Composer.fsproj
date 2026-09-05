@@ -47,6 +47,7 @@
 
       <!-- PSGElaboration - MLIR-aware coeffects (peer to Alex) -->
       <Compile Include="MiddleEnd/PSGElaboration/Coeffects.fs" />
+      <Compile Include="MiddleEnd/PSGElaboration/PlatformPinResolution.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/CurryFlattening.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/ValuePositionAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/SSAAssignment.fs" />
@@ -58,7 +59,6 @@
       <!-- Platform Config (depends on PlatformTypes) -->
       <Compile Include="MiddleEnd/PSGElaboration/PlatformConfig.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PlatformBindingResolution.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/PlatformPinResolution.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PatternBindingAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/CoeffectValidation.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PreprocessingSerializer.fs" />

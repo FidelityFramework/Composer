@@ -121,7 +121,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                         | _ -> (List.rev acc, Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph ty)
                                     let (paramMLIRTypes, returnMLIRType) = extractParamTypes bindingNode.Type []
                                     let! (inlineOps, topLevelOps, pairSSA, pairTy) =
-                                        pNamedFunctionAsClosure funcName paramMLIRTypes returnMLIRType ssas
+                                        pNamedFunctionAsClosure funcName paramMLIRTypes returnMLIRType ssas PSGElaboration.SSAAssignment.thunkResult
                                     return (inlineOps, topLevelOps, TRValue { SSA = pairSSA; Type = pairTy })
                                 }
                             match tryMatch namedFuncClosurePattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

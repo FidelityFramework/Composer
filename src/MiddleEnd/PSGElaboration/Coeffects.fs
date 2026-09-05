@@ -65,6 +65,9 @@ type CaptureSlot = {
     SourceNodeId: NodeId option
     /// How the variable is captured
     Mode: CaptureMode
+    /// The slot holds the base index of a memref value (a record, an array, a mutable cell):
+    /// construction extracts the base pointer first, with its own value from CaptureInsertSSAs
+    ExtractsBasePointer: bool
 }
 
 /// Complete closure layout for a Lambda with captures.
@@ -118,6 +121,11 @@ type ClosureLayout = {
     // ─────────────────────────────────────────────────────────────────────────
     /// SSA for loading the closure struct from env_ptr (Arg 0) in inner function
     StructLoadSSA: SSA
+    /// The callee prologue's values per capture, in the order pExtractCaptures consumes them:
+    /// the capture's work values (view and zero; a decomposed memref's seven) then its result
+    CaptureExtractionSSAs: SSA list list
+    /// The callee prologue's env reconstruction: the memref view of Arg 0, then its static cast
+    EnvReconstructionSSAs: SSA * SSA
 
     // ─────────────────────────────────────────────────────────────────────────
     // TYPE INFORMATION
@@ -281,4 +289,88 @@ type PlatformPinMapping = {
     /// Record field name → pin logical names (from [<Pin>]/[<Pins>] attributes)
     /// Used by HardwareModulePatterns for struct ↔ flat port mapping
     FieldPinAttrs: Map<string, string list>
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HARDWARE MODULE LAYOUT COEFFECT (FPGA)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The Mealy machine an [<HardwareModule>] binding describes is synthesised by
+// HardwareModulePatterns from the Design record. Every value in its body is a
+// deterministic function of the design's structure and the platform's pin facts,
+// so SSAAssignment derives them and the pattern reads them. One walk of the
+// output record (outputExtractions) serves the derivation and the emission.
+
+/// One hw.struct_extract the flat-port module emits while flattening the step's
+/// output record into pin-mapped ports, in emission order.
+type OutputExtraction = {
+    /// The extraction this one reads from (None: the step result's output struct)
+    Parent: int option
+    /// The field extracted
+    Field: string
+    /// The type of the struct extracted from
+    ParentType: MLIRType
+    /// The type of the field
+    FieldType: MLIRType
+    /// The flat output port this extraction feeds, if it feeds one
+    Pin: string option
+}
+
+/// The extractions the flat-port module emits for an output type under the platform's
+/// pin attributes: a pinned field is extracted (a multi-pin tuple field then extracts each
+/// element for its pin); an unpinned record field is extracted and walked; any other
+/// unpinned field is left for synthesis to drop.
+let outputExtractions (pinAttrs: Map<string, string list>) (outputType: MLIRType) : OutputExtraction list =
+    let rec walk (parent: int option) (parentType: MLIRType) (acc: OutputExtraction list) : OutputExtraction list =
+        match parentType with
+        | TStruct fields ->
+            fields |> List.fold (fun (acc: OutputExtraction list) (fieldName, fieldTy) ->
+                let step pin = { Parent = parent; Field = fieldName; ParentType = parentType; FieldType = fieldTy; Pin = pin }
+                match Map.tryFind fieldName pinAttrs with
+                | Some [single] -> acc @ [ step (Some single) ]
+                | Some multiple ->
+                    match fieldTy with
+                    | TStruct tupleFields ->
+                        let acc' = acc @ [ step None ]
+                        let idx = acc'.Length - 1
+                        acc' @ (List.zip multiple tupleFields |> List.map (fun (pinName, (elemField, elemTy)) ->
+                            { Parent = Some idx; Field = elemField; ParentType = fieldTy; FieldType = elemTy; Pin = Some pinName }))
+                    | _ -> acc @ [ step (Some (List.head multiple)) ]
+                | None ->
+                    match fieldTy with
+                    | TStruct _ ->
+                        let acc' = acc @ [ step None ]
+                        walk (Some (acc'.Length - 1)) fieldTy acc'
+                    | _ -> acc) acc
+        | _ -> acc
+    walk None outputType []
+
+/// The values of the Mealy machine's hw.module body, derived by SSAAssignment for the
+/// [<HardwareModule>] binding and read by HardwareModulePatterns; numbered from zero in
+/// emission order, so a register's feedback operand is simply its NextFields entry.
+type HardwareModuleLayout = {
+    /// The binding this layout is for
+    BindingNodeId: NodeId
+    /// The internal power-on reset (constant one, register, xor) of the flat-port module when
+    /// the platform declares no external reset; None with an external reset port, and for the
+    /// struct-port module, which takes rst as a port
+    PowerOnReset: (SSA * SSA * SSA) option
+    /// One reset constant per state field
+    ResetValues: SSA list
+    /// One seq.compreg per state field
+    Registers: SSA list
+    /// One hw.struct_create per multi-pin tuple input field, in field order (flat-port module)
+    InputPacks: SSA list
+    /// The packed input struct of the flat-port module with a record input
+    InputStruct: SSA option
+    /// hw.struct_create of the current state from the registers
+    State: SSA
+    /// hw.instance of the step function
+    Instance: SSA
+    /// Item1 (the next state) and Item2 (the outputs) of the step result, when the step reports
+    StepResult: (SSA * SSA) option
+    /// The flat-port module's output extractions, in outputExtractions order
+    OutputFlatten: SSA list
+    /// One hw.struct_extract per state field: the next value fed back to its register
+    NextFields: SSA list
 }

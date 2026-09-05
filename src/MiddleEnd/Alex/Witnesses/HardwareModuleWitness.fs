@@ -26,6 +26,7 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators  // narrowType
 open Alex.Patterns.HardwareModulePatterns
+open PSGElaboration.SSAAssignment  // lookupHardwareModuleLayout
 
 // ═══════════════════════════════════════════════════════════
 // PSG STRUCTURE EXTRACTION
@@ -363,19 +364,24 @@ let private witnessHardwareModule
                     OutputType = narrowedOutputType
                 }
 
-                let hwModuleOp =
-                    match ctx.Coeffects.PinMapping with
-                    | Some pinMapping ->
-                        buildFlatPortMealyModule info pinMapping pinMapping.FieldPinAttrs
-                    | None ->
-                        buildMealyMachineModule info
+                // The module body's values are the layout SSAAssignment derived for this binding
+                match lookupHardwareModuleLayout node.Id ctx.Coeffects.SSA with
+                | None ->
+                    WitnessOutput.error $"HardwareModule '{name}': SSAAssignment derived no layout for binding {NodeId.value node.Id}; the derivation reads the Design record's InitialState and Step"
+                | Some layout ->
+                    let hwModuleOp =
+                        match ctx.Coeffects.PinMapping with
+                        | Some pinMapping ->
+                            buildFlatPortMealyModule info pinMapping pinMapping.FieldPinAttrs layout
+                        | None ->
+                            buildMealyMachineModule info layout
 
-                // Add hw.module to root scope (top-level declaration)
-                let updatedRootScope = ScopeContext.addOp hwModuleOp !ctx.RootScopeContext
-                ctx.RootScopeContext := updatedRootScope
+                    // Add hw.module to root scope (top-level declaration)
+                    let updatedRootScope = ScopeContext.addOp hwModuleOp !ctx.RootScopeContext
+                    ctx.RootScopeContext := updatedRootScope
 
-                // HardwareModule binding is structural — no inline ops, no value
-                { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                    // HardwareModule binding is structural — no inline ops, no value
+                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 
             | _ ->
                 WitnessOutput.error $"HardwareModule '{name}': State type must be a record (TStruct), got {stateType}"

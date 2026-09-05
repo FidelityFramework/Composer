@@ -7,7 +7,7 @@
 
 Clef Native uses **MLKit-style flat closures** where all captured variables are stored inline in the closure struct, not via pointer chains to enclosing environments.
 
-**Key Architectural Decision**: Capture analysis is **scope analysis**, and scope is resolved during type checking. Therefore, **capture analysis belongs in CCS**, not Composer. CCS computes captures during PSG construction and includes them directly in `SemanticKind.Lambda`. Alex only handles SSA assignment and struct layout for code generation.
+**Key Architectural Decision**: Capture analysis is **scope analysis**, and scope is resolved during type checking. Therefore, **capture analysis belongs in CCS**, not Composer. CCS computes captures during PSG construction and includes them directly in `SemanticKind.Lambda`. SSA assignment and closure struct layout are derived by the post-saturation coeffect nanopass (`PSGElaboration.SSAAssignment` today, scheduled into CCS; see CCS_Architecture.md); Alex reads both and computes neither.
 
 **Implementation**: All closures use the **portable memref dialect** — byte-level `TMemRefStatic(N, TInt(IntWidth 8))` for struct representation, `pInsertValue`/`pExtractValue` for field access, `pFuncCallIndirect` for code pointer invocation. No LLVM dialect.
 

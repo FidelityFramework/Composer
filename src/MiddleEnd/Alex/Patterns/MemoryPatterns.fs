@@ -225,7 +225,7 @@ let pRecordCopyWith (origSSA: SSA) (recordType: MLIRType) (updates: (int * SSA) 
 // ARRAY PATTERNS
 // ═══════════════════════════════════════════════════════════
 
-/// Build array: allocate, initialize elements, construct fat pointer
+/// Build array: allocate, initialize elements, construct the memref view
 /// Array element access via SubView + Load
 /// SSAs: gepSSA for subview, loadSSA for result, indexZeroSSA for memref index
 let pArrayAccess (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (gepSSA: SSA) (loadSSA: SSA) (indexZeroSSA: SSA) : PSGParser<MLIROp list> =
@@ -247,47 +247,6 @@ let pArraySet (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (value: SSA) (gep
         let memrefType = TMemRefStatic (1, elemType)
         let! storeOp = pStore value gepSSA [indexZeroSSA] elemType memrefType
         return ([subViewOp; indexZeroOp; storeOp])
-    }
-
-// ═══════════════════════════════════════════════════════════
-// NATIVEPTR OPERATIONS (CCS Intrinsics)
-// ═══════════════════════════════════════════════════════════
-
-/// Build NativePtr.stackalloc pattern
-/// Allocates memory on the stack and returns a pointer
-///
-/// NativePtr.stackalloc<'T>(count) : nativeptr<'T>
-/// SSA extracted from coeffects via nodeId: [0] = result
-let pStackAlloca (nodeId: NodeId) (count: int) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 1) $"pStackAlloca: Expected 1 SSA, got {ssas.Length}"
-        let resultSSA = ssas.[0]
-
-        let! state = getUserState
-
-        // Extract element type from nativeptr<'T> in state.Current.Type
-        match state.Current.Type with
-        | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "nativeptr" ->
-            let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph innerTy
-
-            // Use the provided count for memref allocation
-            let! allocaOp = pAlloca resultSSA count elemType None
-            let memrefTy = TMemRefStatic (count, elemType)
-
-            // Return memref type (not TIndex) - conversion to pointer happens at FFI boundary
-            return ([allocaOp], TRValue { SSA = resultSSA; Type = memrefTy })
-        | NativeType.TNativePtr innerTy ->
-            let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph innerTy
-
-            // Use the provided count for memref allocation
-            let! allocaOp = pAlloca resultSSA count elemType None
-            let memrefTy = TMemRefStatic (count, elemType)
-
-            // Return memref type (not TIndex) - conversion to pointer happens at FFI boundary
-            return ([allocaOp], TRValue { SSA = resultSSA; Type = memrefTy })
-        | _ ->
-            return! fail (Message $"NativePtr.stackalloc: expected nativeptr<'T> type, got {state.Current.Type}")
     }
 
 /// Build Arena.create pattern
@@ -357,7 +316,7 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
                 // Callers at FFI boundaries (pExternCallResolved) handle index→i64 conversion.
                 match fieldTy with
                 | TIndex ->
-                    // nativeptr<T> → TIndex: extract as index, no cast needed
+                    // An index field: the base pointer as index, no cast needed
                     let! extractOp = pExtractBasePtr resultSSA structSSA structTy
                     return ([extractOp], TRValue { SSA = resultSSA; Type = TIndex })
                 | _ ->
@@ -525,28 +484,6 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
 // SIMPLE MEMORY STORE
 // ═══════════════════════════════════════════════════════════
 
-/// Simple memref.store with no indices (scalar store)
-/// Store value to scalar memref (requires index even for 1-element memrefs)
-/// Allocates 1 SSA for the index constant
-let pMemRefStore (indexSSA: SSA) (value: SSA) (memref: SSA) (elemType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! indexOp = pConstI indexSSA 0L TIndex  // Index 0 for scalar/1-element memref
-        let memrefType = TMemRefStatic (1, elemType)  // 1-element memref for scalar stores
-        let! storeOp = pStore value memref [indexSSA] elemType memrefType
-        return ([indexOp; storeOp], TRVoid)
-    }
-
-/// Indexed memref.store (for NativePtr.write with NativePtr.add)
-/// Store value to memref at computed index
-/// Handles: NativePtr.write (NativePtr.add base offset) value -> memref.store value, base[offset]
-/// Note: offsetSSA must be index type (nativeint in F# source)
-let pMemRefStoreIndexed (memref: SSA) (value: SSA) (offsetSSA: SSA) (elemType: MLIRType) (memrefType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        // Store value at computed index (offsetSSA is already index type from nativeint)
-        let! storeOp = pStore value memref [offsetSSA] elemType memrefType
-        return ([storeOp], TRVoid)
-    }
-
 /// MemRef copy - bulk memory copy via memcpy library function
 let pMemCopy (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
     parser {
@@ -560,52 +497,6 @@ let pMemCopy (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp lis
         let! memcpyCall = pFuncCall None "memcpy" args platformWordTy
         let! memcpyDecl = pFuncDecl "memcpy" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
         return ([memcpyDecl; memcpyCall], TRVoid)
-    }
-
-/// Helper: Ensure a pointer argument is a memref type.
-/// When a pointer arrives as TIndex (from function parameter or NativePtr.ofNativeInt no-op),
-/// this emits an unrealized_conversion_cast (index → memref<?xelemType>).
-/// When the ptr is already TMemRef, this is a no-op.
-let private pEnsureMemRef (castSSA: SSA) (ptrSSA: SSA) (ptrType: MLIRType) (elemType: MLIRType)
-    : PSGParser<MLIROp list * SSA * MLIRType> =
-    parser {
-        match ptrType with
-        | TMemRef _ | TMemRefStatic _ ->
-            return ([], ptrSSA, ptrType)
-        | TIndex ->
-            let memrefType = TMemRef elemType
-            let castOp = MLIROp.MemRefOp (MemRefOp.IndexToMemRef (castSSA, ptrSSA, memrefType))
-            let! state = getUserState
-            MLIRAccumulator.registerSSAType castSSA memrefType state.Accumulator
-            return ([castOp], castSSA, memrefType)
-        | _ ->
-            return! fail (Message $"pEnsureMemRef: unexpected pointer type {ptrType} — expected TMemRef or TIndex")
-    }
-
-/// MemRef load operation - MLIR memref.load (NOT LLVM pointer load)
-/// Baker has already transformed NativePtr.read → MemRef.load
-/// This emits: %result = memref.load %memref[%index] : memref<?xT>
-///
-/// SSA Coeffects (1 SSA allocated by SSAAssignment):
-///   [0] = result (loaded value)
-///
-/// Parameters:
-/// - nodeId: NodeId for extracting result SSA from coeffects
-/// - memrefSSA: The memref to load from
-/// - indexSSA: The index to load at (already computed by witness from MemRef.add marker)
-let pMemRefLoad (nodeId: NodeId) (memrefSSA: SSA) (indexSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! state = getUserState
-        let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 1) $"pMemRefLoad: Expected 1 SSA, got {ssas.Length}"
-
-        let resultSSA = ssas.[0]
-        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-
-        // Emit memref.load %memref[%index]
-        let! loadOp = pLoad resultSSA memrefSSA [indexSSA]
-
-        return ([loadOp], TRValue { SSA = resultSSA; Type = resultType })
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -623,144 +514,8 @@ let pRecallArgWithLoad (argId: NodeId) : PSGParser<MLIROp list * SSA * MLIRType>
     }
 
 // ═══════════════════════════════════════════════════════════
-// MEMREF.ADD FUSION COMBINATOR
-// ═══════════════════════════════════════════════════════════
-
-/// Detect MemRef.add(base, offset) fusion on an argument node.
-/// If the argument was produced by MemRef.add, returns base memref + loaded offset.
-/// Uses pRecallArgWithLoad for offset — monadic, no raw MemRefOp.Load.
-let pDetectMemRefAddFusion (argId: NodeId) : PSGParser<SSA * SSA option * MLIRType * MLIROp list> =
-    parser {
-        let! (argSSA, argType) = pRecallNode argId
-        let! state = getUserState
-        match SemanticGraph.tryGetNode argId state.Graph with
-        | Some { Kind = SemanticKind.Application (funcId, addArgIds) } ->
-            match SemanticGraph.tryGetNode funcId state.Graph with
-            | Some { Kind = SemanticKind.Intrinsic info }
-                when info.Module = IntrinsicModule.MemRef && info.Operation = "add" ->
-                let! (_, baseSSA, baseTy) = pRecallArgWithLoad addArgIds.[0]
-                let! (loadOps, offsetSSA, _) = pRecallArgWithLoad addArgIds.[1]
-                return (baseSSA, Some offsetSSA, baseTy, loadOps)
-            | _ -> return (argSSA, None, argType, [])
-        | _ -> return (argSSA, None, argType, [])
-    }
-
-// ═══════════════════════════════════════════════════════════
 // COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
 // ═══════════════════════════════════════════════════════════
-
-/// MemRef.alloca intrinsic — stack allocation with compile-time size
-let pMemRefAllocaIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
-        do! ensure (info.Operation = "alloca") "Not MemRef.alloca"
-        let! state = getUserState
-        let! node = getCurrentNode
-        let countNodeId = argIds.[0]
-        match SemanticGraph.tryGetNode countNodeId state.Graph with
-        | Some countNode ->
-            match countNode.Kind with
-            | SemanticKind.Literal (NativeLiteral.Int (value, _)) ->
-                return! pStackAlloca node.Id (int value)
-            | _ -> return! fail (Message $"MemRef.alloca: count must be a literal (node {countNodeId})")
-        | None -> return! fail (Message $"MemRef.alloca: count node not found")
-    }
-
-/// MemRef.store intrinsic — store value to memref with MemRef.add fusion
-let pMemRefStoreIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
-        do! ensure (info.Operation = "store") "Not MemRef.store"
-        do! ensure (argIds.Length >= 3) "MemRef.store: Expected 3 args"
-
-        // Recall value argument (valueType determines memref element type for TIndex destinations)
-        let! (_, valueSSA, valueType) = pRecallArgWithLoad argIds.[0]
-
-        // Detect MemRef.add fusion on pointer argument
-        let! (memrefSSA, fusedOffsetOpt, memrefType, fusionOps) = pDetectMemRefAddFusion argIds.[1]
-
-        // Use fused offset or recall original index argument
-        let! (indexOps, offsetSSA) =
-            match fusedOffsetOpt with
-            | Some offset -> parser { return ([], offset) }
-            | None ->
-                parser {
-                    let! (ops, ssa, _) = pRecallArgWithLoad argIds.[2]
-                    return (ops, ssa)
-                }
-
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-
-        match memrefType with
-        | TMemRef elemType
-        | TMemRefStatic (_, elemType) ->
-            let! (storeOps, result) = pMemRefStoreIndexed memrefSSA valueSSA offsetSSA elemType memrefType
-            return (fusionOps @ indexOps @ storeOps, result)
-        | TIndex ->
-            // Pointer from NativePtr.ofNativeInt — need index→memref cast before store.
-            // Baker transforms NativePtr.write → MemRef.store, but ofNativeInt produces TIndex.
-            // Element type comes from the VALUE being stored (fully resolved, deterministic).
-            do! ensure (ssas.Length >= 2) $"pMemRefStore with cast: Expected 2 SSAs, got {ssas.Length}"
-            let castSSA = ssas.[0]
-            let! (castOps, effPtrSSA, effPtrType) = pEnsureMemRef castSSA memrefSSA memrefType valueType
-            let! (storeOps, result) = pMemRefStoreIndexed effPtrSSA valueSSA offsetSSA valueType effPtrType
-            return (fusionOps @ indexOps @ castOps @ storeOps, result)
-        | _ ->
-            return! fail (Message $"MemRef.store: expected memref destination type, got {memrefType}")
-    }
-
-/// MemRef.load intrinsic — load from memref at index
-let pMemRefLoadIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
-        do! ensure (info.Operation = "load") "Not MemRef.load"
-        do! ensure (argIds.Length >= 2) "MemRef.load: Expected 2 args"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        let! (_, memrefSSA, memrefType) = pRecallArgWithLoad argIds.[0]
-        let! (_, indexSSA, _) = pRecallArgWithLoad argIds.[1]
-
-        let! state = getUserState
-        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-
-        match memrefType with
-        | TIndex ->
-            // Pointer from NativePtr.ofNativeInt (no-op) — need index→memref cast
-            do! ensure (ssas.Length >= 2) $"pMemRefLoad with cast: Expected 2 SSAs, got {ssas.Length}"
-            let castSSA = ssas.[0]
-            let resultSSA = ssas.[1]
-            let! (castOps, effPtrSSA, _) = pEnsureMemRef castSSA memrefSSA memrefType resultType
-            let! loadOp = pLoad resultSSA effPtrSSA [indexSSA]
-            return (castOps @ [loadOp], TRValue { SSA = resultSSA; Type = resultType })
-        | _ ->
-            // Normal memref — use directly
-            let resultSSA = ssas.[0]
-            let! loadOp = pLoad resultSSA memrefSSA [indexSSA]
-            return ([loadOp], TRValue { SSA = resultSSA; Type = resultType })
-    }
-
-/// MemRef.copy intrinsic — bulk memory copy
-let pMemRefCopyIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
-        do! ensure (info.Operation = "copy") "Not MemRef.copy"
-        do! ensure (argIds.Length >= 3) "MemRef.copy: Expected 3 args"
-        let! (_, destSSA, _) = pRecallArgWithLoad argIds.[0]
-        let! (_, srcSSA, _) = pRecallArgWithLoad argIds.[1]
-        let! (_, countSSA, _) = pRecallArgWithLoad argIds.[2]
-        return! pMemCopy destSSA srcSSA countSSA
-    }
-
-/// MemRef.add intrinsic — marker operation, returns offset only
-let pMemRefAddIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.MemRef
-        do! ensure (info.Operation = "add") "Not MemRef.add"
-        do! ensure (argIds.Length >= 2) "MemRef.add: Expected 2 args"
-        let! (_, offsetSSA, _) = pRecallArgWithLoad argIds.[1]
-        return ([], TRValue { SSA = offsetSSA; Type = TIndex })
-    }
 
 /// Arena.create intrinsic — stack-allocated byte buffer
 let pArenaCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
@@ -1101,14 +856,4 @@ let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
             return (sizeOp :: allocOp :: List.concat storeOpLists, TRValue { SSA = ssas.[1]; Type = arrayType })
         | _ -> return! fail (Message "Expected ArrayExpr")
     }
-
-// ═══════════════════════════════════════════════════════════
-// NativePtr INTRINSIC PARSERS (untransformed by Baker)
-// ═══════════════════════════════════════════════════════════
-// Baker transforms NativePtr.stackalloc → MemRef.alloca, NativePtr.write → MemRef.store,
-// NativePtr.add → flattened, NativePtr.copy → MemRef.copy.
-// These three operations pass through untransformed:
-//   ofNativeInt — raw pointer (index) to typed memref
-//   set         — indexed write through raw pointer
-//   read        — scalar read from raw pointer
 

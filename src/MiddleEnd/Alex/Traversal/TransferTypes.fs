@@ -271,7 +271,6 @@ type MLIRAccumulator() =
     member val Errors: Diagnostic list = [] with get, set
     member val NodeAssoc: Map<NodeId, SSA * MLIRType> = Map.empty with get, set  // Global SSA bindings (PSG nodes)
     member val SSATypes: Map<SSA, MLIRType> = Map.empty with get, set            // SSA → type reverse index (for monadic type derivation in Elements)
-    member val MLIRTempCounter: int = 0 with get, set                      // For MLIR-level temporary SSAs (NOT PSG nodes)
 
     // Witnessing Coordination State (Dependent Transparency)
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)

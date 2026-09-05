@@ -1,11 +1,21 @@
-/// SSA Assignment Pass - PSGElaboration for MLIR emission
+/// SSA Assignment: the post-saturation coeffect nanopass
 ///
-/// This pass assigns SSA values to PSG nodes BEFORE MLIR emission.
-/// SSA is an MLIR/LLVM concern, not F# semantics, so it lives in PSGElaboration.
+/// Runs once over the saturated graph, after every range and selection is settled and
+/// before any witness runs, and derives each node's SSAs exactly from its structure:
+/// the SSA count of a node is a deterministic function of the instance's shape. The
+/// witnesses read the result as codata; nothing is minted, counted or allocated at
+/// emission, and no witness or pattern holds a counter. A value that a witness emits
+/// on a node's behalf (a meet, an extraction, a cast) is derived here for that node.
+///
+/// This is the coeffect the design places before traversal ("SSA Pre-assignment",
+/// clef-lang-site docs/internals/pipeline/learning-to-walk.md; the coeffect table in
+/// docs/CCS_Architecture.md). It is computed in Composer today and scheduled to move
+/// into CCS as a hyperedge consequence; until then this pass is the interim computation
+/// of a graph-resident fact, and the graph is the authority wherever it carries one.
 ///
 /// Key design:
-/// - SSA counter resets at each Lambda boundary (per-function scoping)
-/// - Post-order traversal ensures values are assigned before uses
+/// - Values are numbered per function: each Lambda boundary starts its own derivation
+/// - Post-order derivation: a value's producers are derived before its uses
 /// - Returns Map<NodeId, NodeSSAAllocation> that witnesses read (coeffect lookup, no generation during emission)
 /// - Uses structured SSA type (V of int | Arg of int), not strings
 /// - Knows MLIR expansion costs: one PSG node may need multiple SSAs
@@ -95,7 +105,7 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         // SECOND: Name-based fallback for types without proper NTU metadata
         | _ ->
             match tycon.Name with
-            | "Ptr" | "nativeptr" | "byref" | "inref" | "outref" -> TIndex
+            | "byref" | "inref" | "outref" -> TIndex
             | "array" ->
                 let sizeOf = mlirTypeSizeForArch arch
                 let totalBytes = sizeOf TIndex + sizeOf (TInt (IntWidth 64))
@@ -146,20 +156,64 @@ let private captureSlotType (arch: Architecture) (capture: CaptureInfo) : MLIRTy
         // Immutable capture: store the value directly
         mapCaptureType arch capture.Type
 
-/// Construction SSA cost per capture, derived from slot type.
-/// Decomposed memref captures (strings, arrays) need more SSAs because they
-/// store {ptr, len} separately: ExtractBasePtr + Dim + two typed stores.
-let private captureConstructionSSACount (slotType: MLIRType) : int =
+/// A slot that holds the base index of a memref value: the capture's type is a memref in
+/// MLIR (a record, an array, a mutable cell's alloca) and the slot is an index, so the
+/// construction extracts the base pointer before storing it. Read from the same type
+/// mapping the witnesses use; the witness checks the accumulator's type against this.
+let private captureExtractsBasePointer (arch: Architecture) (graph: SemanticGraph) (capture: CaptureInfo) (slotType: MLIRType) : bool =
+    slotType = TIndex &&
+    (capture.IsMutable ||
+     (match mapNativeTypeWithGraphForArch arch graph capture.Type with
+      | TMemRef _ | TMemRefStatic _ -> true
+      | _ -> false))
+
+/// Construction SSA cost per capture, derived from the slot.
+/// A decomposed memref capture (a string) stores {ptr, len} separately: ExtractBasePtr,
+/// Dim and two typed stores. A slot extracting a base pointer takes the extraction value
+/// and its view. A scalar takes its view (for reinterpret_cast).
+let private captureConstructionSSACount (slotType: MLIRType) (extractsBasePointer: bool) : int =
     match slotType with
     | TStruct [("ptr", TIndex); ("len", TIndex)] -> 5  // ptrSSA, dimZeroSSA, lenSSA, ptrViewSSA, lenViewSSA
-    | _ -> 1  // viewSSA (for reinterpret_cast)
+    | _ when extractsBasePointer -> 2  // viewSSA, extractSSA
+    | _ -> 1  // viewSSA
 
 /// Extraction work SSA cost per capture (excludes the result SSA).
-/// Work SSAs are allocated after the capture result SSAs [V(0)..V(n-1)].
+/// Work SSAs follow the capture result SSAs [V(0)..V(n-1)].
 let private captureExtractionWorkSSACount (slotType: MLIRType) : int =
     match slotType with
     | TStruct [("ptr", TIndex); ("len", TIndex)] -> 7  // ptrView,ptrZero,ptr, lenView,lenZero,len, rawMemref
     | _ -> 2  // view, zero
+
+/// The callee prologue of a closure, in the order pExtractCaptures consumes it: per capture
+/// its work values then its result (the results are V 0 .. V (n-1); the work follows them),
+/// and then the two env-reconstruction values (the memref view of Arg 0, its static cast).
+let private closurePrologue (captureSlots: MLIRType list) : SSA list list * (SSA * SSA) =
+    let n = captureSlots.Length
+    let perCapture, totalWork =
+        captureSlots
+        |> List.mapi (fun i slot -> (i, slot))
+        |> List.fold (fun (acc, work) (i, slot) ->
+            let w = captureExtractionWorkSSACount slot
+            (acc @ [ List.init w (fun k -> V (n + work + k)) @ [ V i ] ], work + w)) ([], 0)
+    perCapture, (V (n + totalWork), V (n + totalWork + 1))
+
+/// The number of values the callee prologue takes; the body's own values follow it
+let private closurePrologueCount (captureSlots: MLIRType list) : int =
+    let perCapture, _ = closurePrologue captureSlots
+    (perCapture |> List.sumBy List.length) + 2
+
+/// A unit-typed body: the function returns no value and its func.return needs a zero
+/// constant, derived here as the first value of the body's scope
+let private isUnitTyped (ty: NativeType) : bool =
+    let rec go t =
+        match t with
+        | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) -> true
+        | NativeType.TVar tv ->
+            match find tv with
+            | (_, Some bound) -> go bound
+            | (_, None) -> false
+        | _ -> false
+    go ty
 
 /// Compute exact SSA count for Lambda based on captures list
 /// This is DETERMINISTIC - derived directly from PSG structure (captures list from CCS)
@@ -179,12 +233,15 @@ let private captureExtractionWorkSSACount (slotType: MLIRType) : int =
 ///   Uniform pair construction (3):
 ///     - 3 SSAs: pairUndefSSA, pairWithCodeSSA, closureResultSSA
 ///   Total: C + 14 SSAs
-let private computeLambdaSSACost (arch: Architecture) (captures: CaptureInfo list) : int =
+let private computeLambdaSSACost (arch: Architecture) (graph: SemanticGraph) (captures: CaptureInfo list) : int =
     let n = List.length captures
     if n = 0 then
         0  // Simple function - no closure struct needed
     else
-        let c = captures |> List.sumBy (fun cap -> captureConstructionSSACount (captureSlotType arch cap))
+        let c =
+            captures |> List.sumBy (fun cap ->
+                let slot = captureSlotType arch cap
+                captureConstructionSSACount slot (captureExtractsBasePointer arch graph cap slot))
         c + 14  // flat struct (c+3) + heap (5) + size (3) + pair (3)
 
 /// Build the environment struct type from captures
@@ -219,9 +276,11 @@ let private buildClosureLayout
 
     let n = List.length captures
     let captureTypes = captures |> List.map (captureSlotType arch)
+    let extracts = List.map2 (captureExtractsBasePointer arch graph) captures captureTypes
 
-    // Total construction SSAs varies by capture type (1 for scalar, 5 for decomposed memref)
-    let c = captureTypes |> List.sumBy captureConstructionSSACount
+    // Total construction SSAs varies by capture: 1 for a scalar, 2 for a base-pointer
+    // extraction, 5 for a decomposed memref
+    let c = List.map2 captureConstructionSSACount captureTypes extracts |> List.sum
 
     // Extract SSAs by position for closure CONSTRUCTION
     // Flat struct construction (0 to c+2)
@@ -258,6 +317,7 @@ let private buildClosureLayout
                 SlotType = captureSlotType arch capture
                 SourceNodeId = capture.SourceNodeId
                 Mode = if capture.IsMutable then ByRef else ByValue
+                ExtractsBasePointer = extracts.[i]
             })
 
     // Build env struct type (for internal tracking, kept for compatibility)
@@ -294,6 +354,9 @@ let private buildClosureLayout
     // It's V(captureCount) because extraction SSAs are v0..v(N-1), body starts at v(N+1)
     let structLoadSSA = V n
 
+    // The callee prologue, derived once here and read by LambdaWitness
+    let captureExtractionSSAs, envReconstructionSSAs = closurePrologue captureTypes
+
     {
         LambdaNodeId = lambdaNodeId
         Captures = captureSlots
@@ -313,6 +376,8 @@ let private buildClosureLayout
         PairWithCodeSSA = pairWithCodeSSA
         ClosureResultSSA = closureResultSSA
         StructLoadSSA = structLoadSSA
+        CaptureExtractionSSAs = captureExtractionSSAs
+        EnvReconstructionSSAs = envReconstructionSSAs
         EnvStructType = envStructType
         ClosureStructType = closureStructType
         Context = context
@@ -490,6 +555,8 @@ type private SSAContext = {
     ClosureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>
     DULayouts: System.Collections.Generic.Dictionary<int, DULayout>
     InnerScopeAssignments: System.Collections.Generic.Dictionary<int, NodeSSAAllocation>
+    /// The zero constant each unit-typed function returns, by Lambda NodeId.value
+    UnitReturns: System.Collections.Generic.Dictionary<int, SSA>
     SaturatedCallArgCounts: Map<NodeId, int>
     /// Pre-computed value-position coeffect — VarRefs needing closure pair construction
     ValuePosition: ValuePositionAnalysis.ValuePositionResult
@@ -632,12 +699,6 @@ let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : i
 
                 // MemRef operations (MLIR memref semantics)
                 // MemRef ops are Baker's synthesized internal memory vocabulary
-                | IntrinsicModule.MemRef, "alloca" -> 1  // result memref only
-                | IntrinsicModule.MemRef, "load" -> 2    // potential index→memref cast + load result
-                | IntrinsicModule.MemRef, "store" -> 2   // potential index→memref cast + unit result
-                | IntrinsicModule.MemRef, "add" -> 1     // marker: returns offset/index for memref operations
-                | IntrinsicModule.MemRef, "copy" -> 1    // memcpy returns void* (result pointer)
-                | IntrinsicModule.MemRef, _ -> 1         // safe default
                 | IntrinsicModule.Array, _ -> 10           // array ops
                 | IntrinsicModule.Operators, ("op_Equality" | "op_Inequality") ->
                     // Structural equality on strings / byte arrays (pStringEquality) needs 16 SSAs
@@ -884,7 +945,7 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
 
     // Lambda: cost depends on captures (structural analysis, capture types vary by arch)
     | SemanticKind.Lambda (_, _, captures, _, _) ->
-        computeLambdaSSACost ctx.Arch captures
+        computeLambdaSSACost ctx.Arch ctx.Graph captures
 
     // Fixed costs (these don't vary by structure)
     | SemanticKind.ForLoop _ -> 2
@@ -1053,6 +1114,11 @@ type SSAAssignment = {
     /// DU layouts for DUConstruct nodes needing arena allocation (NodeId.value -> DULayout)
     /// Empty for homogeneous DUs like Option that use inline struct
     DULayouts: Map<int, DULayout>
+    /// The Mealy machine values of each [<HardwareModule>] binding (NodeId.value -> layout)
+    HardwareModuleLayouts: Map<int, HardwareModuleLayout>
+    /// The zero constant a unit-typed function returns (Lambda NodeId.value -> its value),
+    /// the first value of the body's scope
+    UnitReturns: Map<int, SSA>
 }
 
 /// Assign SSA names to all nodes in a function body
@@ -1105,15 +1171,19 @@ let rec private assignFunctionBody
                     match bodyNode.EmissionStrategy with
                     | EmissionStrategy.SeparateFunction captureCount ->
                         if captureCount > 0 then
-                            let captureTypes = captures |> List.map (captureSlotType ctx.Arch)
-                            let workSSAs = captureTypes |> List.sumBy captureExtractionWorkSSACount
-                            // +2 for env reconstruction prologue: IndexToMemRef + ReinterpretCast
-                            // (converts Arg 0 : index → memref<Nxi8> before capture extraction)
-                            captureCount + workSSAs + 2
+                            // The callee prologue (closurePrologue): capture results, work, env reconstruction
+                            closurePrologueCount (captures |> List.map (captureSlotType ctx.Arch))
                         else 0
                     | _ -> 0  // Shouldn't happen - Lambda bodies are marked SeparateFunction
                 | None -> 0
-            let innerStartScope = { FunctionScope.empty with Counter = startCounter }
+            // A unit-typed body returns a zero constant: the first value after the prologue
+            let unitReturnCount =
+                match Map.tryFind bodyId ctx.Graph.Nodes with
+                | Some bodyNode when isUnitTyped bodyNode.Type ->
+                    ctx.UnitReturns.[NodeId.value nodeId] <- V startCounter
+                    1
+                | _ -> 0
+            let innerStartScope = { FunctionScope.empty with Counter = startCounter + unitReturnCount }
 
             // Assign Arg SSAs for nested lambda parameters (mirrors top-level handling in assignSSA)
             // For closures: offset by 1 because Arg 0 = env_ptr (closure struct)
@@ -1179,7 +1249,7 @@ let rec private assignFunctionBody
                         // for code_ptr, closure struct alloca, and uniform pair construction
                         14
                     else
-                        computeLambdaSSACost ctx.Arch captures
+                        computeLambdaSSACost ctx.Arch ctx.Graph captures
 
                 if cost > 0 then
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
@@ -1527,13 +1597,115 @@ let private findAllModuleLevelValueBindings (graph: SemanticGraph) : NodeId list
                 | None -> false)
         | _ -> [])
 
-let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) (valuePosition: ValuePositionAnalysis.ValuePositionResult) : SSAAssignment =
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HARDWARE MODULE LAYOUT DERIVATION (FPGA)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// See through TypeAnnotation to the node it annotates
+let rec private unwrapTypeAnnotation (graph: SemanticGraph) (nodeId: NodeId) : NodeId =
+    match Map.tryFind nodeId graph.Nodes with
+    | Some { Kind = SemanticKind.TypeAnnotation (innerId, _) } -> unwrapTypeAnnotation graph innerId
+    | _ -> nodeId
+
+/// The values of the Mealy machine an [<HardwareModule>] binding describes, derived from the
+/// Design record's structure (the InitialState fields, the Step function's signature) and the
+/// platform's pin facts, numbered from zero in the order HardwareModulePatterns emits them.
+/// None when the binding does not carry a Design the pattern can build; the witness reports
+/// the shape it found.
+let private deriveHardwareModuleLayout (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (pinMapping: PlatformPinMapping option) (binding: SemanticNode) : HardwareModuleLayout option =
+    let designFields =
+        match binding.Children with
+        | [valueId] ->
+            match Map.tryFind (unwrapTypeAnnotation graph valueId) graph.Nodes with
+            | Some { Kind = SemanticKind.RecordExpr (fields, _) } -> Some fields
+            | _ -> None
+        | _ -> None
+    let field name = designFields |> Option.bind (List.tryFind (fun (n, _) -> n = name)) |> Option.map snd
+    let stateFieldCount =
+        field "InitialState" |> Option.bind (fun initId ->
+            match Map.tryFind (unwrapTypeAnnotation graph initId) graph.Nodes with
+            | Some { Kind = SemanticKind.RecordExpr (fields, _) } -> Some fields.Length
+            | _ -> None)
+    let stepLambda =
+        field "Step" |> Option.bind (fun stepId ->
+            match Map.tryFind stepId graph.Nodes with
+            | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
+                match Map.tryFind defId graph.Nodes with
+                | Some defNode ->
+                    match defNode.Children with
+                    | [lambdaId] ->
+                        match Map.tryFind lambdaId graph.Nodes with
+                        | Some { Kind = SemanticKind.Lambda (params', bodyId, _, _, _) } -> Some (params', bodyId)
+                        | _ -> None
+                    | _ -> None
+                | None -> None
+            | _ -> None)
+    match stateFieldCount, stepLambda with
+    | Some n, Some (params', bodyId) ->
+        // The witness's own mapping (TransferTypes.mapType): the target's shape of a record, a tuple,
+        // an option; narrowing afterwards changes widths only, so the shapes agree
+        let mapTy ty = mapNativeTypeForTarget targetPlatform arch graph ty
+        let inputType =
+            match params' with
+            | _ :: (_, inputTy, _) :: _ -> Some (mapTy inputTy)
+            | _ -> None
+        let outputType =
+            match Map.tryFind bodyId graph.Nodes with
+            | Some bodyNode ->
+                match mapTy bodyNode.Type with
+                | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
+                | _ -> None
+            | None -> None
+        let pinAttrs = pinMapping |> Option.map (fun m -> m.FieldPinAttrs) |> Option.defaultValue Map.empty
+        // The flat-port module (a pin mapping) synthesises a power-on reset unless the platform
+        // declares an external one; the struct-port module takes rst as a port
+        let internalReset =
+            match pinMapping with
+            | Some m -> not (m.Reset |> Option.map (fun r -> r.IsExternal) |> Option.defaultValue false)
+            | None -> false
+        let inputPackCount, hasInputStruct =
+            match pinMapping, inputType with
+            | Some _, Some (TStruct fields) ->
+                (fields |> List.sumBy (fun (name, ty) ->
+                    match Map.tryFind name pinAttrs, ty with
+                    | Some pins, TStruct _ when pins.Length > 1 -> 1
+                    | _ -> 0)), true
+            | _ -> 0, false
+        let flattenCount =
+            match pinMapping, outputType with
+            | Some _, Some outTy -> (outputExtractions pinAttrs outTy).Length
+            | _ -> 0
+        // One numbering, in emission order: power-on reset, reset constants, registers, input
+        // packs, input struct, state, instance, step result, output flatten, next fields
+        let counts =
+            [ (if internalReset then 3 else 0); n; n; inputPackCount; (if hasInputStruct then 1 else 0)
+              1; 1; (if outputType.IsSome then 2 else 0); flattenCount; n ]
+        let starts = counts |> List.scan (+) 0
+        let values i = List.init counts.[i] (fun k -> V (starts.[i] + k))
+        Some {
+            BindingNodeId = binding.Id
+            PowerOnReset = (match values 0 with [a; b; c] -> Some (a, b, c) | _ -> None)
+            ResetValues = values 1
+            Registers = values 2
+            InputPacks = values 3
+            InputStruct = List.tryHead (values 4)
+            State = List.head (values 5)
+            Instance = List.head (values 6)
+            StepResult = (match values 7 with [a; b] -> Some (a, b) | _ -> None)
+            OutputFlatten = values 8
+            NextFields = values 9
+        }
+    | _ -> None
+
+let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) (valuePosition: ValuePositionAnalysis.ValuePositionResult) (pinMapping: PlatformPinMapping option) : SSAAssignment =
     let lambdaNames, declRootLambdas = collectLambdas graph
 
     let mutable allAssignments = Map.empty
     let mutableClosureLayouts = System.Collections.Generic.Dictionary<int, ClosureLayout>()
     let mutableDULayouts = System.Collections.Generic.Dictionary<int, DULayout>()
     let mutableInnerScopeAssignments = System.Collections.Generic.Dictionary<int, NodeSSAAllocation>()
+    let mutableUnitReturns = System.Collections.Generic.Dictionary<int, SSA>()
 
     let ctx : SSAContext = {
         Arch = arch
@@ -1541,6 +1713,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
         ClosureLayouts = mutableClosureLayouts
         DULayouts = mutableDULayouts
         InnerScopeAssignments = mutableInnerScopeAssignments
+        UnitReturns = mutableUnitReturns
         SaturatedCallArgCounts = saturatedCallArgCounts
         ValuePosition = valuePosition
     }
@@ -1605,7 +1778,14 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
                     if isMain then moduleLevelCounter
                     elif Option.isNone mainLambdaIdOpt then moduleLevelCounter
                     else 0
-                let initialScope = { FunctionScope.empty with Counter = initialCounter }
+                // A unit-typed body returns a zero constant: the first value of the body's scope
+                let unitReturnCount =
+                    match Map.tryFind bodyId graph.Nodes with
+                    | Some bodyNode when isUnitTyped bodyNode.Type ->
+                        mutableUnitReturns.[nodeIdVal] <- V initialCounter
+                        1
+                    | _ -> 0
+                let initialScope = { FunctionScope.empty with Counter = initialCounter + unitReturnCount }
 
                 // Assign SSAs to parameter PatternBindings (Arg 0, Arg 1, etc.)
                 // For closures: offset by 1 because Arg 0 = env_ptr (closure struct)
@@ -1640,7 +1820,7 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
                 // Assign SSAs to the Lambda node itself (for closure value)
                 // Top-level Lambdas (not visited during body traversal) need SSA assignments
                 // for closure construction if they have captures
-                let cost = computeLambdaSSACost arch captures
+                let cost = computeLambdaSSACost arch graph captures
                 if cost > 0 then
                     // Lambda with captures needs SSAs for closure struct construction
                     let ssas = List.init cost (fun i -> V (topLevelCounter + i))
@@ -1724,6 +1904,17 @@ let assignSSA (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCount
         DeclarationRootLambdas = declRootLambdas
         ClosureLayouts = closureLayouts
         DULayouts = duLayouts
+        HardwareModuleLayouts =
+            graph.Nodes
+            |> Map.toList
+            |> List.choose (fun (_, node) ->
+                match node.Kind with
+                | SemanticKind.Binding (_, _, _, Some DeclRoot.HardwareModule) ->
+                    deriveHardwareModuleLayout targetPlatform arch graph pinMapping node
+                    |> Option.map (fun layout -> (NodeId.value node.Id, layout))
+                | _ -> None)
+            |> Map.ofList
+        UnitReturns = mutableUnitReturns |> Seq.map (fun kv -> (kv.Key, kv.Value)) |> Map.ofSeq
     }
 
 /// Look up the full SSA allocation for a node (coeffect lookup)
@@ -1763,6 +1954,21 @@ let lookupDULayout (nodeId: NodeId) (assignment: SSAAssignment) : DULayout optio
 /// Check if a DUConstruct node needs arena allocation
 let hasDULayout (nodeId: NodeId) (assignment: SSAAssignment) : bool =
     Map.containsKey (NodeId.value nodeId) assignment.DULayouts
+
+/// The Mealy machine values derived for an [<HardwareModule>] binding (coeffect lookup)
+let lookupHardwareModuleLayout (bindingId: NodeId) (assignment: SSAAssignment) : HardwareModuleLayout option =
+    Map.tryFind (NodeId.value bindingId) assignment.HardwareModuleLayouts
+
+/// The zero constant a unit-typed function returns (coeffect lookup); None for a function
+/// whose body has a value
+let lookupUnitReturn (lambdaId: NodeId) (assignment: SSAAssignment) : SSA option =
+    Map.tryFind (NodeId.value lambdaId) assignment.UnitReturns
+
+/// The value of a named function's closure thunk (`f_as_closure`, pNamedFunctionAsClosure):
+/// the thunk is its own function scope with exactly one value, the forwarded call's result,
+/// so its derivation is the first value of that scope. Read by the pattern; nothing is
+/// numbered there.
+let thunkResult : SSA = V 0
 
 /// PRD-14/PRD-15: Get the actual return type for a function that may return a lazy or seq with captures.
 /// If the function body is a LazyExpr with captures, returns the actual lazy struct type

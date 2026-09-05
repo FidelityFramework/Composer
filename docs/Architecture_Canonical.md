@@ -126,7 +126,7 @@ Output: Complete MLIR module
 
 **Component Roles:**
 
-- **Zipper**: Purely navigational - provides focus with context, carries state (SSA counters)
+- **Zipper**: Purely navigational - provides focus with context; reads the SSA assignment coeffect and holds no counters
 - **XParsec**: Local pattern matching - composable patterns, NOT a routing table
 - **Bindings**: Platform-specific MLIR - looked up by extern entry point, are DATA not routing
 - **MLIR Builder**: Where centralization correctly occurs - the single accumulation point

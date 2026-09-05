@@ -32,7 +32,7 @@ let private isPlatformIntrinsic (info: IntrinsicInfo) : bool =
         match info.Operation with
         | "now" | "utcNow" -> true
         | _ -> false  // Component extraction is pure arithmetic
-    // NOTE: Console is NOT an intrinsic - see fsnative-spec/spec/platform-bindings.md
+    // NOTE: Console is NOT an intrinsic - see clef-lang-spec/spec/platform-bindings.md
     | _ -> false
 
 /// Resolve a single intrinsic to a concrete binding based on runtime mode
@@ -58,7 +58,7 @@ let private resolveIntrinsic
         // NOTE: Sys.stackArgc and Sys.stackArgv are witnessed directly by Alex
         // based on target architecture. No pre-resolution needed here.
         // NOTE: Console.* is NOT an intrinsic - it's Layer 3 user code in Fidelity.Platform
-        // that uses Sys.* intrinsics. See fsnative-spec/spec/platform-bindings.md
+        // that uses Sys.* intrinsics. See clef-lang-spec/spec/platform-bindings.md
         | _ -> None  // Not a platform-resolvable intrinsic
 
     | Console ->
@@ -68,7 +68,7 @@ let private resolveIntrinsic
         | IntrinsicModule.Sys, "read" -> Some (LibcCall "read")
         | IntrinsicModule.Sys, "exit" -> Some (LibcCall "exit")
         // NOTE: Console.* is NOT an intrinsic - it's Layer 3 user code in Fidelity.Platform
-        // that uses Sys.* intrinsics. See fsnative-spec/spec/platform-bindings.md
+        // that uses Sys.* intrinsics. See clef-lang-spec/spec/platform-bindings.md
         | _ -> None  // Not a platform-resolvable intrinsic
 
 // ═══════════════════════════════════════════════════════════════════════════

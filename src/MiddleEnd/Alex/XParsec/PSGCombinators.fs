@@ -692,7 +692,7 @@ type EmissionCategory =
     | MemoryOp of op: string
     | StringOp of op: string
     // NOTE: ConsoleOp removed - Console is NOT an atomic operation, it's Layer 3 user code
-    // in Fidelity.Platform that uses Sys.* atomic operations. See fsnative-spec/spec/platform-bindings.md
+    // in Fidelity.Platform that uses Sys.* atomic operations. See clef-lang-spec/spec/platform-bindings.md
     | PlatformOp of op: string
     | DateTimeOp of op: string
     | TimeSpanOp of op: string
@@ -731,7 +731,7 @@ let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     | IntrinsicModule.Operators, "op_RightShift"  -> BinaryArith "shr"   // resolved to shrsi/shrui per NTUKind
     // String
     | IntrinsicModule.String, op -> StringOp op
-    // NOTE: Console is NOT an atomic operation - see fsnative-spec/spec/platform-bindings.md
+    // NOTE: Console is NOT an atomic operation - see clef-lang-spec/spec/platform-bindings.md
     // Platform (Sys.* atomic operations from CCS)
     | IntrinsicModule.Sys, op -> PlatformOp op
     // DateTime operations

@@ -170,7 +170,7 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
         let! (lhsLoadOps, lhsSSA, lhsType) = pRecallArgWithLoad argIds.[0]
         let! (rhsLoadOps, rhsSSA, rhsType) = pRecallArgWithLoad argIds.[1]
 
-        // Extract SSA pool from coeffects (5 SSAs for Operators intrinsics)
+        // The node's derived SSAs (5 for an Operators intrinsic)
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 1) $"pBinaryArithOp: Expected 1 SSA, got {ssas.Length}"
 
@@ -222,7 +222,7 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
             let needExtRhs = rhsBits < opBits
             let needTrunc = resBits < opBits
 
-            // SSA layout: [ext0?, ext1?, combResult, trunc?] — all within the 5-SSA pool
+            // SSA layout: [ext0?, ext1?, combResult, trunc?] — within the node's 5 derived SSAs
             let! (extOps, effLhs, effRhs, combResultSSA, nextSSAIdx) =
                 match needExtLhs, needExtRhs with
                 | true, true ->
@@ -266,7 +266,7 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
             let resultSSA = ssas.[0]
             // Shift amounts are typed `int` (platform word) by the front end while the shifted
             // operand keeps its own width; MLIR shifts require equal widths, so bring the
-            // amount to the operand's width (spare SSA [1] from the 5-SSA operator pool).
+            // amount to the operand's width (SSA [1] of the node's 5 derived SSAs, unused by a shift).
             let! (shiftAmountOps, rhsSSA) =
                 match operation, lhsType, rhsType with
                 | ("shli" | "shrui" | "shrsi"), TInt (IntWidth lw), TInt (IntWidth rw) when lw <> rw && ssas.Length >= 2 ->
@@ -315,7 +315,7 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
         let! (lhsLoadOps, lhsSSA, lhsType) = pRecallArgWithLoad argIds.[0]
         let! (rhsLoadOps, rhsSSA, rhsType) = pRecallArgWithLoad argIds.[1]
 
-        // Extract SSA pool from coeffects (5 SSAs for Operators intrinsics)
+        // The node's derived SSAs (5 for an Operators intrinsic)
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 1) $"pComparisonOp: Expected 1 SSA, got {ssas.Length}"
 

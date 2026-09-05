@@ -69,9 +69,10 @@ let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * S
 /// Handles the function terminator internally: func.return (CPU) or hw.output (FPGA).
 ///
 /// `paramNames`: optional port names for hw.module (defaults to "in0", "in1", ...)
-/// `returnSSA`: the SSA of the return value (None for unit functions — zero constant synthesized)
+/// `returnSSA`: the SSA of the return value (None for a unit function)
+/// `unitReturnSSA`: for a unit function, the zero constant it returns, derived by SSAAssignment
 let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: string list option)
-                 (retTy: MLIRType) (bodyOps: MLIROp list) (returnSSA: SSA option)
+                 (retTy: MLIRType) (bodyOps: MLIROp list) (returnSSA: SSA option) (unitReturnSSA: SSA option)
                  : PSGParser<MLIROp> =
     parser {
         let! targetPlatform = getTargetPlatform
@@ -92,19 +93,17 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
         | _ ->
             // func.func with positional parameters
             let visibility = if name = "main" then FuncVisibility.Public else FuncVisibility.Private
-            // Unit-returning functions: returnSSA = None but retTy is concrete (e.g. i32).
-            // MLIR requires func.return operands to match function signature.
-            // Synthesize arith.constant 0 for the return value.
-            let! state = getUserState
+            // A unit function: returnSSA = None but retTy is concrete (e.g. i32), and
+            // func.return needs an operand of that type. The zero constant it returns is the
+            // value SSAAssignment derived for the Lambda (the first of its body's scope).
             let actualReturnSSA, extraOps =
-                match returnSSA with
-                | Some _ -> returnSSA, []
-                | None ->
-                    let tempIdx = state.Accumulator.MLIRTempCounter
-                    state.Accumulator.MLIRTempCounter <- tempIdx + 1
-                    let zeroSSA = V (10000 + tempIdx)
+                match returnSSA, unitReturnSSA with
+                | Some _, _ -> returnSSA, []
+                | None, Some zeroSSA ->
                     let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, retTy))
                     (Some zeroSSA, [zeroOp])
+                | None, None ->
+                    failwithf "pFunctionDef: function '%s' returns no value and SSAAssignment derived no unit-return value for its Lambda; the derivation covers every unit-typed body" name
             let returnOp = MLIROp.FuncOp (FuncOp.Return (actualReturnSSA, Some retTy))
             let body = bodyOps @ extraOps @ [returnOp]
             return! pFuncDef name params' retTy body visibility
@@ -127,7 +126,7 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
 ///
 /// Then build a closure pair: {code_ptr → thunk, env_ptr → 0}
 ///
-/// SSA layout in parent scope (5 SSAs):
+/// SSA layout in parent scope (5 SSAs); the thunk body's single value is SSAAssignment.thunkResult:
 ///   [0] = funcRefSSA (func.constant result)
 ///   [1] = codePtrSSA (FuncToIndex result)
 ///   [2] = pairSSA (alloca memref<2xindex>)
@@ -142,6 +141,7 @@ let pNamedFunctionAsClosure
     (paramMLIRTypes: MLIRType list)
     (returnMLIRType: MLIRType)
     (ssas: SSA list)
+    (thunkResultSSA: SSA)
     : PSGParser<MLIROp list * MLIROp list * SSA * MLIRType> =
     parser {
         do! ensure (ssas.Length >= 5) $"pNamedFunctionAsClosure: Expected at least 5 SSAs, got {ssas.Length}"
@@ -162,7 +162,8 @@ let pNamedFunctionAsClosure
         // Body: call @funcName with args (skip env)
         let callArgs =
             paramMLIRTypes |> List.mapi (fun i ty -> { SSA = SSA.Arg (i + 1); Type = ty })
-        let resultSSA = SSA.V 0
+        // The thunk's one value, derived by SSAAssignment (thunkResult) for its own scope
+        let resultSSA = thunkResultSSA
         let callOp = MLIROp.FuncOp (FuncOp.FuncCall (Some resultSSA, funcName, callArgs, returnMLIRType))
         let returnOp = MLIROp.FuncOp (FuncOp.Return (Some resultSSA, Some returnMLIRType))
         let thunkBody = [callOp; returnOp]
@@ -231,7 +232,7 @@ let pExtractCaptures (prefixByteOffset: int) (captureTypes: MLIRType list) (stru
                 parser {
                     match capTy with
                     | TStruct [("ptr", TIndex); ("len", TIndex)] ->
-                        // Decomposed memref capture: load {ptr, len}, reconstruct memref
+                        // Decomposed memref capture: load the base index and the extent, reconstruct the memref
                         // SSAs: ptrView, ptrZero, ptr, lenView, lenZero, len, rawMemref, result
                         let ptrViewSSA  = ssas.[ssaOffset]
                         let ptrZeroSSA  = ssas.[ssaOffset + 1]

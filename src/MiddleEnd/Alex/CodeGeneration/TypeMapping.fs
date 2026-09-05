@@ -217,7 +217,6 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
             match tycon.Name with
             // Byref types: all variants map to pointers
             | "byref" | "inref" | "outref" -> TIndex
-            | "Ptr" | "nativeptr" -> TIndex
             | "option" ->
                 // Option is a DU with 2 cases (None, Some) - tag must be i8, not i1
                 // DU tags are ALWAYS i8 (or i16 for >256 cases), never boolean
@@ -263,7 +262,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                         // Record with known layout — use computed size
                         TMemRefStatic (size, TInt (IntWidth 8))
                     | _ ->
-                        // Record with Opaque/unknown layout (e.g. contains strings/fat pointers)
+                        // Record with Opaque/unknown layout (e.g. contains strings or other memref views)
                         // Estimate: field count × word size as upper bound
                         let wordSize = match arch with X86_64 | ARM64 | RISCV64 -> 8 | _ -> 4
                         let estimatedSize = tycon.FieldCount * wordSize
@@ -790,27 +789,6 @@ let nativeTypeToMLIR (ty: NativeType) : string =
 /// Map a type constructor application to MLIR string
 let mapTypeApp (conRef: TypeConRef) (args: NativeType list) : string =
     nativeTypeToMLIR (NativeType.TApp(conRef, args))
-
-/// Extract element type from a pointer type (nativeptr<T> → T)
-/// Returns the MLIR type of the element, or None if not a pointer type
-/// DEPRECATED: Use extractPtrElementTypeWithGraph for correct record handling
-let extractPtrElementType (ty: NativeType) : MLIRType option =
-    match ty with
-    | NativeType.TApp(tycon, [elemTy]) when tycon.Name = "nativeptr" || tycon.Name = "Ptr" ->
-        Some (mapNativeType elemTy)
-    | NativeType.TNativePtr elemTy ->
-        Some (mapNativeType elemTy)
-    | _ -> None
-
-/// Extract element type from a pointer type with graph-aware mapping
-/// CANONICAL: Use this version for correct record type handling
-let extractPtrElementTypeWithGraph (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : MLIRType option =
-    match ty with
-    | NativeType.TApp(tycon, [elemTy]) when tycon.Name = "nativeptr" || tycon.Name = "Ptr" ->
-        Some (mapNativeTypeWithGraphForArch arch graph elemTy)
-    | NativeType.TNativePtr elemTy ->
-        Some (mapNativeTypeWithGraphForArch arch graph elemTy)
-    | _ -> None
 
 /// Extract return type from a function type as string
 let getReturnType (ty: NativeType) : string =

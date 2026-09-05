@@ -325,48 +325,20 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         | LambdaContext.SeqGenerator ->
                             // {state: i32, current: T, code_ptr: ptr}
                             sizeOf (TInt (IntWidth 32)) + sizeOf TIndex + sizeOf TIndex  // Approximate
-                    // Build SSAs for extraction: variable-width per capture type.
-                    // Result SSAs are V(0)..V(n-1), work SSAs start at V(n).
-                    // pExtractCaptures consumes SSAs in order per capture:
-                    //   decomposed memref: 8 SSAs [ptrView,ptrZero,ptr, lenView,lenZero,len, rawMemref, result]
-                    //   scalar: 3 SSAs [view, zero, result]
-                    let n = captureTypes.Length
-                    let extractionSSAs, captureResultTypes, totalWorkSSAs =
-                        let mutable ssaList = []
-                        let mutable resultTypes = []  // per-capture: the type body code sees
-                        let mutable workIdx = 0  // work SSA counter (offset from n)
-                        for i in 0 .. n - 1 do
-                            let capTy = captureTypes.[i]
+                    // The callee prologue's values are the closure layout's, derived by SSAAssignment
+                    // in the order pExtractCaptures consumes them (per capture: its work values, its
+                    // result), then the env reconstruction pair. Nothing is numbered here.
+                    let extractionSSAs = layout.CaptureExtractionSSAs |> List.concat
+                    let captureResultTypes =  // per capture: the type body code sees
+                        captureTypes |> List.map (fun capTy ->
                             match capTy with
-                            | TStruct [("ptr", TIndex); ("len", TIndex)] ->
-                                // Decomposed memref: 7 work SSAs + 1 result SSA
-                                let ptrViewSSA  = V (n + workIdx)
-                                let ptrZeroSSA  = V (n + workIdx + 1)
-                                let ptrSSA      = V (n + workIdx + 2)
-                                let lenViewSSA  = V (n + workIdx + 3)
-                                let lenZeroSSA  = V (n + workIdx + 4)
-                                let lenSSA      = V (n + workIdx + 5)
-                                let rawMemrefSSA = V (n + workIdx + 6)
-                                let resultSSA   = V i
-                                ssaList <- ssaList @ [ptrViewSSA; ptrZeroSSA; ptrSSA; lenViewSSA; lenZeroSSA; lenSSA; rawMemrefSSA; resultSSA]
-                                resultTypes <- resultTypes @ [TMemRef(TInt (IntWidth 8))]
-                                workIdx <- workIdx + 7
-                            | _ ->
-                                // Scalar: 2 work SSAs + 1 result SSA
-                                let viewSSA   = V (n + workIdx)
-                                let zeroSSA   = V (n + workIdx + 1)
-                                let resultSSA = V i
-                                ssaList <- ssaList @ [viewSSA; zeroSSA; resultSSA]
-                                resultTypes <- resultTypes @ [capTy]
-                                workIdx <- workIdx + 2
-                        ssaList, resultTypes, workIdx
+                            | TStruct [("ptr", TIndex); ("len", TIndex)] -> TMemRef(TInt (IntWidth 8))
+                            | _ -> capTy)
 
                     // ═══ ENV RECONSTRUCTION PROLOGUE ═══
                     // Arg 0 arrives as index (raw pointer from uniform pair).
                     // Reconstruct memref<Nxi8> so capture extraction can use typed views.
-                    // Uses 2 SSAs at end of work range: rawEnvSSA, envMemrefSSA
-                    let rawEnvSSA = V (n + totalWorkSSAs)       // memref<?xi8> from IndexToMemRef
-                    let envMemrefSSA = V (n + totalWorkSSAs + 1) // memref<Nxi8> from ReinterpretCast
+                    let rawEnvSSA, envMemrefSSA = layout.EnvReconstructionSSAs
                     let dynMemrefTy = TMemRef(TInt (IntWidth 8))
                     let envReconstructionOps = [
                         MLIROp.MemRefOp(MemRefOp.IndexToMemRef(rawEnvSSA, SSA.Arg 0, dynMemrefTy))
@@ -475,7 +447,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match closureLayoutOpt with
                 | Some _ -> "env" :: (params' |> List.map (fun (name, _, _) -> name))
                 | None -> params' |> List.map (fun (name, _, _) -> name)
-            match tryMatchWithDiagnostics (pFunctionDef funcName funcParams (Some paramNames) returnType bodyOps returnSSA) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            match tryMatchWithDiagnostics (pFunctionDef funcName funcParams (Some paramNames) returnType bodyOps returnSSA (lookupUnitReturn node.Id ctx.Coeffects.SSA)) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
@@ -600,26 +572,33 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                             | _ ->
                                 // Scalar: single reinterpret_cast + store
                                 let viewSSA = layout.CaptureInsertSSAs.[ssaIdx]
-                                ssaIdx <- ssaIdx + 1
+                                let extractSSAOpt =
+                                    if cap.ExtractsBasePointer then Some layout.CaptureInsertSSAs.[ssaIdx + 1] else None
+                                ssaIdx <- ssaIdx + (if cap.ExtractsBasePointer then 2 else 1)
                                 let viewTy = TMemRefStatic (1, cap.SlotType)
                                 let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (viewSSA, layout.ClosureUndefSSA, captureByteOffset, 1, closureTy, viewTy))
                                 ctx.ScopeContext := ScopeContext.addOp castOp !ctx.ScopeContext
-                                // If capture slot expects index but source is a memref, extract base pointer.
-                                // Records, arrays, and other heap-allocated types are memref in MLIR but
-                                // the closure slot stores them as index (raw pointer).
+                                // A slot holding a memref value (a record, an array, a mutable cell) as its
+                                // base index: the extraction value is the layout's, derived from the capture's
+                                // type. The accumulator's type must agree, or the derivation and the emission
+                                // have diverged, which is reported, never patched here.
+                                let sourceType =
+                                    if i < savedCaptureSSAs.Length then savedCaptureSSAs.[i] |> Option.map snd else None
+                                let sourceIsMemRef =
+                                    match sourceType with
+                                    | Some (TMemRefStatic _ | TMemRef _) -> true
+                                    | _ -> false
                                 let actualCapSSA =
-                                    if i < savedCaptureSSAs.Length then
-                                        match savedCaptureSSAs.[i] with
-                                        | Some (_, srcTy) when cap.SlotType = TIndex && (match srcTy with TMemRefStatic _ | TMemRef _ -> true | _ -> false) ->
-                                            // Source is memref but slot is index — extract base pointer
-                                            let tempIdx = ctx.Accumulator.MLIRTempCounter
-                                            ctx.Accumulator.MLIRTempCounter <- tempIdx + 1
-                                            let extractSSA = V (10000 + tempIdx)  // High range to avoid collision with pre-computed SSAs
-                                            let extractOp = MLIROp.MemRefOp(MemRefOp.ExtractBasePtr(extractSSA, capSSA, srcTy))
-                                            ctx.ScopeContext := ScopeContext.addOp extractOp !ctx.ScopeContext
-                                            extractSSA
-                                        | _ -> capSSA
-                                    else capSSA
+                                    match extractSSAOpt, sourceIsMemRef with
+                                    | Some extractSSA, true ->
+                                        let extractOp = MLIROp.MemRefOp(MemRefOp.ExtractBasePtr(extractSSA, capSSA, sourceType.Value))
+                                        ctx.ScopeContext := ScopeContext.addOp extractOp !ctx.ScopeContext
+                                        extractSSA
+                                    | None, false -> capSSA
+                                    | Some _, false ->
+                                        failwithf "LambdaWitness: closure %d capture '%s' was derived to extract a base pointer (index slot, memref source) but its source is bound as %A" nodeIdValue cap.Name sourceType
+                                    | None, true ->
+                                        failwithf "LambdaWitness: closure %d capture '%s' binds a memref source to an index slot with no extraction value derived; SSAAssignment.captureExtractsBasePointer does not cover its type" nodeIdValue cap.Name
                                 let storeOp = MLIROp.MemRefOp (MemRefOp.Store (actualCapSSA, viewSSA, [zeroSSA], cap.SlotType, viewTy))
                                 ctx.ScopeContext := ScopeContext.addOp storeOp !ctx.ScopeContext
                         | None ->
@@ -628,7 +607,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                             // Still advance ssaIdx for consistency
                             match cap.SlotType with
                             | TStruct [("ptr", TIndex); ("len", TIndex)] -> ssaIdx <- ssaIdx + 5
-                            | _ -> ssaIdx <- ssaIdx + 1
+                            | _ -> ssaIdx <- ssaIdx + (if cap.ExtractsBasePointer then 2 else 1)
                         captureByteOffset <- captureByteOffset + sizeOf cap.SlotType
 
                     // 5. Build uniform pair {code_ptr, env_ptr}

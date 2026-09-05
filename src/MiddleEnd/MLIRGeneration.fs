@@ -78,7 +78,16 @@ let generate
         // Compute coeffects on flattened graph (SSAs reflect flattened parameter structure)
         // ValuePosition runs first — SSAAssignment consumes it for VarRef SSA cost decisions
         let valuePosition = PSGElaboration.ValuePositionAnalysis.analyze flattenedGraph
-        let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA arch flattenedGraph saturatedCallArgCounts valuePosition
+
+        // FPGA pin mapping coeffect (FPGA targets only); SSAAssignment reads it to derive the
+        // hardware module's values (the power-on reset, the flat input packing, the output flattening)
+        let pinMapping =
+            match targetPlatform with
+            | Core.Types.Dialects.TargetPlatform.FPGA ->
+                PSGElaboration.PlatformPinResolution.resolve flattenedGraph
+            | _ -> None
+
+        let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA targetPlatform arch flattenedGraph saturatedCallArgCounts valuePosition pinMapping
         let mutability = PSGElaboration.MutabilityAnalysis.analyze flattenedGraph
         let yieldStates = PSGElaboration.YieldStateIndices.run flattenedGraph
         let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze flattenedGraph
@@ -99,13 +108,6 @@ let generate
                 dir ssaAssignment mutability yieldStates patternBindings strings
                 ssaAssignment.DeclarationRootLambdas flattenedGraph
         | None -> ()
-
-        // Compute FPGA pin mapping coeffect (FPGA targets only)
-        let pinMapping =
-            match targetPlatform with
-            | Core.Types.Dialects.TargetPlatform.FPGA ->
-                PSGElaboration.PlatformPinResolution.resolve flattenedGraph
-            | _ -> None
 
         // Build TransferCoeffects
         let coeffects : TransferCoeffects = {

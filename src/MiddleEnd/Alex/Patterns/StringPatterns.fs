@@ -1,7 +1,7 @@
 /// StringPatterns - String operation elision patterns
 ///
 /// Provides composable patterns for string operations using XParsec.
-/// Strings are represented as fat pointers: {ptr: index, length: int}
+/// Strings are memref views: a buffer and its extent (representation chapters; no {base, length} header)
 ///
 /// ARCHITECTURAL RESTORATION (Feb 2026): All patterns use NodeId-based API.
 /// Patterns extract SSAs monadically via getNodeSSAs - witnesses pass NodeIds, not SSAs.
@@ -23,7 +23,7 @@ open Alex.CodeGeneration.TypeMapping
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
-open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad, pDetectMemRefAddFusion
+open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad
 
 // ═══════════════════════════════════════════════════════════
 // MEMORY COPY PATTERN (composed from FuncElements)

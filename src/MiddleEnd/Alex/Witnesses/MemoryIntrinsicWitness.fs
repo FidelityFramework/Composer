@@ -1,9 +1,9 @@
-/// MemoryIntrinsicWitness - Witness MemRef/Arena intrinsic operations
+/// MemoryIntrinsicWitness - Witness Arena and Array intrinsic operations
 ///
 /// Composes per-operation parsers with <|> — no dispatch hub.
 /// Each parser self-checks via pIntrinsicApplication + ensure.
 ///
-/// NANOPASS: Handles MemRef.* and Arena.* intrinsic applications.
+/// NANOPASS: Handles Arena.* and Array.* intrinsic applications.
 module Alex.Witnesses.MemoryIntrinsicWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
@@ -15,9 +15,7 @@ open XParsec.Combinators  // <|>
 
 let private witnessMemoryIntrinsic (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     let combined =
-        pMemRefAllocaIntrinsic <|> pMemRefStoreIntrinsic <|> pMemRefLoadIntrinsic
-        <|> pMemRefCopyIntrinsic <|> pMemRefAddIntrinsic
-        <|> pArenaCreateIntrinsic <|> pArenaAllocIntrinsic
+        pArenaCreateIntrinsic <|> pArenaAllocIntrinsic
         <|> pArrayZeroCreateIntrinsic <|> pArrayGetIntrinsic <|> pArraySetIntrinsic <|> pArraySubIntrinsic
         <|> pArrayLengthIntrinsic <|> pArrayBlitIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

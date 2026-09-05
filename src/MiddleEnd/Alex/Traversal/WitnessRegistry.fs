@@ -7,7 +7,7 @@
 /// As each witness is migrated, uncomment its registration below.
 module Alex.Traversal.WitnessRegistry
 
-// Suppress FS0040: Y-combinator uses delayed initialization for recursive scope witnesses
+// Suppress the F# compiler's warning 40: the Y-combinator uses delayed initialization for recursive scope witnesses
 // This is safe - Lazy<_> ensures proper initialization order
 #nowarn "40"
 

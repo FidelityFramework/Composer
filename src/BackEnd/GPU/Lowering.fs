@@ -168,7 +168,7 @@ let private findKernelEntry (funcs: DeviceFunc list) (kernelName: string) : Resu
 /// The application supplies the compute function; the toolchain supplies
 /// the data movement — the same division of labour the NPU leg uses. The
 /// Clef side never names a buffer, which is why it lowers at all: a
-/// nativeptr parameter arrives as a bare `index` carrying neither extent
+/// pointer parameter (the compiler-internal TNativePtr, witnessed as index) arrives as a bare `index` carrying neither extent
 /// nor address space, and the ROCDL pipeline cannot legalise it. Here the
 /// buffers are genuine memrefs that the toolchain can place and size.
 ///
