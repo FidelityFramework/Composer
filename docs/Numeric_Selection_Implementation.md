@@ -150,7 +150,7 @@ Layering (so reviewers don't mistake it for the paper's equation): `R(target) = 
 
 **`Fidelity.Physics` is planned, not built.** Its normative surface is the design sketch in [`numeric-selection.md` §4](../../clef-lang-spec/spec/numeric-selection.md#4-the-fidelityphysics-mechanism-design-sketch); do not write integration code until the binding contract is ratified. This section records the *implementation obstacle* the contract must resolve — which is Composer-HOW, not spec-WHAT.
 
-**The type-checking obstacle.** `Expr<DomainRange<measure>>` **does not type-check**: F# `[<Measure>]` types are a separate kind, not first-class type arguments, and `FSharp.Quotations` reflects over value-level `Expr<'T>`, not measure-level indices. Two coherent designs:
+**The type-checking obstacle.** `Expr<DomainRange<measure>>` **does not type-check**: F# `[<Measure>]` types are a separate kind, not first-class type arguments, and quotations reflect over value-level `Expr<'T>`, not measure-level indices. Two coherent designs:
 
 - **Design A — quotation-symbolic (recommended).** The range law is `Expr<float -> ... -> float>` over *unmeasured* floats, its dimension carried by a separate companion attribute (not a measure type-argument). PSG elaboration **symbolically interval-evaluates the quotation AST** to produce `[a,b]`; regime classification then runs over the resulting `[a,b]` *value*, so active patterns are value classifiers, not AST matchers. Matches the Farscape `Expr<PeripheralDescriptor>` precedent.
 - **Design B — value-level registry.** The library registers ordinary runtime `DomainRange` values keyed by dimension via an attribute; no quotations. Simpler, but loses compile-time symbolic derivation of derived ranges.

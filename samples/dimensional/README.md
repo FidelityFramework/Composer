@@ -50,3 +50,4 @@ dotnet build /home/hhh/repos/Composer/src/Composer.fsproj   # vet.sh never build
   judges 10 of 10. NS-1/reject moved back to accept as foreseen: the interim operator type that rejected it is
   gone, and its own rule waits on step 8.
 
+**Reading after CS-8 (2026-09-04):** 24 of 46, 10 of 10 judged through step 2, identical to CS-7 except that the ten M rows now print the located `CCS8706` (the step-5 types `Stack`, `Flash`, `Peripheral` are not defined yet) as their first error instead of a later `CCS8009` or a Composer type-mapping failure. Baseline transcript: `vet-cs8.txt` in the session scratchpad.

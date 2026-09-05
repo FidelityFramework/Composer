@@ -98,6 +98,10 @@ let rec visitAllNodes
             if traceTraversal then printfn "[visitAllNodes] Node %A: visiting %d children" currentNode.Id currentNode.Children.Length
             currentNode.Children |> List.iteri (fun childIndex childId ->
                 match SemanticGraph.tryGetNode childId visitedCtx.Graph with
+                | Some childNode when not childNode.IsReachable ->
+                    // Reachability is CCS's decision, read here: a child the graph marks unreachable
+                    // (a module's quotation declaration, D9; anything nothing executes) is not witnessed.
+                    if traceTraversal then printfn "[visitAllNodes] Node %A: child %A is unreachable; not witnessed" currentNode.Id childId
                 | Some childNode ->
                     // Navigate zipper DOWN to this child — builds path with parent breadcrumb
                     match PSGZipper.down childIndex visitedCtx.Zipper with
