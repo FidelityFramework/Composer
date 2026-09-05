@@ -76,7 +76,7 @@
       <Compile Include="MiddleEnd/Alex/Traversal/CoverageValidation.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/NanopassArchitecture.fs" />
 
-      <!-- Alex CodeGeneration - TypeSizing uses TypeMapping (moved earlier) -->
+      <!-- Alex CodeGeneration -->
 
       <!-- Alex XParsec - Composable PSG pattern matchers -->
       <Compile Include="MiddleEnd/Alex/XParsec/PSGCombinators.fs" />

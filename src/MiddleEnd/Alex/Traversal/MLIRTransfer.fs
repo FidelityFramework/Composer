@@ -58,7 +58,7 @@ let transfer
         // Write partial MLIR to intermediate file for debugging (even with errors)
         match intermediatesDir with
         | Some dir ->
-            let mlirText = moduleToString "main" cleanedOps
+            let mlirText = moduleToString coeffects.Platform.TargetArch.Pointer "main" cleanedOps
             let mlirPath = Path.Combine(dir, "07_output.mlir")
             File.WriteAllText(mlirPath, mlirText)
         | None -> ()

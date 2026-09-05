@@ -25,8 +25,8 @@ open Alex.CodeGeneration.TypeMapping
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Compute byte offset of a field within a TStruct from preceding fields
-let structFieldByteOffset (fields: (string * MLIRType) list) (idx: int) : int =
-    fields |> List.take idx |> List.sumBy (fun (_, t) -> mlirTypeSize t)
+let structFieldByteOffset (arch: Architecture) (fields: (string * MLIRType) list) (idx: int) : int =
+    fields |> List.take idx |> List.sumBy (fun (_, t) -> mlirTypeSize arch t)
 
 /// Find field index and type by name within a TStruct
 let structFieldLookup (fields: (string * MLIRType) list) (fieldName: string) : (int * MLIRType) option =
@@ -61,7 +61,7 @@ let pBuildRecord
             // extended by the sign of its own range (extui / extsi, read from the value's node);
             // a value wider than its field cannot occur, since the field's range is the join of
             // every construction's, and is a stop. SSA layout: [0] = result, [1 + 3*i] = the
-            // extension of field i where one is needed (the CPU layout's spare per-field SSAs).
+            // extension of field i where one is needed (the per-field SSAs the CPU layout derives).
             let resultSSA = ssas.[0]
             let! state = getUserState
             let declared =
@@ -88,7 +88,9 @@ let pBuildRecord
 
         | _ ->
             // CPU: alloca + pTypedInsertView per field
-            let (count, elemType) = extractMemRefShape structTy
+            let! state = getUserState
+            let arch = state.Platform.TargetArch
+            let (count, elemType) = extractMemRefShape arch structTy
             let memrefTy = TMemRefStatic (count, elemType)
             let allocSSA = ssas.[0]
             let! allocOp = pAllocValue nodeId allocSSA memrefTy
@@ -105,7 +107,7 @@ let pBuildRecord
                             match structTy with
                             | TStruct allFields ->
                                 match structFieldLookup allFields fieldName with
-                                | Some (fieldIdx, _) -> parser { return structFieldByteOffset allFields fieldIdx }
+                                | Some (fieldIdx, _) -> parser { return structFieldByteOffset arch allFields fieldIdx }
                                 | None -> fail (Message $"Record field '{fieldName}' not found in struct type — CCS must provide complete field metadata")
                             | _ -> fail (Message $"Record construction requires TStruct type, got {structTy} — type mapping must produce TStruct for records")
                         return! pTypedInsertView allocSSA valueSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
@@ -162,7 +164,9 @@ let pBuildRecordCopyWith
 
         | _ ->
             // CPU: alloca + memcpy from original + overwrite updated fields
-            let (count, elemType) = extractMemRefShape structTy
+            let! state = getUserState
+            let arch = state.Platform.TargetArch
+            let (count, elemType) = extractMemRefShape arch structTy
             let memrefTy = TMemRefStatic (count, elemType)
             let totalBytes = count
             let allocSSA = ssas.[0]
@@ -209,7 +213,7 @@ let pBuildRecordCopyWith
                             match structTy with
                             | TStruct allFields ->
                                 match structFieldLookup allFields fieldName with
-                                | Some (fieldIdx, _) -> structFieldByteOffset allFields fieldIdx
+                                | Some (fieldIdx, _) -> structFieldByteOffset arch allFields fieldIdx
                                 | None -> 0
                             | _ -> 0
                         return! pTypedInsertView allocSSA valueSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
@@ -246,11 +250,13 @@ let pRecordFieldSet
             match structFieldLookup fields fieldName with
             | Some (fieldIdx, fieldType) ->
                 do! ensure (ssas.Length >= 3) $"pRecordFieldSet: Expected 3 SSAs, got {ssas.Length}"
+                let! state = getUserState
+                let arch = state.Platform.TargetArch
                 let offsetSSA = ssas.[0]
                 let viewSSA   = ssas.[1]
                 let zeroSSA   = ssas.[2]
-                let byteOffset = structFieldByteOffset fields fieldIdx
-                let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize t), TInt (IntWidth 8))
+                let byteOffset = structFieldByteOffset arch fields fieldIdx
+                let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize arch t), TInt (IntWidth 8))
                 let! storeOps = pTypedInsertView structSSA valueSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
                 return (storeOps, TRVoid)
             | None ->
@@ -292,12 +298,14 @@ let pRecordFieldGet
                     // CPU: pTypedExtractView at byte offset
                     // SSAs: [offset, view, zero, result]
                     do! ensure (ssas.Length >= 4) $"pRecordFieldGet: Expected 4 SSAs, got {ssas.Length}"
+                    let! state = getUserState
+                    let arch = state.Platform.TargetArch
                     let offsetSSA = ssas.[0]
                     let viewSSA   = ssas.[1]
                     let zeroSSA   = ssas.[2]
                     let resultSSA = ssas.[3]
-                    let byteOffset = structFieldByteOffset fields fieldIdx
-                    let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize t), TInt (IntWidth 8))
+                    let byteOffset = structFieldByteOffset arch fields fieldIdx
+                    let memrefTy = TMemRefStatic (fields |> List.sumBy (fun (_, t) -> mlirTypeSize arch t), TInt (IntWidth 8))
                     let! extractOps = pTypedExtractView resultSSA structSSA byteOffset offsetSSA viewSSA zeroSSA fieldType memrefTy
                     return (extractOps, TRValue { SSA = resultSSA; Type = fieldType })
 

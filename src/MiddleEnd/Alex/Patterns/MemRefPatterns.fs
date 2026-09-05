@@ -16,7 +16,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.MemRefElements
 open Alex.Elements.IndexElements  // pIndexConst
 open Alex.Dialects.Core.Types
-open Alex.CodeGeneration.TypeMapping  // mlirTypeSizeForArch
+open Alex.CodeGeneration.TypeMapping  // mlirTypeSize
 
 // ═══════════════════════════════════════════════════════════
 // MUTABLE VARIABLE PATTERNS
@@ -200,12 +200,13 @@ let pGlobalSlotStore (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (valu
 let pBuildAddressOf (nodeId: NodeId) (valueSSA: SSA) (elemType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
+        let! state = getUserState
         // Determine if the value is memref-backed (data behind the descriptor's pointer).
         // TStruct is the semantic type for records; physical representation is memref<Nxi8>.
         let physicalMemrefType =
             match elemType with
             | TMemRefStatic _ | TMemRef _ | TMemRefScalar _ -> Some elemType
-            | TStruct _ -> Some (TMemRefStatic (mlirTypeSize elemType, TInt (IntWidth 8)))
+            | TStruct _ -> Some (TMemRefStatic (mlirTypeSize state.Platform.TargetArch elemType, TInt (IntWidth 8)))
             | _ -> None
         match physicalMemrefType with
         // Memref-backed values: extract the data pointer directly — no alloca.

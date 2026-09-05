@@ -59,7 +59,6 @@ let private literalExpansionCost (lit: NativeLiteral) : int =
 /// CRITICAL: Must check Layout + NTUKind first to match TypeMapping behavior,
 /// especially for PlatformWord types like int which depend on target architecture.
 let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType =
-    let wordWidth = platformWordWidth arch
     /// One type-constructor table for both the `TApp` and the `TNum` forms (as in TypeMapping):
     /// a numeric type is read off its carrier exactly as the arity-0 `TApp` was.
     let mapTyCon (tycon: TypeConRef) (args: NativeType list) : MLIRType =
@@ -80,14 +79,14 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         | _, Some (NTUKind.NTUint (NTUWidth.Fixed 64)) -> TInt (IntWidth 64)
         | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 64)) -> TInt (IntWidth 64)
         // Platform-word integers (int, uint, nativeint, size_t, ptrdiff_t)
-        // Size depends on target architecture via platformWordWidth
+        // the declared Register width (plan D8, L-10)
         | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
         | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register))
         | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Pointer))
         | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Pointer))
         | TypeLayout.PlatformWord, Some NTUKind.NTUsize
         | TypeLayout.PlatformWord, Some NTUKind.NTUdiff
-        | TypeLayout.PlatformWord, None -> TInt wordWidth  // Platform word resolved per architecture
+        | TypeLayout.PlatformWord, None -> TInt (declaredWordWidth arch)  // the declared Register width
         // Pointers
         | TypeLayout.PlatformWord, Some NTUKind.NTUptr
         | TypeLayout.PlatformWord, Some NTUKind.NTUfnptr -> TIndex
@@ -107,14 +106,14 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
             match tycon.Name with
             | "byref" | "inref" | "outref" -> TIndex
             | "array" ->
-                let sizeOf = mlirTypeSizeForArch arch
+                let sizeOf = mlirTypeSize arch
                 let totalBytes = sizeOf TIndex + sizeOf (TInt (IntWidth 64))
                 TMemRefStatic(totalBytes, TInt (IntWidth 8))  // Fat pointer
             | "option" | "voption" ->
                 match args with
                 | [innerTy] ->
                     let innerMlir = mapCaptureType arch innerTy
-                    let totalBytes = 1 + mlirTypeSizeForArch arch innerMlir
+                    let totalBytes = 1 + mlirTypeSize arch innerMlir
                     TMemRefStatic(totalBytes, TInt (IntWidth 8))
                 | _ -> TIndex  // Fallback
             | _ ->
@@ -137,7 +136,7 @@ let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType 
         TMemRefStatic(2, TIndex)
     | NativeType.TTuple (elements, _) ->
         let elementTypes = elements |> List.map (mapCaptureType arch)
-        let totalBytes = elementTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        let totalBytes = elementTypes |> List.sumBy (mlirTypeSize arch)
         TMemRefStatic(totalBytes, TInt (IntWidth 8))
     | NativeType.TVar tvar ->
         // Resolve type variable using Union-Find
@@ -247,7 +246,7 @@ let private computeLambdaSSACost (arch: Architecture) (graph: SemanticGraph) (ca
 /// Build the environment struct type from captures
 let private buildEnvStructType (arch: Architecture) (captures: CaptureInfo list) : MLIRType =
     let slotTypes = captures |> List.map (captureSlotType arch)
-    let totalBytes = slotTypes |> List.sumBy (mlirTypeSizeForArch arch)
+    let totalBytes = slotTypes |> List.sumBy (mlirTypeSize arch)
     TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
 /// Build complete ClosureLayout from Lambda captures and pre-assigned SSAs
@@ -328,7 +327,7 @@ let private buildClosureLayout
     // This eliminates lifetime issues - closure is returned by value with all state inline
     let captureTypes = captures |> List.map (captureSlotType arch)
     let fieldTypes = TIndex :: captureTypes
-    let sizeOf = mlirTypeSizeForArch arch
+    let sizeOf = mlirTypeSize arch
     let totalBytes = fieldTypes |> List.sumBy sizeOf
     let closureStructType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
@@ -447,7 +446,7 @@ let private buildDULayout
     let caseStructType =
         match payloadType with
         | Some pType ->
-            let totalBytes = 1 + mlirTypeSizeForArch arch pType
+            let totalBytes = 1 + mlirTypeSize arch pType
             TMemRefStatic(totalBytes, TInt (IntWidth 8))
         | None ->
             TMemRefStatic(1, TInt (IntWidth 8))
@@ -550,6 +549,9 @@ let private computeMatchSSACost (graph: SemanticGraph) (scrutineeId: NodeId) (ca
 /// SSA traversal context — bundles all invariant state for the recursive traversal.
 /// Only `scope` and `nodeId` vary per call; everything else is created once in `assignSSA`.
 type private SSAContext = {
+    /// The target: the fabric leg holds a DU or a record as an hw.struct at its settled widths
+    /// and derives no byte layout for it
+    TargetPlatform: Core.Types.Dialects.TargetPlatform
     Arch: Architecture
     Graph: SemanticGraph
     ClosureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>
@@ -811,8 +813,8 @@ let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType o
                 let okMlir = mapCaptureType arch okTy
                 let errorMlir = mapCaptureType arch errorTy
                 // Pick the larger type (same logic as TypeMapping.maxMLIRType)
-                let okSize = mlirTypeSizeForArch arch okMlir
-                let errorSize = mlirTypeSizeForArch arch errorMlir
+                let okSize = mlirTypeSize arch okMlir
+                let errorSize = mlirTypeSize arch errorMlir
                 Some (if okSize >= errorSize then okMlir else errorMlir)
             | _ -> None
         // Other DUs with known layout
@@ -1255,7 +1257,10 @@ let rec private assignFunctionBody
                     // Compute ClosureLayout immediately using the allocated SSAs from the parent scope
                     // Pass the context so witnesses know how to extract captures
                     // PRD-14: Pass graph and bodyId for lazy struct type computation
-                    if not (List.isEmpty captures) || requiresClosurePair then
+                    // A closure's byte layout is a core's, sized by the declared Pointer width; the
+                    // fabric leg holds no closure (a function is an hw.module, a value its instance)
+                    // and derives none (HelloArty, CS-11 review)
+                    if ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.FPGA && (not (List.isEmpty captures) || requiresClosurePair) then
                         let layout = buildClosureLayout ctx.Arch ctx.Graph node.Id bodyId captures ssas context
                         if not (ctx.ClosureLayouts.ContainsKey(NodeId.value node.Id)) then
                             ctx.ClosureLayouts.Add(NodeId.value node.Id, layout)
@@ -1281,8 +1286,10 @@ let rec private assignFunctionBody
             let alloc = NodeSSAAllocation.multi ssas
             let scopeWithAlloc = FunctionScope.assign node.Id alloc scopeWithSSAs
 
-            // Build DULayout for heterogeneous DUs needing arena allocation
-            if needsDUArenaAllocation node.Type then
+            // Build DULayout for heterogeneous DUs needing arena allocation: a core's byte layout,
+            // sized by the declared Pointer width; the fabric leg holds a DU as an hw.struct and
+            // reads no such layout (HelloArty, CS-11 review)
+            if ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.FPGA && needsDUArenaAllocation node.Type then
                 let layout = buildDULayout ctx.Arch ctx.Graph node.Id caseName caseIndex payloadOpt ssas
                 if not (ctx.DULayouts.ContainsKey(NodeId.value node.Id)) then
                     ctx.DULayouts.Add(NodeId.value node.Id, layout)
@@ -1704,6 +1711,7 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
     let mutableUnitReturns = System.Collections.Generic.Dictionary<int, SSA>()
 
     let ctx : SSAContext = {
+        TargetPlatform = targetPlatform
         Arch = arch
         Graph = graph
         ClosureLayouts = mutableClosureLayouts
@@ -2009,7 +2017,7 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
 
                     // Build the actual lazy struct type with captures inlined
                     let fieldTypes = TInt (IntWidth 1) :: elemMlir :: TIndex :: captureTypes
-                    let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+                    let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
                     let actualLazyType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
                     Some actualLazyType
 
@@ -2039,7 +2047,7 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
                         // Build the actual seq struct type with captures + internal state inlined
                         // Layout: {state: i32, current: T, code_ptr: ptr, cap0..., state0...}
                         let fieldTypes = TInt (IntWidth 32) :: elemMlir :: TIndex :: captureTypes @ internalStateTypes
-                        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+                        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
                         let actualSeqType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
                         Some actualSeqType
 

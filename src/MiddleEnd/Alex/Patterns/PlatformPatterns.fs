@@ -444,7 +444,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 |> List.mapi (fun i (_argId, (_ssa, ty)) ->
                     match ty with
                     | TStruct _ when not (isOptionArgument (fst (argWithIds.[i]))) ->
-                        let size = mlirTypeSize ty
+                        let size = mlirTypeSize state.Platform.TargetArch ty
                         if size > 16 then Some { ParamIndex = i; SizeBytes = size; AlignBytes = 8 }
                         else None
                     | _ -> None)
@@ -708,7 +708,7 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                 |> List.mapi (fun i (_argId, (_ssa, ty)) ->
                     match ty with
                     | TStruct _ when not (isOptionArgument (fst (argWithIds.[i]))) ->
-                        let size = mlirTypeSize ty
+                        let size = mlirTypeSize state.Platform.TargetArch ty
                         if size > 16 then Some { ParamIndex = i; SizeBytes = size; AlignBytes = 8 }
                         else None
                     | _ -> None)

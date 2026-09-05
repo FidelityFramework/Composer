@@ -155,7 +155,7 @@ let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (
     // Serialize intermediate (if -k flag enabled)
     match intermediatesDir with
     | Some dir ->
-        let mlirText = Alex.Dialects.Core.Serialize.moduleToString "main" afterDecls
+        let mlirText = Alex.Dialects.Core.Serialize.moduleToString platform.TargetArch.Pointer "main" afterDecls
         let filePath = System.IO.Path.Combine(dir, "08_after_declaration_collection.mlir")
         System.IO.File.WriteAllText(filePath, mlirText)
         if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then

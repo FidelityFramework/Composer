@@ -565,4 +565,4 @@ let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =
-    platformWordWidth ctx.Coeffects.Platform.TargetArch
+    declaredWordWidth ctx.Coeffects.Platform.TargetArch

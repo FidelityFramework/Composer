@@ -257,4 +257,4 @@ let private scope (ob: ObligationInfo) : MLIROp list =
 let transfer (obs: ObligationInfo list) : string =
     obs
     |> List.collect scope
-    |> moduleToString "obligations"
+    |> moduleToString (Error "the obligations module carries no pointer-sized type") "obligations"

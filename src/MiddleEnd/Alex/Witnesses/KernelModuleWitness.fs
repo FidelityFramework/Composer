@@ -149,7 +149,7 @@ let private resolveElementType (ctx: WitnessContext) (computeNodeId: NodeId) : s
             | other -> other
         let retNativeType = innerReturnType node.Type
         let mlirType = mapType retNativeType ctx
-        let typeStr = typeToString mlirType
+        let typeStr = typeToString ctx.Coeffects.Platform.TargetArch.Pointer mlirType
         Some typeStr
     | None -> None
 

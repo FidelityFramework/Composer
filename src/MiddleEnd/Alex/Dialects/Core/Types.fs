@@ -46,21 +46,6 @@ type MLIRType =
     | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
     | TError of string                      // Error type
 
-/// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct).
-/// Rank-1 memref descriptors are 5 words: {allocPtr, alignPtr, offset, size, stride}.
-let rec mlirTypeSize (ty: MLIRType) : int =
-    match ty with
-    | TInt w -> intWidthBytes w
-    | TFloat F32 -> 4 | TFloat F64 -> 8
-    | TFunc _ -> 16
-    | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 40
-    | TVector (_, elemTy) -> mlirTypeSize elemTy
-    | TIndex -> 8
-    | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
-    | TSeqClock -> 1
-    | TTag _ -> 1  // Tag is at least 1 byte; platform elision determines actual width
-    | TUnit -> 0 | TError _ -> 0
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM TYPES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -72,8 +57,8 @@ type OSFamily =
     | MacOS
     | FreeBSD
 
-/// Target CPU architecture
-type Architecture =
+/// The instruction set, for the OS and syscall selection.
+type Isa =
     | X86_64
     | ARM64
     | ARM32_Thumb
@@ -81,13 +66,57 @@ type Architecture =
     | RISCV32
     | WASM32
 
-/// Get the platform word width for a target CPU architecture.
-/// This determines the size of int, nativeint, size_t, ptrdiff_t on CPU targets.
-/// NOT applicable to FPGA — FPGA widths come from the design, not from a CPU model.
-let platformWordWidth (arch: Architecture) : IntWidth =
-    match arch with
-    | X86_64 | ARM64 | RISCV64 -> IntWidth 64
-    | ARM32_Thumb | RISCV32 | WASM32 -> IntWidth 32
+/// The target architecture as Composer reads it (plan D8, L-10; Dimensional_Range_Design.md
+/// §8.3): the instruction set, and the width dimensions the platform description declares,
+/// `Register` and `Pointer`, read once from the CCS context (PlatformConfig.resolveOSArch). There
+/// is no architecture table: a width the description does not declare carries CCS8203's text,
+/// and the site that needs it fails with that text, never with a number of its own. An FPGA
+/// description declares neither, and no site on the fabric leg reads them.
+type Architecture = {
+    Isa: Isa
+    Register: Result<int, string>
+    Pointer: Result<int, string>
+}
+
+/// The platform's word: the declared Register width as an MLIR integer width.
+let declaredWordWidth (arch: Architecture) : IntWidth =
+    match arch.Register with
+    | Ok bits -> IntWidth bits
+    | Error message -> failwith message
+
+/// The declared Pointer width in bytes: the size of an index, and the unit of a memref
+/// descriptor (five words) and a closure pair (two words).
+let declaredPointerBytes (arch: Architecture) : int =
+    match arch.Pointer with
+    | Ok bits -> (bits + 7) / 8
+    | Error message -> failwith message
+
+/// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct). The one
+/// size model (§8.3): every pointer-sized type (an index; a rank-1 memref descriptor,
+/// {allocPtr, alignPtr, offset, size, stride}, five words; a closure pair, two words) is sized by
+/// the declared Pointer width, and `pointer` is `Error` where no declaration is in hand
+/// (serialization), so that a pointer-sized field reaching such a path is a loud defect and
+/// never a silent eight bytes.
+let rec mlirTypeSizeWith (pointer: Result<int, string>) (ty: MLIRType) : int =
+    let pointerBytes () =
+        match pointer with
+        | Ok bits -> (bits + 7) / 8
+        | Error message -> failwith message
+    match ty with
+    | TInt w -> intWidthBytes w
+    | TFloat F32 -> 4 | TFloat F64 -> 8
+    | TFunc _ -> 2 * pointerBytes ()
+    | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 5 * pointerBytes ()
+    | TVector (_, elemTy) -> mlirTypeSizeWith pointer elemTy
+    | TIndex -> pointerBytes ()
+    | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSizeWith pointer ft)
+    | TSeqClock -> 1
+    | TTag _ -> 1  // Tag is at least 1 byte; platform elision determines actual width
+    | TUnit -> 0 | TError _ -> 0
+
+/// The size model read through the architecture's declared Pointer width.
+let mlirTypeSize (arch: Architecture) (ty: MLIRType) : int =
+    mlirTypeSizeWith arch.Pointer ty
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSA VALUES AND BLOCK REFERENCES

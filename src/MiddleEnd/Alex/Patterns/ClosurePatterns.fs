@@ -155,8 +155,8 @@ let pExtractCaptures (prefixByteOffset: int) (captureTypes: MLIRType list) (stru
                         ssaOffset <- ssaOffset + 8
 
                         let ptrByteOffset = byteOffset
-                        let lenByteOffset = byteOffset + mlirTypeSizeForArch arch TIndex
-                        byteOffset <- byteOffset + mlirTypeSizeForArch arch capTy
+                        let lenByteOffset = byteOffset + mlirTypeSize arch TIndex
+                        byteOffset <- byteOffset + mlirTypeSize arch capTy
 
                         // Load ptr (TIndex) at ptrByteOffset
                         let! ptrOps = pTypedExtract ptrSSA envPtrSSA ptrByteOffset ptrViewSSA ptrZeroSSA TIndex structType
@@ -176,7 +176,7 @@ let pExtractCaptures (prefixByteOffset: int) (captureTypes: MLIRType list) (stru
                         let resultSSA = ssas.[ssaOffset + 2]
                         ssaOffset <- ssaOffset + 3
                         let currentOffset = byteOffset
-                        byteOffset <- byteOffset + mlirTypeSizeForArch arch capTy
+                        byteOffset <- byteOffset + mlirTypeSize arch capTy
                         return! pTypedExtract resultSSA envPtrSSA currentOffset viewSSA zeroSSA capTy structType
                 })
             |> sequence
@@ -202,7 +202,7 @@ let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas
 
         // Compute closure type: {code_ptr: ptr, capture0, capture1, ...}
         let fieldTypes = codePtrTy :: (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
         let closureTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         // Create undef struct
@@ -280,7 +280,7 @@ let pLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (captur
 
         // Compute lazy type: {computed: i1, value: T, code_ptr: ptr, captures...}
         let fieldTypes = [TInt (IntWidth 1); valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
         let lazyTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         // Create undef struct
@@ -323,7 +323,7 @@ let pBuildLazyStruct (valueTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA) (c
 
         // Lazy type is {computed: i1, value: T, code_ptr, captures...}
         let fieldTypes = [TInt (IntWidth 1); valueTy; codePtrTy] @ (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
         let mlirType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         return (ops, TRValue { SSA = finalSSA; Type = mlirType })
@@ -397,7 +397,7 @@ let pSeqStruct (stateInit: int64) (currentTy: MLIRType) (codePtrTy: MLIRType) (c
         let fieldTypes = [TInt (IntWidth 32); currentTy; codePtrTy]
                          @ (captures |> List.map (fun cap -> cap.Type))
                          @ (internalState |> List.map (fun st -> st.Type))
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
         let seqTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         // Create undef struct
@@ -527,7 +527,7 @@ let pBuildSeqStruct (currentTy: MLIRType) (codePtrTy: MLIRType) (codePtr: SSA)
         let fieldTypes = [TInt (IntWidth 32); currentTy; codePtrTy]
                          @ (captures |> List.map (fun cap -> cap.Type))
                          @ (internalState |> List.map (fun st -> st.Type))
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSizeForArch arch)
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
         let mlirType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
         return (ops, TRValue { SSA = finalSSA; Type = mlirType })

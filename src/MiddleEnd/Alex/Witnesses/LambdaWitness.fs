@@ -22,7 +22,7 @@ open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
-open Alex.CodeGeneration.TypeMapping  // For resolveTypeParams, mlirTypeSizeForArch
+open Alex.CodeGeneration.TypeMapping  // For resolveTypeParams
 open Alex.Elements.MLIRAtomics  // For pUndef, pInsertValue, pExtractValue
 open Alex.Elements.FuncElements  // For pFuncConstant
 open PSGElaboration.SSAAssignment  // For lookupClosureLayout
@@ -315,7 +315,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     let captureTypes = layout.Captures |> List.map (fun cap -> cap.SlotType)
                     // Compute prefix byte offset (bytes before first capture in struct)
                     let arch = ctx.Coeffects.Platform.TargetArch
-                    let sizeOf = mlirTypeSizeForArch arch
+                    let sizeOf = mlirTypeSize arch
                     let prefixByteOffset =
                         match layout.Context with
                         | LambdaContext.RegularClosure -> sizeOf TIndex  // code_ptr = one platform word
@@ -516,7 +516,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     // scalar captures use 1 SSA. CaptureInsertSSAs is a flat list sized by
                     // captureConstructionSSACount per capture.
                     let arch = ctx.Coeffects.Platform.TargetArch
-                    let sizeOf = mlirTypeSizeForArch arch
+                    let sizeOf = mlirTypeSize arch
                     let mutable captureByteOffset = sizeOf codePtrTy  // Start after code_ptr
                     let mutable ssaIdx = 0  // Index into flat CaptureInsertSSAs list
                     for i in 0 .. layout.Captures.Length - 1 do

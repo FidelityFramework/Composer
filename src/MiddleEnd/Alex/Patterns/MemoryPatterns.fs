@@ -364,13 +364,13 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
 
 /// Record struct via Undef + InsertValue chain
 /// SSA layout: [0] = undefSSA, then for each field: [2*i+1] = offsetSSA, [2*i+2] = resultSSA
-let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
+let pRecordStruct (arch: Architecture) (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     parser {
         do! ensure (ssas.Length = 1 + 2 * fields.Length) $"pRecordStruct: Expected {1 + 2 * fields.Length} SSAs, got {ssas.Length}"
 
         // Compute struct type from field types
         let fieldTypes = fields |> List.map (fun f -> f.Type)
-        let totalBytes = fieldTypes |> List.sumBy mlirTypeSize
+        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
         let structTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
         let! undefOp = pUndef ssas.[0] structTy
 
@@ -390,19 +390,19 @@ let pRecordStruct (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
     }
 
 /// Tuple struct via Undef + InsertValue chain (same as record, but semantically different)
-let pTupleStruct (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
-    pRecordStruct elements ssas  // Same implementation, different semantic context
+let pTupleStruct (arch: Architecture) (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
+    pRecordStruct arch elements ssas  // Same implementation, different semantic context
 
 // ═══════════════════════════════════════════════════════════
 // ESCAPE-AWARE ALLOCATION
 // ═══════════════════════════════════════════════════════════
 
 /// Extract static memref shape from an MLIRType
-let extractMemRefShape (ty: MLIRType) =
+let extractMemRefShape (arch: Architecture) (ty: MLIRType) =
     match ty with
     | TMemRefStatic (count, elemType) -> (count, elemType)
     | TStruct fields ->
-        let totalBytes = fields |> List.sumBy (fun (_, ft) -> mlirTypeSize ft)
+        let totalBytes = fields |> List.sumBy (fun (_, ft) -> mlirTypeSize arch ft)
         (totalBytes, TInt (IntWidth 8))
     | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
 
@@ -429,13 +429,13 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
         | StackScoped ->
             return! pUndef ssa ty
         | StaticLifetime ->
-            let count, elemType = extractMemRefShape ty
+            let count, elemType = extractMemRefShape state.Platform.TargetArch ty
             let storageTy = TMemRefStatic (count, elemType)
             let globalName = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
             MLIRAccumulator.tryEmitGlobalMemref globalName storageTy state.Accumulator
             return! pMemRefGetGlobal ssa globalName storageTy
         | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
-            let count, elemType = extractMemRefShape ty
+            let count, elemType = extractMemRefShape state.Platform.TargetArch ty
             return! pAllocStatic ssa count elemType None
     }
 
@@ -750,7 +750,7 @@ let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
             match srcType with
             | TMemRef t | TMemRefStatic (_, t) -> t
             | _ -> TInt (IntWidth 8)
-        let elemSize = int64 (mlirTypeSizeForArch arch (physicalElementType arch elemTy))
+        let elemSize = int64 (mlirTypeSize arch (physicalElementType arch elemTy))
         let! srcBaseIdxOp = pExtractBasePtr ssas.[0] srcSSA srcType
         let! dstBaseIdxOp = pExtractBasePtr ssas.[1] dstSSA dstType
         let! srcBaseOp = pIndexCastS ssas.[2] ssas.[0] TIndex wordTy

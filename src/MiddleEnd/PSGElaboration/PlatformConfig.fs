@@ -157,13 +157,22 @@ let hasBinding (nodeId: int) (result: PlatformResolutionResult) : bool =
 /// Uses PlatformId to determine OS/arch. The PlatformId now comes from
 /// binding metadata (arch field) when available, or path-string inference for legacy.
 let resolveOSArch (ctx: Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext) : OSFamily * Architecture =
-    match ctx.PlatformId with
-    | id when id.Contains("x86_64") || id.Contains("x86-64") -> (Linux, X86_64)
-    | id when id.Contains("arm_cortex_m7") || id.Contains("arm_cortex_m33") || id.Contains("arm32") -> (Linux, ARM32_Thumb)
-    | id when id.Contains("ARM64") || id.Contains("aarch64") -> (Linux, ARM64)
-    | id when id.Contains("riscv64") -> (Linux, RISCV64)
-    | id when id.Contains("riscv32") -> (Linux, RISCV32)
-    | _ -> (Linux, X86_64)
+    let (os, isa) =
+        match ctx.PlatformId with
+        | id when id.Contains("x86_64") || id.Contains("x86-64") -> (Linux, X86_64)
+        | id when id.Contains("arm_cortex_m7") || id.Contains("arm_cortex_m33") || id.Contains("arm32") -> (Linux, ARM32_Thumb)
+        | id when id.Contains("ARM64") || id.Contains("aarch64") -> (Linux, ARM64)
+        | id when id.Contains("riscv64") -> (Linux, RISCV64)
+        | id when id.Contains("riscv32") -> (Linux, RISCV32)
+        | _ -> (Linux, X86_64)
+    // The declared width dimensions ride with the instruction set (plan D8, L-10): read once here
+    // from the context CCS filled at saturation, never from a table keyed on the instruction set.
+    let width (dimension: Clef.Compiler.NativeTypedTree.NativeTypes.WidthDimension) =
+        Clef.Compiler.NativeTypedTree.NativeTypes.PlatformContext.tryWidth ctx
+            (Clef.Compiler.NativeTypedTree.NativeTypes.WidthDimension.name dimension)
+    (os, { Isa = isa
+           Register = width Clef.Compiler.NativeTypedTree.NativeTypes.WidthDimension.Register
+           Pointer = width Clef.Compiler.NativeTypedTree.NativeTypes.WidthDimension.Pointer })
 
 /// Resolve runtime mode from PlatformContext binding metadata.
 /// When RuntimeModel is present (from [platform] section), it is authoritative.
