@@ -32,7 +32,7 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
             match SemanticGraph.tryGetNode targetId ctx.Graph with
             | Some { Kind = SemanticKind.VarRef (_, Some bindingId) } ->
                 match SemanticGraph.tryGetNode bindingId ctx.Graph with
-                | Some bindingNode when ModuleValues.isSlotBinding ctx.Graph bindingNode -> Some (bindingId, bindingNode)
+                | Some bindingNode when ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode -> Some (bindingId, bindingNode)
                 | _ -> None
             | _ -> None
         match slotTarget with

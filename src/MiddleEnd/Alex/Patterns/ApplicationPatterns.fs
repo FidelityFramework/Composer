@@ -144,6 +144,7 @@ let private pFpgaCombOp (operation: string) (resultSSA: SSA) (lhs: SSA) (rhs: SS
     | "mul" -> pCombMul resultSSA lhs rhs opTy
     | "div" -> pCombDivS resultSSA lhs rhs opTy
     | "rem" -> pCombMod resultSSA lhs rhs opTy
+    | "remu" -> pCombModU resultSSA lhs rhs opTy
     | "andi" -> pCombAnd resultSSA lhs rhs opTy
     | "ori" -> pCombOr resultSSA lhs rhs opTy
     | "xori" -> pCombXor resultSSA lhs rhs opTy
@@ -179,51 +180,79 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
         let! state = getUserState
         match targetPlatform with
         | FPGA ->
-            // FPGA: combinational logic (comb dialect)
-            // Determine operation width: max of operand widths and inferred result width
-            let lhsBits = match lhsType with TInt (IntWidth b) -> b | _ -> 0
-            let rhsBits = match rhsType with TInt (IntWidth b) -> b | _ -> 0
-            // Query the Application node's inferred result width via coeffect
-            let inferredResultTy = narrowForCurrent state (TInt (IntWidth 0))
-            let resBits = match inferredResultTy with TInt (IntWidth b) -> b | _ -> 0
-            // comb.* ops require all operands AND result at same width
-            let opBits = max (max lhsBits rhsBits) resBits
-            let opTy = if opBits > 0 then TInt (IntWidth opBits) else lhsType
+            // FPGA: combinational logic (comb dialect). Every width here is read from the range CCS
+            // wrote on a node (Dimensional_Range_Design.md §3.1, §8.3; plan L-7 and L-7b retired):
+            // the operation runs at the width of the join of the operand and result ranges, never
+            // narrower than an operand's physical width; each operand is extended to it by the sign
+            // of its own range (extui for a non-negative range, extsi otherwise); the result is
+            // truncated to its own range's width only where that is narrower (a modulus, a
+            // quotient, a mask); a division, modulus or right shift takes its unsigned form when
+            // the join is non-negative. Nothing is decided here: the ranges are CCS's.
+            let physical (side: string) (ty: MLIRType) =
+                match ty with
+                | TInt (IntWidth b) when b > 0 -> b
+                | other -> failwithf "pBinaryArithOp: the %s operand of '%s' on fabric is %A, not an integer of settled width" side operation other
+            let lhsBits = physical "left" lhsType
+            let rhsBits = physical "right" rhsType
+            let rangeOf (id: NodeId) (what: string) =
+                match nodeRange state.Graph id with
+                | Some r -> r
+                | None -> failwithf "pBinaryArithOp: %s of '%s' (node %d) has no analysed range" what operation (NodeId.value id)
+            let widthOfRange (r: ValueRange) (what: string) =
+                match ValueRange.width r with
+                | Some b -> b
+                | None -> failwithf "pBinaryArithOp: %s of '%s' has the unobservable range %s (CCS8011)" what operation (ValueRange.render r)
+            let lhsRange = rangeOf argIds.[0] "the left operand"
+            let rhsRange = rangeOf argIds.[1] "the right operand"
+            let resRange = rangeOf nodeId "the result"
+            // The operation's range is CCS's settled fact, read, not joined here (the standing rule:
+            // a witness computes no range).
+            let joined =
+                match Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis.operationRange state.Graph nodeId with
+                | Some r -> r
+                | None -> failwithf "pBinaryArithOp: '%s' (node %d) has an unannotated operand or result" operation (NodeId.value nodeId)
+            let resBits = widthOfRange resRange "the result"
+            let opBits = List.max [ lhsBits; rhsBits; resBits; widthOfRange joined "the join of the operands" ]
+            let opTy = TInt (IntWidth opBits)
+            let signed = not (ValueRange.isNonNegative joined)
+            let extend (ssa: SSA) (value: SSA) (fromTy: MLIRType) (range: ValueRange) =
+                parser { return (if ValueRange.isNonNegative range then MLIROp.ArithOp (ArithOp.ExtUI (ssa, value, fromTy, opTy))
+                                 else MLIROp.ArithOp (ArithOp.ExtSI (ssa, value, fromTy, opTy))) }
+            let needExtLhs = lhsBits < opBits
+            let needExtRhs = rhsBits < opBits
+            let needTrunc = resBits < opBits
 
-            // Emit extension ops for narrower operands (using spare SSAs from pool)
-            let needExtLhs = lhsBits > 0 && lhsBits < opBits
-            let needExtRhs = rhsBits > 0 && rhsBits < opBits
-            // Truncation needed when operation width exceeds inferred result width
-            // e.g. counter % maxCounterTicks: operands at i30, result interval → i29
-            let needTrunc = resBits > 0 && resBits < opBits
-
-            // Step 1: Emit extension ops, compute effective operand SSAs and comb result SSA
-            // SSA layout: [ext0?, ext1?, combResult, trunc?] — all within 5-SSA pool
+            // SSA layout: [ext0?, ext1?, combResult, trunc?] — all within the 5-SSA pool
             let! (extOps, effLhs, effRhs, combResultSSA, nextSSAIdx) =
                 match needExtLhs, needExtRhs with
                 | true, true ->
                     parser {
-                        let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
-                        let! extR = pExtSI ssas.[1] rhsSSA rhsType opTy
+                        let! extL = extend ssas.[0] lhsSSA lhsType lhsRange
+                        let! extR = extend ssas.[1] rhsSSA rhsType rhsRange
                         return ([extL; extR], ssas.[0], ssas.[1], ssas.[2], 3)
                     }
                 | true, false ->
                     parser {
-                        let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
+                        let! extL = extend ssas.[0] lhsSSA lhsType lhsRange
                         return ([extL], ssas.[0], rhsSSA, ssas.[1], 2)
                     }
                 | false, true ->
                     parser {
-                        let! extR = pExtSI ssas.[0] rhsSSA rhsType opTy
+                        let! extR = extend ssas.[0] rhsSSA rhsType rhsRange
                         return ([extR], lhsSSA, ssas.[0], ssas.[1], 2)
                     }
                 | false, false ->
                     parser { return ([], lhsSSA, rhsSSA, ssas.[0], 1) }
 
-            // Step 2: Emit the comb operation
-            let! op = pFpgaCombOp operation combResultSSA effLhs effRhs opTy
+            // The signed or unsigned form of the operation follows the join's sign
+            let form =
+                match operation, signed with
+                | "div", false -> "divu"
+                | "rem", false -> "remu"
+                | "shrsi", false -> "shrui"
+                | op, _ -> op
+            let! op = pFpgaCombOp form combResultSSA effLhs effRhs opTy
 
-            // Step 3: Truncate if operation width exceeds inferred result width
             if needTrunc then
                 let resTy = TInt (IntWidth resBits)
                 let truncSSA = ssas.[nextSSAIdx]
@@ -296,32 +325,59 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
         let! state = getUserState
         match targetPlatform with
         | FPGA ->
-            // FPGA: combinational comparison — operands must match width
-            let lhsBits = match lhsType with TInt (IntWidth b) -> b | _ -> 0
-            let rhsBits = match rhsType with TInt (IntWidth b) -> b | _ -> 0
-            // Comparison operands must match; result is always i1
-            let opBits = max lhsBits rhsBits
-            let opTy = if opBits > 0 then TInt (IntWidth opBits) else lhsType
+            // FPGA: combinational comparison. Both operands are extended to the width of the join
+            // of their ranges (no narrower than either's physical width), each by the sign of its
+            // own range, and the predicate is signed only when the join has a negative value
+            // (Dimensional_Range_Design.md §3.1). An operand that is not a sized integer (a tag)
+            // keeps its own type and is not extended.
+            let bits (ty: MLIRType) = match ty with TInt (IntWidth b) -> b | _ -> 0
+            let lhsBits = bits lhsType
+            let rhsBits = bits rhsType
+            let rangeOf (id: NodeId) (_physical: int) =
+                match nodeRange state.Graph id with
+                | Some r -> r
+                | None -> failwithf "pComparisonOp: an operand of '%s' (node %d) has no analysed range" predName (NodeId.value id)
+            let lhsRange = rangeOf argIds.[0] lhsBits
+            let rhsRange = rangeOf argIds.[1] rhsBits
+            // The comparison works in the join of its operands' ranges, CCS's settled facts read as
+            // one (the comparison node's own range is [0, 1] and is not part of it).
+            let joined =
+                match Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis.operandRange state.Graph nodeId with
+                | Some r -> r
+                | None -> failwithf "pComparisonOp: '%s' (node %d) has an unannotated operand" predName (NodeId.value nodeId)
+            let joinBits =
+                match ValueRange.width joined with
+                | Some b -> b
+                | None -> failwithf "pComparisonOp: the operands of '%s' have the unobservable range %s (CCS8011)" predName (ValueRange.render joined)
+            let opBits = List.max [ lhsBits; rhsBits; joinBits ]
+            let opTy = if lhsBits > 0 || rhsBits > 0 then TInt (IntWidth opBits) else lhsType
+            let signed = not (ValueRange.isNonNegative joined)
 
             match opTy with
             | TFloat _ ->
                 return! fail (Message $"FPGA does not support float comparison: {predName}")
             | _ ->
                 let icmpPred =
-                    match predName with
-                    | "eq"  -> ICmpPred.Eq
-                    | "ne"  -> ICmpPred.Ne
-                    | "lt"  -> ICmpPred.Slt
-                    | "le"  -> ICmpPred.Sle
-                    | "gt"  -> ICmpPred.Sgt
-                    | "ge"  -> ICmpPred.Sge
-                    | "ult" -> ICmpPred.Ult
-                    | "ule" -> ICmpPred.Ule
-                    | "ugt" -> ICmpPred.Ugt
-                    | "uge" -> ICmpPred.Uge
+                    match predName, signed with
+                    | "eq", _ -> ICmpPred.Eq
+                    | "ne", _ -> ICmpPred.Ne
+                    | "lt", true -> ICmpPred.Slt
+                    | "le", true -> ICmpPred.Sle
+                    | "gt", true -> ICmpPred.Sgt
+                    | "ge", true -> ICmpPred.Sge
+                    | "lt", false -> ICmpPred.Ult
+                    | "le", false -> ICmpPred.Ule
+                    | "gt", false -> ICmpPred.Ugt
+                    | "ge", false -> ICmpPred.Uge
+                    | "ult", _ -> ICmpPred.Ult
+                    | "ule", _ -> ICmpPred.Ule
+                    | "ugt", _ -> ICmpPred.Ugt
+                    | "uge", _ -> ICmpPred.Uge
                     | _ -> failwith $"Unknown FPGA comparison predicate: {predName}"
 
-                // Emit extension ops for narrower operands, then compare
+                let extend (ssa: SSA) (value: SSA) (fromTy: MLIRType) (range: ValueRange) =
+                    parser { return (if ValueRange.isNonNegative range then MLIROp.ArithOp (ArithOp.ExtUI (ssa, value, fromTy, opTy))
+                                     else MLIROp.ArithOp (ArithOp.ExtSI (ssa, value, fromTy, opTy))) }
                 let needExtLhs = lhsBits > 0 && lhsBits < opBits
                 let needExtRhs = rhsBits > 0 && rhsBits < opBits
 
@@ -329,18 +385,18 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
                     match needExtLhs, needExtRhs with
                     | true, true ->
                         parser {
-                            let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
-                            let! extR = pExtSI ssas.[1] rhsSSA rhsType opTy
+                            let! extL = extend ssas.[0] lhsSSA lhsType lhsRange
+                            let! extR = extend ssas.[1] rhsSSA rhsType rhsRange
                             return ([extL; extR], ssas.[0], ssas.[1], ssas.[2])
                         }
                     | true, false ->
                         parser {
-                            let! extL = pExtSI ssas.[0] lhsSSA lhsType opTy
+                            let! extL = extend ssas.[0] lhsSSA lhsType lhsRange
                             return ([extL], ssas.[0], rhsSSA, ssas.[1])
                         }
                     | false, true ->
                         parser {
-                            let! extR = pExtSI ssas.[0] rhsSSA rhsType opTy
+                            let! extR = extend ssas.[0] rhsSSA rhsType rhsRange
                             return ([extR], lhsSSA, ssas.[0], ssas.[1])
                         }
                     | false, false ->

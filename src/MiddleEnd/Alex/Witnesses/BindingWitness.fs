@@ -56,13 +56,14 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                     // Module-level value: initialize its program-lifetime slot (memref.global).
                     // References reload from the slot in whatever function they occur.
-                    elif ModuleValues.isSlotBinding ctx.Graph node then
+                    elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then
                         // The initializer may be a block (`let a = ... in { ... }`): its value is
                         // the last value node of the block, not the block node itself.
                         let initValueId = findLastValueNode valueId ctx.Graph
                         match MLIRAccumulator.recallNode initValueId ctx.Accumulator with
                         | Some (valueSSA, _) ->
-                            let valueTy = mapType node.Type ctx
+                            // the slot's element type at the binding's range width on fabric
+                            let valueTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                             let globalName = ModuleValues.globalName name node.Id
                             match tryMatchWithDiagnostics (pGlobalSlotInit node.Id globalName valueSSA valueTy)
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

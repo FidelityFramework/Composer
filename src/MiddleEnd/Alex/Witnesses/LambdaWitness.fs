@@ -249,7 +249,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                             | [] -> return []
                             | (_paramName, paramType, paramNodeId) :: rest ->
                                 let rawType = mapType paramType ctx
-                                let mlirType = narrowType ctx.Coeffects paramNodeId rawType
+                                let mlirType = narrowType ctx.Coeffects ctx.Graph paramNodeId rawType
                                 let! paramSSA = getNodeSSA paramNodeId
                                 let! restParams = extractParams rest
                                 return (paramSSA, mlirType) :: restParams
@@ -440,7 +440,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let returnType =
                 match bodyResult with
                 | Some (_, actualTy) -> actualTy
-                | None -> narrowType ctx.Coeffects actualValueNode rawReturnType
+                | None -> narrowType ctx.Coeffects ctx.Graph actualValueNode rawReturnType
 
             // Handle bodyResult based on return type
             let returnSSA =

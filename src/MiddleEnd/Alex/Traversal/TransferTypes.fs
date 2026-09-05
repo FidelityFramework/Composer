@@ -56,9 +56,6 @@ type TransferCoeffects = {
     /// Pin mapping for FPGA targets (None for CPU/MCU)
     /// Observed by HardwareModulePatterns (flat ports) and XDCTransfer (constraints)
     PinMapping: PSGElaboration.Coeffects.PlatformPinMapping option
-    /// Inferred value widths for FPGA targets (None for CPU)
-    /// Observed by TypeMapping for minimum-width MLIR type selection
-    WidthInference: PSGElaboration.IntervalAnalysis.WidthInferenceResult option
     /// VarRef nodes that reference function bindings and appear in value position.
     /// Observed by VarRefWitness to decide closure pair construction.
     /// Observed by SSAAssignment for SSA cost (7 vs 2).
@@ -521,9 +518,12 @@ module ModuleValues =
     /// member of a ModuleDef (the ModuleInit set of its module's classification) whose value is
     /// not a function. A binding nested inside a module-level value's initializer also carries
     /// MainPrologue (it is outside every function) but is a local of that initializer, not a slot.
-    let isSlotBinding (graph: SemanticGraph) (bindingNode: SemanticNode) : bool =
+    /// On fabric there is no program lifetime, no prologue and no slot: a module-level value is a
+    /// constant expression witnessed inside every hw.module that reads it (the per-module visited
+    /// set of the walk re-emits it there), so nothing is a slot on FPGA.
+    let isSlotBinding (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (bindingNode: SemanticNode) : bool =
         match bindingNode.Kind with
-        | SemanticKind.Binding _ when bindingNode.EmissionStrategy = EmissionStrategy.MainPrologue ->
+        | SemanticKind.Binding _ when platform <> Core.Types.Dialects.TargetPlatform.FPGA && bindingNode.EmissionStrategy = EmissionStrategy.MainPrologue ->
             let isModuleMember =
                 graph.ModuleClassifications.Value
                 |> Map.exists (fun _ classification -> List.contains bindingNode.Id classification.ModuleInit)

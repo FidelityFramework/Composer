@@ -120,14 +120,14 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                         match params' with
                         | (_, stateNativeType, stateParamNodeId) :: _ ->
                             let raw = mapType stateNativeType ctx
-                            Some (narrowType ctx.Coeffects stateParamNodeId raw)
+                            Some (narrowType ctx.Coeffects graph stateParamNodeId raw)
                         | _ -> None
                     // Extract InputType from second parameter (if present), narrowed via coeffect
                     let inputType =
                         match params' with
                         | _ :: (_, inputNativeType, inputParamNodeId) :: _ ->
                             let raw = mapType inputNativeType ctx
-                            Some (narrowType ctx.Coeffects inputParamNodeId raw)
+                            Some (narrowType ctx.Coeffects graph inputParamNodeId raw)
                         | _ -> None
                     // Extract OutputType from body expression's type
                     // If step returns (State, Output), the body type maps to TStruct [Item1; Item2]
@@ -147,7 +147,7 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                                     | _ -> nid
                                 | None -> nid
                             let lastValueId = findLastValue bodyId
-                            let narrowedRetType = narrowType ctx.Coeffects lastValueId retType
+                            let narrowedRetType = narrowType ctx.Coeffects graph lastValueId retType
                             match narrowedRetType with
                             | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
                             | _ -> None  // Single return type — no separate output
@@ -174,7 +174,7 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                                             | _ -> nid
                                         | None -> nid
                                     let lastId = findLast bodyId
-                                    let narrowed = narrowType ctx.Coeffects lastId retType
+                                    let narrowed = narrowType ctx.Coeffects graph lastId retType
                                     match narrowed with
                                     | TStruct (("Item1", TStruct retFields) :: _) -> Some retFields
                                     | _ -> None
@@ -185,8 +185,10 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                                     List.zip paramFields retFields
                                     |> List.map (fun ((name, paramFty), (_, retFty)) ->
                                         match paramFty, retFty with
-                                        | TInt (IntWidth a), TInt (IntWidth b) when a > 0 && b > 0 ->
-                                            (name, TInt (IntWidth (max a b)))
+                                        | TInt (IntWidth a), TInt (IntWidth b) when a > 0 && b > 0 && a <> b ->
+                                            // Both read the state type's FieldRanges CCS settled; a
+                                            // disagreement is a defect, never a width chosen here.
+                                            failwithf "HardwareModuleWitness: state field '%s' is %d bits as a parameter and %d bits as returned; the graph's FieldRanges must give one width" name a b
                                         | _ -> (name, paramFty))
                                 Some (TStruct unified)
                             | _ -> stateType
@@ -334,7 +336,7 @@ let private witnessHardwareModule
                 | None ->
                     // Step didn't provide state type — derive from init node type
                     let rawStateType = mapType initNode.Type ctx
-                    narrowType ctx.Coeffects initNodeId rawStateType
+                    narrowType ctx.Coeffects ctx.Graph initNodeId rawStateType
 
             // Verify state type is TStruct
             match stateType with
@@ -346,9 +348,9 @@ let private witnessHardwareModule
                         (fieldName, fieldTy, resetLit))
 
                 let narrowedInputType = inputType
-                // Clamp any remaining IntWidth 0 in nested output structs (e.g. ValueNone
-                // inner fields where no value flows — dead data, minimum 1-bit hw width).
-                let narrowedOutputType = outputType |> Option.map clampZeroWidths
+                // The output type was narrowed through the step body's type: every nested
+                // record field at its FieldRanges width (a field nothing constructs: one bit).
+                let narrowedOutputType = outputType
 
                 // ── 8. Build Mealy machine hw.module ──
                 let moduleName = qualifiedBindingName ctx.Graph node name

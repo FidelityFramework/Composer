@@ -19,6 +19,7 @@ open XParsec
 open XParsec.Parsers     // preturn, fail, getUserState, setUserState, updateUserState
 open XParsec.Combinators // >>=, |>>, .>>, >>., <|>, parser { }
 open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.UnionFind
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Traversal.PSGZipper
@@ -107,58 +108,104 @@ let platformWordBits (state: PSGParserState) : int =
     | Ok bits -> bits
     | Error message -> failwith message
 
-/// Narrow an MLIRType using per-node width inference coeffects.
-/// TInt → NodeWidths lookup. TStruct → StructNodeWidths lookup.
-/// Returns type unchanged if no inference is available or target is not FPGA.
-/// SINGLE entry point for all width narrowing. No string keys. No type names.
-let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (nodeId: NodeId) (ty: MLIRType) : MLIRType =
-    match coeffects.WidthInference with
-    | None -> ty
-    | Some result ->
-        let id = NodeId.value nodeId
-        match ty with
-        | TInt (IntWidth 0) ->
-            match Map.tryFind id result.NodeWidths with
-            | Some inferred -> TInt (IntWidth inferred.Bits)
-            | None ->
-                // Width inference fell through — same contract as HM "add a type annotation"
-                failwithf
-                    "error FPGA0001: Width inference could not resolve bit width for node %d.\n\
-                     The value has no observable range (no constants, operations, or DU cases bound it).\n\
-                     Add a width annotation to the declaration, e.g.: myField: int<32>\n\
-                     Or ensure the value is assigned from an expression with a known range." id
-        | TInt _ -> ty  // Already has a concrete width, don't override
-        | TStruct fields ->
-            let narrowedFields =
-                match Map.tryFind id result.StructNodeWidths with
-                | Some fieldWidths ->
-                    let widthMap = Map.ofList fieldWidths
-                    fields |> List.map (fun (name, fty) ->
-                        match fty with
-                        | TInt (IntWidth 0) ->
-                            match Map.tryFind name widthMap with
-                            | Some bits -> (name, TInt (IntWidth bits))
-                            | None ->
-                                failwithf
-                                    "error FPGA0001: Width inference could not resolve bit width for \
-                                     struct field '%s' (node %d).\n\
-                                     Add a width annotation, e.g.: %s: int<32>" name id name
-                        | _ -> (name, fty))
-                | None ->
-                    fields |> List.map (fun (name, fty) ->
-                        match fty with
-                        | TInt (IntWidth 0) ->
-                            failwithf
-                                "error FPGA0001: Width inference could not resolve bit width for \
-                                 struct field '%s' (node %d). No struct width entry exists.\n\
-                                 Add a width annotation, e.g.: %s: int<32>" name id name
-                        | _ -> (name, fty))
-            TStruct narrowedFields
-        | _ -> ty
+/// The range CCS wrote on a node at saturation (Dimensional_Range_Design.md §1; RangeAnalysis):
+/// read here, never computed. `None` for a node that is not an integer, boolean or char.
+let nodeRange (graph: SemanticGraph) (nodeId: NodeId) : ValueRange option =
+    SemanticGraph.tryGetNode nodeId graph |> Option.bind (fun n -> n.ValueRange)
 
-/// Narrow an MLIRType using the current node's inferred width (FPGA-aware).
+/// The width of a range for a value that must have one. Defence in depth only: CCS reports
+/// CCS8011 for every reachable integer whose range has no width, and compilation does not reach
+/// Composer with an error present, so this stop names a defect of the pipeline, not of the program.
+let private widthOf (describe: string) (range: ValueRange option) : int =
+    match range with
+    | Some r ->
+        match ValueRange.width r with
+        | Some bits -> bits
+        | None ->
+            failwithf "narrowType: %s has the unobservable range %s; CCS reports that as CCS8011 before Composer runs"
+                describe (ValueRange.render r)
+    | None ->
+        failwithf "narrowType: %s has no analysed range; RangeAnalysis ranges every reachable integer, so this value is not one"
+            describe
+
+/// The extension of a value to a wider type, by the sign of the value's range (§3.1: `extui` for a
+/// non-negative range, `extsi` otherwise; never by a type name).
+let extensionOp (graph: SemanticGraph) (valueNodeId: NodeId) (ssa: SSA) (value: SSA) (fromTy: MLIRType) (toTy: MLIRType) : MLIROp =
+    match nodeRange graph valueNodeId with
+    | Some r when ValueRange.isNonNegative r -> MLIROp.ArithOp (ArithOp.ExtUI (ssa, value, fromTy, toTy))
+    | Some _ -> MLIROp.ArithOp (ArithOp.ExtSI (ssa, value, fromTy, toTy))
+    | None -> failwithf "extensionOp: node %d has no analysed range to read the extension from" (NodeId.value valueNodeId)
+
+/// A type variable the type mapping has bound, followed to what it is bound to.
+let rec private followBound (ty: NativeType) : NativeType =
+    match ty with
+    | NativeType.TVar tp ->
+        match find tp with
+        | (_, Some bound) -> followBound bound
+        | _ -> ty
+    | _ -> ty
+
+/// The range of element `index` of a tuple-valued node, read through references to the tuple
+/// expression that builds it (a reference, a binding, a block's last value, an annotation).
+let rec private tupleElementRange (graph: SemanticGraph) (nodeId: NodeId) (index: int) : ValueRange option =
+    match SemanticGraph.tryGetNode nodeId graph with
+    | Some { Kind = SemanticKind.TupleExpr ids } -> List.tryItem index ids |> Option.bind (nodeRange graph)
+    | Some { Kind = SemanticKind.VarRef (_, Some defId) } -> tupleElementRange graph defId index
+    | Some ({ Kind = SemanticKind.Binding _ } as b) -> List.tryLast b.Children |> Option.bind (fun v -> tupleElementRange graph v index)
+    | Some ({ Kind = SemanticKind.PatternBinding _ } as b) -> List.tryLast b.Children |> Option.bind (fun v -> tupleElementRange graph v index)
+    | Some { Kind = SemanticKind.Sequential ids } -> List.tryLast ids |> Option.bind (fun v -> tupleElementRange graph v index)
+    | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } -> tupleElementRange graph inner index
+    | _ -> None
+
+/// Narrow one MLIR type by the native type it was mapped from. `TInt (IntWidth 0)` is
+/// TypeMapping's sentinel for "the width is the range's" (a platform-word integer on fabric): it
+/// becomes the width of `range`. A struct's sentinel fields become the widths of the record type's
+/// `FieldRanges` (nested records by the field's declared type), a tuple's the ranges of its
+/// elements by position, an option's payload the widths of the inner type.
+let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<string, Map<string, ValueRange>>)
+                         (describe: string) (range: ValueRange option) (elements: (int -> ValueRange option) option)
+                         (nativeTy: NativeType option) (ty: MLIRType) : MLIRType =
+    match ty with
+    | TInt (IntWidth 0) -> TInt (IntWidth (widthOf describe range))
+    | TStruct fields ->
+        match nativeTy |> Option.map followBound with
+        | Some (NativeType.TApp (tycon, [ inner ])) when tycon.Name = "option" || tycon.Name = "voption" ->
+            TStruct (fields |> List.map (fun (name, fty) ->
+                if name = "value" then name, narrowBy graph fieldRanges (sprintf "the payload of %s" describe) None None (Some inner) fty
+                else name, fty))
+        | Some (NativeType.TApp (tycon, _)) when (SemanticGraph.tryGetRecordFields tycon.Name graph).IsSome ->
+            let declared = SemanticGraph.tryGetRecordFields tycon.Name graph |> Option.defaultValue []
+            let ranges = Map.tryFind tycon.Name fieldRanges |> Option.defaultValue Map.empty
+            TStruct (fields |> List.map (fun (name, fty) ->
+                let declaredTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd
+                name, narrowBy graph fieldRanges (sprintf "field '%s' of '%s'" name tycon.Name) (Map.tryFind name ranges) None declaredTy fty))
+        | Some (NativeType.TTuple (elementTypes, _)) ->
+            TStruct (fields |> List.mapi (fun i (name, fty) ->
+                name, narrowBy graph fieldRanges (sprintf "element %d of %s" (i + 1) describe)
+                          (elements |> Option.bind (fun f -> f i)) None (List.tryItem i elementTypes) fty))
+        | _ ->
+            TStruct (fields |> List.map (fun (name, fty) ->
+                name, narrowBy graph fieldRanges (sprintf "%s.%s" describe name) None None None fty))
+    | _ -> ty
+
+/// The width of a node's value on fabric, read from the range CCS wrote on the node
+/// (Dimensional_Range_Design.md §3.1, §8.3: the FPGA leg reads the node; plan L-7, L-7b retired,
+/// with the platform-word default and the FPGA0001 throw of L-10). Nothing is computed here: a
+/// width is `ValueRange.width` of a range CCS settled, and a struct's field widths are the record
+/// type's `FieldRanges`. The one entry point for narrowing; identity on every other target.
+let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (graph: SemanticGraph) (nodeId: NodeId) (ty: MLIRType) : MLIRType =
+    match coeffects.TargetPlatform with
+    | Core.Types.Dialects.TargetPlatform.FPGA ->
+        match SemanticGraph.tryGetNode nodeId graph with
+        | None -> failwithf "narrowType: node %d is not in the graph" (NodeId.value nodeId)
+        | Some node ->
+            let describe = sprintf "node %d (%s)" (NodeId.value nodeId) (let k = sprintf "%A" node.Kind in k.Substring(0, min 40 k.Length))
+            narrowBy graph graph.FieldRanges.Value describe node.ValueRange (Some (tupleElementRange graph nodeId)) (Some node.Type) ty
+    | _ -> ty
+
+/// Narrow an MLIRType by the current node's range.
 let narrowForCurrent (state: PSGParserState) (ty: MLIRType) : MLIRType =
-    narrowType state.Coeffects state.Current.Id ty
+    narrowType state.Coeffects state.Graph state.Current.Id ty
 
 /// Get the target architecture
 let targetArch (state: PSGParserState) : Architecture =

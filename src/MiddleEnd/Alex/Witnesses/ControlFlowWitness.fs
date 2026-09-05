@@ -135,7 +135,7 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
 
             let result =
                 if isExpressionValued then
-                    let resultType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
+                    let resultType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                     match tryMatch (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ssas, _) when ssas.Length >= 1 -> Some (ssas.[0], resultType)
                     | _ -> None  // Fall back to void

@@ -94,7 +94,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                 WitnessOutput.error $"Saturated call to {funcName}: some args not witnessed: {unwitnessedArgs}"
             else
                 let args = argsResult |> List.choose id
-                let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
+                let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
                 // Retrieve deferred InlineOps for partial app arguments
                 let deferredOps =
@@ -161,7 +161,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             (sprintf "Closure call: arguments not yet witnessed (missing nodes: %A)" missing)
                     else
                         let args = argsResult |> List.choose id
-                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
+                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
                         match tryMatchWithDiagnostics (pClosureCall node.Id closureSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -199,7 +199,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                             (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)" funcName missing)
                     else
                         let args = argsResult |> List.choose id
-                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
+                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                         let defIdOpt = match funcNode.Kind with SemanticKind.VarRef (_, d) -> d | _ -> None
                         let paramNames = defIdOpt |> Option.bind (fun d -> extractParamNames d ctx.Graph)
                         match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

@@ -48,6 +48,7 @@ let pBuildRecord
     (nodeId: NodeId)
     (structTy: MLIRType)
     (fieldValues: (string * SSA * MLIRType) list)
+    (fieldNodes: NodeId list)
     : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
@@ -55,22 +56,35 @@ let pBuildRecord
 
         match platform with
         | Core.Types.Dialects.FPGA ->
-            // FPGA: hw.struct_create
-            // Use actual field types from accumulated child values (ground truth),
-            // not parent-mapped structTy which may have i0 sentinels in nested structs
+            // FPGA: hw.struct_create at the record type's settled field widths (structTy, narrowed
+            // by the witness through FieldRanges). A field value narrower than its field is
+            // extended by the sign of its own range (extui / extsi, read from the value's node);
+            // a value wider than its field cannot occur, since the field's range is the join of
+            // every construction's, and is a stop. SSA layout: [0] = result, [1 + 3*i] = the
+            // extension of field i where one is needed (the CPU layout's spare per-field SSAs).
             let resultSSA = ssas.[0]
-            let fieldVals = fieldValues |> List.map (fun (_, ssa, ty) -> (ssa, ty))
-            let actualStructTy =
-                TStruct (fieldValues |> List.map (fun (name, _, ty) ->
-                    match ty with
-                    | TInt (IntWidth 0) ->
-                        failwithf
-                            "error FPGA0001: Record field '%s' has unresolvable bit width (IntWidth 0).\n\
-                             Width inference found no value range for this field.\n\
-                             Add a width annotation to the type, e.g.: %s: int<32>" name name
-                    | _ -> (name, ty)))
+            let! state = getUserState
+            let declared =
+                match structTy with
+                | TStruct fields -> fields
+                | other -> failwithf "pBuildRecord: the record type on fabric is %A, not a struct" other
+            let bits (ty: MLIRType) = match ty with TInt (IntWidth b) -> b | _ -> 0
+            let placed =
+                List.zip fieldValues fieldNodes
+                |> List.mapi (fun i ((name, valueSSA, valueTy), valueNode) ->
+                    let fieldTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd |> Option.defaultValue valueTy
+                    match bits valueTy, bits fieldTy with
+                    | v, f when v > 0 && f > 0 && v < f ->
+                        let extSSA = ssas.[1 + 3 * i]
+                        ([ extensionOp state.Graph valueNode extSSA valueSSA valueTy fieldTy ], (extSSA, fieldTy))
+                    | v, f when v > 0 && f > 0 && v > f ->
+                        failwithf "pBuildRecord: field '%s' is %d bits but its value (node %d) is %d bits; the field's range is the join of every construction's" name f (NodeId.value valueNode) v
+                    | _ -> ([], (valueSSA, valueTy)))
+            let extOps = placed |> List.collect fst
+            let fieldVals = placed |> List.map snd
+            let actualStructTy = TStruct (List.zip fieldValues fieldVals |> List.map (fun ((name, _, _), (_, ty)) -> (name, ty)))
             let! createOp = pHWStructCreate resultSSA fieldVals actualStructTy
-            return ([createOp], TRValue { SSA = resultSSA; Type = actualStructTy })
+            return (extOps @ [createOp], TRValue { SSA = resultSSA; Type = actualStructTy })
 
         | _ ->
             // CPU: alloca + pTypedInsertView per field

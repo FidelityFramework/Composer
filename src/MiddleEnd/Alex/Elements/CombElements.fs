@@ -45,10 +45,16 @@ let pCombDivU (ssa: SSA) (lhs: SSA) (rhs: SSA) (operandTy: MLIRType) : PSGParser
         return MLIROp.CombOp (CombOp.CombDivU (ssa, lhs, rhs, operandTy))
     }
 
-/// Emit comb.mods (combinational modulus)
+/// Emit comb.mods (signed combinational modulus)
 let pCombMod (ssa: SSA) (lhs: SSA) (rhs: SSA) (operandTy: MLIRType) : PSGParser<MLIROp> =
     parser {
         return MLIROp.CombOp (CombOp.CombMod (ssa, lhs, rhs, operandTy))
+    }
+
+/// Emit comb.modu (unsigned combinational modulus)
+let pCombModU (ssa: SSA) (lhs: SSA) (rhs: SSA) (operandTy: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.CombOp (CombOp.CombModU (ssa, lhs, rhs, operandTy))
     }
 
 // ═══════════════════════════════════════════════════════════

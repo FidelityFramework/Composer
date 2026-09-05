@@ -32,11 +32,12 @@ let pBuildDUConstruct (nodeId: NodeId) (tag: int64) (payload: Val list) (duTy: M
                 match duTy with
                 | TStruct _ ->
                     // Struct DU on FPGA (e.g. ValueNone): zero-initialized aggregate constant.
-                    // Dead data — tag guarantees value bits are never read.
-                    // Clamp any unresolved IntWidth 0 to IntWidth 1 (minimum hw register width).
-                    let clampedTy = clampZeroWidths duTy
-                    let! op = pHWAggregateConstant ssa clampedTy
-                    return ([op], TRValue { SSA = ssa; Type = clampedTy })
+                    // Its payload fields take the widths of the payload type's FieldRanges
+                    // (a field nothing constructs has the empty range, one bit).
+                    let! state = getUserState
+                    let narrowedTy = narrowType state.Coeffects state.Graph nodeId duTy
+                    let! op = pHWAggregateConstant ssa narrowedTy
+                    return ([op], TRValue { SSA = ssa; Type = narrowedTy })
                 | _ ->
                     // Enum DU on FPGA: just a tag constant. Type is TTag which serializes to correct width.
                     let! op = pConstI ssa tag duTy

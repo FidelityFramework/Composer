@@ -28,7 +28,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
     | Some ((fields, copyFrom), _) ->
         // RecordExpr: field value nodes are already walked in post-order.
         // Recall each field value SSA from accumulator.
-        let structTy = mapType node.Type ctx |> narrowType ctx.Coeffects node.Id
+        let structTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
         let fieldValues =
             fields |> List.choose (fun (fieldName, fieldNodeId) ->
@@ -51,7 +51,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     WitnessOutput.error "RecordExpr copy-with: Original record not in accumulator"
             | None ->
                 // Full construction: all field values provided
-                match tryMatchWithDiagnostics (pBuildRecord node.Id structTy fieldValues) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                match tryMatchWithDiagnostics (pBuildRecord node.Id structTy fieldValues (fields |> List.map snd)) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"RecordExpr: {diagnostic}"
 
@@ -68,7 +68,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                      let fields = elemTypes |> List.mapi (fun i e -> (sprintf "Item%d" (i + 1), mapType e ctx))
                      TStruct fields
                  | _ -> mapType node.Type ctx)
-                |> narrowType ctx.Coeffects node.Id
+                |> narrowType ctx.Coeffects ctx.Graph node.Id
 
             // Recall each element's SSA from the accumulator (children already walked in post-order)
             let fieldValues =
@@ -82,7 +82,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             if resolved.Length <> elements.Length then
                 WitnessOutput.error $"TupleExpr: Only {resolved.Length} of {elements.Length} element values witnessed"
             else
-                match tryMatchWithDiagnostics (pBuildRecord node.Id structTy resolved) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                match tryMatchWithDiagnostics (pBuildRecord node.Id structTy resolved elements) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"TupleExpr: {diagnostic}"
         | _ ->

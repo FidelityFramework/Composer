@@ -25,9 +25,9 @@ let intWidthToString (IntWidth bits) : string =
     if bits = 0 then
         failwith
             "Width inference failure: IntWidth 0 reached MLIR serialization. \
-             A hardware integer has no resolvable bit width. This means a struct field \
-             or variable was never assigned a concrete value (e.g. ValueNone branch of \
-             a ValueOption where the inner type's fields have no observable interval)."
+             A hardware integer's width is the width of the range CCS wrote on its node \
+             (RangeAnalysis); a sentinel here is a value the witness did not narrow through \
+             narrowType, a defect of the pipeline rather than of the program."
     sprintf "i%d" bits
 
 /// Convert FloatWidth to MLIR type string
@@ -208,6 +208,8 @@ let combOpToString (op: CombOp) : string =
         sprintf "%s = comb.divu %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombMod (result, lhs, rhs, ty) ->
         sprintf "%s = comb.mods %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
+    | CombModU (result, lhs, rhs, ty) ->
+        sprintf "%s = comb.modu %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombAnd (result, lhs, rhs, ty) ->
         sprintf "%s = comb.and %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (hwTypeToString ty)
     | CombOr (result, lhs, rhs, ty) ->
@@ -649,9 +651,18 @@ let rec opToString (op: MLIROp) : string =
         sprintf "// TODO: Serialize %A" op
 
 /// Serialize a list of operations with proper indentation
+/// Serialize one op; a width failure inside it is re-raised naming the op, so that the
+/// stop says which value had no width rather than only that one did.
+let private opToStringNamed (op: MLIROp) : string =
+    try opToString op
+    with ex when ex.Message.StartsWith "Width inference failure" ->
+        let rendered = sprintf "%A" op
+        let shown = if rendered.Length > 400 then rendered.Substring(0, 400) + " ..." else rendered
+        failwith (ex.Message + "\nWhile serialising: " + shown)
+
 let opsToString (ops: MLIROp list) (indent: string) : string =
     ops
-    |> List.map opToString
+    |> List.map opToStringNamed
     |> List.map (fun line -> indent + line)
     |> String.concat "\n"
 

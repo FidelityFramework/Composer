@@ -370,6 +370,12 @@ let runAllNanopasses
         |> Map.toList
         |> List.choose (fun (id, dr) -> if dr = DeclRoot.EntryPoint then Some (NodeId id) else None)
     let prologueInEntry = isCPULike && not (List.isEmpty entryLambdaIds)
+    // A design has no prologue: on FPGA a module-level value is witnessed inside each hw.module
+    // that reads it (the per-module visited set re-walks the binding at its reference), and the
+    // platform's metadata (the clock chain) is consumed structurally by HardwareModuleWitness.
+    // Walking those bindings as roots would emit them at module scope, where an hw design has no
+    // place for them.
+    let moduleInitAsRoots = not prologueInEntry && coeffects.TargetPlatform <> Core.Types.Dialects.FPGA
     if prologueInEntry then
         for lambdaId in entryLambdaIds do
             match SemanticGraph.tryGetNode lambdaId graph with
@@ -381,8 +387,9 @@ let runAllNanopasses
     for kvp in classifications do
         let moduleDefId = kvp.Key
         let classification = kvp.Value
-        // Module-init first (prologue bindings) — unless the entry point's prologue owns them
-        if not prologueInEntry then
+        // Module-init first (prologue bindings) — unless the entry point's prologue owns them,
+        // or the target has no prologue at all (FPGA)
+        if moduleInitAsRoots then
             for nodeId in classification.ModuleInit do
                 processRoot nodeId
         // Then definitions in source order (includes entry point)

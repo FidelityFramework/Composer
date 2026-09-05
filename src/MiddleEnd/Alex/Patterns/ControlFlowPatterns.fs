@@ -115,28 +115,22 @@ let pBuildConditional (condSSA: SSA)
 
                 if needThenHarm || needElseHarm then
                     let! allSSAs = getNodeSSAs nodeId
-                    // SSA layout: [0]=result, [1]=thenHarm, [2]=elseHarm, [3]=trunc
-                    let mutable harmOps = []
-                    let effThenSSA =
-                        if needThenHarm then
-                            let harmSSA = allSSAs.[1]
-                            if thenBits > resBits then
-                                harmOps <- MLIROp.ArithOp (ArithOp.TruncI (harmSSA, thenSSA, thenTy, resultType)) :: harmOps
-                            else
-                                harmOps <- MLIROp.ArithOp (ArithOp.ExtSI (harmSSA, thenSSA, thenTy, resultType)) :: harmOps
-                            harmSSA
-                        else thenSSA
-                    let effElseSSA =
-                        if needElseHarm then
-                            let harmSSA = allSSAs.[2]
-                            if elseBits > resBits then
-                                harmOps <- MLIROp.ArithOp (ArithOp.TruncI (harmSSA, elseSSA, elseTy, resultType)) :: harmOps
-                            else
-                                harmOps <- MLIROp.ArithOp (ArithOp.ExtSI (harmSSA, elseSSA, elseTy, resultType)) :: harmOps
-                            harmSSA
-                        else elseSSA
+                    let! state = getUserState
+                    // SSA layout: [0]=result, [1]=thenHarm, [2]=elseHarm. A branch value narrower
+                    // than the result is extended by the sign of its own range (extui / extsi,
+                    // read from its node); one wider (a reference refined below its binding's
+                    // width) is truncated to the result's range width.
+                    let harmonize (harmSSA: SSA) (valueSSA: SSA) (valueTy: MLIRType) (valueBits: int) (valueNodeId: NodeId) =
+                        if valueBits > resBits then MLIROp.ArithOp (ArithOp.TruncI (harmSSA, valueSSA, valueTy, resultType))
+                        else extensionOp state.Graph valueNodeId harmSSA valueSSA valueTy resultType
+                    let (thenHarmOps, effThenSSA) =
+                        if needThenHarm then ([ harmonize allSSAs.[1] thenSSA thenTy thenBits thenValueNodeId ], allSSAs.[1])
+                        else ([], thenSSA)
+                    let (elseHarmOps, effElseSSA) =
+                        if needElseHarm then ([ harmonize allSSAs.[2] elseSSA elseTy elseBits elseValueNodeId ], allSSAs.[2])
+                        else ([], elseSSA)
                     let! muxOp = pCombMux resultSSA condSSA effThenSSA effElseSSA resultType
-                    let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ (List.rev harmOps) @ [muxOp]
+                    let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ thenHarmOps @ elseHarmOps @ [muxOp]
                     return (allOps, TRValue { SSA = resultSSA; Type = resultType })
                 else
                     let! muxOp = pCombMux resultSSA condSSA thenSSA elseSSA resultType
@@ -276,6 +270,7 @@ let pBuildMatchElimination
                 // FPGA comb.mux requires all operands at matching bit widths.
                 // Arm values (e.g. DU tag constants at i8) may differ from resultType (e.g. i3).
                 let resBits = match resultType with | TInt (IntWidth b) -> b | _ -> 0
+                let! state = getUserState
                 let! (harmonizedSSAs, harmonizeOps) =
                     let rec harmonize idx accSSAs accOps =
                         if idx >= numArms then preturn (List.rev accSSAs, List.concat (List.rev accOps))
@@ -291,10 +286,10 @@ let pBuildMatchElimination
                                         return! harmonize (idx + 1) (harmSSA :: accSSAs) ([truncOp] :: accOps)
                                     }
                                 else
-                                    parser {
-                                        let! extOp = pExtSI harmSSA armSSA armTy resultType
-                                        return! harmonize (idx + 1) (harmSSA :: accSSAs) ([extOp] :: accOps)
-                                    }
+                                    // extended by the sign of the arm value's range (extui / extsi)
+                                    let (_, armValueNodeId, _) = arms.[idx]
+                                    let extOp = extensionOp state.Graph armValueNodeId harmSSA armSSA armTy resultType
+                                    harmonize (idx + 1) (harmSSA :: accSSAs) ([extOp] :: accOps)
                             else
                                 harmonize (idx + 1) (armSSA :: accSSAs) ([] :: accOps)
                     harmonize 0 [] []

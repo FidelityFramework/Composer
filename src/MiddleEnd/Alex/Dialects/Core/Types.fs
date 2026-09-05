@@ -46,15 +46,6 @@ type MLIRType =
     | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
     | TError of string                      // Error type
 
-/// Clamp IntWidth 0 → IntWidth 1 recursively through nested structs.
-/// Hardware requires minimum 1-bit registers. IntWidth 0 (unresolved abstract width)
-/// in dead aggregate fields (e.g. ValueNone inner struct) becomes IntWidth 1.
-let rec clampZeroWidths (ty: MLIRType) : MLIRType =
-    match ty with
-    | TInt (IntWidth 0) -> TInt (IntWidth 1)
-    | TStruct fields -> TStruct (fields |> List.map (fun (n, ft) -> (n, clampZeroWidths ft)))
-    | _ -> ty
-
 /// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct).
 /// Rank-1 memref descriptors are 5 words: {allocPtr, alignPtr, offset, size, stride}.
 let rec mlirTypeSize (ty: MLIRType) : int =
@@ -264,7 +255,8 @@ type CombOp =
     | CombMul of SSA * SSA * SSA * MLIRType
     | CombDivS of SSA * SSA * SSA * MLIRType                   // signed
     | CombDivU of SSA * SSA * SSA * MLIRType                   // unsigned
-    | CombMod of SSA * SSA * SSA * MLIRType
+    | CombMod of SSA * SSA * SSA * MLIRType                    // signed (comb.mods)
+    | CombModU of SSA * SSA * SSA * MLIRType                   // unsigned (comb.modu)
     // Bitwise
     | CombAnd of SSA * SSA * SSA * MLIRType
     | CombOr of SSA * SSA * SSA * MLIRType

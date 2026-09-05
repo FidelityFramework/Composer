@@ -107,15 +107,6 @@ let generate
                 PSGElaboration.PlatformPinResolution.resolve flattenedGraph
             | _ -> None
 
-        // Compute FPGA width inference coeffect (FPGA targets only)
-        let widthInference =
-            match targetPlatform with
-            | Core.Types.Dialects.TargetPlatform.FPGA ->
-                let result = PSGElaboration.IntervalAnalysis.analyze flattenedGraph
-                ignore result  // Width inference result wired through coeffects
-                Some result
-            | _ -> None
-
         // Build TransferCoeffects
         let coeffects : TransferCoeffects = {
             SSA = ssaAssignment
@@ -129,7 +120,6 @@ let generate
             DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
             TargetPlatform = targetPlatform
             PinMapping = pinMapping
-            WidthInference = widthInference
             ValuePosition = valuePosition
         }
 
