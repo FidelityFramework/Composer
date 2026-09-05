@@ -1,12 +1,14 @@
 module Vet
+
 [<Measure>] type m
 [<Measure>] type s
 [<Measure>] type kg
 [<Measure>] type N = kg m / s^2
 
+// One body: the parameter range is the join over the call sites, [1, 200000] and [2, 200000].
 let g x y = x + y
-let a = g 1L 2L
-let b = g 1 2
+let a = g 1 2
+let b = g 100000 200000
 
 [<EntryPoint>]
 let main _ =

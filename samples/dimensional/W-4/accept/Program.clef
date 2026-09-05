@@ -1,10 +1,14 @@
 module Vet
+
 [<Measure>] type m
 [<Measure>] type s
 [<Measure>] type kg
 [<Measure>] type N = kg m / s^2
 
-let f (n: int32) = n + 1
+// A bounded range: the comparison bounds n on its branch, so the result is [0, 1000].
+let f (n: int) = if n < 1000 then n + 1 else 0
 
 [<EntryPoint>]
-let main _ = 0
+let main _ =
+    let _ = f 5
+    0

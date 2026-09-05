@@ -1,6 +1,6 @@
 # Expected outcome for W-1/reject. Read by vet.sh; keys are one-line strings.
-rule = "two different seals meeting is an explicit-conversion site; a bare operand adopts a covering seal"
+rule = "there is no width-named type (D10)"
 verdict = "reject"
-code = "CCS8013"
-count = "2"  # the code must appear at least this many times (one per reject site)
-pending = "step 7"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 7
+code = "CCS8706"
+count = "2"
+pending = "step 7"

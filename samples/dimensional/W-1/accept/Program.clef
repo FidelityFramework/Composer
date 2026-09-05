@@ -1,16 +1,16 @@
 module Vet
+
 [<Measure>] type m
 [<Measure>] type s
 [<Measure>] type kg
 [<Measure>] type N = kg m / s^2
 
-let a = 1 + 1L
-let b = 1L + 2L
-let h (x: int64) = x + 1L
+// One integer kind; the result's width is the result range's.
+let f (x: int) (y: int) = x + y
+let a = 1 + 1
 
 [<EntryPoint>]
 let main _ =
+    let _ = f 1 2
     let _ = a
-    let _ = b
-    let _ = h 3L
     0

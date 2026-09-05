@@ -1,6 +1,6 @@
 # Expected outcome for W-6/accept. Read by vet.sh; keys are one-line strings.
-rule = "width is propagated, never unified: the range coeffect of a generalised function is analysed per instantiation; one body"
+rule = "width is propagated, never unified: one body at the joined range"
 verdict = "accept"
 code = ""
-pending = "step 7"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 7
+pending = "step 7"
 scheme = "forall k u. k<u> -> k<u> -> k<u>"  # one body; the parameter range is the join of the sites (design note (g))

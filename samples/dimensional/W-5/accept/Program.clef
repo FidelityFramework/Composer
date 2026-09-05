@@ -1,13 +1,13 @@
 module Vet
+
 [<Measure>] type m
 [<Measure>] type s
 [<Measure>] type kg
 [<Measure>] type N = kg m / s^2
 
-let x (counter: uint32) : uint8 = counter % 256
-let y : int8 = -128
+// Intended loss is arithmetic: the range of counter % 256 is [0, 255], of clamp 0 255 v is [0, 255].
+let w (reg8: Ptr<int, Peripheral, WriteOnly>) (counter: int) = Ptr.write reg8 (counter % 256)
+let s (reg8: Ptr<int, Peripheral, WriteOnly>) (v: int) = Ptr.write reg8 (min 255 (max 0 v))
 
 [<EntryPoint>]
-let main _ =
-    let _ = y
-    0
+let main _ = 0

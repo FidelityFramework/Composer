@@ -1,7 +1,7 @@
 # Expected outcome for W-5/reject. Read by vet.sh; keys are one-line strings.
-rule = "a seal must cover the analysed range"
+rule = "a boundary's declared representation must cover the analysed range (D10)"
 verdict = "reject"
 code = "CCS8012"
-count = "2"  # the code must appear at least this many times (one per reject site)
+count = "2"
 flags = "--warnaserror"  # extra compile flags; a coverage finding is a Warning promoted under --warnaserror
-pending = "step 7"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 7
+pending = "step 7"

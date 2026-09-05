@@ -51,3 +51,5 @@ dotnet build /home/hhh/repos/Composer/src/Composer.fsproj   # vet.sh never build
   gone, and its own rule waits on step 8.
 
 **Reading after CS-8 (2026-09-04):** 24 of 46, 10 of 10 judged through step 2, identical to CS-7 except that the ten M rows now print the located `CCS8706` (the step-5 types `Stack`, `Flash`, `Peripheral` are not defined yet) as their first error instead of a later `CCS8009` or a Composer type-mapping failure. Baseline transcript: `vet-cs8.txt` in the session scratchpad.
+
+**D10 (2026-09-04):** there is no width-named type and no width suffix (`Dimensional_Range_Design.md`). The W rows and the M rows' handles were rewritten to `int`; W-1 now rejects the spellings themselves (CCS8706), W-5 is the coverage check at an 8-bit register boundary the Contracts leaf declares, W-6 joins call-site ranges. Readings taken before this date used the retired spellings.

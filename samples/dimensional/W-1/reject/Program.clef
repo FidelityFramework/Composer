@@ -1,11 +1,12 @@
 module Vet
+
 [<Measure>] type m
 [<Measure>] type s
 [<Measure>] type kg
 [<Measure>] type N = kg m / s^2
 
+// D10: there is no width-named type. Each spelling is CCS8706 at its annotation.
 let f (x: int32) (y: int64) = x + y
-let g (p: nativeint) (x: int32) = p + x
 
 [<EntryPoint>]
 let main _ = 0
