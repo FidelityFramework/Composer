@@ -56,23 +56,6 @@ type BindingResolution = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PLATFORM WORD TYPE RESOLUTION
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Resolve platform word type for a given architecture
-/// This is the authoritative source for what PlatformWord layout means on each target.
-/// CCS uses TypeLayout.PlatformWord; Alex resolves it here based on target.
-let platformWordType (arch: Architecture) : MLIRType =
-    match arch with
-    | X86_64 | ARM64 | RISCV64 -> TInt (IntWidth 64)  // 64-bit platforms
-    | ARM32_Thumb | RISCV32 | WASM32 -> TInt (IntWidth 32)  // 32-bit platforms
-
-/// Resolve platform word integer width for a given architecture
-/// Delegates to the canonical definition in Alex.Dialects.Core.Types
-let platformWordWidth (arch: Architecture) : IntWidth =
-    Alex.Dialects.Core.Types.platformWordWidth arch
-
-// ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM RESOLUTION RESULT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -84,9 +67,12 @@ type PlatformResolutionResult = {
     TargetOS: OSFamily
     /// Target architecture
     TargetArch: Architecture
-    /// Platform word type (i64 on 64-bit, i32 on 32-bit)
-    /// This is the resolved MLIRType for CCS PlatformWord layout
-    PlatformWordType: MLIRType
+    /// The Register width the platform description declares, read from the CCS
+    /// PlatformContext (plan D8, L-10): Composer reads, never computes it. The
+    /// `Error` carries the text of CCS8203 when the description declares no
+    /// Register (an FPGA), and a site that reads the word type then fails with
+    /// that text rather than with a number of its own.
+    RegisterWidth: Result<int, string>
     /// All resolved bindings keyed by PSG node ID
     Bindings: Map<int, BindingResolution>
     /// Accumulated external library dependencies for linker flags
@@ -95,6 +81,14 @@ type PlatformResolutionResult = {
     /// Whether _start wrapper is needed (freestanding mode)
     NeedsStartWrapper: bool
 }
+with
+    /// The platform word type: the declared Register width as an MLIR integer.
+    /// Read at the sites that need it; fails with CCS8203's text where the
+    /// description declares no Register.
+    member this.PlatformWordType : MLIRType =
+        match this.RegisterWidth with
+        | Ok bits -> TInt (IntWidth bits)
+        | Error message -> failwith message
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSCALL DATA (Linux x86_64)

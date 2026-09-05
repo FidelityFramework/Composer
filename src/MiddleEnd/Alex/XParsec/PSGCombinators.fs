@@ -94,14 +94,18 @@ type PSGParser<'T> = Parser<'T, char, PSGParserState, ReadableString, ReadableSt
 // PLATFORM-AWARE TYPE RESOLUTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Get the word-sized integer type for the target platform
-/// Already resolved in PlatformResolutionResult - just look it up
+/// The word-sized integer type: the Register width the platform description
+/// declares, read from the context CCS filled (plan D8, L-10). Where the
+/// description declares no Register this fails with CCS8203's text; Composer
+/// never supplies a width of its own.
 let platformWordType (state: PSGParserState) : MLIRType =
     state.Platform.PlatformWordType
 
-/// Get the word width in bits for the target platform
+/// The word width in bits: the declared Register width, or CCS8203's text.
 let platformWordBits (state: PSGParserState) : int =
-    intWidthBits (platformWordWidth state.Platform.TargetArch)
+    match state.Platform.RegisterWidth with
+    | Ok bits -> bits
+    | Error message -> failwith message
 
 /// Narrow an MLIRType using per-node width inference coeffects.
 /// TInt → NodeWidths lookup. TStruct → StructNodeWidths lookup.

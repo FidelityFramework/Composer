@@ -111,11 +111,8 @@ let analyze
     (mode: RuntimeMode)
     (os: OSFamily)
     (arch: Architecture)
+    (registerWidth: Result<int, string>)
     : PlatformResolutionResult =
-
-    // Resolve platform word type for this architecture
-    // This is the authoritative source for what PlatformWord means on this target
-    let wordType = platformWordType arch
 
     // Walk graph, find Application nodes that call platform intrinsics.
     // Bindings are keyed by the Application node ID (the call site),
@@ -189,7 +186,7 @@ let analyze
         RuntimeMode = mode
         TargetOS = os
         TargetArch = arch
-        PlatformWordType = wordType
+        RegisterWidth = registerWidth
         Bindings = bindings
         ExternLibraries = externLibs
         NeedsStartWrapper = needsStart

@@ -39,140 +39,158 @@ let generate
     // Authoritative when RuntimeModel is present; falls back to PlatformId string parsing.
     let (os, arch) = PSGElaboration.PlatformConfig.resolveOSArch platformCtx
 
-    // Resolve runtime mode from binding metadata (RuntimeModel coeffect).
-    // Falls back to DeploymentMode mapping for legacy bindings without [platform].
-    let runtimeMode = PSGElaboration.PlatformConfig.resolveRuntimeMode platformCtx deploymentMode
+    // The Register width the platform description declares (plan D8, L-10): the
+    // context CCS filled at saturation is the one source. The word type every
+    // witness reads comes from it. The architecture table Alex still keys its
+    // type mapping on (Alex.Dialects.Core.Types.platformWordWidth) is checked
+    // against the declaration here so that no site can emit a width the
+    // description did not declare; a disagreement stops the build.
+    let registerWidth = PlatformContext.tryWidth platformCtx (WidthDimension.name WidthDimension.Register)
+    let archWordBits = intWidthBits (platformWordWidth arch)
+    let declarationAgrees =
+        match registerWidth with
+        | Ok bits when bits <> archWordBits ->
+            Result.Error (sprintf "The platform description of '%s' declares Register %d bits, but Composer's architecture table maps %A to %d bits; the declaration governs and the table must be corrected" platformCtx.PlatformId bits arch archWordBits)
+        | _ -> Result.Ok ()
 
-    // Representation decisions inside type mapping that depend on the target (enum DU tags)
-    Alex.CodeGeneration.TypeMapping.setTargetPlatform targetPlatform
+    match declarationAgrees with
+    | Result.Error message -> Result.Error message
+    | Result.Ok () ->
 
-    // Phase 0: Flatten curried lambdas (graph normalization BEFORE coeffect analysis)
-    // Merges Lambda(a) → Lambda(b) → body into Lambda(a,b) → body
-    // and identifies partial application / saturated call patterns
-    let (flattenedGraph, absorbedLambdas) = PSGElaboration.CurryFlattening.flatten graph
-    let curryFlatteningResult = PSGElaboration.CurryFlattening.analyze flattenedGraph absorbedLambdas
+        // Resolve runtime mode from binding metadata (RuntimeModel coeffect).
+        // Falls back to DeploymentMode mapping for legacy bindings without [platform].
+        let runtimeMode = PSGElaboration.PlatformConfig.resolveRuntimeMode platformCtx deploymentMode
 
-    // Compute effective arg counts for saturated calls (SSAAssignment needs correct SSA counts)
-    let saturatedCallArgCounts =
-        curryFlatteningResult.SaturatedCalls
-        |> Map.map (fun _ info -> List.length info.AllArgNodes)
+        // Representation decisions inside type mapping that depend on the target (enum DU tags)
+        Alex.CodeGeneration.TypeMapping.setTargetPlatform targetPlatform
 
-    // Compute coeffects on flattened graph (SSAs reflect flattened parameter structure)
-    // ValuePosition runs first — SSAAssignment consumes it for VarRef SSA cost decisions
-    let valuePosition = PSGElaboration.ValuePositionAnalysis.analyze flattenedGraph
-    let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA arch flattenedGraph saturatedCallArgCounts valuePosition
-    let mutability = PSGElaboration.MutabilityAnalysis.analyze flattenedGraph
-    let yieldStates = PSGElaboration.YieldStateIndices.run flattenedGraph
-    let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze flattenedGraph
-    let strings = PSGElaboration.StringCollection.collect flattenedGraph
-    let platformResolution = PSGElaboration.PlatformBindingResolution.analyze flattenedGraph runtimeMode os arch
-    let escapeAnalysis = PSGElaboration.EscapeAnalysis.analyzeGraph flattenedGraph
+        // Phase 0: Flatten curried lambdas (graph normalization BEFORE coeffect analysis)
+        // Merges Lambda(a) → Lambda(b) → body into Lambda(a,b) → body
+        // and identifies partial application / saturated call patterns
+        let (flattenedGraph, absorbedLambdas) = PSGElaboration.CurryFlattening.flatten graph
+        let curryFlatteningResult = PSGElaboration.CurryFlattening.analyze flattenedGraph absorbedLambdas
 
-    // Proof obligations are graph citizens: minted into the PSG by the Baker
-    // obligation recipes at saturation (CCS Pass 5), discharged at design time
-    // from F by CCS (06a/06b). This is a READ of the same records for the
-    // build-time dispatch below (09); nothing here computes an obligation.
-    let proofObligations = Clef.Compiler.Nanopass.ObligationDischarge.ofGraph flattenedGraph
+        // Compute effective arg counts for saturated calls (SSAAssignment needs correct SSA counts)
+        let saturatedCallArgCounts =
+            curryFlatteningResult.SaturatedCalls
+            |> Map.map (fun _ info -> List.length info.AllArgNodes)
 
-    // Serialize coeffects if keeping intermediates
-    match intermediatesDir with
-    | Some dir ->
-        PSGElaboration.PreprocessingSerializer.serializeAll
-            dir ssaAssignment mutability yieldStates patternBindings strings
-            ssaAssignment.DeclarationRootLambdas flattenedGraph
-    | None -> ()
+        // Compute coeffects on flattened graph (SSAs reflect flattened parameter structure)
+        // ValuePosition runs first — SSAAssignment consumes it for VarRef SSA cost decisions
+        let valuePosition = PSGElaboration.ValuePositionAnalysis.analyze flattenedGraph
+        let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA arch flattenedGraph saturatedCallArgCounts valuePosition
+        let mutability = PSGElaboration.MutabilityAnalysis.analyze flattenedGraph
+        let yieldStates = PSGElaboration.YieldStateIndices.run flattenedGraph
+        let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze flattenedGraph
+        let strings = PSGElaboration.StringCollection.collect flattenedGraph
+        let platformResolution = PSGElaboration.PlatformBindingResolution.analyze flattenedGraph runtimeMode os arch registerWidth
+        let escapeAnalysis = PSGElaboration.EscapeAnalysis.analyzeGraph flattenedGraph
 
-    // Compute FPGA pin mapping coeffect (FPGA targets only)
-    let pinMapping =
-        match targetPlatform with
-        | Core.Types.Dialects.TargetPlatform.FPGA ->
-            PSGElaboration.PlatformPinResolution.resolve flattenedGraph
-        | _ -> None
+        // Proof obligations are graph citizens: minted into the PSG by the Baker
+        // obligation recipes at saturation (CCS Pass 5), discharged at design time
+        // from F by CCS (06a/06b). This is a READ of the same records for the
+        // build-time dispatch below (09); nothing here computes an obligation.
+        let proofObligations = Clef.Compiler.Nanopass.ObligationDischarge.ofGraph flattenedGraph
 
-    // Compute FPGA width inference coeffect (FPGA targets only)
-    let widthInference =
-        match targetPlatform with
-        | Core.Types.Dialects.TargetPlatform.FPGA ->
-            let result = PSGElaboration.IntervalAnalysis.analyze flattenedGraph
-            ignore result  // Width inference result wired through coeffects
-            Some result
-        | _ -> None
+        // Serialize coeffects if keeping intermediates
+        match intermediatesDir with
+        | Some dir ->
+            PSGElaboration.PreprocessingSerializer.serializeAll
+                dir ssaAssignment mutability yieldStates patternBindings strings
+                ssaAssignment.DeclarationRootLambdas flattenedGraph
+        | None -> ()
 
-    // Build TransferCoeffects
-    let coeffects : TransferCoeffects = {
-        SSA = ssaAssignment
-        Platform = platformResolution
-        Mutability = mutability
-        PatternBindings = patternBindings
-        Strings = strings
-        YieldStates = yieldStates
-        EscapeAnalysis = escapeAnalysis
-        CurryFlattening = curryFlatteningResult
-        DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
-        TargetPlatform = targetPlatform
-        PinMapping = pinMapping
-        WidthInference = widthInference
-        ValuePosition = valuePosition
-    }
+        // Compute FPGA pin mapping coeffect (FPGA targets only)
+        let pinMapping =
+            match targetPlatform with
+            | Core.Types.Dialects.TargetPlatform.FPGA ->
+                PSGElaboration.PlatformPinResolution.resolve flattenedGraph
+            | _ -> None
 
-    // Execute Alex transfer (parallel nanopasses)
-    match flattenedGraph.DeclarationRoots with
-    | [] -> Result.Error "No declaration roots found in PSG"
-    | (entryId, _) :: _ ->
-        match transfer flattenedGraph entryId coeffects intermediatesDir with
-        | Result.Ok (topLevelOps, _) ->
-            // Filter ops by target platform — FPGA/NPU exclude CPU-only func.func ops
-            let platformOps =
-                match targetPlatform with
-                | Core.Types.Dialects.TargetPlatform.FPGA ->
-                    topLevelOps |> List.filter (fun op ->
-                        match op with MLIROp.FuncOp _ -> false | _ -> true)
-                | Core.Types.Dialects.TargetPlatform.NPU ->
-                    // NPU: keep only RawMLIR (the aie.device block from KernelModuleWitness)
-                    topLevelOps |> List.filter (fun op ->
-                        match op with MLIROp.RawMLIR _ -> true | _ -> false)
-                | _ -> topLevelOps
+        // Compute FPGA width inference coeffect (FPGA targets only)
+        let widthInference =
+            match targetPlatform with
+            | Core.Types.Dialects.TargetPlatform.FPGA ->
+                let result = PSGElaboration.IntervalAnalysis.analyze flattenedGraph
+                ignore result  // Width inference result wired through coeffects
+                Some result
+            | _ -> None
 
-            // Apply MLIR nanopasses (MLIR→MLIR transformations)
-            let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses platformOps platformResolution intermediatesDir
+        // Build TransferCoeffects
+        let coeffects : TransferCoeffects = {
+            SSA = ssaAssignment
+            Platform = platformResolution
+            Mutability = mutability
+            PatternBindings = patternBindings
+            Strings = strings
+            YieldStates = yieldStates
+            EscapeAnalysis = escapeAnalysis
+            CurryFlattening = curryFlatteningResult
+            DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
+            TargetPlatform = targetPlatform
+            PinMapping = pinMapping
+            WidthInference = widthInference
+            ValuePosition = valuePosition
+        }
 
-            // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
-            // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
-            let mlirText =
-                match targetPlatform with
-                | Core.Types.Dialects.TargetPlatform.NPU ->
-                    let opsText = opsToString transformedOps "  "
-                    sprintf "module {\n%s\n}" opsText
-                | _ -> moduleToString "main" transformedOps
+        // Execute Alex transfer (parallel nanopasses)
+        match flattenedGraph.DeclarationRoots with
+        | [] -> Result.Error "No declaration roots found in PSG"
+        | (entryId, _) :: _ ->
+            match transfer flattenedGraph entryId coeffects intermediatesDir with
+            | Result.Ok (topLevelOps, _) ->
+                // Filter ops by target platform — FPGA/NPU exclude CPU-only func.func ops
+                let platformOps =
+                    match targetPlatform with
+                    | Core.Types.Dialects.TargetPlatform.FPGA ->
+                        topLevelOps |> List.filter (fun op ->
+                            match op with MLIROp.FuncOp _ -> false | _ -> true)
+                    | Core.Types.Dialects.TargetPlatform.NPU ->
+                        // NPU: keep only RawMLIR (the aie.device block from KernelModuleWitness)
+                        topLevelOps |> List.filter (fun op ->
+                            match op with MLIROp.RawMLIR _ -> true | _ -> false)
+                    | _ -> topLevelOps
 
-            // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
-            match intermediatesDir with
-            | Some dir ->
-                let finalPath = Path.Combine(dir, "10_output.mlir")
-                File.WriteAllText(finalPath, mlirText)
-                if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                    printfn "[Alex] Wrote final MLIR: 10_output.mlir"
-                // SMT verification module — parallel residual from the proof
-                // obligations coeffect (same shape as XDC from pin mapping)
-                if not (List.isEmpty proofObligations) then
-                    let smtPath = Path.Combine(dir, "09_obligations.mlir")
-                    File.WriteAllText(smtPath, Alex.Traversal.SMTTransfer.transfer proofObligations + "\n")
-                    if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                        printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Length
-            | None -> ()
+                // Apply MLIR nanopasses (MLIR→MLIR transformations)
+                let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses platformOps platformResolution intermediatesDir
 
-            // XDC transfer — parallel residual from pin mapping coeffect (FPGA only)
-            match pinMapping with
-            | Some mapping ->
-                let xdcText = Alex.Traversal.XDCTransfer.transfer mapping
+                // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
+                // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
+                let mlirText =
+                    match targetPlatform with
+                    | Core.Types.Dialects.TargetPlatform.NPU ->
+                        let opsText = opsToString transformedOps "  "
+                        sprintf "module {\n%s\n}" opsText
+                    | _ -> moduleToString "main" transformedOps
+
+                // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
                 match intermediatesDir with
                 | Some dir ->
-                    let xdcPath = Path.Combine(dir, "constraints.xdc")
-                    File.WriteAllText(xdcPath, xdcText)
+                    let finalPath = Path.Combine(dir, "10_output.mlir")
+                    File.WriteAllText(finalPath, mlirText)
                     if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                        printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                        printfn "[Alex] Wrote final MLIR: 10_output.mlir"
+                    // SMT verification module — parallel residual from the proof
+                    // obligations coeffect (same shape as XDC from pin mapping)
+                    if not (List.isEmpty proofObligations) then
+                        let smtPath = Path.Combine(dir, "09_obligations.mlir")
+                        File.WriteAllText(smtPath, Alex.Traversal.SMTTransfer.transfer proofObligations + "\n")
+                        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                            printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Length
                 | None -> ()
-            | None -> ()
 
-            Result.Ok (mlirText, platformResolution.ExternLibraries)
-        | Result.Error msg -> Result.Error msg
+                // XDC transfer — parallel residual from pin mapping coeffect (FPGA only)
+                match pinMapping with
+                | Some mapping ->
+                    let xdcText = Alex.Traversal.XDCTransfer.transfer mapping
+                    match intermediatesDir with
+                    | Some dir ->
+                        let xdcPath = Path.Combine(dir, "constraints.xdc")
+                        File.WriteAllText(xdcPath, xdcText)
+                        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                            printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                    | None -> ()
+                | None -> ()
+
+                Result.Ok (mlirText, platformResolution.ExternLibraries)
+            | Result.Error msg -> Result.Error msg
