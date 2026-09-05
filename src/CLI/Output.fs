@@ -81,12 +81,22 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics
 /// Colored: location, severity label, diagnostic code.
 /// Plain: message body.
 /// Dim: [unreachable] tag.
+/// The interim warnings `--warnaserror` does not promote (Dimensional_Range_Design.md, CS-12
+/// ruling 5, step 5a): CCS8019, the width-spelling alias, while the corpus still carries the
+/// spellings and the suffixes. This set is the promotion switch: step three of the ruling deletes
+/// it with the alias, and a spelling is CCS8706, a suffix CCS8018, errors in their own right.
+let private interimWarnings : Set<string> = set [ "CCS8019" ]
+
+/// Whether `--warnaserror` promotes this warning: every warning but the interim ones.
+let private promoted (warnaserror: bool) (diag: Diagnostic) : bool =
+    warnaserror && not (Set.contains diag.Code interimWarnings)
+
 let emitDiagnostic (warnaserror: bool) (projectDir: string option) (diag: Diagnostic) =
     let effectiveSev = Diagnostic.effectiveSeverity diag
 
     // When warnaserror is set, elevate reachable warnings to errors in display
     let displaySev =
-        if warnaserror && effectiveSev = NativeDiagnosticSeverity.Warning then
+        if promoted warnaserror diag && effectiveSev = NativeDiagnosticSeverity.Warning then
             NativeDiagnosticSeverity.Error
         else
             effectiveSev
@@ -120,9 +130,10 @@ let emitAllDiagnostics (warnaserror: bool) (projectDir: string option) (diagnost
     for d in warnings do emitDiagnostic warnaserror projectDir d
     for d in infos do emitDiagnostic warnaserror projectDir d
 
-    // Return counts reflecting elevation
+    // Return counts reflecting elevation; an interim warning stays a warning under --warnaserror
     if warnaserror then
-        (List.length errors + List.length warnings, 0, List.length infos)
+        let elevated, interim = warnings |> List.partition (promoted warnaserror)
+        (List.length errors + List.length elevated, List.length interim, List.length infos)
     else
         (List.length errors, List.length warnings, List.length infos)
 

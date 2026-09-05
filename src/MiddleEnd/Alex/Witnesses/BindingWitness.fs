@@ -95,11 +95,14 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         | None ->
                             WitnessOutput.error $"Mutable binding '{name}': Initial value not yet witnessed"
                     else
-                        // IMMUTABLE BINDING: Forward child's SSA (existing logic)
+                        // IMMUTABLE BINDING: the value's SSA, brought to the binding's width where a
+                        // declaration (a spelled annotation, a descriptor) holds the binding at a
+                        // representation the value does not arrive at (the meet SSAAssignment derived
+                        // for this binding); the value's own SSA where the widths agree
                         match MLIRAccumulator.recallNode valueId ctx.Accumulator with
-                        | Some (ssa, ty) ->
-                            // Forward the value's SSA - binding doesn't emit ops
-                            { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+                        | Some (rawSSA, rawTy) ->
+                            let (meetOps, ssa, ty) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawSSA rawTy
+                            { InlineOps = meetOps; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
                         | None ->
                             // Check if the child was witnessed but returned TRVoid
                             // This happens for entry point Lambdas (function definitions) and other module-level declarations

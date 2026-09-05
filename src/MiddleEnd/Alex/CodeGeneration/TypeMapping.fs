@@ -154,7 +154,10 @@ let private bytesOf (fields: SettledField list) (size: int option) (align: int o
 /// Map NTUKind directly to MLIRType. Used for NativeLiteral where we have the kind without a
 /// full NativeType. The bare integer kind is the sentinel on every substrate: a literal's width
 /// is its point range's selection, put on the sentinel by `narrowType` at the literal's node.
-/// A width-named carrier is its declared width (interim, CS-12).
+/// A width-named spelling here, with no graph and no node, is the spelling's own bits, the
+/// value its declaration takes on a description that offers no representation of that name
+/// (CS-12 step 5a); a node's width is `nodeWidth`, a type's `mapNativeTypeForTarget`, both
+/// reading the declaration through CCS. Owed to the promotion step with the spellings.
 let mapNTUKindToMLIRType (kind: NTUKind) : MLIRType =
     match kind with
     | NTUKind.NTUint (NTUWidth.Fixed bits) | NTUKind.NTUuint (NTUWidth.Fixed bits) -> TInt (IntWidth bits)
@@ -394,6 +397,17 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
     let core = platform <> FPGA
     let layoutOf (t: NativeType) = if core then settledLayout graph t else None
     match ty with
+    // A value of a width-named spelling (CS-12 step 5a, the alias): its width is the declaration
+    // the spelling writes, read from CCS (`RangeAnalysis.declaredWidthOfKind`, the platform's
+    // representation of that name), never the spelling's own bits. A node at hand reads
+    // `nodeWidth` instead; this is the read for a type with no node (a signature, a capture).
+    | NativeType.TNum (carrier, _) when core ->
+        match CarrierRef.tryConstructor carrier |> Option.bind (fun tc -> tc.NTUKind) with
+        | Some (NTUKind.NTUint (NTUWidth.Fixed _) as kind) | Some (NTUKind.NTUuint (NTUWidth.Fixed _) as kind) ->
+            match RangeAnalysis.declaredWidthOfKind graph kind with
+            | Some bits -> TInt (IntWidth bits)
+            | None -> failwithf "mapNativeTypeForTarget: the spelled kind %s has no declared representation on this platform" (NTUKind.name kind)
+        | _ -> mapNativeTypeForArch arch ty
     | NativeType.TApp(tycon, args) when tycon.FieldCount > 0 ->
         // Record type: look up field types from TypeDef → TStruct with named fields
         match SemanticGraph.tryGetRecordFields tycon.Name graph with
