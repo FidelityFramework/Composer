@@ -33,7 +33,6 @@ module PatternAnalysis = PSGElaboration.PatternBindingAnalysis
 module YieldStateIndices = PSGElaboration.YieldStateIndices
 module EscapeAnalysis = PSGElaboration.EscapeAnalysis
 module CurryFlat = PSGElaboration.CurryFlattening
-module ValuePosition = PSGElaboration.ValuePositionAnalysis
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TRANSFER COEFFECTS (Pre-computed, Immutable)
@@ -56,10 +55,6 @@ type TransferCoeffects = {
     /// Pin mapping for FPGA targets (None for CPU/MCU)
     /// Observed by HardwareModulePatterns (flat ports) and XDCTransfer (constraints)
     PinMapping: PSGElaboration.Coeffects.PlatformPinMapping option
-    /// VarRef nodes that reference function bindings and appear in value position.
-    /// Observed by VarRefWitness to decide closure pair construction.
-    /// Observed by SSAAssignment for SSA cost (7 vs 2).
-    ValuePosition: ValuePosition.ValuePositionResult
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -274,7 +269,6 @@ type MLIRAccumulator() =
 
     // Witnessing Coordination State (Dependent Transparency)
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)
-    member val EmittedThunks: Set<string> = Set.empty with get, set              // Track emitted closure thunks (dedup _as_closure wrappers)
     member val EmittedStaticGlobals: Set<string> = Set.empty with get, set        // Track emitted memref.global static-storage decls (program-lifetime values)
     member val PendingStaticGlobals: MLIROp list = [] with get, set                // memref.global decls emitted by a parser, awaiting drain to TopLevelOps by the witness (module-scope placement)
     // NOTE: Function declarations now handled by MLIR Declaration Collection Pass (no coordination needed)
@@ -360,14 +354,6 @@ module MLIRAccumulator =
             acc.EmittedGlobals <- Set.add name acc.EmittedGlobals
             Some (MLIROp.GlobalString (name, content, byteLength, obligations))
 
-    /// Check if a thunk wrapper has already been emitted (returns true if NEW, false if duplicate)
-    /// Parallel to tryEmitGlobal: module-level thunk declarations are emitted once per function name.
-    let tryEmitThunk (thunkName: string) (acc: MLIRAccumulator) : bool =
-        if Set.contains thunkName acc.EmittedThunks then
-            false  // Already emitted
-        else
-            acc.EmittedThunks <- Set.add thunkName acc.EmittedThunks
-            true
 
     /// Register a module-level memref.global static-storage decl for a program-lifetime value,
     /// deduplicated by symbol name. A memref.global is only valid at module scope, but this is

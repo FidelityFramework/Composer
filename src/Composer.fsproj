@@ -49,7 +49,6 @@
       <Compile Include="MiddleEnd/PSGElaboration/Coeffects.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/PlatformPinResolution.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/CurryFlattening.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/ValuePositionAnalysis.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/SSAAssignment.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/YieldStateIndices.fs" />
       <Compile Include="MiddleEnd/PSGElaboration/MutabilityAnalysis.fs" />

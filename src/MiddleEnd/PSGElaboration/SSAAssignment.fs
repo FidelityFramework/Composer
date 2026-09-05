@@ -558,8 +558,6 @@ type private SSAContext = {
     /// The zero constant each unit-typed function returns, by Lambda NodeId.value
     UnitReturns: System.Collections.Generic.Dictionary<int, SSA>
     SaturatedCallArgCounts: Map<NodeId, int>
-    /// Pre-computed value-position coeffect — VarRefs needing closure pair construction
-    ValuePosition: ValuePositionAnalysis.ValuePositionResult
 }
 
 let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : int =
@@ -955,14 +953,12 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | SemanticKind.IndexSet _ -> 1
     | SemanticKind.AddressOf _ -> 3  // alloca, zero-index, extract-base-ptr
     | SemanticKind.VarRef (_, defIdOpt) ->
-        // Value-position is a pre-computed coeffect. Function VarRefs in value position
-        // need 7 SSAs (closure pair construction). References to module-level value slots
-        // need 3 (get_global + zero + load). All others need 2.
-        if Set.contains node.Id ctx.ValuePosition.FunctionVarRefsInValuePosition then 7
-        else
-            match defIdOpt |> Option.bind (fun d -> Map.tryFind d ctx.Graph.Nodes) with
-            | Some def when isModuleValueSlotBinding ctx.Graph def -> 3
-            | _ -> 2
+        // A reference to a module-level value slot needs 3 (get_global + zero + load); any
+        // other reference 2. A named function in value position is no VarRef by now: Baker
+        // elaborates it into a Lambda marked for closure pair construction.
+        match defIdOpt |> Option.bind (fun d -> Map.tryFind d ctx.Graph.Nodes) with
+        | Some def when isModuleValueSlotBinding ctx.Graph def -> 3
+        | _ -> 2
     | SemanticKind.TupleGet _ -> 4  // Struct field extraction: offset + view + zero + result (pass-through uses 0 but over-allocate for safety)
     | SemanticKind.FieldGet _ -> 4  // View-based: offset + view + zero + result (for TStruct records)
     | SemanticKind.FieldSet _ -> 3  // Offset constant + typed view + zero index (pRecordFieldSet)
@@ -1698,7 +1694,7 @@ let private deriveHardwareModuleLayout (targetPlatform: Core.Types.Dialects.Targ
         }
     | _ -> None
 
-let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) (valuePosition: ValuePositionAnalysis.ValuePositionResult) (pinMapping: PlatformPinMapping option) : SSAAssignment =
+let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) (pinMapping: PlatformPinMapping option) : SSAAssignment =
     let lambdaNames, declRootLambdas = collectLambdas graph
 
     let mutable allAssignments = Map.empty
@@ -1715,7 +1711,6 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
         InnerScopeAssignments = mutableInnerScopeAssignments
         UnitReturns = mutableUnitReturns
         SaturatedCallArgCounts = saturatedCallArgCounts
-        ValuePosition = valuePosition
     }
 
     // Find the main Lambda
@@ -1963,12 +1958,6 @@ let lookupHardwareModuleLayout (bindingId: NodeId) (assignment: SSAAssignment) :
 /// whose body has a value
 let lookupUnitReturn (lambdaId: NodeId) (assignment: SSAAssignment) : SSA option =
     Map.tryFind (NodeId.value lambdaId) assignment.UnitReturns
-
-/// The value of a named function's closure thunk (`f_as_closure`, pNamedFunctionAsClosure):
-/// the thunk is its own function scope with exactly one value, the forwarded call's result,
-/// so its derivation is the first value of that scope. Read by the pattern; nothing is
-/// numbered there.
-let thunkResult : SSA = V 0
 
 /// PRD-14/PRD-15: Get the actual return type for a function that may return a lazy or seq with captures.
 /// If the function body is a LazyExpr with captures, returns the actual lazy struct type

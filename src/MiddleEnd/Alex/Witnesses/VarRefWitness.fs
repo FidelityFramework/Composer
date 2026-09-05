@@ -4,7 +4,7 @@
 /// The binding SSA is looked up from the accumulator (bindings witnessed first in post-order).
 ///
 /// FUNCTION REFERENCES: VarRef nodes pointing to function bindings (Lambda nodes) build
-/// closure pairs via pNamedFunctionAsClosure, enabling named functions as first-class values.
+/// named functions in value position are elaborated by Baker into lambdas (no thunk here).
 /// For direct calls, ApplicationWitness navigates to VarRef for name resolution independently.
 ///
 /// NANOPASS: This witness handles ONLY VarRef nodes.
@@ -18,7 +18,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemRefPatterns  // pLoadMutableVariable
-open Alex.Patterns.ClosurePatterns  // pNamedFunctionAsClosure
 open Alex.Dialects.Core.Types  // TMemRef
 open XParsec
 open XParsec.Parsers
@@ -79,56 +78,11 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                             // Closure-captured function value — return the closure pair
                             { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = closureSSA; Type = closureTy } }
                         | None ->
-                            // Value position vs call position is a COEFFECT (pre-computed).
-                            // "The zipper witnesses, it does not decide." — SpeakEZ: Learning to Walk
-                            if not (Set.contains node.Id ctx.Coeffects.ValuePosition.FunctionVarRefsInValuePosition) then
-                                // Call position — ApplicationWitness handles direct call
-                                { InlineOps = []; TopLevelOps = []; Result = TRVoid }
-                            else
-                            // Value position — build closure pair with thunk wrapper.
-                            // The thunk accepts env (ignored) + params, forwarding to the original.
-                            // This bridges the calling convention gap: closure calls prepend env,
-                            // but named functions don't expect it.
-                            let namedFuncClosurePattern =
-                                parser {
-                                    let! state = getUserState
-                                    let! ssas = getNodeSSAs node.Id
-                                    // Resolve the QUALIFIED function name: Binding name + ModuleDef parent
-                                    // Same logic as LambdaWitness and ApplicationWitness direct call path
-                                    let funcName =
-                                        match bindingNode.Kind with
-                                        | SemanticKind.Binding (bindName, _, _, _) ->
-                                            match bindingNode.Parent with
-                                            | Some parentId ->
-                                                match SemanticGraph.tryGetNode parentId state.Graph with
-                                                | Some parentNode ->
-                                                    match parentNode.Kind with
-                                                    | SemanticKind.ModuleDef (moduleName, _) ->
-                                                        sprintf "%s.%s" moduleName bindName
-                                                    | _ -> bindName
-                                                | None -> bindName
-                                            | None -> bindName
-                                        | _ -> name
-                                    do! ensure (funcName <> "") $"VarRef '{name}': Could not resolve function name"
-                                    // Extract param/return types from the binding node's TFun type
-                                    let platform = state.Coeffects.TargetPlatform
-                                    let arch = state.Coeffects.Platform.TargetArch
-                                    let rec extractParamTypes ty acc =
-                                        match ty with
-                                        | Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TFun (domain, range) ->
-                                            let mlirTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph domain
-                                            extractParamTypes range (mlirTy :: acc)
-                                        | _ -> (List.rev acc, Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph ty)
-                                    let (paramMLIRTypes, returnMLIRType) = extractParamTypes bindingNode.Type []
-                                    let! (inlineOps, topLevelOps, pairSSA, pairTy) =
-                                        pNamedFunctionAsClosure funcName paramMLIRTypes returnMLIRType ssas PSGElaboration.SSAAssignment.thunkResult
-                                    return (inlineOps, topLevelOps, TRValue { SSA = pairSSA; Type = pairTy })
-                                }
-                            match tryMatch namedFuncClosurePattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                            | Some ((inlineOps, topLevelOps, result), _) ->
-                                { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
-                            | None ->
-                                WitnessOutput.error $"VarRef '{name}': Failed to build closure pair for named function"
+                            // Call position: ApplicationWitness handles the direct call. A named
+                            // function in value position never reaches here: Baker elaborates it
+                            // into an eta-expanded Lambda marked for closure pair construction,
+                            // witnessed by the closure path like any other lambda.
+                            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                     elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode then
                         // Module-level value: reload from its slot (valid in any function)
                         let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> name

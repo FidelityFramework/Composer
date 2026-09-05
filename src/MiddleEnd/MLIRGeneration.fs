@@ -76,8 +76,6 @@ let generate
             |> Map.map (fun _ info -> List.length info.AllArgNodes)
 
         // Compute coeffects on flattened graph (SSAs reflect flattened parameter structure)
-        // ValuePosition runs first — SSAAssignment consumes it for VarRef SSA cost decisions
-        let valuePosition = PSGElaboration.ValuePositionAnalysis.analyze flattenedGraph
 
         // FPGA pin mapping coeffect (FPGA targets only); SSAAssignment reads it to derive the
         // hardware module's values (the power-on reset, the flat input packing, the output flattening)
@@ -87,7 +85,7 @@ let generate
                 PSGElaboration.PlatformPinResolution.resolve flattenedGraph
             | _ -> None
 
-        let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA targetPlatform arch flattenedGraph saturatedCallArgCounts valuePosition pinMapping
+        let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA targetPlatform arch flattenedGraph saturatedCallArgCounts pinMapping
         let mutability = PSGElaboration.MutabilityAnalysis.analyze flattenedGraph
         let yieldStates = PSGElaboration.YieldStateIndices.run flattenedGraph
         let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze flattenedGraph
@@ -122,7 +120,6 @@ let generate
             DeclarationRootLambdas = ssaAssignment.DeclarationRootLambdas
             TargetPlatform = targetPlatform
             PinMapping = pinMapping
-            ValuePosition = valuePosition
         }
 
         // Execute Alex transfer (parallel nanopasses)
