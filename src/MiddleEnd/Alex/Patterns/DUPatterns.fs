@@ -71,8 +71,9 @@ let pBuildDUGetTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<
 // DU ELIMINATE — Codata-dependent elision
 // ═══════════════════════════════════════════════════════════
 
-/// Extract DU payload. CPU: memref view at offset. FPGA: struct extract (future).
-let pBuildDUEliminate (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (caseIndex: int) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+/// Extract DU payload. CPU: memref view at the settled payload offset, then the read's own
+/// width through its derived meet. FPGA: struct extract (future).
+let pBuildDUEliminate (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionNativeType: NativeType) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! targetPlatform = getTargetPlatform
         match targetPlatform with
@@ -80,5 +81,10 @@ let pBuildDUEliminate (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (caseInde
             return! fail (Message "FPGA DU payload extraction not yet supported")
         | _ ->
             // CPU/MCU: memory-based payload extraction
-            return! pExtractDUPayload nodeId duSSA duType caseIndex payloadType
+            let! (ops, result) = pExtractDUPayload nodeId duSSA duType unionNativeType payloadType
+            match result with
+            | TRValue v ->
+                let! (meetOps, readSSA, readTy) = pAdapt nodeId nodeId v.SSA v.Type
+                return (ops @ meetOps, TRValue { SSA = readSSA; Type = readTy })
+            | other -> return (ops, other)
     }

@@ -39,106 +39,6 @@ let pExtractField (ssas: SSA list) (structSSA: SSA) (fieldIndex: int) (structTy:
     }
 
 // ═══════════════════════════════════════════════════════════
-// FIELD ACCESS PATTERNS (Byte-Offset)
-// ═══════════════════════════════════════════════════════════
-
-/// Field access via byte-offset memref operations
-/// structType: The NativeType of the struct (for calculating field offset)
-let pFieldAccess (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (gepSSA: SSA) (loadSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        let! state = getUserState
-        let arch = state.Platform.TargetArch
-
-        // Calculate byte offset for the field using CCS-provided type structure
-        let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
-
-        // Emit offset constant using SSA observed from coeffects via witness
-        let! offsetOp = pConstI gepSSA (int64 fieldOffset) TIndex
-
-        // Memref.load with byte offset
-        // Note: This assumes structPtr is memref<Nxi8> and we load at byte offset
-        let! loadOp = Alex.Elements.MemRefElements.pLoad loadSSA structPtr [gepSSA]
-
-        return ([offsetOp; loadOp])
-    }
-
-/// Field set via byte-offset memref operations
-/// structType: The NativeType of the struct (for calculating field offset)
-let pFieldSet (structPtr: SSA) (structType: NativeType) (fieldIndex: int) (value: SSA) (gepSSA: SSA) (_indexSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        let! state = getUserState
-        let arch = state.Platform.TargetArch
-        let elemType = mapNativeTypeWithGraphForArch arch state.Graph state.Current.Type
-
-        // Calculate byte offset for the field using CCS-provided type structure
-        let fieldOffset = calculateFieldOffsetForArch arch structType fieldIndex
-
-        // Emit offset constant using SSA observed from coeffects via witness
-        let! offsetOp = pConstI gepSSA (int64 fieldOffset) TIndex
-
-        // Memref.store with byte offset
-        let memrefType = TMemRefStatic (1, elemType)
-        let! storeOp = pStore value structPtr [gepSSA] elemType memrefType
-
-        return ([offsetOp; storeOp])
-    }
-
-// ═══════════════════════════════════════════════════════════
-// ALLOCATION PATTERNS
-// ═══════════════════════════════════════════════════════════
-
-/// Address-of for immutable values: const 1, allocate, store, return pointer
-/// SSAs: [0] = const 1, [1] = alloca result
-let pAllocaImmutable (valueSSA: SSA) (valueType: MLIRType) (ssas: SSA list) : PSGParser<MLIROp list> =
-    parser {
-        do! ensure (ssas.Length >= 3) $"pAllocaImmutable: Expected 3 SSAs, got {ssas.Length}"
-
-        let constOneSSA = ssas.[0]
-        let allocaSSA = ssas.[1]
-        let indexSSA = ssas.[2]
-
-        let constOneTy = TInt (IntWidth 64)
-        let! constOp = pConstI constOneSSA 1L constOneTy
-        let! allocaOp = pAlloca allocaSSA 1 valueType None
-        let! indexOp = pConstI indexSSA 0L TIndex  // Index 0 for 1-element memref
-        let memrefType = TMemRefStatic (1, valueType)
-        let! storeOp = pStore valueSSA allocaSSA [indexSSA] valueType memrefType
-
-        return ([constOp; allocaOp; indexOp; storeOp])
-    }
-
-// ═══════════════════════════════════════════════════════════
-// TYPE CONVERSION PATTERNS
-// ═══════════════════════════════════════════════════════════
-
-/// Type conversion dispatcher - chooses appropriate conversion Element
-let pConvertType (srcSSA: SSA) (srcType: MLIRType) (dstType: MLIRType) (resultSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        if srcType = dstType then
-            // No conversion needed
-            return []
-        else
-            let! convOp =
-                match srcType, dstType with
-                // Integer widening (sign-extend)
-                | TInt srcWidth, TInt dstWidth when srcWidth < dstWidth ->
-                    pExtSI resultSSA srcSSA srcType dstType
-                // Integer narrowing (truncate)
-                | TInt _, TInt _ ->
-                    pTruncI resultSSA srcSSA srcType dstType
-                // Float to int
-                | TFloat _, TInt _ ->
-                    pFPToSI resultSSA srcSSA srcType dstType
-                // Int to float
-                | TInt _, TFloat _ ->
-                    pSIToFP resultSSA srcSSA srcType dstType
-                // Unsupported conversion (bitcast removed - no portable memref equivalent)
-                | _, _ ->
-                    fail (Message $"Unsupported type conversion: {srcType} -> {dstType}")
-            return ([convOp])
-    }
-
-// ═══════════════════════════════════════════════════════════
 // DU PATTERNS
 // ═══════════════════════════════════════════════════════════
 
@@ -170,9 +70,17 @@ let pExtractDUTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<M
             return (ops, TRValue { SSA = tagSSA; Type = tagTy })
     }
 
+/// The payload offset of a union, read from the settled layout of the union's type
+/// (`SemanticGraph.Layouts`, ruling 2: the tag, then the payload slot of the widest case).
+let unionPayloadOffset (graph: SemanticGraph) (unionTy: NativeType) : int =
+    match settledLayout graph unionTy with
+    | Some (SettledLayout.Union (_, Some offset, _, _)) -> offset
+    | Some other -> failwithf "unionPayloadOffset: '%s' has the settled layout %A, not a union's with a payload offset" (formatType unionTy) other
+    | None -> failwithf "unionPayloadOffset: '%s' has no settled layout on the graph" (formatType unionTy)
+
 /// Extract DU payload via memref.view (different element type: byte buffer → typed payload)
 /// SSAs extracted from coeffects via nodeId: [0] = offsetSSA, [1] = viewSSA, [2] = zeroSSA, [3] = extractSSA
-let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (_caseIndex: int) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionNativeType: NativeType) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 4) $"pExtractDUPayload: Expected 4 SSAs, got {ssas.Length}"
@@ -182,8 +90,8 @@ let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (_caseInd
         let zeroSSA = ssas.[2]
         let extractSSA = ssas.[3]
 
-        // Payload byte offset = tag size (1 byte for i8 tags)
-        let payloadByteOffset = 1
+        let! state = getUserState
+        let payloadByteOffset = unionPayloadOffset state.Graph unionNativeType
 
         // Typed extract via memref.view — payload has different element type than byte buffer
         let! extractOps = pTypedExtractView extractSSA duSSA payloadByteOffset offsetSSA viewSSA zeroSSA payloadType duType
@@ -191,63 +99,8 @@ let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (_caseInd
     }
 
 // ═══════════════════════════════════════════════════════════
-// RECORD PATTERNS
-// ═══════════════════════════════════════════════════════════
-
-/// Record copy-and-update: start with original, insert updated fields
-/// SSAs: one per updated field
-/// Updates: (fieldIndex, valueSSA) pairs
-let pRecordCopyWith (origSSA: SSA) (recordType: MLIRType) (updates: (int * SSA) list) (ssas: SSA list) : PSGParser<MLIROp list> =
-    parser {
-        // Each update needs 2 SSAs: offsetSSA and targetSSA
-        do! ensure (ssas.Length = 2 * updates.Length) $"pRecordCopyWith: Expected {2 * updates.Length} SSAs (2 per update), got {ssas.Length}"
-
-        // Fold over updates, threading prevSSA through
-        let! result =
-            updates
-            |> List.mapi (fun i (fieldIdx, valueSSA) ->
-                let offsetSSA = ssas.[2*i]
-                let targetSSA = ssas.[2*i + 1]
-                (offsetSSA, targetSSA, fieldIdx, valueSSA))
-            |> List.fold (fun accParser (offsetSSA, targetSSA, fieldIdx, valueSSA) ->
-                parser {
-                    let! (prevOps, prevSSA) = accParser
-                    let! insertOps = pInsertValue targetSSA prevSSA valueSSA fieldIdx offsetSSA recordType
-                    return (prevOps @ insertOps, targetSSA)
-                }
-            ) (preturn ([], origSSA))
-
-        let (ops, _) = result
-        return ops
-    }
-
-// ═══════════════════════════════════════════════════════════
 // ARRAY PATTERNS
 // ═══════════════════════════════════════════════════════════
-
-/// Build array: allocate, initialize elements, construct the memref view
-/// Array element access via SubView + Load
-/// SSAs: gepSSA for subview, loadSSA for result, indexZeroSSA for memref index
-let pArrayAccess (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (gepSSA: SSA) (loadSSA: SSA) (indexZeroSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        let! subViewOp = pSubView gepSSA arrayPtr [index]
-        let! indexZeroOp = pConstI indexZeroSSA 0L TIndex  // MLIR memrefs require indices
-        let! loadOp = pLoad loadSSA gepSSA [indexZeroSSA]
-        return ([subViewOp; indexZeroOp; loadOp])
-    }
-
-/// Array element set via SubView + Store
-let pArraySet (arrayPtr: SSA) (index: SSA) (indexTy: MLIRType) (value: SSA) (gepSSA: SSA) (indexZeroSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        let! state = getUserState
-        let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-
-        let! subViewOp = pSubView gepSSA arrayPtr [index]
-        let! indexZeroOp = pConstI indexZeroSSA 0L TIndex  // Index 0 for 1-element memref
-        let memrefType = TMemRefStatic (1, elemType)
-        let! storeOp = pStore value gepSSA [indexZeroSSA] elemType memrefType
-        return ([subViewOp; indexZeroOp; storeOp])
-    }
 
 /// Build Arena.create pattern
 /// Allocates an arena buffer on the stack
@@ -359,51 +212,14 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
     }
 
 // ═══════════════════════════════════════════════════════════
-// STRUCT CONSTRUCTION PATTERNS
-// ═══════════════════════════════════════════════════════════
-
-/// Record struct via Undef + InsertValue chain
-/// SSA layout: [0] = undefSSA, then for each field: [2*i+1] = offsetSSA, [2*i+2] = resultSSA
-let pRecordStruct (arch: Architecture) (fields: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
-    parser {
-        do! ensure (ssas.Length = 1 + 2 * fields.Length) $"pRecordStruct: Expected {1 + 2 * fields.Length} SSAs, got {ssas.Length}"
-
-        // Compute struct type from field types
-        let fieldTypes = fields |> List.map (fun f -> f.Type)
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
-        let structTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
-        let! undefOp = pUndef ssas.[0] structTy
-
-        let! insertOpLists =
-            fields
-            |> List.mapi (fun i field ->
-                parser {
-                    let offsetSSA = ssas.[2*i + 1]
-                    let targetSSA = ssas.[2*i + 2]
-                    let sourceSSA = if i = 0 then ssas.[0] else ssas.[2*(i-1) + 2]
-                    return! pInsertValue targetSSA sourceSSA field.SSA i offsetSSA structTy
-                })
-            |> sequence
-
-        let insertOps = List.concat insertOpLists
-        return undefOp :: insertOps
-    }
-
-/// Tuple struct via Undef + InsertValue chain (same as record, but semantically different)
-let pTupleStruct (arch: Architecture) (elements: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
-    pRecordStruct arch elements ssas  // Same implementation, different semantic context
-
-// ═══════════════════════════════════════════════════════════
 // ESCAPE-AWARE ALLOCATION
 // ═══════════════════════════════════════════════════════════
 
-/// Extract static memref shape from an MLIRType
+/// The static memref shape of a value's storage: a struct is a byte memref of its settled size
 let extractMemRefShape (arch: Architecture) (ty: MLIRType) =
     match ty with
     | TMemRefStatic (count, elemType) -> (count, elemType)
-    | TStruct fields ->
-        let totalBytes = fields |> List.sumBy (fun (_, ft) -> mlirTypeSize arch ft)
-        (totalBytes, TInt (IntWidth 8))
+    | TStruct _ -> (mlirTypeSize arch ty, TInt (IntWidth 8))
     | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
 
 /// Allocate memory for a constructed value — queries escape analysis coeffect
@@ -461,9 +277,10 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
         let! tagConstOp = pConstI ssas.[1] tag tagTy
         let! insertTagOps = pTypedInsert ssas.[0] ssas.[1] 0 ssas.[2] ssas.[3] tagTy ty
 
-        // Insert payload fields at byte offset 1 (after i8 tag) via memref.view
+        // Insert payload fields at the settled payload offset (after the tag) via memref.view
         // (different element type: byte buffer → typed payload)
-        let payloadByteOffset = 1
+        let! state = getUserState
+        let payloadByteOffset = unionPayloadOffset state.Graph state.Current.Type
         let! payloadOpLists =
             payload
             |> List.mapi (fun i field ->
@@ -572,13 +389,10 @@ let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
         // Cast size to index type (memref.alloc requires index)
         let! castOp = pIndexCastS sizeIndexSSA sizeSSA sizeType TIndex
 
-        // Element type from the result type (Array<byte> → memref<?xi8>)
+        // The element type of the array node's type: an element of the bare kind at the element
+        // range's settled width, a record at its physical storage
         let! state = getUserState
-        let elemType =
-            match state.Current.Type with
-            | NativeType.TApp(tycon, [innerTy]) when tycon.Name = "array" ->
-                mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph innerTy
-            | _ -> TInt (IntWidth 8)  // Default to byte for Array.zeroCreate<byte>
+        let elemType = arrayElementType state.Platform.TargetArch state.Graph state.Current.Type
 
         let! allocOp = pAlloc resultSSA sizeIndexSSA elemType
         let resultType = TMemRef elemType
@@ -602,21 +416,38 @@ let pArraySetIntrinsic : PSGParser<MLIROp list * TransferResult> =
 
         let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
         let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
-        let! (_, valueSSA, _) = pRecallArgWithLoad argIds.[2]
+        let! (_, rawValueSSA, rawValueTy) = pRecallArgWithLoad argIds.[2]
+        // the value at the element's settled width (its derived meet)
+        let! (meetOps, valueSSA, _) = pAdapt node.Id argIds.[2] rawValueSSA rawValueTy
 
         // Cast index to index type (memref.store requires index-typed indices)
         let! castOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
 
         // Element type from the array type (NOT current node type which is unit)
-        let elemType =
+        let! elemType =
             match arrayType with
-            | TMemRef t -> t
-            | TMemRefStatic (_, t) -> t
-            | _ -> TInt (IntWidth 8)  // Default to byte
+            | TMemRef t -> preturn t
+            | TMemRefStatic (_, t) -> preturn t
+            | other -> fail (Message $"Array.set: expected an array (memref), got {other}")
 
         // Direct memref.store (no SubView needed)
         let! storeOp = pStore valueSSA arraySSA [indexCastSSA] elemType arrayType
-        return ([castOp; storeOp], TRVoid)
+        return (meetOps @ [castOp; storeOp], TRVoid)
+    }
+
+/// An element read at its own width: a scalar element through the read's derived meet; a
+/// record or tuple element keeps the logical struct type of the read's node over the byte
+/// memref the element holds (the settled layout the struct carries).
+let pReadElement (nodeId: NodeId) (elemType: MLIRType) (loaded: SSA) (nodeType: NativeType) : PSGParser<MLIROp list * SSA * MLIRType> =
+    parser {
+        let! state = getUserState
+        match elemType with
+        | TInt _ -> return! pAdapt nodeId nodeId loaded elemType
+        | _ ->
+            let logical = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph nodeType
+            match logical with
+            | TStruct _ -> return ([], loaded, logical)
+            | _ -> return ([], loaded, elemType)
     }
 
 /// Array.get intrinsic — load element at index
@@ -636,20 +467,24 @@ let pArrayGetIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let indexCastSSA = ssas.[0]
         let resultSSA = ssas.[1]
 
-        let! (_, arraySSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
         let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
 
         // Cast index to index type (memref.load requires index-typed indices)
         let! castOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
 
-        // Result type from the current node's type
-        let! state = getUserState
-        let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-
-        // Direct memref.load at cast index
+        // Direct memref.load at cast index: the element's slot, then the read's own width
+        // (a scalar through its derived meet; a record or tuple keeps its logical struct type
+        // over the byte memref the element holds)
         let! loadOp = pLoad resultSSA arraySSA [indexCastSSA]
+        let! elemType =
+            match arrayType with
+            | TMemRef t | TMemRefStatic (_, t) -> preturn t
+            | other -> fail (Message $"Array.get: expected an array (memref), got {other}")
+        let! state = getUserState
+        let! (meetOps, readSSA, readTy) = pReadElement node.Id elemType resultSSA state.Current.Type
 
-        return ([castOp; loadOp], TRValue { SSA = resultSSA; Type = resultType })
+        return ([castOp; loadOp] @ meetOps, TRValue { SSA = readSSA; Type = readTy })
     }
 
 /// Array.sub intrinsic — extract subarray (offset + length)
@@ -705,7 +540,7 @@ let pArrayLengthIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (ssas.Length >= 3) $"pArrayLength: Expected 3 SSAs, got {ssas.Length}"
         let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
         let! state = getUserState
-        let intTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
+        let intTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type |> narrowForCurrent state
         let! dimConstOp = pConstI ssas.[0] 0L TIndex
         let! dimOp = pMemRefDim ssas.[1] arraySSA ssas.[0] arrayType
         let! castOp = pIndexCastS ssas.[2] ssas.[1] TIndex intTy
@@ -739,17 +574,21 @@ let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! ssas = getNodeSSAs node.Id
         do! ensure (ssas.Length >= 10) $"pArrayBlit: Expected 10 SSAs, got {ssas.Length}"
         let! (_, srcSSA, srcType) = pRecallArgWithLoad argIds.[0]
-        let! (_, srcIdxSSA, idxType) = pRecallArgWithLoad argIds.[1]
+        let! (_, rawSrcIdx, rawSrcIdxTy) = pRecallArgWithLoad argIds.[1]
         let! (_, dstSSA, dstType) = pRecallArgWithLoad argIds.[2]
-        let! (_, dstIdxSSA, _) = pRecallArgWithLoad argIds.[3]
-        let! (_, countSSA, _) = pRecallArgWithLoad argIds.[4]
+        let! (_, rawDstIdx, rawDstIdxTy) = pRecallArgWithLoad argIds.[3]
+        let! (_, rawCount, rawCountTy) = pRecallArgWithLoad argIds.[4]
+        // pointer arithmetic at the declared word: each index and the count at its derived meet
+        let! (srcIdxMeet, srcIdxSSA, idxType) = pAdapt node.Id argIds.[1] rawSrcIdx rawSrcIdxTy
+        let! (dstIdxMeet, dstIdxSSA, _) = pAdapt node.Id argIds.[3] rawDstIdx rawDstIdxTy
+        let! (countMeet, countSSA, _) = pAdapt node.Id argIds.[4] rawCount rawCountTy
         let! state = getUserState
         let arch = state.Platform.TargetArch
         let wordTy = state.Platform.PlatformWordType
-        let elemTy =
+        let! elemTy =
             match srcType with
-            | TMemRef t | TMemRefStatic (_, t) -> t
-            | _ -> TInt (IntWidth 8)
+            | TMemRef t | TMemRefStatic (_, t) -> preturn t
+            | other -> fail (Message $"Array.blit: expected an array (memref), got {other}")
         let elemSize = int64 (mlirTypeSize arch (physicalElementType arch elemTy))
         let! srcBaseIdxOp = pExtractBasePtr ssas.[0] srcSSA srcType
         let! dstBaseIdxOp = pExtractBasePtr ssas.[1] dstSSA dstType
@@ -763,6 +602,7 @@ let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let dstPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[9], ssas.[3], ssas.[6], wordTy))
         let! (copyOps, _) = pMemCopy ssas.[9] ssas.[8] ssas.[7]
         let ops =
+            srcIdxMeet @ dstIdxMeet @ countMeet @
             [srcBaseIdxOp; dstBaseIdxOp; srcBaseOp; dstBaseOp; elemSizeOp;
              srcOffsetOp; dstOffsetOp; byteCountOp; srcPtrOp; dstPtrOp] @ copyOps
         return (ops, TRVoid)
@@ -787,13 +627,11 @@ let pIndexGetArray : PSGParser<MLIROp list * TransferResult> =
                 let! (_, indexSSA, indexType) = pRecallArgWithLoad idxId
                 let! ssas = getNodeSSAs node.Id
                 do! ensure (ssas.Length >= 2) $"pIndexGetArray: Expected 2 SSAs, got {ssas.Length}"
-                let! state = getUserState
-                let resultType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph node.Type
-                let physical = physicalElementType state.Platform.TargetArch resultType
-                do! ensure (physical = elemTy) $"IndexGet: element type {elemTy} does not match result type {resultType} (string indexing is String.charAt)"
                 let! castOp = pIndexCastS ssas.[0] indexSSA indexType TIndex
                 let! loadOp = pLoad ssas.[1] arraySSA [ssas.[0]]
-                return ([castOp; loadOp], TRValue { SSA = ssas.[1]; Type = resultType })
+                // the element's slot, then the read's own width (its derived meet)
+                let! (meetOps, readSSA, readTy) = pReadElement node.Id elemTy ssas.[1] node.Type
+                return ([castOp; loadOp] @ meetOps, TRValue { SSA = readSSA; Type = readTy })
             | _ -> return! fail (Message $"IndexGet: expected an array (memref), got {arrayType}")
         | _ -> return! fail (Message "Expected IndexGet")
     }
@@ -811,12 +649,13 @@ let pIndexSetArray : PSGParser<MLIROp list * TransferResult> =
             match arrayType with
             | TMemRef elemTy | TMemRefStatic (_, elemTy) ->
                 let! (_, indexSSA, indexType) = pRecallArgWithLoad idxId
-                let! (_, valueSSA, _) = pRecallArgWithLoad valId
+                let! (_, rawValueSSA, rawValueTy) = pRecallArgWithLoad valId
+                let! (meetOps, valueSSA, _) = pAdapt node.Id valId rawValueSSA rawValueTy
                 let! ssas = getNodeSSAs node.Id
                 do! ensure (ssas.Length >= 1) $"pIndexSetArray: Expected 1 SSA, got {ssas.Length}"
                 let! castOp = pIndexCastS ssas.[0] indexSSA indexType TIndex
                 let! storeOp = pStore valueSSA arraySSA [ssas.[0]] elemTy arrayType
-                return ([castOp; storeOp], TRVoid)
+                return (meetOps @ [castOp; storeOp], TRVoid)
             | _ -> return! fail (Message $"IndexSet: expected an array (memref), got {arrayType}")
         | _ -> return! fail (Message "Expected IndexSet")
     }
@@ -835,11 +674,7 @@ let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
             do! ensure (ssas.Length >= 2 + n) $"pBuildArrayLiteral: Expected {2 + n} SSAs, got {ssas.Length}"
             let! state = getUserState
             let arch = state.Platform.TargetArch
-            let! elemType =
-                match node.Type with
-                | NativeType.TApp (tycon, [innerTy]) when tycon.Name = "array" || tycon.Name = "Array" ->
-                    preturn (physicalElementType arch (mapNativeTypeWithGraphForArch arch state.Graph innerTy))
-                | other -> fail (Message $"ArrayExpr: expected an array type, got {other}")
+            let elemType = arrayElementType arch state.Graph node.Type
             let arrayType = TMemRef elemType
             let! sizeOp = pConstI ssas.[0] (int64 n) TIndex
             let! allocOp = pAlloc ssas.[1] ssas.[0] elemType
@@ -847,10 +682,11 @@ let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
                 elemIds
                 |> List.mapi (fun i elemId ->
                     parser {
-                        let! (_, valueSSA, _) = pRecallArgWithLoad elemId
+                        let! (_, rawValueSSA, rawValueTy) = pRecallArgWithLoad elemId
+                        let! (meetOps, valueSSA, _) = pAdapt node.Id elemId rawValueSSA rawValueTy
                         let! idxOp = pConstI ssas.[2 + i] (int64 i) TIndex
                         let! storeOp = pStore valueSSA ssas.[1] [ssas.[2 + i]] elemType arrayType
-                        return [idxOp; storeOp]
+                        return meetOps @ [idxOp; storeOp]
                     })
                 |> sequence
             return (sizeOp :: allocOp :: List.concat storeOpLists, TRValue { SSA = ssas.[1]; Type = arrayType })

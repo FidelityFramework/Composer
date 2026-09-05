@@ -55,7 +55,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                 let arch = state.Coeffects.Platform.TargetArch
                                 let rawTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph bindingNode.Type
                                 let ty = Alex.XParsec.PSGCombinators.narrowType state.Coeffects state.Graph bindingId rawTy
-                                return ([], TRValue { SSA = ssa; Type = ty })
+                                // the parameter's width, then this read's own (ruling 3)
+                                let! (meetOps, readSSA, readTy) = pAdapt node.Id node.Id ssa ty
+                                return (meetOps, TRValue { SSA = readSSA; Type = readTy })
                             }
 
                         match tryMatch patternBindingPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -91,6 +93,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         let globalName = ModuleValues.globalName bindingName bindingId
                         match tryMatchWithDiagnostics (pGlobalSlotLoad node.Id globalName valueTy)
                                       ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, TRValue v), _) ->
+                            let (meetOps, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id v.SSA v.Type
+                            { InlineOps = ops @ meetOps; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | Result.Error diagnostic -> WitnessOutput.error $"VarRef '{name}': {diagnostic}"
                     elif Set.contains bindingId ctx.Coeffects.CurryFlattening.PartialAppBindings then
@@ -116,6 +121,11 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                     let (NodeId nodeIdInt) = node.Id
                                     match tryMatchWithDiagnostics (pLoadMutableVariable nodeIdInt ssa elemType)
                                                   ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                                    | Result.Ok ((ops, TRValue v), _) ->
+                                        // the cell's width, then this read's own (ruling 3: a read
+                                        // refined under a guard truncates; at a boundary it extends)
+                                        let (meetOps, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id v.SSA v.Type
+                                        { InlineOps = ops @ meetOps; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                                     | Result.Ok ((ops, result), _) ->
                                         { InlineOps = ops; TopLevelOps = []; Result = result }
                                     | Result.Error diagnostic ->
@@ -123,8 +133,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                 | None ->
                                     WitnessOutput.error $"VarRef '{name}': Mutable cell has unexpected type {ty}"
                             else
-                                // Immutable value (including buffers): forward directly
-                                { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+                                // Immutable value (including buffers): forward, at this read's own width
+                                let (meetOps, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id ssa ty
+                                { InlineOps = meetOps; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                         | None ->
                             WitnessOutput.error $"VarRef '{name}': Binding not yet witnessed"
 

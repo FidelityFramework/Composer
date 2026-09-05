@@ -44,7 +44,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 // Copy-and-update: recall original record SSA, delegate to pBuildRecordCopyWith
                 match MLIRAccumulator.recallNode origId ctx.Accumulator with
                 | Some (origSSA, _origTy) ->
-                    match tryMatchWithDiagnostics (pBuildRecordCopyWith node.Id structTy origSSA fieldValues) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    match tryMatchWithDiagnostics (pBuildRecordCopyWith node.Id structTy origSSA fieldValues (fields |> List.map snd)) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error diagnostic -> WitnessOutput.error $"RecordExpr copy-with: {diagnostic}"
                 | None ->
@@ -62,13 +62,8 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
         match node.Kind with
         | SemanticKind.TupleExpr elements ->
             // Map tuple type to TStruct with Item1, Item2, ... fields
-            let structTy =
-                (match node.Type with
-                 | Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TTuple(elemTypes, _) ->
-                     let fields = elemTypes |> List.mapi (fun i e -> (sprintf "Item%d" (i + 1), mapType e ctx))
-                     TStruct fields
-                 | _ -> mapType node.Type ctx)
-                |> narrowType ctx.Coeffects ctx.Graph node.Id
+            // the tuple's struct at its settled layout (mapType reads it from the graph)
+            let structTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
             // Recall each element's SSA from the accumulator (children already walked in post-order)
             let fieldValues =

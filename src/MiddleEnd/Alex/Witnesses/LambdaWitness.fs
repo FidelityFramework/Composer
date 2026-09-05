@@ -143,15 +143,23 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
 
             // Determine return type from Lambda type signature
-            // For flattened Lambdas with N params, unroll N levels of TFun
+            // For flattened Lambdas with N params, unroll N levels of TFun. The entry point's
+            // result is ABI-governed (§4.1): the body node sits at the declared Register width,
+            // and the last value is brought to it by the return meet SSAAssignment derived.
             let innerReturnNativeType = unrollReturnType (List.length params') node.Type
-            let expectedReturnType = mapType innerReturnNativeType ctx
+            let expectedReturnType = mapType innerReturnNativeType ctx |> narrowType ctx.Coeffects ctx.Graph bodyId
+            let returnMeet = lookupReturnMeet node.Id ctx.Coeffects.SSA
+            let returnMeetOps =
+                match returnMeet, bodyResult with
+                | Some meet, Some (ssa, _) -> [ meetOp meet ssa ]
+                | _ -> []
 
             // Handle bodyResult based on return type
             let returnSSA, returnType =
-                match bodyResult with
-                | Some (ssa, ty) -> (Some ssa, ty)
-                | None ->
+                match returnMeet, bodyResult with
+                | Some meet, Some _ -> (Some meet.SSA, TInt meet.To)
+                | _, Some (ssa, ty) -> (Some ssa, ty)
+                | _, None ->
                     // Check if Lambda returns unit - if so, None is expected (TRVoid)
                     match innerReturnNativeType with
                     | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
@@ -179,7 +187,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         (None, expectedReturnType)
 
             let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some returnType))
-            let completeBody = bodyOps @ [returnOp]
+            let completeBody = bodyOps @ returnMeetOps @ [returnOp]
 
             // Build func.func @main wrapper (portable MLIR)
             // Parameters: argv as memref<?xi8> (dynamic-sized buffer)
@@ -312,27 +320,17 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let captureExtractionOps =
                 match closureLayoutOpt with
                 | Some layout when not layout.Captures.IsEmpty ->
-                    let captureTypes = layout.Captures |> List.map (fun cap -> cap.SlotType)
-                    // Compute prefix byte offset (bytes before first capture in struct)
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let sizeOf = mlirTypeSize arch
-                    let prefixByteOffset =
-                        match layout.Context with
-                        | LambdaContext.RegularClosure -> sizeOf TIndex  // code_ptr = one platform word
-                        | LambdaContext.LazyThunk ->
-                            // {computed: i1, value: T, code_ptr: ptr} — need value type from lazy struct
-                            sizeOf (TInt (IntWidth 1)) + sizeOf TIndex + sizeOf TIndex  // Approximate
-                        | LambdaContext.SeqGenerator ->
-                            // {state: i32, current: T, code_ptr: ptr}
-                            sizeOf (TInt (IntWidth 32)) + sizeOf TIndex + sizeOf TIndex  // Approximate
+                    // Each slot's type and settled byte offset, read from the layout SSAAssignment
+                    // derived (the header before the first capture is the layout's)
+                    let captureSlots = layout.Captures |> List.map (fun cap -> (cap.SlotType, cap.ByteOffset))
                     // The callee prologue's values are the closure layout's, derived by SSAAssignment
                     // in the order pExtractCaptures consumes them (per capture: its work values, its
                     // result), then the env reconstruction pair. Nothing is numbered here.
-                    let extractionSSAs = layout.CaptureExtractionSSAs |> List.concat
+                    let extractionSSAs = layout.CaptureExtractionSSAs
                     let captureResultTypes =  // per capture: the type body code sees
-                        captureTypes |> List.map (fun capTy ->
+                        captureSlots |> List.map (fun (capTy, _) ->
                             match capTy with
-                            | TStruct [("ptr", TIndex); ("len", TIndex)] -> TMemRef(TInt (IntWidth 8))
+                            | TStruct ([("ptr", TIndex); ("len", TIndex)], _) -> TMemRef(TInt (IntWidth 8))
                             | _ -> capTy)
 
                     // ═══ ENV RECONSTRUCTION PROLOGUE ═══
@@ -345,7 +343,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         MLIROp.MemRefOp(MemRefOp.ReinterpretCast(envMemrefSSA, rawEnvSSA, 0, (match layout.ClosureStructType with TMemRefStatic(sz, _) -> sz | _ -> 0), dynMemrefTy, layout.ClosureStructType))
                     ]
 
-                    match tryMatch (pExtractCaptures prefixByteOffset captureTypes layout.ClosureStructType envMemrefSSA extractionSSAs) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    match tryMatch (pExtractCaptures captureSlots layout.ClosureStructType envMemrefSSA extractionSSAs) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Some (ops, _) ->
                         // Register capture SSAs in accumulator so body references can find them.
                         // For decomposed memref captures, bind with the RECONSTRUCTED type (memref<?>),
@@ -403,22 +401,33 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
 
             // Determine return type from Lambda type signature
-            // For flattened Lambdas with N params, unroll N levels of TFun
+            // For flattened Lambdas with N params, unroll N levels of TFun. The result is held at
+            // the body node's width (the width every caller reads for the call); the last value
+            // is brought to it by the return meet SSAAssignment derived, the last value of this
+            // scope (an escaping lambda's body sits at the declared Register width, ruling 1).
             let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
             if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
                 printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
                     funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
             let rawReturnType = mapType innerReturnNativeType2 ctx
+            let returnMeet = lookupReturnMeet node.Id ctx.Coeffects.SSA
             let returnType =
-                match bodyResult with
-                | Some (_, actualTy) -> actualTy
-                | None -> narrowType ctx.Coeffects ctx.Graph actualValueNode rawReturnType
+                match returnMeet, bodyResult with
+                | Some meet, Some _ -> TInt meet.To
+                | _, Some (_, actualTy) -> actualTy
+                | _, None -> narrowType ctx.Coeffects ctx.Graph bodyId rawReturnType
+            let returnMeetOps =
+                match returnMeet, bodyResult with
+                | Some meet, Some (ssa, _) -> [ meetOp meet ssa ]
+                | _ -> []
+            let bodyOps = bodyOps @ returnMeetOps
 
             // Handle bodyResult based on return type
             let returnSSA =
-                match bodyResult with
-                | Some (ssa, _) -> Some ssa
-                | None ->
+                match returnMeet, bodyResult with
+                | Some meet, Some _ -> Some meet.SSA
+                | _, Some (ssa, _) -> Some ssa
+                | _, None ->
                     match innerReturnNativeType2 with
                     | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
                         None
@@ -511,16 +520,13 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     let parentScope4 = ScopeContext.addOp codeStoreOp !ctx.ScopeContext
                     ctx.ScopeContext := parentScope4
 
-                    // 4. Insert captures at computed byte offsets via reinterpret_cast
-                    // Variable-width: decomposed memref captures use 5 SSAs from CaptureInsertSSAs,
-                    // scalar captures use 1 SSA. CaptureInsertSSAs is a flat list sized by
-                    // captureConstructionSSACount per capture.
-                    let arch = ctx.Coeffects.Platform.TargetArch
-                    let sizeOf = mlirTypeSize arch
-                    let mutable captureByteOffset = sizeOf codePtrTy  // Start after code_ptr
-                    let mutable ssaIdx = 0  // Index into flat CaptureInsertSSAs list
+                    // 4. Insert captures at their settled byte offsets via reinterpret_cast, each
+                    // with the construction values the layout derived for it (five for a
+                    // decomposed memref, two for a base-pointer slot, one for a scalar)
                     for i in 0 .. layout.Captures.Length - 1 do
                         let cap = layout.Captures.[i]
+                        let captureByteOffset = cap.ByteOffset
+                        let captureSSAs = layout.CaptureInsertSSAs.[i]
                         // Resolve capture source SSA from the SAVED parent-scope snapshot.
                         // We snapshot NodeAssoc BEFORE body emission because body emission
                         // overwrites parent-scope entries with inner function extraction SSAs.
@@ -533,15 +539,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                                 None
                         match captureSSAOpt with
                         | Some capSSA ->
-                            match cap.SlotType with
-                            | TStruct [("ptr", TIndex); ("len", TIndex)] ->
+                            match cap.SlotType, captureSSAs with
+                            | TStruct ([("ptr", TIndex); ("len", TIndex)], slotBytes), [ ptrSSA; dimZeroSSA; lenSSA; ptrViewSSA; lenViewSSA ] ->
                                 // Decomposed memref: extract ptr + len from source memref, store separately
-                                let ptrSSA     = layout.CaptureInsertSSAs.[ssaIdx]
-                                let dimZeroSSA = layout.CaptureInsertSSAs.[ssaIdx + 1]
-                                let lenSSA     = layout.CaptureInsertSSAs.[ssaIdx + 2]
-                                let ptrViewSSA = layout.CaptureInsertSSAs.[ssaIdx + 3]
-                                let lenViewSSA = layout.CaptureInsertSSAs.[ssaIdx + 4]
-                                ssaIdx <- ssaIdx + 5
 
                                 // Extract base pointer from source memref
                                 let srcMemrefTy = TMemRef(TInt (IntWidth 8))
@@ -561,20 +561,24 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                                 let ptrStoreOp = MLIROp.MemRefOp(MemRefOp.Store(ptrSSA, ptrViewSSA, [zeroSSA], TIndex, ptrViewTy))
                                 ctx.ScopeContext := ScopeContext.addOp ptrStoreOp !ctx.ScopeContext
 
-                                // Store len at next word offset
-                                let lenByteOffset = captureByteOffset + sizeOf TIndex
+                                // Store len at its offset within the decomposed slot
+                                let lenByteOffset =
+                                    match slotBytes with
+                                    | Some b -> captureByteOffset + b.Offsets.[1]
+                                    | None -> failwith "LambdaWitness: a decomposed string slot with no derived layout"
                                 let lenViewTy = TMemRefStatic(1, TIndex)
                                 let lenCastOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCast(lenViewSSA, layout.ClosureUndefSSA, lenByteOffset, 1, closureTy, lenViewTy))
                                 ctx.ScopeContext := ScopeContext.addOp lenCastOp !ctx.ScopeContext
                                 let lenStoreOp = MLIROp.MemRefOp(MemRefOp.Store(lenSSA, lenViewSSA, [zeroSSA], TIndex, lenViewTy))
                                 ctx.ScopeContext := ScopeContext.addOp lenStoreOp !ctx.ScopeContext
 
-                            | _ ->
+                            | _, (viewSSA :: rest) ->
                                 // Scalar: single reinterpret_cast + store
-                                let viewSSA = layout.CaptureInsertSSAs.[ssaIdx]
                                 let extractSSAOpt =
-                                    if cap.ExtractsBasePointer then Some layout.CaptureInsertSSAs.[ssaIdx + 1] else None
-                                ssaIdx <- ssaIdx + (if cap.ExtractsBasePointer then 2 else 1)
+                                    match cap.ExtractsBasePointer, rest with
+                                    | true, [ extractSSA ] -> Some extractSSA
+                                    | true, _ -> failwithf "LambdaWitness: closure %d capture '%s' extracts a base pointer but was derived %d values" nodeIdValue cap.Name captureSSAs.Length
+                                    | false, _ -> None
                                 let viewTy = TMemRefStatic (1, cap.SlotType)
                                 let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (viewSSA, layout.ClosureUndefSSA, captureByteOffset, 1, closureTy, viewTy))
                                 ctx.ScopeContext := ScopeContext.addOp castOp !ctx.ScopeContext
@@ -601,14 +605,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                                         failwithf "LambdaWitness: closure %d capture '%s' binds a memref source to an index slot with no extraction value derived; SSAAssignment.captureExtractsBasePointer does not cover its type" nodeIdValue cap.Name
                                 let storeOp = MLIROp.MemRefOp (MemRefOp.Store (actualCapSSA, viewSSA, [zeroSSA], cap.SlotType, viewTy))
                                 ctx.ScopeContext := ScopeContext.addOp storeOp !ctx.ScopeContext
+                            | _, values ->
+                                failwithf "LambdaWitness: closure %d capture '%s' of slot type %A was derived %d values; the derivation and the emission disagree" nodeIdValue cap.Name cap.SlotType values.Length
                         | None ->
-                            printfn "[WARN] LambdaWitness: Capture '%s' (source %A) not found in accumulator for closure %d"
-                                cap.Name cap.SourceNodeId nodeIdValue
-                            // Still advance ssaIdx for consistency
-                            match cap.SlotType with
-                            | TStruct [("ptr", TIndex); ("len", TIndex)] -> ssaIdx <- ssaIdx + 5
-                            | _ -> ssaIdx <- ssaIdx + (if cap.ExtractsBasePointer then 2 else 1)
-                        captureByteOffset <- captureByteOffset + sizeOf cap.SlotType
+                            failwithf "LambdaWitness: capture '%s' (source %A) not found in accumulator for closure %d" cap.Name cap.SourceNodeId nodeIdValue
 
                     // 5. Build uniform pair {code_ptr, env_ptr}
                     // Pair type matches TypeMapping: TMemRefStatic(2, TIndex) = memref<2xindex>

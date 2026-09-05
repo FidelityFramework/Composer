@@ -41,6 +41,40 @@ module NodeSSAAllocation =
         | _ -> { SSAs = ssas; Result = List.last ssas }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// MEETS (the CPU leg's width adaptations, Dimensional_Range_Design.md §3.1, §8.3, rulings 1 and 3)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A meet is the one value a consumer emits to bring an operand's selected width to the width
+// the slot it meets is held at: an extension by the sign of the operand's range where the slot
+// is wider (the fabric leg's field rule, now both legs), a truncation where the read is narrower
+// than its cell (a refined read under a guard, ruling 3: lossless by construction, and the
+// `trunci` carries the refined range as its obligation). SSAAssignment derives every meet from
+// the settled facts (RangeAnalysis.heldWidth of both nodes) and the witness reads and transcribes
+// it; a consumer whose operand already sits at the slot's width has no meet and emits nothing.
+
+/// How a meet adapts its operand.
+[<RequireQualifiedAccess>]
+type MeetKind =
+    /// `arith.extui`: the operand's range is non-negative and the slot is wider.
+    | ExtendUnsigned
+    /// `arith.extsi`: the operand's range has a negative value and the slot is wider.
+    | ExtendSigned
+    /// `arith.trunci`: the read's range is narrower than its cell's (ruling 3).
+    | Truncate
+
+/// One derived meet: the consumer node, the operand node (the consumer itself for a read of a
+/// slot, whose value arrives from the slot rather than from a child), the value derived for it,
+/// and the widths it adapts between.
+type Meet = {
+    Consumer: NodeId
+    Operand: NodeId
+    SSA: SSA
+    From: IntWidth
+    To: IntWidth
+    Kind: MeetKind
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CLOSURE LAYOUT COEFFECT
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -61,6 +95,9 @@ type CaptureSlot = {
     SlotIndex: int
     /// MLIR type of the slot (value type for ByValue, ptr for ByRef)
     SlotType: MLIRType
+    /// The slot's byte offset in the closure struct, derived once with the layout (the code
+    /// pointer, or a lazy or seq header, precedes the first capture); the witnesses read it.
+    ByteOffset: int
     /// Source NodeId of the captured binding (for SSA lookup)
     SourceNodeId: NodeId option
     /// How the variable is captured
@@ -87,8 +124,10 @@ type ClosureLayout = {
     ClosureUndefSSA: SSA
     /// SSA for insertvalue of code_ptr at [0]
     ClosureWithCodeSSA: SSA
-    /// SSAs for insertvalue of each capture at [1..N] (one per capture)
-    CaptureInsertSSAs: SSA list
+    /// The construction values of each capture, per capture in slot order: one view for a
+    /// scalar; a view and the extraction for a slot that holds a base pointer; five for a
+    /// decomposed memref (ptr, dim-zero, len, ptr view, len view)
+    CaptureInsertSSAs: SSA list list
 
     // ─────────────────────────────────────────────────────────────────────────
     // HEAP ALLOCATION SSAs (for escaping closures)
@@ -323,14 +362,14 @@ type OutputExtraction = {
 let outputExtractions (pinAttrs: Map<string, string list>) (outputType: MLIRType) : OutputExtraction list =
     let rec walk (parent: int option) (parentType: MLIRType) (acc: OutputExtraction list) : OutputExtraction list =
         match parentType with
-        | TStruct fields ->
+        | TStruct (fields, _) ->
             fields |> List.fold (fun (acc: OutputExtraction list) (fieldName, fieldTy) ->
                 let step pin = { Parent = parent; Field = fieldName; ParentType = parentType; FieldType = fieldTy; Pin = pin }
                 match Map.tryFind fieldName pinAttrs with
                 | Some [single] -> acc @ [ step (Some single) ]
                 | Some multiple ->
                     match fieldTy with
-                    | TStruct tupleFields ->
+                    | TStruct (tupleFields, _) ->
                         let acc' = acc @ [ step None ]
                         let idx = acc'.Length - 1
                         acc' @ (List.zip multiple tupleFields |> List.map (fun (pinName, (elemField, elemTy)) ->

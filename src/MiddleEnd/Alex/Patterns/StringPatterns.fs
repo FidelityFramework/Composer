@@ -159,7 +159,8 @@ let pStringLength (nodeId: NodeId) (stringSSA: SSA) (stringType: MLIRType) : PSG
         let resultSSA = ssas.[2]
 
         let! state = getUserState
-        let intTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph Types.intType
+        // the length at the node's held width (the platform's length range selects it)
+        let intTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph Types.intType |> narrowForCurrent state
 
         // Get string dimension (dimension 0 for 1D memref)
         let! dimConstOp = pConstI dimConstSSA 0L TIndex
@@ -186,7 +187,7 @@ let pStringCharAt (nodeId: NodeId) (stringSSA: SSA) (indexSSA: SSA) (indexType: 
         let resultSSA = ssas.[2]
 
         let! state = getUserState
-        let charTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph Types.charType
+        let charTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph Types.charType |> narrowForCurrent state
 
         // Cast int index to index type for memref indexing (e.g., i32 → index)
         let! castIdxOp = pIndexCastS idxIndexSSA indexSSA indexType TIndex

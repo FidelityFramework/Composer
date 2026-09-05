@@ -206,7 +206,7 @@ let pBuildAddressOf (nodeId: NodeId) (valueSSA: SSA) (elemType: MLIRType) : PSGP
         let physicalMemrefType =
             match elemType with
             | TMemRefStatic _ | TMemRef _ | TMemRefScalar _ -> Some elemType
-            | TStruct _ -> Some (TMemRefStatic (mlirTypeSize state.Platform.TargetArch elemType, TInt (IntWidth 8)))
+            | TStruct _ -> Some (physicalStorageType state.Platform.TargetArch elemType)
             | _ -> None
         match physicalMemrefType with
         // Memref-backed values: extract the data pointer directly — no alloca.

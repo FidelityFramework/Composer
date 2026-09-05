@@ -53,6 +53,48 @@ let private extractParamNames (bindingId: NodeId) (graph: SemanticGraph) : strin
         | None -> None
     | None -> None
 
+/// Each argument of a call adapted to the slot it meets (the parameter node's width for a
+/// direct call, the declared Register width through a value): the meets SSAAssignment derived
+/// for (call, argument), read and transcribed here.
+let private adaptArguments (ctx: WitnessContext) (callId: NodeId) (args: (NodeId * (SSA * MLIRType)) list) : MLIROp list * (SSA * MLIRType) list =
+    let adapted =
+        args |> List.map (fun (argId, (ssa, ty)) ->
+            let (ops, ssa', ty') = adaptOperand ctx.Coeffects ctx.Graph callId argId ssa ty
+            (ops, (ssa', ty')))
+    (adapted |> List.collect fst, adapted |> List.map snd)
+
+/// The body of the lambda a binding holds (through an annotation): the node whose held width
+/// is the width the callee returns at.
+let private calleeBody (graph: SemanticGraph) (bindingId: NodeId) : NodeId option =
+    match SemanticGraph.tryGetNode bindingId graph with
+    | Some ({ Kind = SemanticKind.Binding _ } as binding) ->
+        binding.Children
+        |> List.tryPick (fun childId ->
+            match SemanticGraph.tryGetNode childId graph with
+            | Some { Kind = SemanticKind.Lambda (_, bodyId, _, _, _) } -> Some bodyId
+            | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } ->
+                match SemanticGraph.tryGetNode inner graph with
+                | Some { Kind = SemanticKind.Lambda (_, bodyId, _, _, _) } -> Some bodyId
+                | _ -> None
+            | _ -> None)
+    | _ -> None
+
+/// A direct call's result: the callee returns at its body's width; the call node reads it at its
+/// own through the meet derived for (call, call).
+let private callResult (ctx: WitnessContext) (node: SemanticNode) (ops: MLIROp list) (result: TransferResult) : WitnessOutput =
+    match result with
+    | TRValue v ->
+        let (meetOps, ssa, ty) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id v.SSA v.Type
+        { InlineOps = ops @ meetOps; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+    | other -> { InlineOps = ops; TopLevelOps = []; Result = other }
+
+/// The type a direct call returns: the callee's body at its held width (a scalar), or the
+/// mapped result type.
+let private calleeReturnType (ctx: WitnessContext) (node: SemanticNode) (bodyId: NodeId option) : MLIRType =
+    match bodyId with
+    | Some body -> mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
+    | None -> mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+
 /// Witness application nodes - emits function calls (non-intrinsic only)
 let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     match tryMatch pApplication ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -93,8 +135,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     |> List.map fst
                 WitnessOutput.error $"Saturated call to {funcName}: some args not witnessed: {unwitnessedArgs}"
             else
-                let args = argsResult |> List.choose id
-                let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                // each argument at its parameter's width: the call's derived meets
+                let (meetOps, args) = adaptArguments ctx node.Id (List.zip satInfo.AllArgNodes (argsResult |> List.choose id))
+                let retType = calleeReturnType ctx node (calleeBody ctx.Graph satInfo.TargetBindingId)
 
                 // Retrieve deferred InlineOps for partial app arguments
                 let deferredOps =
@@ -103,7 +146,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
 
                 let paramNames = extractParamNames satInfo.TargetBindingId ctx.Graph
                 match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Result.Ok ((ops, result), _) -> { InlineOps = deferredOps @ ops; TopLevelOps = []; Result = result }
+                | Result.Ok ((ops, result), _) -> callResult ctx node (deferredOps @ meetOps @ ops) result
                 | Result.Error diagnostic -> WitnessOutput.error $"Saturated call '{funcName}': {diagnostic}"
         | None ->
         match Map.tryFind node.Id curryResult.PartialApplications with
@@ -160,11 +203,13 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "ClosureCall")
                             (sprintf "Closure call: arguments not yet witnessed (missing nodes: %A)" missing)
                     else
-                        let args = argsResult |> List.choose id
+                        // a call through a value: every argument at the declared Register width
+                        // (ruling 1), the call's derived meets
+                        let (meetOps, args) = adaptArguments ctx node.Id (List.zip argIds (argsResult |> List.choose id))
                         let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
                         match tryMatchWithDiagnostics (pClosureCall node.Id closureSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                         | Result.Error diagnostic ->
                             WitnessOutput.errorCoded AX2004 (Some node.Id) (Some "Application") (Some "ClosureCall")
                                 (sprintf "Closure call: %s" diagnostic)
@@ -198,12 +243,13 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
                             (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)" funcName missing)
                     else
-                        let args = argsResult |> List.choose id
-                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                        // each argument at its parameter's width: the call's derived meets
+                        let (meetOps, args) = adaptArguments ctx node.Id (List.zip argIds (argsResult |> List.choose id))
                         let defIdOpt = match funcNode.Kind with SemanticKind.VarRef (_, d) -> d | _ -> None
+                        let retType = calleeReturnType ctx node (defIdOpt |> Option.bind (calleeBody ctx.Graph))
                         let paramNames = defIdOpt |> Option.bind (fun d -> extractParamNames d ctx.Graph)
                         match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Ok ((ops, result), _) -> callResult ctx node (meetOps @ ops) result
                         | Result.Error diagnostic ->
                             WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
                                 (sprintf "Call to '%s': %s" funcName diagnostic)

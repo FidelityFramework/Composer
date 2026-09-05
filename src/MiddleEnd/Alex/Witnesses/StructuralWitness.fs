@@ -76,8 +76,9 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
                 let elementId = elements.[index]
                 match MLIRAccumulator.recallNode elementId ctx.Accumulator with
                 | Some (ssa, ty) ->
-                    MLIRAccumulator.bindNode node.Id ssa ty ctx.Accumulator
-                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                    // the element's width, then this read's own (its derived meet)
+                    let (meetOps, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id ssa ty
+                    { InlineOps = meetOps; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                 | None ->
                     WitnessOutput.error (sprintf "TupleGet: element %d (node %d) not in accumulator" index (NodeId.value elementId))
             | _ ->

@@ -167,32 +167,36 @@ let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<string, Map<st
                          (nativeTy: NativeType option) (ty: MLIRType) : MLIRType =
     match ty with
     | TInt (IntWidth 0) -> TInt (IntWidth (widthOf describe range))
-    | TStruct fields ->
+    | TStruct (fields, bytes) ->
         match nativeTy |> Option.map followBound with
         | Some (NativeType.TApp (tycon, [ inner ])) when tycon.Name = "option" || tycon.Name = "voption" ->
             TStruct (fields |> List.map (fun (name, fty) ->
                 if name = "value" then name, narrowBy graph fieldRanges (sprintf "the payload of %s" describe) None None (Some inner) fty
-                else name, fty))
+                else name, fty), bytes)
         | Some (NativeType.TApp (tycon, _)) when (SemanticGraph.tryGetRecordFields tycon.Name graph).IsSome ->
             let declared = SemanticGraph.tryGetRecordFields tycon.Name graph |> Option.defaultValue []
             let ranges = Map.tryFind tycon.Name fieldRanges |> Option.defaultValue Map.empty
             TStruct (fields |> List.map (fun (name, fty) ->
                 let declaredTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd
-                name, narrowBy graph fieldRanges (sprintf "field '%s' of '%s'" name tycon.Name) (Map.tryFind name ranges) None declaredTy fty))
+                name, narrowBy graph fieldRanges (sprintf "field '%s' of '%s'" name tycon.Name) (Map.tryFind name ranges) None declaredTy fty), bytes)
         | Some (NativeType.TTuple (elementTypes, _)) ->
             TStruct (fields |> List.mapi (fun i (name, fty) ->
                 name, narrowBy graph fieldRanges (sprintf "element %d of %s" (i + 1) describe)
-                          (elements |> Option.bind (fun f -> f i)) None (List.tryItem i elementTypes) fty))
+                          (elements |> Option.bind (fun f -> f i)) None (List.tryItem i elementTypes) fty), bytes)
         | _ ->
             TStruct (fields |> List.map (fun (name, fty) ->
-                name, narrowBy graph fieldRanges (sprintf "%s.%s" describe name) None None None fty))
+                name, narrowBy graph fieldRanges (sprintf "%s.%s" describe name) None None None fty), bytes)
     | _ -> ty
 
-/// The width of a node's value on fabric, read from the range CCS wrote on the node
-/// (Dimensional_Range_Design.md §3.1, §8.3: the FPGA leg reads the node; plan L-7, L-7b retired,
-/// with the platform-word default and the FPGA0001 throw of L-10). Nothing is computed here: a
-/// width is `ValueRange.width` of a range CCS settled, and a struct's field widths are the record
-/// type's `FieldRanges`. The one entry point for narrowing; identity on every other target.
+/// The width of a node's value, read from the range CCS wrote on the node
+/// (Dimensional_Range_Design.md §3.1, §8.3: every leg reads the node; plan L-7, L-7b, L-10 retired).
+/// Nothing is computed here. On fabric a width is `ValueRange.width` of a range CCS settled, and
+/// a struct's field widths are the record type's `FieldRanges`. On a core the sentinel
+/// `TInt (IntWidth 0)` of the bare integer kind becomes the node's held width
+/// (`TypeMapping.nodeWidth`: the selected representation of the node's range, the Register width
+/// at the value-call boundary, a carrier's own bits, or the one interim word); an aggregate's
+/// interior widths, offsets and size were read from the settled layouts when it was mapped, so a
+/// struct passes through. The one entry point for narrowing.
 let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (graph: SemanticGraph) (nodeId: NodeId) (ty: MLIRType) : MLIRType =
     match coeffects.TargetPlatform with
     | Core.Types.Dialects.TargetPlatform.FPGA ->
@@ -201,7 +205,57 @@ let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (grap
         | Some node ->
             let describe = sprintf "node %d (%s)" (NodeId.value nodeId) (let k = sprintf "%A" node.Kind in k.Substring(0, min 40 k.Length))
             narrowBy graph graph.FieldRanges.Value describe node.ValueRange (Some (tupleElementRange graph nodeId)) (Some node.Type) ty
-    | _ -> ty
+    | _ ->
+        match ty with
+        | TInt (IntWidth 0) -> TInt (requireNodeWidth graph nodeId)
+        | TMemRef (TInt (IntWidth 0)) ->
+            failwithf "narrowType: node %d is an array whose element width the mapping did not read; arrays are mapped through the graph (TypeMapping.mapNativeTypeForTarget)" (NodeId.value nodeId)
+        | _ -> ty
+
+/// The value a derived meet produces: the extension by the operand's sign or the truncation of a
+/// refined read that SSAAssignment derived for this consumer and operand (Coeffects.Meet). The
+/// witness transcribes it; nothing is decided here.
+let meetOp (meet: PSGElaboration.Coeffects.Meet) (value: SSA) : MLIROp =
+    match meet.Kind with
+    | PSGElaboration.Coeffects.MeetKind.ExtendUnsigned -> MLIROp.ArithOp (ArithOp.ExtUI (meet.SSA, value, TInt meet.From, TInt meet.To))
+    | PSGElaboration.Coeffects.MeetKind.ExtendSigned -> MLIROp.ArithOp (ArithOp.ExtSI (meet.SSA, value, TInt meet.From, TInt meet.To))
+    | PSGElaboration.Coeffects.MeetKind.Truncate -> MLIROp.ArithOp (ArithOp.TruncI (meet.SSA, value, TInt meet.From, TInt meet.To))
+
+/// The last value a node evaluates to: through a block's last child and an annotation (the node
+/// a value operand is derived and recalled at).
+let rec private lastValueNode (graph: SemanticGraph) (id: NodeId) : NodeId =
+    match SemanticGraph.tryGetNode id graph with
+    | Some { Kind = SemanticKind.Sequential ids } ->
+        match List.tryLast ids with
+        | Some last -> lastValueNode graph last
+        | None -> id
+    | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } -> lastValueNode graph inner
+    | _ -> id
+
+/// Adapt an operand's value to the slot it meets at `consumer`: the meet SSAAssignment derived
+/// for (consumer, operand), or the value unchanged where none was derived (the widths agree).
+/// The operand is looked up at the node the witness recalled and at its last value.
+/// Returns the ops to emit before the consumer, and the value and type the consumer reads.
+let adaptOperand (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (graph: SemanticGraph) (consumer: NodeId) (operand: NodeId) (value: SSA) (ty: MLIRType) : MLIROp list * SSA * MLIRType =
+    let found =
+        match PSGElaboration.SSAAssignment.lookupMeet consumer operand coeffects.SSA with
+        | Some meet -> Some meet
+        | None -> PSGElaboration.SSAAssignment.lookupMeet consumer (lastValueNode graph operand) coeffects.SSA
+    match found with
+    | Some meet ->
+        match ty with
+        | TInt from when from = meet.From -> ([ meetOp meet value ], meet.SSA, TInt meet.To)
+        | _ ->
+            failwithf "adaptOperand: the meet derived for node %d's operand %d adapts %A, but the operand arrives as %A; the derivation and the emission disagree"
+                (NodeId.value consumer) (NodeId.value operand) (TInt meet.From) ty
+    | None -> ([], value, ty)
+
+/// The monadic form of `adaptOperand`.
+let pAdapt (consumer: NodeId) (operand: NodeId) (value: SSA) (ty: MLIRType) : PSGParser<MLIROp list * SSA * MLIRType> =
+    parser {
+        let! state = getUserState
+        return adaptOperand state.Coeffects state.Graph consumer operand value ty
+    }
 
 /// Narrow an MLIRType by the current node's range.
 let narrowForCurrent (state: PSGParserState) (ty: MLIRType) : MLIRType =
@@ -220,11 +274,10 @@ let mainReturnType (state: PSGParserState) : MLIRType =
 let nativeIntType (state: PSGParserState) : MLIRType =
     state.Platform.PlatformWordType
 
-/// Map NTUKind to MLIRType with platform awareness
-/// Delegates to TypeMapping but provides platform + architecture context from state.
-/// On FPGA, platform-word integers produce IntWidth 0 (abstract — resolved by interval analysis).
-let mapNTUKindForPlatform (state: PSGParserState) (kind: NTUKind) : MLIRType =
-    Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType state.Coeffects.TargetPlatform state.Platform.TargetArch kind
+/// Map NTUKind to MLIRType: the bare integer kind is the sentinel on every substrate, narrowed
+/// at its node by `narrowForCurrent`.
+let mapNTUKindForPlatform (_state: PSGParserState) (kind: NTUKind) : MLIRType =
+    Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType kind
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSA COEFFECT EXTRACTION (monadic access to pre-computed SSAs)

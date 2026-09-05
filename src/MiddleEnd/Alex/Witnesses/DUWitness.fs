@@ -42,6 +42,10 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
     | Some ((duValueId, caseIndex, _caseName, psgPayloadType), _) ->
         match MLIRAccumulator.recallNode duValueId ctx.Accumulator with
         | Some (duSSA, duType) ->
+            let unionNativeType =
+                match SemanticGraph.tryGetNode duValueId ctx.Graph with
+                | Some scrutinee -> scrutinee.Type
+                | None -> node.Type
             // Use the payload type from the PSG node (CCS-resolved).
             // Fall back to the DUEliminate node's own type only if PSG type is TVar
             // (which happens when the binding is unused and CCS didn't resolve it).
@@ -59,9 +63,9 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
                                 mapType typeArgs.[min caseIndex (typeArgs.Length - 1)] ctx
                             | _ -> mapType node.Type ctx
                         | None -> mapType node.Type ctx
-                    | _ -> mapType psgPayloadType ctx
+                    | _ -> mapType psgPayloadType ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                 mapped
-            match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType caseIndex payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType unionNativeType payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
             | Result.Error diagnostic ->
                 WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "DUEliminate")
@@ -76,18 +80,21 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
     match tryMatch pDUConstruct ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((_caseName, caseIndex, payloadOpt, _arenaHintOpt), _) ->
         let tag = int64 caseIndex
-        let payload =
+        // the payload at its slot's width (its derived meet)
+        let (meetOps, payload) =
             match payloadOpt with
             | Some payloadId ->
                 match MLIRAccumulator.recallNode payloadId ctx.Accumulator with
-                | Some (ssa, ty) -> [{ SSA = ssa; Type = ty }]
-                | None -> []
-            | None -> []
+                | Some (ssa, ty) ->
+                    let (ops, adapted, adaptedTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id payloadId ssa ty
+                    (ops, [{ SSA = adapted; Type = adaptedTy }])
+                | None -> ([], [])
+            | None -> ([], [])
 
         let duTy = mapType node.Type ctx
 
         match tryMatchWithDiagnostics (pBuildDUConstruct node.Id tag payload duTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
         | Result.Error diagnostic -> WitnessOutput.error $"DUConstruct: {diagnostic}"
 
     | None -> WitnessOutput.skip

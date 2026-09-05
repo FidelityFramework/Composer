@@ -55,11 +55,13 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
         sprintf "vector<%dx%s>" count (typeToString pointer elemTy)
     | TIndex -> "index"
     | TUnit -> "i32"  // Unit represented as i32 (value 0)
-    | TStruct fields ->
+    | TStruct (_, Some bytes) ->
         // TStruct serializes as !hw.struct for CIRCT (FPGA) or memref for CPU.
         // This default path is CPU; hwTypeToString pointer handles the FPGA case.
-        // The byte size reads the declared Pointer width the caller hands in (the one size model).
-        sprintf "memref<%dxi8>" (mlirTypeSizeWith pointer (TStruct fields))
+        // The byte size is the settled layout's, read from the graph (the one size model).
+        sprintf "memref<%dxi8>" bytes.Size
+    | TStruct (fields, None) ->
+        failwithf "typeToString: the struct {%s} reached serialization on a core with no settled layout" (fields |> List.map fst |> String.concat ", ")
     | TSeqClock -> "!seq.clock"
     | TTag caseCount ->
         // Default serialization: smallest power-of-2 integer that fits the case count
@@ -74,7 +76,7 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
 /// Used by comb.* and other CIRCT ops that carry struct types on FPGA.
 let rec hwTypeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
     match ty with
-    | TStruct fields ->
+    | TStruct (fields, _) ->
         let fs = fields |> List.map (fun (n, t) -> sprintf "%s: %s" n (hwTypeToString pointer t))
         sprintf "!hw.struct<%s>" (String.concat ", " fs)
     | _ -> typeToString pointer ty
@@ -277,14 +279,14 @@ let hwOpToString (pointer: Result<int, string>) (inner: MLIROp -> string) (op: H
     | HWAggregateConstant (result, structTy) ->
         let rec zeroLiteral (ty: MLIRType) : string =
             match ty with
-            | TStruct fields ->
+            | TStruct (fields, _) ->
                 let inner = fields |> List.map (fun (_, ft) -> zeroLiteral ft) |> String.concat ", "
                 sprintf "[%s]" inner
             | _ -> sprintf "0 : %s" (hwTypeToString pointer ty)
         sprintf "%s = hw.aggregate_constant [%s] : %s"
             (ssaToString result)
             (match structTy with
-             | TStruct fields -> fields |> List.map (fun (_, ft) -> zeroLiteral ft) |> String.concat ", "
+             | TStruct (fields, _) -> fields |> List.map (fun (_, ft) -> zeroLiteral ft) |> String.concat ", "
              | _ -> zeroLiteral structTy)
             (hwTypeToString pointer structTy)
 

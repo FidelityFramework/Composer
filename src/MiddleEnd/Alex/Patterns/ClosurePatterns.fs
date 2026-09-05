@@ -122,42 +122,25 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
 ///   - Decomposed memref (TStruct [ptr; len]): load ptr + len separately,
 ///     reconstruct memref via IndexToMemRef + ReinterpretCastDynamic — 8 SSAs total
 ///
-/// SSA layout is variable-stride: each capture consumes SSAs from the flat list
-/// based on its slot type. Result SSAs are at fixed positions [0..n-1]; work SSAs follow.
-let pExtractCaptures (prefixByteOffset: int) (captureTypes: MLIRType list) (structType: MLIRType) (envSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list> =
+/// Each capture's slot type and byte offset, and its values (its work values then its result,
+/// `ClosureLayout.CaptureExtractionSSAs`), are read from the closure layout SSAAssignment
+/// derived; nothing is counted or summed here.
+let pExtractCaptures (captures: (MLIRType * int) list) (structType: MLIRType) (envSSA: SSA) (ssas: SSA list list) : PSGParser<MLIROp list> =
     parser {
-        let! state = getUserState
-        let arch = state.Platform.TargetArch
         let envPtrSSA = envSSA  // Reconstructed memref<Nxi8> from caller
 
-        // Walk captures, consuming SSAs per slot type
-        // SSA layout: result SSAs at V(0)..V(n-1), work SSAs from V(n) onward
-        // The ssas list is ordered: [workSSAs...; resultSSA] per capture, interleaved
-        let mutable ssaOffset = 0
-        let mutable byteOffset = prefixByteOffset
-
         let! extractOpLists =
-            captureTypes
-            |> List.mapi (fun _i capTy ->
+            List.zip captures ssas
+            |> List.map (fun ((capTy, byteOffset), captureSSAs) ->
                 parser {
-                    match capTy with
-                    | TStruct [("ptr", TIndex); ("len", TIndex)] ->
+                    match capTy, captureSSAs with
+                    | TStruct ([("ptr", TIndex); ("len", TIndex)], bytes), [ ptrViewSSA; ptrZeroSSA; ptrSSA; lenViewSSA; lenZeroSSA; lenSSA; rawMemrefSSA; resultSSA ] ->
                         // Decomposed memref capture: load the base index and the extent, reconstruct the memref
-                        // SSAs: ptrView, ptrZero, ptr, lenView, lenZero, len, rawMemref, result
-                        let ptrViewSSA  = ssas.[ssaOffset]
-                        let ptrZeroSSA  = ssas.[ssaOffset + 1]
-                        let ptrSSA      = ssas.[ssaOffset + 2]
-                        let lenViewSSA  = ssas.[ssaOffset + 3]
-                        let lenZeroSSA  = ssas.[ssaOffset + 4]
-                        let lenSSA      = ssas.[ssaOffset + 5]
-                        let rawMemrefSSA = ssas.[ssaOffset + 6]
-                        let resultSSA   = ssas.[ssaOffset + 7]
-                        ssaOffset <- ssaOffset + 8
-
                         let ptrByteOffset = byteOffset
-                        let lenByteOffset = byteOffset + mlirTypeSize arch TIndex
-                        byteOffset <- byteOffset + mlirTypeSize arch capTy
-
+                        let lenByteOffset =
+                            match bytes with
+                            | Some b -> byteOffset + b.Offsets.[1]
+                            | None -> failwith "pExtractCaptures: a decomposed string slot with no derived layout"
                         // Load ptr (TIndex) at ptrByteOffset
                         let! ptrOps = pTypedExtract ptrSSA envPtrSSA ptrByteOffset ptrViewSSA ptrZeroSSA TIndex structType
                         // Load len (TIndex) at lenByteOffset
@@ -169,15 +152,12 @@ let pExtractCaptures (prefixByteOffset: int) (captureTypes: MLIRType list) (stru
                         let sizeOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCastDynamic(resultSSA, rawMemrefSSA, 0, lenSSA, dynMemrefTy, dynMemrefTy))
                         return ptrOps @ lenOps @ [castOp; sizeOp]
 
-                    | _ ->
-                        // Scalar capture: standard typed extraction
-                        let viewSSA   = ssas.[ssaOffset]
-                        let zeroSSA   = ssas.[ssaOffset + 1]
-                        let resultSSA = ssas.[ssaOffset + 2]
-                        ssaOffset <- ssaOffset + 3
-                        let currentOffset = byteOffset
-                        byteOffset <- byteOffset + mlirTypeSize arch capTy
-                        return! pTypedExtract resultSSA envPtrSSA currentOffset viewSSA zeroSSA capTy structType
+                    | _, [ viewSSA; zeroSSA; resultSSA ] ->
+                        // Scalar capture: standard typed extraction at the slot's settled offset
+                        return! pTypedExtract resultSSA envPtrSSA byteOffset viewSSA zeroSSA capTy structType
+
+                    | _, values ->
+                        return! fail (Message $"pExtractCaptures: a slot of type {capTy} was derived {values.Length} values; the derivation and the pattern disagree")
                 })
             |> sequence
 

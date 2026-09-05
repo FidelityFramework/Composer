@@ -38,13 +38,15 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
         match slotTarget with
         | Some (bindingId, bindingNode) ->
             match MLIRAccumulator.recallNode valueId ctx.Accumulator with
-            | Some (valueSSA, _) ->
+            | Some (rawSSA, rawTy) ->
                 let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> "value"
-                let valueTy = mapType bindingNode.Type ctx
+                // the slot at the binding's width; the value adapted to it by its derived meet
+                let valueTy = mapType bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
+                let (meetOps, valueSSA, _) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawSSA rawTy
                 let globalName = ModuleValues.globalName bindingName bindingId
                 match tryMatchWithDiagnostics (pGlobalSlotStore node.Id globalName valueSSA valueTy)
                               ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"Module value assignment: {diagnostic}"
             | None -> WitnessOutput.error "Module value assignment: Value not yet witnessed"
         | None ->
@@ -56,13 +58,15 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
             | _ -> None
 
         match memrefResult, MLIRAccumulator.recallNode valueId ctx.Accumulator with
-        | Some (memrefSSA, (TMemRef elemType | TMemRefStatic (_, elemType))), Some (valueSSA, _) ->
-            // Emit memref.store to update mutable variable
+        | Some (memrefSSA, (TMemRef elemType | TMemRefStatic (_, elemType))), Some (rawSSA, rawTy) ->
+            // The value at the cell's width (the meet SSAAssignment derived for (set, value)),
+            // then memref.store to update the mutable variable
+            let (meetOps, valueSSA, _) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawSSA rawTy
             let (NodeId nodeIdInt) = node.Id
             match tryMatchWithDiagnostics (pStoreMutableVariable nodeIdInt memrefSSA valueSSA elemType)
                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) ->
-                { InlineOps = ops; TopLevelOps = []; Result = result }
+                { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
             | Result.Error diagnostic ->
                 WitnessOutput.error $"Mutable assignment: {diagnostic}"
         | Some (_, ty), Some _ ->

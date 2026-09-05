@@ -112,7 +112,7 @@ let private perField (role: string) (info: MealyMachineInfo) (ssas: SSA list) : 
 /// The step function's result type: (State × Output) when the step reports, else the state
 let private stepResultTypeOf (info: MealyMachineInfo) : MLIRType =
     match info.OutputType with
-    | Some outTy -> TStruct [("Item1", info.StateType); ("Item2", outTy)]
+    | Some outTy -> TStruct ([("Item1", info.StateType); ("Item2", outTy)], None)
     | None -> info.StateType
 
 /// Reset constants: one arith.constant per state field, from the InitialState literals
@@ -244,14 +244,14 @@ let buildFlatPortMealyModule
     // Walk input struct fields, map each to its pin logical name via FieldPinAttributes
     let flatInputPorts =
         match info.InputType with
-        | Some (TStruct fields) ->
+        | Some (TStruct (fields, _)) ->
             fields |> List.collect (fun (fieldName, fieldTy) ->
                 match Map.tryFind fieldName pinAttrs with
                 | Some [pinName] -> [(pinName, fieldTy)]
                 | Some pinNames ->
                     // Multi-pin input field
                     match fieldTy with
-                    | TStruct tupleFields ->
+                    | TStruct (tupleFields, _) ->
                         List.zip pinNames tupleFields
                         |> List.map (fun (pn, (_, eTy)) -> (pn, eTy))
                     | _ -> [((List.head pinNames), fieldTy)]
@@ -289,7 +289,7 @@ let buildFlatPortMealyModule
     // layout (InputPacks, in field order); every other field is one arg.
     let inputPackOps, inputStructSSA =
         match info.InputType with
-        | Some (TStruct fields as inputType) ->
+        | Some (TStruct (fields, _) as inputType) ->
             let structSSA =
                 match layout.InputStruct with
                 | Some s -> s
@@ -297,7 +297,7 @@ let buildFlatPortMealyModule
             let (_, remainingPacks, fieldSSAsRev, packOpsRev) =
                 fields |> List.fold (fun (argIdx, packs, fieldSSAs, packOps) (fieldName, fieldTy) ->
                     match Map.tryFind fieldName pinAttrs, fieldTy with
-                    | Some pinNames, TStruct tupleFields when pinNames.Length > 1 ->
+                    | Some pinNames, TStruct (tupleFields, _) when pinNames.Length > 1 ->
                         let elemSSAs = tupleFields |> List.mapi (fun k (_, eTy) -> (SSA.Arg (argIdx + k), eTy))
                         match packs with
                         | tupleSSA :: rest ->

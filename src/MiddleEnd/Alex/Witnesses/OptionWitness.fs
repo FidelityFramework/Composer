@@ -16,7 +16,6 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.CollectionPatterns
-open Alex.CodeGeneration.TypeMapping  // mlirTypeSize
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -33,13 +32,15 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             match node.Children with
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
-                | Some (valSSA, valType) ->
+                | Some (rawSSA, rawType) ->
+                    // the payload at its slot's width (its derived meet); the option at its
+                    // settled size (the graph's layout of the option type)
+                    let (meetOps, valSSA, valType) = adaptOperand ctx.Coeffects ctx.Graph node.Id childId rawSSA rawType
                     let value = { SSA = valSSA; Type = valType }
-                    let totalBytes = 1 + mlirTypeSize ctx.Coeffects.Platform.TargetArch valType
-                    let optionTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
+                    let optionTy = mapType node.Type ctx
 
                     match tryMatchWithDiagnostics (pOptionSome node.Id value optionTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                     | Result.Error diagnostic -> WitnessOutput.error $"Option.Some: {diagnostic}"
                 | None -> WitnessOutput.error "Option.Some: Value not yet witnessed"
             | _ -> WitnessOutput.error $"Option.Some: Expected 1 child, got {node.Children.Length}"
@@ -78,7 +79,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    let valueType = mapType node.Type ctx
+                    let valueType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
                     match tryMatchWithDiagnostics (pOptionGet node.Id optSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

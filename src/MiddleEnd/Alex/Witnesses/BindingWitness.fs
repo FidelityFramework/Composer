@@ -75,14 +75,21 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                             WitnessOutput.error $"Module value '{name}': Initial value not yet witnessed"
                     // Check if binding is mutable
                     elif isMut then
-                        // MUTABLE BINDING: Allocate memref and initialize
+                        // MUTABLE BINDING: the cell at the binding node's width (the join of its
+                        // value and every assignment); the initial value adapted to it by the
+                        // meet SSAAssignment derived for (binding, value)
                         match MLIRAccumulator.recallNode valueId ctx.Accumulator with
-                        | Some (initSSA, elemType) ->
+                        | Some (rawInitSSA, rawInitTy) ->
                             let (NodeId nodeIdInt) = node.Id
+                            let (meetOps, initSSA, initTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawInitSSA rawInitTy
+                            let elemType =
+                                match mapType node.Type ctx with
+                                | TInt (IntWidth 0) -> narrowType ctx.Coeffects ctx.Graph node.Id (TInt (IntWidth 0))
+                                | _ -> initTy
                             match tryMatchWithDiagnostics (pBuildMutableBinding nodeIdInt elemType initSSA)
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                             | Result.Ok ((ops, result), _) ->
-                                { InlineOps = ops; TopLevelOps = []; Result = result }
+                                { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                             | Result.Error diagnostic ->
                                 WitnessOutput.error $"Mutable binding '{name}': {diagnostic}"
                         | None ->

@@ -357,19 +357,35 @@ let pSysReadline (node: SemanticNode) (fdSSA: SSA) : PSGParser<MLIROp list * Tra
 // EXTERN CALL PATTERN (FidelityExtern bindings)
 // ═══════════════════════════════════════════════════════════
 
-/// Monadically recall a list of argument nodes from the accumulator.
-/// Returns (SSA * MLIRType) pairs preserving argument order.
-let private recallArgs (argIds: NodeId list) : PSGParser<(SSA * MLIRType) list> =
-    let rec loop (ids: NodeId list) : PSGParser<(SSA * MLIRType) list> =
+/// Monadically recall a list of argument nodes from the accumulator, each brought to the width
+/// of the C parameter it meets (the binding's parameter node: its descriptor's carrier, or the
+/// declared Register width for the bare kind) by the meet SSAAssignment derived for (call, arg).
+/// Returns the meet ops and the (SSA * MLIRType) pairs in argument order.
+let private recallArgs (callId: NodeId) (argIds: NodeId list) : PSGParser<MLIROp list * (SSA * MLIRType) list> =
+    let rec loop (ids: NodeId list) : PSGParser<MLIROp list * (SSA * MLIRType) list> =
         parser {
             match ids with
-            | [] -> return []
+            | [] -> return ([], [])
             | id :: rest ->
-                let! pair = pRecallNode id
-                let! restPairs = loop rest
-                return pair :: restPairs
+                let! (ssa, ty) = pRecallNode id
+                let! (meetOps, ssa', ty') = pAdapt callId id ssa ty
+                let! (restOps, restPairs) = loop rest
+                return (meetOps @ restOps, (ssa', ty') :: restPairs)
         }
     loop argIds
+
+/// A record crossing the C boundary by value needs the ABI's struct-passing rule (SysV x86_64
+/// passes a struct wider than two words in memory, `byval`). The platform description declares
+/// no such rule yet, and the leg neither supplies a threshold of its own nor passes the struct
+/// silently: a stop naming the missing declaration (CCS8203-class; CS-12 declares it).
+let private byvalOf (platformId: string) (argWithIds: (NodeId * (SSA * MLIRType)) list) (isOptionArgument: NodeId -> bool) : ByvalParam list =
+    argWithIds
+    |> List.mapi (fun i (argId, (_ssa, ty)) ->
+        match ty with
+        | TStruct _ when not (isOptionArgument argId) ->
+            failwithf "CCS8203: the platform description of '%s' declares no C ABI struct-passing rule, and the record argument %d of this binding crosses the C boundary by value; declare the ABI's byval rule for the description (CS-12) or pass a handle" platformId i
+        | _ -> None)
+    |> List.choose id
 
 /// ExternCall resolved pattern — emits func.call for STATIC [<FidelityExtern>] bindings.
 /// Matches Application nodes with ExternCall(library="c") in pre-computed coeffects.
@@ -422,7 +438,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
             // via pExtractBasePtr (Element) — the extraction op elides naturally
             // as the residual of observing memref at the C boundary (Pillar 4).
             // Cast SSAs are pre-allocated in coeffects (Pillar 1).
-            let! argPairs = recallArgs argIds
+            let! (argMeetOps, argPairs) = recallArgs node.Id argIds
 
             // Helper: check if an argument's original NativeType is option/voption.
             // Record types (e.g., resvg_transform) also lower to TMemRefStatic(N, i8)
@@ -436,19 +452,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 | None -> false
             let argWithIds = List.zip argIds argPairs
 
-            // Collect byval metadata for struct parameters at FFI boundaries.
-            // SysV x86_64: structs > 16 bytes are MEMORY class — passed on the stack
-            // via invisible reference. LLVM needs `byval` attribute to generate correct ABI.
-            let byvalParams =
-                argWithIds
-                |> List.mapi (fun i (_argId, (_ssa, ty)) ->
-                    match ty with
-                    | TStruct _ when not (isOptionArgument (fst (argWithIds.[i]))) ->
-                        let size = mlirTypeSize state.Platform.TargetArch ty
-                        if size > 16 then Some { ParamIndex = i; SizeBytes = size; AlignBytes = 8 }
-                        else None
-                    | _ -> None)
-                |> List.choose id
+            let byvalParams = byvalOf state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
 
             // Detect option<T> return type — requires FFI marshaling at the boundary.
             // C returns a nullable pointer; we must null-check and construct the option.
@@ -553,7 +557,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 //    CaseElimination checks tag before reading payload)
                 let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
 
-                let allOps = marshalOps @ [declOp; callOp; allocaOp; nullOp; cmpOp; extOp]
+                let allOps = argMeetOps @ marshalOps @ [declOp; callOp; allocaOp; nullOp; cmpOp; extOp]
                              @ tagInsertOps @ payInsertOps
 
                 return (allOps, TRValue { SSA = allocaSSA; Type = optionType })
@@ -622,9 +626,9 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 match internalRetType with
                 | TIndex ->
                     let! returnCastOp = pIndexCastS returnCastSSA resultSSA platformWordTy TIndex
-                    return (marshalOps @ [declOp; callOp; returnCastOp], TRValue { SSA = returnCastSSA; Type = TIndex })
+                    return (argMeetOps @ marshalOps @ [declOp; callOp; returnCastOp], TRValue { SSA = returnCastSSA; Type = TIndex })
                 | _ ->
-                    return (marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })
+                    return (argMeetOps @ marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })
         | _ -> return! fail (Message "Not a static ExternCall")
     }
 
@@ -692,7 +696,7 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
         | Some { Resolved = ExternCall (library, symbol) } when library <> "c" ->
             let platformWordTy = state.Platform.PlatformWordType
             let! ssas = getNodeSSAs node.Id
-            let! argPairs = recallArgs argIds
+            let! (argMeetOps, argPairs) = recallArgs node.Id argIds
 
             let isOptionArgument (argId: NodeId) =
                 match Map.tryFind argId state.Graph.Nodes with
@@ -703,16 +707,7 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                 | None -> false
             let argWithIds = List.zip argIds argPairs
 
-            let byvalParams =
-                argWithIds
-                |> List.mapi (fun i (_argId, (_ssa, ty)) ->
-                    match ty with
-                    | TStruct _ when not (isOptionArgument (fst (argWithIds.[i]))) ->
-                        let size = mlirTypeSize state.Platform.TargetArch ty
-                        if size > 16 then Some { ParamIndex = i; SizeBytes = size; AlignBytes = 8 }
-                        else None
-                    | _ -> None)
-                |> List.choose id
+            let byvalParams = byvalOf state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
 
             // ── dlopen/dlsym preamble (SSAs [0..10]) ──
 
@@ -857,7 +852,7 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                 let! tagInsertOps = pTypedInsert allocaSSA tagExtSSA 0 tagViewSSA tagZeroSSA (TInt (IntWidth 8)) optionType
                 let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
 
-                let allOps = preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; allocaOp; nullOp; cmpOp; extOp]
+                let allOps = argMeetOps @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; allocaOp; nullOp; cmpOp; extOp]
                              @ tagInsertOps @ payInsertOps
 
                 return (allOps, pendingGlobals, TRValue { SSA = allocaSSA; Type = optionType })
@@ -914,9 +909,9 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                 match internalRetType with
                 | TIndex ->
                     let! returnCastOp = pIndexCastS returnCastSSA resultSSA platformWordTy TIndex
-                    return (preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; returnCastOp], pendingGlobals, TRValue { SSA = returnCastSSA; Type = TIndex })
+                    return (argMeetOps @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; returnCastOp], pendingGlobals, TRValue { SSA = returnCastSSA; Type = TIndex })
                 | _ ->
-                    return (preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp], pendingGlobals, TRValue { SSA = resultSSA; Type = cRetType })
+                    return (argMeetOps @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp], pendingGlobals, TRValue { SSA = resultSSA; Type = cRetType })
 
         | _ -> return! fail (Message "Not a dynamic ExternCall")
     }
@@ -932,9 +927,12 @@ let pSysWriteIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (info.Operation = "write") "Not Sys.write"
         do! ensure (argIds.Length >= 2) "Sys.write: Expected 2 args"
         let! node = getCurrentNode
-        let! (_, fdSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, rawFdSSA, rawFdTy) = pRecallArgWithLoad argIds.[0]
+        // the descriptor at the declared Register width, the syscall ABI (its derived meet)
+        let! (fdMeetOps, fdSSA, _) = pAdapt node.Id argIds.[0] rawFdSSA rawFdTy
         let! (_, bufferSSA, bufferType) = pRecallArgWithLoad argIds.[1]
-        return! pSysWrite node.Id fdSSA bufferSSA bufferType
+        let! (ops, result) = pSysWrite node.Id fdSSA bufferSSA bufferType
+        return (fdMeetOps @ ops, result)
     }
 
 /// Sys.read intrinsic — read from file descriptor into buffer
@@ -944,9 +942,11 @@ let pSysReadIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (info.Operation = "read") "Not Sys.read"
         do! ensure (argIds.Length >= 2) "Sys.read: Expected 2 args"
         let! node = getCurrentNode
-        let! (_, fdSSA, _) = pRecallArgWithLoad argIds.[0]
+        let! (_, rawFdSSA, rawFdTy) = pRecallArgWithLoad argIds.[0]
+        let! (fdMeetOps, fdSSA, _) = pAdapt node.Id argIds.[0] rawFdSSA rawFdTy
         let! (_, bufferSSA, bufferType) = pRecallArgWithLoad argIds.[1]
-        return! pSysRead node.Id fdSSA bufferSSA bufferType
+        let! (ops, result) = pSysRead node.Id fdSSA bufferSSA bufferType
+        return (fdMeetOps @ ops, result)
     }
 
 /// Sys.readline intrinsic — read line from fd, return trimmed string
@@ -956,6 +956,8 @@ let pSysReadlineIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (info.Operation = "readline") "Not Sys.readline"
         do! ensure (argIds.Length >= 1) "Sys.readline: Expected 1 arg"
         let! node = getCurrentNode
-        let! (_, fdSSA, _) = pRecallArgWithLoad argIds.[0]
-        return! pSysReadline node fdSSA
+        let! (_, rawFdSSA, rawFdTy) = pRecallArgWithLoad argIds.[0]
+        let! (fdMeetOps, fdSSA, _) = pAdapt node.Id argIds.[0] rawFdSSA rawFdTy
+        let! (ops, result) = pSysReadline node fdSSA
+        return (fdMeetOps @ ops, result)
     }

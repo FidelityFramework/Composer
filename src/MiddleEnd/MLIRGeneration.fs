@@ -58,11 +58,6 @@ let private generateCore
     let (flattenedGraph, absorbedLambdas) = PSGElaboration.CurryFlattening.flatten graph
     let curryFlatteningResult = PSGElaboration.CurryFlattening.analyze flattenedGraph absorbedLambdas
 
-    // Compute effective arg counts for saturated calls (SSAAssignment needs correct SSA counts)
-    let saturatedCallArgCounts =
-        curryFlatteningResult.SaturatedCalls
-        |> Map.map (fun _ info -> List.length info.AllArgNodes)
-
     // Compute coeffects on flattened graph (SSAs reflect flattened parameter structure)
 
     // FPGA pin mapping coeffect (FPGA targets only); SSAAssignment reads it to derive the
@@ -73,7 +68,9 @@ let private generateCore
             PSGElaboration.PlatformPinResolution.resolve flattenedGraph
         | _ -> None
 
-    let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA targetPlatform arch flattenedGraph saturatedCallArgCounts pinMapping
+    // SSAAssignment reads the saturated calls (their targets and every argument) for the
+    // derivation of each call's meets
+    let ssaAssignment = PSGElaboration.SSAAssignment.assignSSA targetPlatform arch flattenedGraph curryFlatteningResult pinMapping
     let mutability = PSGElaboration.MutabilityAnalysis.analyze flattenedGraph
     let yieldStates = PSGElaboration.YieldStateIndices.run flattenedGraph
     let patternBindings = PSGElaboration.PatternBindingAnalysis.analyze flattenedGraph

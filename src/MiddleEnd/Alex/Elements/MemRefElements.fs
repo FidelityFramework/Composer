@@ -24,18 +24,22 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 // MEMORY OPERATIONS
 // ═══════════════════════════════════════════════════════════
 
-/// Emit memref.load operation (derives types monadically from PSG node + accumulator)
-/// elemType: derived from Current PSG node type (the load result type)
+/// Emit memref.load operation (derives types monadically from the accumulator)
 /// memrefType: derived from accumulator SSA type index (the source memref's type)
+/// elemType: the memref's element type (a load yields the slot's value; a read held at another
+/// width adapts it afterwards through its derived meet)
 let pLoad (ssa: SSA) (memref: SSA) (indices: SSA list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let elemType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
         match MLIRAccumulator.recallSSAType memref state.Accumulator with
         | Some memrefType ->
+            let elemType =
+                match memrefType with
+                | TMemRef elem | TMemRefStatic (_, elem) | TMemRefScalar elem -> elem
+                | other -> failwithf "pLoad: memref SSA %A is registered as %A, not a memref" memref other
             return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
         | None ->
-            return! fail (Message $"pLoad: memref SSA {memref} has no registered type in accumulator (elemType={elemType})")
+            return! fail (Message $"pLoad: memref SSA {memref} has no registered type in accumulator")
     }
 
 /// Emit memref.load with explicit element type (memref type derived from accumulator)

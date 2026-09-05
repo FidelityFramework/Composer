@@ -143,16 +143,19 @@ let pBuildConditional (condSSA: SSA)
         | FPGA, None ->
             return! fail (Message "FPGA: void conditional requires state (seq.compreg)")
 
-        // ─── CPU expression-valued: scf.if with yield terminators ───
+        // ─── CPU expression-valued: scf.if with yield terminators; each arm's value brought
+        // to the join's width by the meet SSAAssignment derived for (if, arm), inside its region ───
         | _, Some (resultSSA, resultType) ->
-            let! (thenSSA, _) = pRecallNode thenValueNodeId
+            let! (rawThenSSA, rawThenTy) = pRecallNode thenValueNodeId
+            let! (thenMeetOps, thenSSA, _) = pAdapt nodeId thenValueNodeId rawThenSSA rawThenTy
             let thenYield = MLIROp.SCFOp (SCFOp.Yield [(thenSSA, resultType)])
-            let thenOpsWithYield = thenOps @ [thenYield]
+            let thenOpsWithYield = thenOps @ thenMeetOps @ [thenYield]
             match elseValueNodeIdOpt with
             | Some elseValueNodeId ->
-                let! (elseSSA, _) = pRecallNode elseValueNodeId
+                let! (rawElseSSA, rawElseTy) = pRecallNode elseValueNodeId
+                let! (elseMeetOps, elseSSA, _) = pAdapt nodeId elseValueNodeId rawElseSSA rawElseTy
                 let elseYield = MLIROp.SCFOp (SCFOp.Yield [(elseSSA, resultType)])
-                let elseOpsWithYield = elseOps |> Option.map (fun ops -> ops @ [elseYield])
+                let elseOpsWithYield = elseOps |> Option.map (fun ops -> ops @ elseMeetOps @ [elseYield])
                 let! ifOp = pSCFIf condSSA thenOpsWithYield elseOpsWithYield (Some (resultSSA, resultType))
                 return ([ifOp], TRValue { SSA = resultSSA; Type = resultType })
             | None ->
@@ -348,7 +351,8 @@ let pBuildMatchElimination
                 // ── Record match path: no DU tag extraction ──
                 // Selection is by guard evaluation (or passthrough for single arm)
 
-                // Recall all arm value SSAs upfront
+                // Recall all arm value SSAs upfront, each brought to the join's width by the meet
+                // SSAAssignment derived for (match, arm); the meet ops join the arm's ops
                 let! armValueSSAs =
                     match result with
                     | Some _ ->
@@ -357,11 +361,14 @@ let pBuildMatchElimination
                             else
                                 let (_, armValueNodeId, _) = arms.[idx]
                                 parser {
-                                    let! (armSSA, _) = pRecallNode armValueNodeId
-                                    return! recallAll (idx + 1) (armSSA :: acc)
+                                    let! (rawSSA, rawTy) = pRecallNode armValueNodeId
+                                    let! (meetOps, armSSA, _) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
                                 }
                         recallAll 0 []
                     | None -> preturn []
+                let arms = arms |> List.mapi (fun i (armOps, v, arm) -> (armOps @ (match List.tryItem i armValueSSAs with Some (_, ops) -> ops | None -> []), v, arm))
+                let armValueSSAs = armValueSSAs |> List.map fst
 
                 if numArms = 1 then
                     // Single arm: passthrough — just emit arm ops and use arm value directly
@@ -478,7 +485,7 @@ let pBuildMatchElimination
 
                 let! allSSAs = getNodeSSAs nodeId
 
-                // Step 1: Recall all arm value SSAs upfront
+                // Step 1: Recall all arm value SSAs upfront, each at the join's width (its meet)
                 let! armValueSSAs =
                     match result with
                     | Some _ ->
@@ -487,11 +494,14 @@ let pBuildMatchElimination
                             else
                                 let (_, armValueNodeId, _) = arms.[idx]
                                 parser {
-                                    let! (armSSA, _) = pRecallNode armValueNodeId
-                                    return! recallAll (idx + 1) (armSSA :: acc)
+                                    let! (rawSSA, rawTy) = pRecallNode armValueNodeId
+                                    let! (meetOps, armSSA, _) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
                                 }
                         recallAll 0 []
                     | None -> preturn []
+                let arms = arms |> List.mapi (fun i (armOps, v, arm) -> (armOps @ (match List.tryItem i armValueSSAs with Some (_, ops) -> ops | None -> []), v, arm))
+                let armValueSSAs = armValueSSAs |> List.map fst
 
                 // Step 2: Build nested scf.if chain — compare scrutinee against each constant
                 // SSA layout: [0] = result, then 2 per non-final arm (constLit + cmp),
@@ -590,7 +600,7 @@ let pBuildMatchElimination
                         let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))
                         [castOp; zeroOp; loadOp], tagSSA, 4
 
-                // Step 2: Recall all arm value SSAs upfront
+                // Step 2: Recall all arm value SSAs upfront, each at the join's width (its meet)
                 let! armValueSSAs =
                     match result with
                     | Some _ ->
@@ -599,11 +609,14 @@ let pBuildMatchElimination
                             else
                                 let (_, armValueNodeId, _) = arms.[idx]
                                 parser {
-                                    let! (armSSA, _) = pRecallNode armValueNodeId
-                                    return! recallAll (idx + 1) (armSSA :: acc)
+                                    let! (rawSSA, rawTy) = pRecallNode armValueNodeId
+                                    let! (meetOps, armSSA, _) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
                                 }
                         recallAll 0 []
                     | None -> preturn []
+                let arms = arms |> List.mapi (fun i (armOps, v, arm) -> (armOps @ (match List.tryItem i armValueSSAs with Some (_, ops) -> ops | None -> []), v, arm))
+                let armValueSSAs = armValueSSAs |> List.map fst
 
                 // Step 3: Build nested scf.if chain from inside-out.
                 // SSA layout after tag extraction: 2 per non-final arm (tagLit + cmp), then one

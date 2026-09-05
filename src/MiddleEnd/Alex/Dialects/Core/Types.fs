@@ -30,6 +30,12 @@ type FloatWidth =
 // MLIR TYPE SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// The settled byte layout of a struct on a core, read from the graph's settled layouts
+/// (`SemanticGraph.Layouts`, Dimensional_Range_Design.md ruling 2): one offset per field in field
+/// order, the size and the alignment. `None` on fabric, where a struct is an `hw.struct` value
+/// with no byte layout. Composer reads these and computes none of them.
+type StructBytes = { Offsets: int list; Size: int; Align: int }
+
 /// Structured MLIR type representation
 type MLIRType =
     | TInt of IntWidth
@@ -41,7 +47,7 @@ type MLIRType =
     | TVector of int * MLIRType             // Vector type (SIMD)
     | TIndex                                // Index type
     | TUnit                                 // Unit type (represented as i32 0)
-    | TStruct of (string * MLIRType) list   // Named struct type (record fields)
+    | TStruct of (string * MLIRType) list * StructBytes option   // Named struct type (record fields) and, on a core, its settled bytes
     | TSeqClock                             // CIRCT !seq.clock type (clock signal for registers)
     | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
     | TError of string                      // Error type
@@ -91,28 +97,46 @@ let declaredPointerBytes (arch: Architecture) : int =
     | Ok bits -> (bits + 7) / 8
     | Error message -> failwith message
 
-/// Catamorphism: size in bytes when stored as a value (e.g. as a field in a struct). The one
-/// size model (§8.3): every pointer-sized type (an index; a rank-1 memref descriptor,
-/// {allocPtr, alignPtr, offset, size, stride}, five words; a closure pair, two words) is sized by
-/// the declared Pointer width, and `pointer` is `Error` where no declaration is in hand
-/// (serialization), so that a pointer-sized field reaching such a path is a loud defect and
-/// never a silent eight bytes.
+/// The size in bytes of a value as it is stored: a read, never a computation (§8.3, one size
+/// model). A scalar is the bytes of its selected width; every pointer-sized type (an index; a
+/// rank-1 memref descriptor, {allocPtr, alignPtr, offset, size, stride}, five words; a closure
+/// pair, two words) is the declared Pointer width times its words, and `pointer` is `Error`
+/// where no declaration is in hand (serialization), so that a pointer-sized value reaching such a
+/// path is a loud defect and never a silent eight bytes; a struct is its settled size, read from
+/// the layout CCS settled at saturation, and a struct with none (fabric, an opaque field) is a
+/// stop. A width the range was to give (`IntWidth 0`) has no size and is a stop naming it.
 let rec mlirTypeSizeWith (pointer: Result<int, string>) (ty: MLIRType) : int =
     let pointerBytes () =
         match pointer with
         | Ok bits -> (bits + 7) / 8
         | Error message -> failwith message
     match ty with
+    | TInt (IntWidth 0) -> failwith "mlirTypeSize: an integer whose width the node's range was to give reached a size read unnarrowed"
     | TInt w -> intWidthBytes w
     | TFloat F32 -> 4 | TFloat F64 -> 8
     | TFunc _ -> 2 * pointerBytes ()
     | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 5 * pointerBytes ()
     | TVector (_, elemTy) -> mlirTypeSizeWith pointer elemTy
     | TIndex -> pointerBytes ()
-    | TStruct fields -> fields |> List.sumBy (fun (_, ft) -> mlirTypeSizeWith pointer ft)
+    | TStruct (_, Some bytes) -> bytes.Size
+    | TStruct (fields, None) ->
+        failwithf "mlirTypeSize: the struct {%s} has no settled layout to read its size from (a fabric struct, or a field the placement could not settle)"
+            (fields |> List.map fst |> String.concat ", ")
     | TSeqClock -> 1
     | TTag _ -> 1  // Tag is at least 1 byte; platform elision determines actual width
     | TUnit -> 0 | TError _ -> 0
+
+/// The settled byte offset of a struct's field, read from the layout CCS settled; a struct with
+/// no settled layout, or a field outside it, is a stop.
+let structFieldOffset (ty: MLIRType) (fieldIndex: int) : int =
+    match ty with
+    | TStruct (_, Some bytes) ->
+        match List.tryItem fieldIndex bytes.Offsets with
+        | Some offset -> offset
+        | None -> failwithf "structFieldOffset: field %d is outside the settled layout of %d fields" fieldIndex bytes.Offsets.Length
+    | TStruct (fields, None) ->
+        failwithf "structFieldOffset: the struct {%s} has no settled layout to read an offset from" (fields |> List.map fst |> String.concat ", ")
+    | other -> failwithf "structFieldOffset: %A is not a struct" other
 
 /// The size model read through the architecture's declared Pointer width.
 let mlirTypeSize (arch: Architecture) (ty: MLIRType) : int =

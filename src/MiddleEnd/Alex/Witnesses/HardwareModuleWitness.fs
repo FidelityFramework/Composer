@@ -150,7 +150,7 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                             let lastValueId = findLastValue bodyId
                             let narrowedRetType = narrowType ctx.Coeffects graph lastValueId retType
                             match narrowedRetType with
-                            | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
+                            | TStruct (("Item1", _) :: ("Item2", outTy) :: _, _) -> Some outTy
                             | _ -> None  // Single return type — no separate output
                         | None -> None
 
@@ -160,7 +160,7 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                     // hw.module ports and hw.instance operands use identical types.
                     let unifiedStateType =
                         match stateType with
-                        | Some (TStruct paramFields) ->
+                        | Some (TStruct (paramFields, paramBytes)) ->
                             // Get the return state type from the body
                             let returnStateOpt =
                                 match SemanticGraph.tryGetNode bodyId graph with
@@ -177,7 +177,7 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                                     let lastId = findLast bodyId
                                     let narrowed = narrowType ctx.Coeffects graph lastId retType
                                     match narrowed with
-                                    | TStruct (("Item1", TStruct retFields) :: _) -> Some retFields
+                                    | TStruct (("Item1", TStruct (retFields, _)) :: _, _) -> Some retFields
                                     | _ -> None
                                 | None -> None
                             match returnStateOpt with
@@ -191,7 +191,7 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                                             // disagreement is a defect, never a width chosen here.
                                             failwithf "HardwareModuleWitness: state field '%s' is %d bits as a parameter and %d bits as returned; the graph's FieldRanges must give one width" name a b
                                         | _ -> (name, paramFty))
-                                Some (TStruct unified)
+                                Some (TStruct (unified, paramBytes))
                             | _ -> stateType
                         | _ -> stateType
 
@@ -341,7 +341,7 @@ let private witnessHardwareModule
 
             // Verify state type is TStruct
             match stateType with
-            | TStruct stateFields ->
+            | TStruct (stateFields, _) ->
                 // Match state fields with reset values (NativeLiteral preserved)
                 let stateFieldInfo =
                     List.zip stateFields resetValues

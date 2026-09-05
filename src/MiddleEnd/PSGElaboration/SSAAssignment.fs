@@ -53,116 +53,63 @@ let private literalExpansionCost (lit: NativeLiteral) : int =
     | NativeLiteral.ByteArray _ -> 1
     | NativeLiteral.UInt16Array _ -> 1
 
-/// Minimal NativeType to MLIRType mapping for capture slots
-/// This is a subset of TypeMapping.mapNativeType, inlined here to avoid
-/// circular dependencies (SSAAssignment must compile before TypeMapping)
-/// CRITICAL: Must check Layout + NTUKind first to match TypeMapping behavior,
-/// especially for PlatformWord types like int which depend on target architecture.
-let rec private mapCaptureType (arch: Architecture) (ty: NativeType) : MLIRType =
-    /// One type-constructor table for both the `TApp` and the `TNum` forms (as in TypeMapping):
-    /// a numeric type is read off its carrier exactly as the arity-0 `TApp` was.
-    let mapTyCon (tycon: TypeConRef) (args: NativeType list) : MLIRType =
-        // FIRST: Check Layout + NTUKind for platform-aware type mapping
-        // This mirrors TypeMapping.mapNativeType to ensure consistency
-        match tycon.Layout, tycon.NTUKind with
-        // Zero-size unit type
-        | TypeLayout.Inline (0, 1), Some NTUKind.NTUunit -> TInt (IntWidth 32)
-        // Boolean: 1-bit
-        | TypeLayout.Inline (1, 1), Some NTUKind.NTUbool -> TInt (IntWidth 1)
-        // Fixed-width integers by NTUKind
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 8)) -> TInt (IntWidth 8)
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 8)) -> TInt (IntWidth 8)
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 16)) -> TInt (IntWidth 16)
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 16)) -> TInt (IntWidth 16)
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 32)) -> TInt (IntWidth 32)
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 32)) -> TInt (IntWidth 32)
-        | _, Some (NTUKind.NTUint (NTUWidth.Fixed 64)) -> TInt (IntWidth 64)
-        | _, Some (NTUKind.NTUuint (NTUWidth.Fixed 64)) -> TInt (IntWidth 64)
-        // Platform-word integers (int, uint, nativeint, size_t, ptrdiff_t)
-        // the declared Register width (plan D8, L-10)
-        | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Register))
-        | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Register))
-        | TypeLayout.PlatformWord, Some (NTUKind.NTUint (NTUWidth.Resolved WidthDimension.Pointer))
-        | TypeLayout.PlatformWord, Some (NTUKind.NTUuint (NTUWidth.Resolved WidthDimension.Pointer))
-        | TypeLayout.PlatformWord, Some NTUKind.NTUsize
-        | TypeLayout.PlatformWord, Some NTUKind.NTUdiff
-        | TypeLayout.PlatformWord, None -> TInt (declaredWordWidth arch)  // the declared Register width
-        // Pointers
-        | TypeLayout.PlatformWord, Some NTUKind.NTUptr
-        | TypeLayout.PlatformWord, Some NTUKind.NTUfnptr -> TIndex
-        | _, Some NTUKind.NTUptr -> TIndex
-        // Floats
-        | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 32)) -> TFloat F32
-        | _, Some (NTUKind.NTUfloat (NTUWidth.Fixed 64)) -> TFloat F64
-        // Char (Unicode codepoint)
-        | _, Some NTUKind.NTUchar -> TInt (IntWidth 32)
-        // String: decomposed memref capture — store {data_ptr, length} as two platform words.
-        // MLIR memref descriptors can't nest inside byte-level structs; we decompose on
-        // construction and reconstruct on extraction. Both components are TIndex (platform-word).
-        | _, Some NTUKind.NTUstring ->
-            TStruct [("ptr", TIndex); ("len", TIndex)]
-        // SECOND: Name-based fallback for types without proper NTU metadata
-        | _ ->
-            match tycon.Name with
-            | "byref" | "inref" | "outref" -> TIndex
-            | "array" ->
-                let sizeOf = mlirTypeSize arch
-                let totalBytes = sizeOf TIndex + sizeOf (TInt (IntWidth 64))
-                TMemRefStatic(totalBytes, TInt (IntWidth 8))  // Fat pointer
-            | "option" | "voption" ->
-                match args with
-                | [innerTy] ->
-                    let innerMlir = mapCaptureType arch innerTy
-                    let totalBytes = 1 + mlirTypeSize arch innerMlir
-                    TMemRefStatic(totalBytes, TInt (IntWidth 8))
-                | _ -> TIndex  // Fallback
-            | _ ->
-                // Records, DUs, unknown types - check if has fields or treat as pointer
-                if tycon.FieldCount > 0 then
-                    TIndex  // Records are passed by pointer
-                else
-                    TIndex  // Fallback for other cases
-    match ty with
-    | NativeType.TApp(tycon, args) -> mapTyCon tycon args
-    // The carrier is read through the one carrier read; an unresolved carrier variable is a
-    // checker failure surfaced here, never a width chosen by Composer.
-    | NativeType.TNum(carrier, _) ->
-        match CarrierRef.tryConstructor carrier with
-        | Some tc -> mapTyCon tc []
-        | None -> failwithf "mapCaptureType: unresolved carrier variable in numeric type '%s'; CCS must resolve it" (formatType ty)
-    | NativeType.TFun _ ->
-        // Closures are uniform pairs: {code_ptr: index, env_ptr: index} = memref<2xindex>
-        // Must match mapNativeTypeForArch so pClosureCall sees the correct type
-        TMemRefStatic(2, TIndex)
-    | NativeType.TTuple (elements, _) ->
-        let elementTypes = elements |> List.map (mapCaptureType arch)
-        let totalBytes = elementTypes |> List.sumBy (mlirTypeSize arch)
-        TMemRefStatic(totalBytes, TInt (IntWidth 8))
-    | NativeType.TVar tvar ->
-        // Resolve type variable using Union-Find
-        match find tvar with
-        | (_, Some boundTy) -> mapCaptureType arch boundTy
-        | (_, None) -> TIndex  // Unbound type variable - assume pointer-sized
-    | NativeType.TByref _ -> TIndex
-    | _ -> TIndex  // Fallback for other cases
+/// SSA traversal context — bundles all invariant state for the recursive traversal.
+/// Only `scope` and `nodeId` vary per call; everything else is created once in `assignSSA`.
+type private SSAContext = {
+    /// The target: the fabric leg holds a DU or a record as an hw.struct at its settled widths
+    /// and derives no byte layout for it
+    TargetPlatform: Core.Types.Dialects.TargetPlatform
+    Arch: Architecture
+    Graph: SemanticGraph
+    ClosureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>
+    DULayouts: System.Collections.Generic.Dictionary<int, DULayout>
+    InnerScopeAssignments: System.Collections.Generic.Dictionary<int, NodeSSAAllocation>
+    /// The meets of nodes in nested lambda scopes, merged with InnerScopeAssignments
+    InnerMeets: System.Collections.Generic.Dictionary<int, Meet list>
+    /// The zero constant each unit-typed function returns, by Lambda NodeId.value
+    UnitReturns: System.Collections.Generic.Dictionary<int, SSA>
+    /// The return meet of each function whose last value is held narrower or wider than its
+    /// result, by Lambda NodeId.value: the last value of the body's scope
+    ReturnMeets: System.Collections.Generic.Dictionary<int, Meet>
+    /// Curry flattening: the saturated calls (the target binding and every argument) and the
+    /// partial applications, which emit nothing
+    Curry: CurryFlattening.CurryFlatteningResult
+}
 
-/// Compute the MLIR type for a capture slot based on capture mode
-let private captureSlotType (arch: Architecture) (capture: CaptureInfo) : MLIRType =
+/// The type a capture is held at in its closure slot: a read of the captured binding's emitted
+/// type (`TypeMapping.mapNativeTypeForTarget`, the bare integer kind at the source node's held
+/// width, `TypeMapping.nodeWidth`). A mutable capture holds the address of its cell; a string
+/// is decomposed into its base index and its extent (two words, a layout derived here from the
+/// declared Pointer width); every other memref-backed value (an array, a record, a tuple) holds
+/// its base index.
+let private captureSlotType (platform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (capture: CaptureInfo) : MLIRType =
     if capture.IsMutable then
         // Mutable capture: store pointer to the alloca
         TIndex
     else
-        // Immutable capture: store the value directly
-        mapCaptureType arch capture.Type
+        match mapNativeTypeForTarget platform arch graph capture.Type with
+        | TInt (IntWidth 0) ->
+            match capture.SourceNodeId |> Option.bind (nodeWidth graph) with
+            | Some w -> TInt w
+            | None ->
+                failwithf "SSAAssignment: capture '%s' of the bare integer kind has no source node whose held width the slot can read" capture.Name
+        | TMemRef (TInt (IntWidth 8)) ->
+            // String: decomposed memref capture — {data_ptr, length} as two platform words.
+            // MLIR memref descriptors can't nest inside byte-level structs; we decompose on
+            // construction and reconstruct on extraction.
+            let word = declaredPointerBytes arch
+            TStruct ([("ptr", TIndex); ("len", TIndex)], Some { Offsets = [0; word]; Size = 2 * word; Align = word })
+        | TMemRef _ | TMemRefStatic _ | TStruct _ -> TIndex  // memref-backed: the base index
+        | other -> other
 
 /// A slot that holds the base index of a memref value: the capture's type is a memref in
-/// MLIR (a record, an array, a mutable cell's alloca) and the slot is an index, so the
+/// MLIR (an array, a mutable cell's alloca) and the slot is an index, so the
 /// construction extracts the base pointer before storing it. Read from the same type
 /// mapping the witnesses use; the witness checks the accumulator's type against this.
-let private captureExtractsBasePointer (arch: Architecture) (graph: SemanticGraph) (capture: CaptureInfo) (slotType: MLIRType) : bool =
+let private captureExtractsBasePointer (platform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (capture: CaptureInfo) (slotType: MLIRType) : bool =
     slotType = TIndex &&
     (capture.IsMutable ||
-     (match mapNativeTypeWithGraphForArch arch graph capture.Type with
+     (match mapNativeTypeForTarget platform arch graph capture.Type with
       | TMemRef _ | TMemRefStatic _ -> true
       | _ -> false))
 
@@ -172,7 +119,7 @@ let private captureExtractsBasePointer (arch: Architecture) (graph: SemanticGrap
 /// and its view. A scalar takes its view (for reinterpret_cast).
 let private captureConstructionSSACount (slotType: MLIRType) (extractsBasePointer: bool) : int =
     match slotType with
-    | TStruct [("ptr", TIndex); ("len", TIndex)] -> 5  // ptrSSA, dimZeroSSA, lenSSA, ptrViewSSA, lenViewSSA
+    | TStruct ([("ptr", TIndex); ("len", TIndex)], _) -> 5  // ptrSSA, dimZeroSSA, lenSSA, ptrViewSSA, lenViewSSA
     | _ when extractsBasePointer -> 2  // viewSSA, extractSSA
     | _ -> 1  // viewSSA
 
@@ -180,7 +127,7 @@ let private captureConstructionSSACount (slotType: MLIRType) (extractsBasePointe
 /// Work SSAs follow the capture result SSAs [V(0)..V(n-1)].
 let private captureExtractionWorkSSACount (slotType: MLIRType) : int =
     match slotType with
-    | TStruct [("ptr", TIndex); ("len", TIndex)] -> 7  // ptrView,ptrZero,ptr, lenView,lenZero,len, rawMemref
+    | TStruct ([("ptr", TIndex); ("len", TIndex)], _) -> 7  // ptrView,ptrZero,ptr, lenView,lenZero,len, rawMemref
     | _ -> 2  // view, zero
 
 /// The callee prologue of a closure, in the order pExtractCaptures consumes it: per capture
@@ -232,21 +179,31 @@ let private isUnitTyped (ty: NativeType) : bool =
 ///   Uniform pair construction (3):
 ///     - 3 SSAs: pairUndefSSA, pairWithCodeSSA, closureResultSSA
 ///   Total: C + 14 SSAs
-let private computeLambdaSSACost (arch: Architecture) (graph: SemanticGraph) (captures: CaptureInfo list) : int =
+let private computeLambdaSSACost (platform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (captures: CaptureInfo list) : int =
     let n = List.length captures
     if n = 0 then
         0  // Simple function - no closure struct needed
     else
         let c =
             captures |> List.sumBy (fun cap ->
-                let slot = captureSlotType arch cap
-                captureConstructionSSACount slot (captureExtractsBasePointer arch graph cap slot))
+                let slot = captureSlotType platform arch graph cap
+                captureConstructionSSACount slot (captureExtractsBasePointer platform arch graph cap slot))
         c + 14  // flat struct (c+3) + heap (5) + size (3) + pair (3)
 
+/// The byte layout of a closure's environment, derived once here from its slots: each slot at
+/// the next offset, the whole a byte memref. A closure is an aggregate the leg realises (no
+/// Clef type names it), so its layout is this nanopass's derivation from the slot types, each of
+/// which is a read of a selected width or of the declared Pointer width; the witnesses read the
+/// offsets from the layout.
+let private tileSlots (arch: Architecture) (slotTypes: MLIRType list) : int list * int =
+    slotTypes
+    |> List.fold (fun (offsets, cursor) slot -> (cursor :: offsets, cursor + mlirTypeSize arch slot)) ([], 0)
+    |> fun (offsets, size) -> (List.rev offsets, size)
+
 /// Build the environment struct type from captures
-let private buildEnvStructType (arch: Architecture) (captures: CaptureInfo list) : MLIRType =
-    let slotTypes = captures |> List.map (captureSlotType arch)
-    let totalBytes = slotTypes |> List.sumBy (mlirTypeSize arch)
+let private buildEnvStructType (platform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (captures: CaptureInfo list) : MLIRType =
+    let slotTypes = captures |> List.map (captureSlotType platform arch graph)
+    let (_, totalBytes) = tileSlots arch slotTypes
     TMemRefStatic(totalBytes, TInt (IntWidth 8))
 
 /// Build complete ClosureLayout from Lambda captures and pre-assigned SSAs
@@ -264,6 +221,7 @@ let private buildEnvStructType (arch: Architecture) (captures: CaptureInfo list)
 /// - Parent scope: closure CONSTRUCTION (these SSAs)
 /// - Child scope: capture EXTRACTION (v0..v(N-1), derived from PSG structure)
 let private buildClosureLayout
+    (platform: Core.Types.Dialects.TargetPlatform)
     (arch: Architecture)
     (graph: SemanticGraph)
     (lambdaNodeId: NodeId)
@@ -274,19 +232,24 @@ let private buildClosureLayout
     : ClosureLayout =
 
     let n = List.length captures
-    let captureTypes = captures |> List.map (captureSlotType arch)
-    let extracts = List.map2 (captureExtractsBasePointer arch graph) captures captureTypes
+    let captureTypes = captures |> List.map (captureSlotType platform arch graph)
+    let extracts = List.map2 (captureExtractsBasePointer platform arch graph) captures captureTypes
 
     // Total construction SSAs varies by capture: 1 for a scalar, 2 for a base-pointer
     // extraction, 5 for a decomposed memref
-    let c = List.map2 captureConstructionSSACount captureTypes extracts |> List.sum
+    let perCaptureCounts = List.map2 captureConstructionSSACount captureTypes extracts
+    let c = List.sum perCaptureCounts
 
     // Extract SSAs by position for closure CONSTRUCTION
     // Flat struct construction (0 to c+2)
     let codeAddrSSA = ssas.[0]
     let undefSSA = ssas.[1]
     let withCodeSSA = ssas.[2]
-    let captureInsertSSAs = ssas.[3..(c + 2)]
+    // The construction values per capture, in slot order, sliced by each capture's count
+    let captureInsertSSAs =
+        perCaptureCounts
+        |> List.fold (fun (acc, position) count -> (ssas.[position .. position + count - 1] :: acc, position + count)) ([], 3)
+        |> fst |> List.rev
 
     // Heap allocation (c+3 to c+7)
     let heapPosPtrSSA = ssas.[c + 3]
@@ -305,48 +268,50 @@ let private buildClosureLayout
     let pairWithCodeSSA = ssas.[c + 12]
     let closureResultSSA = ssas.[c + 13]
 
-    // Build capture slots (structural info only - no SSAs for extraction)
-    // Extraction SSAs are derived at emission time from SlotIndex
+    // Build env struct type (for internal tracking, kept for compatibility)
+    let envStructType = buildEnvStructType platform arch graph captures
+
+    // TRUE FLAT CLOSURE: {code_ptr, capture_0, capture_1, ...}
+    // Captures are inlined directly, not via env_ptr indirection
+    // This eliminates lifetime issues - closure is returned by value with all state inline.
+    // The header before the first capture: the code pointer (a regular closure), or the lazy
+    // header {computed: i1, value: T, code_ptr} or the seq header {state: i32, current, code_ptr}.
+    let header =
+        match context with
+        | LambdaContext.RegularClosure -> [ TIndex ]
+        | LambdaContext.LazyThunk ->
+            match SemanticGraph.tryGetNode bodyNodeId graph with
+            | Some bodyNode ->
+                let elementType =
+                    match mapNativeTypeForTarget platform arch graph bodyNode.Type with
+                    | TInt (IntWidth 0) -> TInt (requireNodeWidth graph bodyNodeId)
+                    | mapped -> mapped
+                [ TInt (IntWidth 1); elementType; TIndex ]
+            | None -> failwithf "LazyThunk Lambda body node %d not found" (NodeId.value bodyNodeId)
+        | LambdaContext.SeqGenerator -> [ TInt (IntWidth 32); TIndex; TIndex ]
+    let (offsets, totalBytes) = tileSlots arch (header @ captureTypes)
+    let captureOffsets = offsets |> List.skip header.Length
+    let closureStructType = TMemRefStatic((tileSlots arch (TIndex :: captureTypes) |> snd), TInt (IntWidth 8))
+
+    // Build capture slots: the slot's type, its byte offset in the struct, whether it extracts
     let captureSlots =
         captures
         |> List.mapi (fun i capture ->
             {
                 Name = capture.Name
                 SlotIndex = i
-                SlotType = captureSlotType arch capture
+                SlotType = captureTypes.[i]
+                ByteOffset = captureOffsets.[i]
                 SourceNodeId = capture.SourceNodeId
                 Mode = if capture.IsMutable then ByRef else ByValue
                 ExtractsBasePointer = extracts.[i]
             })
 
-    // Build env struct type (for internal tracking, kept for compatibility)
-    let envStructType = buildEnvStructType arch captures
-
-    // TRUE FLAT CLOSURE: {code_ptr, capture_0, capture_1, ...}
-    // Captures are inlined directly, not via env_ptr indirection
-    // This eliminates lifetime issues - closure is returned by value with all state inline
-    let captureTypes = captures |> List.map (captureSlotType arch)
-    let fieldTypes = TIndex :: captureTypes
-    let sizeOf = mlirTypeSize arch
-    let totalBytes = fieldTypes |> List.sumBy sizeOf
-    let closureStructType = TMemRefStatic(totalBytes, TInt (IntWidth 8))
-
-    // PRD-14 Option B: For lazy thunks, compute the FULL lazy struct type
+    // PRD-14 Option B: For lazy thunks, the FULL lazy struct type
     // {computed: i1, value: T, code_ptr: ptr, cap0, cap1, ...}
-    // T is the Lambda body's return type (the element type of Lazy<T>)
     let lazyStructType =
         match context with
-        | LambdaContext.LazyThunk ->
-            // Get the body's return type (T in Lazy<T>)
-            match SemanticGraph.tryGetNode bodyNodeId graph with
-            | Some bodyNode ->
-                let elementType = mapCaptureType arch bodyNode.Type
-                // Lazy struct: {i1, T, ptr, cap0, cap1, ...}
-                let fieldTypes = [TInt (IntWidth 1); elementType; TIndex] @ captureTypes
-                let totalBytes = fieldTypes |> List.sumBy sizeOf
-                Some (TMemRefStatic(totalBytes, TInt (IntWidth 8)))
-            | None ->
-                failwithf "LazyThunk Lambda body node %d not found" (NodeId.value bodyNodeId)
+        | LambdaContext.LazyThunk -> Some (TMemRefStatic(totalBytes, TInt (IntWidth 8)))
         | _ -> None
 
     // StructLoadSSA is for the CALLEE (inner function) - not from parent scope's ssas
@@ -401,9 +366,11 @@ let private buildClosureLayout
 ///   ssas[3..5]        = size computation
 ///   ssas[6..10]       = arena allocation
 let private buildDULayout
+    (platform: Core.Types.Dialects.TargetPlatform)
     (arch: Architecture)
     (graph: SemanticGraph)
     (duConstructNodeId: NodeId)
+    (duType: NativeType)
     (caseName: string)
     (caseIndex: int)
     (payloadOpt: NodeId option)
@@ -436,20 +403,21 @@ let private buildDULayout
     let heapResultPtrSSA = ssas.[arenaOffset + 3]
     let heapNewPosSSA = ssas.[arenaOffset + 4]
 
-    // Get payload type from payload node if present
+    // The payload's type: the payload node's emitted type (the bare integer kind at the node's
+    // held width)
     let payloadType =
         payloadOpt
-        |> Option.bind (fun payloadId -> Map.tryFind payloadId graph.Nodes)
-        |> Option.map (fun node -> mapCaptureType arch node.Type)
+        |> Option.bind (fun payloadId -> Map.tryFind payloadId graph.Nodes |> Option.map (fun node -> payloadId, node))
+        |> Option.map (fun (payloadId, node) ->
+            match mapNativeTypeForTarget platform arch graph node.Type with
+            | TInt (IntWidth 0) -> TInt (requireNodeWidth graph payloadId)
+            | mapped -> mapped)
 
-    // Build case-specific struct type: {i8, PayloadType} or {i8} for nullary
+    // The union's settled bytes, read from the graph's layouts: the tag and the widest payload
     let caseStructType =
-        match payloadType with
-        | Some pType ->
-            let totalBytes = 1 + mlirTypeSize arch pType
-            TMemRefStatic(totalBytes, TInt (IntWidth 8))
-        | None ->
-            TMemRefStatic(1, TInt (IntWidth 8))
+        match mapNativeTypeForTarget platform arch graph duType with
+        | TMemRefStatic _ as settled -> settled
+        | other -> failwithf "SSAAssignment: the union '%s' maps to %A, not to its settled byte memref" (formatType duType) other
 
     {
         DUConstructNodeId = duConstructNodeId
@@ -546,27 +514,11 @@ let private computeMatchSSACost (graph: SemanticGraph) (scrutineeId: NodeId) (ca
     extractionSSAs + ifChainSSAs + 10  // 10 for safety margin
 
 /// Compute exact SSA count for Application based on intrinsic analysis
-/// SSA traversal context — bundles all invariant state for the recursive traversal.
-/// Only `scope` and `nodeId` vary per call; everything else is created once in `assignSSA`.
-type private SSAContext = {
-    /// The target: the fabric leg holds a DU or a record as an hw.struct at its settled widths
-    /// and derives no byte layout for it
-    TargetPlatform: Core.Types.Dialects.TargetPlatform
-    Arch: Architecture
-    Graph: SemanticGraph
-    ClosureLayouts: System.Collections.Generic.Dictionary<int, ClosureLayout>
-    DULayouts: System.Collections.Generic.Dictionary<int, DULayout>
-    InnerScopeAssignments: System.Collections.Generic.Dictionary<int, NodeSSAAllocation>
-    /// The zero constant each unit-typed function returns, by Lambda NodeId.value
-    UnitReturns: System.Collections.Generic.Dictionary<int, SSA>
-    SaturatedCallArgCounts: Map<NodeId, int>
-}
-
 let private computeApplicationSSACost (ctx: SSAContext) (node: SemanticNode) : int =
     // Check if this is a saturated call (curry flattening) — use effective arg count
-    match Map.tryFind node.Id ctx.SaturatedCallArgCounts with
-    | Some effectiveArgCount ->
-        1 + effectiveArgCount  // 1 result + N potential memref casts
+    match Map.tryFind node.Id ctx.Curry.SaturatedCalls with
+    | Some info ->
+        1 + List.length info.AllArgNodes  // 1 result + N potential memref casts
     | None ->
     // Look at what we're applying to determine SSA needs
     match node.Children with
@@ -795,43 +747,6 @@ let private computeUnionCaseSSACost (payloadOpt: NodeId option) : int =
     | Some _ -> 6  // tag + undef + withTag + payload insert + conversion + result
     | None -> 3    // tag + undef + withTag (no payload)
 
-/// Compute the DU slot type from a DU's NativeType
-/// Must match the logic in TypeMapping.fs for consistency
-let private getDUSlotType (arch: Architecture) (duType: NativeType) : MLIRType option =
-    match duType with
-    | NativeType.TApp (tycon, args) ->
-        match tycon.Name, tycon.Layout with
-        // Option/ValueOption: slot type = payload type (homogeneous)
-        | "option", _ | "voption", _ ->
-            match args with
-            | [innerTy] -> Some (mapCaptureType arch innerTy)
-            | _ -> None
-        // Result: slot type = max of Ok and Error types (heterogeneous)
-        | "result", _ ->
-            match args with
-            | [okTy; errorTy] ->
-                let okMlir = mapCaptureType arch okTy
-                let errorMlir = mapCaptureType arch errorTy
-                // Pick the larger type (same logic as TypeMapping.maxMLIRType)
-                let okSize = mlirTypeSize arch okMlir
-                let errorSize = mlirTypeSize arch errorMlir
-                Some (if okSize >= errorSize then okMlir else errorMlir)
-            | _ -> None
-        // Other DUs with known layout
-        | _, TypeLayout.Inline (size, align) when size > 8 ->
-            let tagSize = size % align
-            let payloadSize = size - tagSize
-            let slotType =
-                match payloadSize with
-                | 1 -> TInt (IntWidth 8)
-                | 2 -> TInt (IntWidth 16)
-                | 4 -> TInt (IntWidth 32)
-                | 8 -> TInt (IntWidth 64)
-                | n -> TMemRefStatic(n, TInt (IntWidth 8))
-            Some slotType
-        | _ -> None
-    | _ -> None
-
 /// Check if a DU type needs arena allocation
 /// Heterogeneous DUs (like Result<'T, 'E>) need arena; homogeneous DUs (like Option<'T>) use inline struct
 let private needsDUArenaAllocation (duType: NativeType) : bool =
@@ -945,7 +860,7 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
 
     // Lambda: cost depends on captures (structural analysis, capture types vary by arch)
     | SemanticKind.Lambda (_, _, captures, _, _) ->
-        computeLambdaSSACost ctx.Arch ctx.Graph captures
+        computeLambdaSSACost ctx.TargetPlatform ctx.Arch ctx.Graph captures
 
     // Fixed costs (these don't vary by structure)
     | SemanticKind.ForLoop _ -> 2
@@ -1013,6 +928,254 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
     | _ -> 1
 
 // ═══════════════════════════════════════════════════════════════════════════
+// THE DERIVATION TABLE OF MEETS (Dimensional_Range_Design.md §3.1, §8.3; rulings 1 and 3;
+// CS-11 slice 2(b))
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Every place a value meets a slot held at another width is a consumer kind below, one function
+// each. A meet's value is one more SSA in the consumer's allocation, yielded right after the
+// node's own values in the scope's numbering, in the order the table gives (operand order):
+// `Meets[consumer]`, read by the witness through `lookupMeet consumer operand`. Both widths are
+// reads of CCS's selection (`TypeMapping.nodeWidth`, the settled layouts, the element ranges);
+// the extension's sign is the operand's range's; nothing is decided here.
+//
+//   Application, direct call to a lambda   each argument -> the parameter node's width; the
+//                                             result read from the callee's body width to the
+//                                             call node's own (keyed with the call as operand)
+//   Application, through a value / to an   each argument -> the declared Register width
+//     escaping lambda, and a closure call    (ruling 1: the value-call boundary)
+//   Application, the syscall ABI            the descriptor -> the Register width; Array.blit's
+//     (Sys.write, read, readline)             indices likewise (pointer arithmetic at the word)
+//   Application, Array.set / Array.create   the value -> the element's settled width
+//   Set / mutable Binding                   the value -> the cell's width (the Binding node's)
+//   RecordExpr / TupleExpr                  each field value -> the field's settled representation
+//   IfThenElse / CaseElimination / Match    each arm's value -> the join's width (the node's)
+//   Lambda (the return)                     the body's last value -> the body node's width; the
+//                                             last value of the body's scope (`ReturnMeets`)
+//   VarRef / FieldGet / TupleGet /          the slot's width -> the read's width (ruling 3: a
+//     IndexGet / Array.get / DUEliminate      refined read truncates; a boundary read extends);
+//                                             keyed with the consumer as its own operand
+//   IndexSet / ArrayExpr                    each value -> the element's settled width
+//   DUConstruct / Option.Some               the payload -> the payload slot's width
+//   Operators (pBinaryArithOp, pComparisonOp, the unary ops) and Convert (pTypeConversion)
+//     adapt within the node's own five (three) values at the CS-10 positions; a Literal has
+//     its point range's width and needs no meet.
+
+/// A meet still to be given its value: the operand and the widths it adapts between.
+type private Pending = { Operand: NodeId; From: IntWidth; To: IntWidth; Kind: MeetKind }
+
+/// The last value a body evaluates to: through a block's last child and an annotation.
+let rec private lastValueOf (graph: SemanticGraph) (id: NodeId) : NodeId =
+    match Map.tryFind id graph.Nodes with
+    | Some { Kind = SemanticKind.Sequential ids } ->
+        match List.tryLast ids with
+        | Some last -> lastValueOf graph last
+        | None -> id
+    | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } -> lastValueOf graph inner
+    | _ -> id
+
+/// The function node of an application, through an annotation.
+let private functionNodeOf (graph: SemanticGraph) (funcId: NodeId) : SemanticNode option =
+    match Map.tryFind funcId graph.Nodes with
+    | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } -> Map.tryFind inner graph.Nodes
+    | other -> other
+
+/// The Lambda a binding holds, through an annotation.
+let private lambdaOfBinding (graph: SemanticGraph) (bindingId: NodeId) : SemanticNode option =
+    match Map.tryFind bindingId graph.Nodes with
+    | Some ({ Kind = SemanticKind.Binding _ } as binding) ->
+        binding.Children
+        |> List.tryPick (fun childId ->
+            match Map.tryFind childId graph.Nodes with
+            | Some ({ Kind = SemanticKind.Lambda _ } as lambda) -> Some lambda
+            | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } ->
+                match Map.tryFind inner graph.Nodes with
+                | Some ({ Kind = SemanticKind.Lambda _ } as lambda) -> Some lambda
+                | _ -> None
+            | _ -> None)
+    | _ -> None
+
+/// The meet that brings `operand` from `from` to `target`, if the widths differ: an extension
+/// by the sign of the operand's range, or a truncation.
+let private pending (graph: SemanticGraph) (operand: NodeId) (from: IntWidth) (target: IntWidth) : Pending option =
+    if from = target then None
+    elif intWidthBits from < intWidthBits target then
+        let sign =
+            match Map.tryFind operand graph.Nodes |> Option.bind (fun n -> n.ValueRange) with
+            | Some r when ValueRange.isNonNegative r -> MeetKind.ExtendUnsigned
+            | Some _ -> MeetKind.ExtendSigned
+            | None -> failwithf "SSAAssignment: node %d is extended to a wider slot but has no analysed range to read the extension's sign from" (NodeId.value operand)
+        Some { Operand = operand; From = from; To = target; Kind = sign }
+    else Some { Operand = operand; From = from; To = target; Kind = MeetKind.Truncate }
+
+/// The meet of a value node into a slot of the given width, where both are word integers. The
+/// value is read at its last value (through a block or an annotation), the node whose value the
+/// witness recalls.
+let private meetInto (graph: SemanticGraph) (valueId: NodeId) (slot: IntWidth option) : Pending option =
+    let valueId = lastValueOf graph valueId
+    match nodeWidth graph valueId, slot with
+    | Some from, Some target -> pending graph valueId from target
+    | _ -> None
+
+/// The settled integer slot of a record's field, if the field is one.
+let private fieldSlotWidth (graph: SemanticGraph) (recordTy: NativeType) (field: string) : IntWidth option =
+    match settledLayout graph recordTy with
+    | Some (SettledLayout.Record (fields, _, _)) ->
+        fields |> List.tryFind (fun f -> f.Name = field) |> Option.bind (fun f ->
+            match f.Slot with
+            | SettledSlot.Integer (bits, _) -> Some (IntWidth bits)
+            | _ -> None)
+    | _ -> None
+
+/// The settled integer slot of a union case's payload, if it is one.
+let private payloadSlotWidth (graph: SemanticGraph) (unionTy: NativeType) (caseIndex: int) : IntWidth option =
+    match settledLayout graph unionTy with
+    | Some (SettledLayout.Union (cases, _, _, _)) ->
+        List.tryItem caseIndex cases |> Option.bind snd |> Option.bind (fun slot ->
+            match slot with
+            | SettledSlot.Integer (bits, _) -> Some (IntWidth bits)
+            | _ -> None)
+    | _ -> None
+
+/// The settled width of an array's elements, if they are word integers.
+let private elementSlotWidth (graph: SemanticGraph) (arrayId: NodeId) : IntWidth option =
+    match Map.tryFind arrayId graph.Nodes |> Option.map (fun n -> applySubst n.Type) with
+    | Some (NativeType.TApp (tycon, [ elemTy ])) when tycon.Name = "array" || tycon.Name = "Array" ->
+        if Types.tryGetNTUKind elemTy |> Option.exists isWordInteger then Some (elementWidth graph elemTy) else None
+    | _ -> None
+
+/// The result of a direct call read from the callee's body width (the width the callee returns
+/// at) to the call node's own width: a read meet keyed with the call as its own operand. A call
+/// through a value has both at the declared Register width and no meet.
+let private callResultMeet (graph: SemanticGraph) (node: SemanticNode) (lambda: SemanticNode) : Pending list =
+    match lambda.Kind with
+    | SemanticKind.Lambda (_, bodyId, _, _, _) ->
+        match nodeWidth graph bodyId, nodeWidth graph node.Id with
+        | Some from, Some target -> Option.toList (pending graph node.Id from target)
+        | _ -> []
+    | _ -> []
+
+/// The meets of an application: its arguments against the parameters they meet, and its
+/// result against the callee's.
+let private applicationMeets (ctx: SSAContext) (node: SemanticNode) (funcId: NodeId) (args: NodeId list) : Pending list =
+    let graph = ctx.Graph
+    let word = declaredWordWidth ctx.Arch
+    let toWord (argId: NodeId) = meetInto graph argId (Some word)
+    let toParameters (lambda: SemanticNode) (parameters: (string * NativeType * NodeId) list) (args: NodeId list) =
+        (List.zip (List.truncate (min parameters.Length args.Length) parameters) (List.truncate (min parameters.Length args.Length) args)
+         |> List.choose (fun ((_, _, paramId), argId) -> meetInto graph argId (nodeWidth graph paramId)))
+        @ callResultMeet graph node lambda
+    match functionNodeOf graph funcId with
+    | Some { Kind = SemanticKind.Intrinsic info } ->
+        match info.Module, info.Operation, args with
+        // the syscall ABI: the descriptor at the declared Register width
+        | IntrinsicModule.Sys, ("write" | "read" | "readline"), fd :: _ -> Option.toList (toWord fd)
+        // an element store: the value at the element's settled width
+        | IntrinsicModule.Array, "set", [ arr; _; value ] -> Option.toList (meetInto graph value (elementSlotWidth graph arr))
+        | IntrinsicModule.Array, "create", [ _; seed ] -> Option.toList (meetInto graph seed (elementSlotWidth graph node.Id))
+        // pointer arithmetic at the word
+        | IntrinsicModule.Array, "blit", [ _; srcIdx; _; dstIdx; count ] -> [ srcIdx; dstIdx; count ] |> List.choose toWord
+        | _ -> []
+    | Some funcNode ->
+        match Map.tryFind node.Id ctx.Curry.SaturatedCalls with
+        | Some info ->
+            match lambdaOfBinding graph info.TargetBindingId with
+            | Some ({ Kind = SemanticKind.Lambda (parameters, _, _, _, _) } as lambda) -> toParameters lambda parameters info.AllArgNodes
+            | _ -> info.AllArgNodes |> List.choose toWord
+        | None when Map.containsKey node.Id ctx.Curry.PartialApplications -> []
+        | None ->
+            match funcNode.Kind with
+            | SemanticKind.VarRef (_, Some defId) ->
+                match lambdaOfBinding graph defId with
+                | Some ({ Kind = SemanticKind.Lambda (parameters, _, _, _, _) } as lambda) when args.Length <= parameters.Length ->
+                    // a direct call: the parameter nodes carry the boundary rule where the lambda escapes
+                    toParameters lambda parameters args
+                | _ -> args |> List.choose toWord   // a function value, or a surplus handed to the returned value
+            | SemanticKind.Lambda (parameters, _, _, _, _) when args.Length <= parameters.Length -> toParameters funcNode parameters args
+            | _ -> args |> List.choose toWord
+    | None -> []
+
+/// The read of a slot into a node held at another width (ruling 3), keyed with the node as its
+/// own operand.
+let private readMeet (graph: SemanticGraph) (node: SemanticNode) (slot: IntWidth option) : Pending list =
+    match slot, nodeWidth graph node.Id with
+    | Some from, Some target -> Option.toList (pending graph node.Id from target)
+    | _ -> []
+
+/// The meets a node's consumers-of-slots derive, by kind (the table above). The fabric leg
+/// derives none here: its meets are the CS-10 harmonisations within each pattern's own values
+/// (an hw.struct field, a mux operand, a comb operand), and it reads no Register width.
+let private nodeMeets (ctx: SSAContext) (node: SemanticNode) : Pending list =
+    let graph = ctx.Graph
+    // an unreachable node is never witnessed and carries no range to read
+    if ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.FPGA || not node.IsReachable then [] else
+    match node.Kind with
+    | SemanticKind.Application (funcId, args) -> applicationMeets ctx node funcId args
+    | SemanticKind.Intrinsic { Module = IntrinsicModule.Option; Operation = "Some" } ->
+        match node.Children with
+        | [ payloadId ] -> Option.toList (meetInto graph payloadId (payloadSlotWidth graph node.Type 1))
+        | _ -> []
+    | SemanticKind.DUConstruct (_, caseIndex, Some payloadId, _) ->
+        Option.toList (meetInto graph payloadId (payloadSlotWidth graph node.Type caseIndex))
+    | SemanticKind.Set (targetId, valueId) ->
+        match Map.tryFind targetId graph.Nodes with
+        | Some { Kind = SemanticKind.VarRef (_, Some defId) } -> Option.toList (meetInto graph valueId (nodeWidth graph defId))
+        | _ -> []
+    | SemanticKind.Binding (_, true, _, _) ->
+        match node.Children with
+        | [ valueId ] -> Option.toList (meetInto graph valueId (nodeWidth graph node.Id))
+        | _ -> []
+    | SemanticKind.RecordExpr (fields, _) ->
+        fields |> List.choose (fun (field, valueId) -> meetInto graph valueId (fieldSlotWidth graph node.Type field))
+    | SemanticKind.TupleExpr elements ->
+        elements |> List.mapi (fun i elementId -> meetInto graph elementId (fieldSlotWidth graph node.Type (sprintf "Item%d" (i + 1)))) |> List.choose id
+    | SemanticKind.IfThenElse (_, thenId, elseId) ->
+        (thenId :: Option.toList elseId) |> List.choose (fun armId -> meetInto graph armId (nodeWidth graph node.Id))
+    | SemanticKind.CaseElimination (_, arms) ->
+        arms |> List.choose (fun arm -> meetInto graph arm.Body (nodeWidth graph node.Id))
+    | SemanticKind.Match (_, cases) ->
+        cases |> List.choose (fun case -> meetInto graph case.Body (nodeWidth graph node.Id))
+    | SemanticKind.IndexSet (arrId, _, valueId) -> Option.toList (meetInto graph valueId (elementSlotWidth graph arrId))
+    | SemanticKind.ArrayExpr elements ->
+        elements |> List.choose (fun elementId -> meetInto graph elementId (elementSlotWidth graph node.Id))
+    | SemanticKind.VarRef (_, Some defId) ->
+        match Map.tryFind defId graph.Nodes with
+        | Some { Kind = SemanticKind.Binding _ } -> readMeet graph node (nodeWidth graph defId)
+        | Some ({ Kind = SemanticKind.PatternBinding _ } as def) ->
+            // a lambda parameter: its own held width (a match arm's binding aliases its scrutinee)
+            match def.Parent |> Option.bind (fun p -> Map.tryFind p graph.Nodes) with
+            | Some { Kind = SemanticKind.Lambda _ } -> readMeet graph node (nodeWidth graph defId)
+            | _ -> []
+        | _ -> []
+    | SemanticKind.FieldGet (exprId, field) ->
+        match Map.tryFind exprId graph.Nodes with
+        | Some expr -> readMeet graph node (fieldSlotWidth graph expr.Type field)
+        | None -> []
+    | SemanticKind.TupleGet (tupleId, index) ->
+        match Map.tryFind tupleId graph.Nodes with
+        | Some { Kind = SemanticKind.TupleExpr elements } when index < elements.Length ->
+            readMeet graph node (nodeWidth graph elements.[index])
+        | Some tuple -> readMeet graph node (fieldSlotWidth graph tuple.Type (sprintf "Item%d" (index + 1)))
+        | None -> []
+    | SemanticKind.IndexGet (arrId, _) -> readMeet graph node (elementSlotWidth graph arrId)
+    | SemanticKind.DUEliminate (duId, caseIndex, _, _) ->
+        match Map.tryFind duId graph.Nodes with
+        | Some du -> readMeet graph node (payloadSlotWidth graph du.Type caseIndex)
+        | None -> []
+    | _ -> []
+
+/// The application form of a read of an element (`Array.get`), which the table lists with the reads.
+let private applicationReadMeets (ctx: SSAContext) (node: SemanticNode) : Pending list =
+    if ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.FPGA || not node.IsReachable then [] else
+    match node.Kind with
+    | SemanticKind.Application (funcId, [ arr; _ ]) ->
+        match functionNodeOf ctx.Graph funcId with
+        | Some { Kind = SemanticKind.Intrinsic { Module = IntrinsicModule.Array; Operation = "get" } } ->
+            readMeet ctx.Graph node (elementSlotWidth ctx.Graph arr)
+        | _ -> []
+    | _ -> []
+
+// ═══════════════════════════════════════════════════════════════════════════
 // FUNCTION SCOPE STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1020,10 +1183,12 @@ let private nodeExpansionCost (ctx: SSAContext) (node: SemanticNode) : int =
 type private FunctionScope = {
     Counter: int
     Assignments: Map<int, NodeSSAAllocation>  // NodeId.value -> SSA allocation
+    /// The meets derived for each consumer in this scope (NodeId.value -> meets in table order)
+    Meets: Map<int, Meet list>
 }
 
 module private FunctionScope =
-    let empty = { Counter = 0; Assignments = Map.empty }
+    let empty = { Counter = 0; Assignments = Map.empty; Meets = Map.empty }
 
     /// Yield a single SSA
     let yieldSSA (scope: FunctionScope) : SSA * FunctionScope =
@@ -1038,6 +1203,16 @@ module private FunctionScope =
     /// Assign a node's SSA allocation
     let assign (nodeId: NodeId) (alloc: NodeSSAAllocation) (scope: FunctionScope) : FunctionScope =
         { scope with Assignments = Map.add (NodeId.value nodeId) alloc scope.Assignments }
+
+    /// Give each pending meet of a consumer its value, right after the consumer's own values
+    let meet (consumer: NodeId) (pendings: Pending list) (scope: FunctionScope) : FunctionScope =
+        if List.isEmpty pendings then scope
+        else
+            let ssas, scope' = yieldSSAs pendings.Length scope
+            let meets =
+                List.zip pendings ssas
+                |> List.map (fun (p, ssa) -> { Consumer = consumer; Operand = p.Operand; SSA = ssa; From = p.From; To = p.To; Kind = p.Kind })
+            { scope' with Meets = Map.add (NodeId.value consumer) meets scope'.Meets }
 
 /// Check if a node kind produces an SSA value
 let private producesValue (kind: SemanticKind) : bool =
@@ -1117,7 +1292,26 @@ type SSAAssignment = {
     /// The zero constant a unit-typed function returns (Lambda NodeId.value -> its value),
     /// the first value of the body's scope
     UnitReturns: Map<int, SSA>
+    /// The meets derived for each consumer (NodeId.value -> meets, in the derivation table's order)
+    Meets: Map<int, Meet list>
+    /// The return meet of each function whose last value is held at another width than its
+    /// result (Lambda NodeId.value -> the meet), the last value of the body's scope
+    ReturnMeets: Map<int, Meet>
 }
+
+/// The return meet of a lambda: its body's last value brought to the body node's width (the
+/// result the callers read), the last value of the body's scope. Recorded in `ReturnMeets`.
+let private returnMeet (ctx: SSAContext) (lambdaId: NodeId) (bodyId: NodeId) (scope: FunctionScope) : FunctionScope =
+    let lastValue = lastValueOf ctx.Graph bodyId
+    let reachable = Map.tryFind bodyId ctx.Graph.Nodes |> Option.exists (fun n -> n.IsReachable)
+    if lastValue = bodyId || not reachable || ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.FPGA then scope
+    else
+        match meetInto ctx.Graph lastValue (nodeWidth ctx.Graph bodyId) with
+        | Some p ->
+            let ssa, scope' = FunctionScope.yieldSSA scope
+            ctx.ReturnMeets.[NodeId.value lambdaId] <- { Consumer = bodyId; Operand = p.Operand; SSA = ssa; From = p.From; To = p.To; Kind = p.Kind }
+            scope'
+        | None -> scope
 
 /// Assign SSA names to all nodes in a function body
 /// Returns updated scope with assignments
@@ -1170,7 +1364,7 @@ let rec private assignFunctionBody
                     | EmissionStrategy.SeparateFunction captureCount ->
                         if captureCount > 0 then
                             // The callee prologue (closurePrologue): capture results, work, env reconstruction
-                            closurePrologueCount (captures |> List.map (captureSlotType ctx.Arch))
+                            closurePrologueCount (captures |> List.map (captureSlotType ctx.TargetPlatform ctx.Arch ctx.Graph))
                         else 0
                     | _ -> 0  // Shouldn't happen - Lambda bodies are marked SeparateFunction
                 | None -> 0
@@ -1198,7 +1392,7 @@ let rec private assignFunctionBody
                     FunctionScope.assign paramNodeId (NodeSSAAllocation.single (Arg i)) s
                 ) innerStartScope
 
-            let innerScope = assignFunctionBody ctx paramScope bodyId
+            let innerScope = returnMeet ctx node.Id bodyId (assignFunctionBody ctx paramScope bodyId)
 
             // Merge nested lambda's parameter and body SSAs into the shared collection.
             // These are a separate MLIR function's namespace, collected for the global SSA map.
@@ -1208,6 +1402,9 @@ let rec private assignFunctionBody
             for kvp in innerScope.Assignments do
                 if not (ctx.InnerScopeAssignments.ContainsKey(kvp.Key)) then
                     ctx.InnerScopeAssignments.Add(kvp.Key, kvp.Value)
+            for kvp in innerScope.Meets do
+                if not (ctx.InnerMeets.ContainsKey(kvp.Key)) then
+                    ctx.InnerMeets.Add(kvp.Key, kvp.Value)
 
             // DISTINCTION: Nested NAMED functions with captures use parameter-passing, NOT closure structs.
             // Anonymous lambdas (fun x -> ...) that escape STILL need closure structs.
@@ -1247,7 +1444,7 @@ let rec private assignFunctionBody
                         // for code_ptr, closure struct alloca, and uniform pair construction
                         14
                     else
-                        computeLambdaSSACost ctx.Arch ctx.Graph captures
+                        computeLambdaSSACost ctx.TargetPlatform ctx.Arch ctx.Graph captures
 
                 if cost > 0 then
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
@@ -1261,7 +1458,7 @@ let rec private assignFunctionBody
                     // fabric leg holds no closure (a function is an hw.module, a value its instance)
                     // and derives none (HelloArty, CS-11 review)
                     if ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.FPGA && (not (List.isEmpty captures) || requiresClosurePair) then
-                        let layout = buildClosureLayout ctx.Arch ctx.Graph node.Id bodyId captures ssas context
+                        let layout = buildClosureLayout ctx.TargetPlatform ctx.Arch ctx.Graph node.Id bodyId captures ssas context
                         if not (ctx.ClosureLayouts.ContainsKey(NodeId.value node.Id)) then
                             ctx.ClosureLayouts.Add(NodeId.value node.Id, layout)
                     scopeWithAlloc
@@ -1284,13 +1481,13 @@ let rec private assignFunctionBody
             let cost = nodeExpansionCost ctx node
             let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
             let alloc = NodeSSAAllocation.multi ssas
-            let scopeWithAlloc = FunctionScope.assign node.Id alloc scopeWithSSAs
+            let scopeWithAlloc = FunctionScope.assign node.Id alloc scopeWithSSAs |> FunctionScope.meet node.Id (nodeMeets ctx node)
 
-            // Build DULayout for heterogeneous DUs needing arena allocation: a core's byte layout,
-            // sized by the declared Pointer width; the fabric leg holds a DU as an hw.struct and
-            // reads no such layout (HelloArty, CS-11 review)
+            // Build DULayout for heterogeneous DUs needing arena allocation: a core's settled
+            // layout; the fabric leg holds a DU as an hw.struct and reads no such layout
+            // (HelloArty, CS-11 review)
             if ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.FPGA && needsDUArenaAllocation node.Type then
-                let layout = buildDULayout ctx.Arch ctx.Graph node.Id caseName caseIndex payloadOpt ssas
+                let layout = buildDULayout ctx.TargetPlatform ctx.Arch ctx.Graph node.Id node.Type caseName caseIndex payloadOpt ssas
                 if not (ctx.DULayouts.ContainsKey(NodeId.value node.Id)) then
                     ctx.DULayouts.Add(NodeId.value node.Id, layout)
 
@@ -1363,18 +1560,20 @@ let rec private assignFunctionBody
                 FunctionScope.assign node.Id alloc scopeWithSSAs
 
         | _ ->
-            // Regular node - assign SSAs based on structural analysis
+            // Regular node - assign SSAs based on structural analysis, then the meets its
+            // consumption derives (the derivation table), right after its own values
+            let meets = nodeMeets ctx node @ applicationReadMeets ctx node
             if producesValue node.Kind then
                 let cost = nodeExpansionCost ctx node  // Structural derivation
                 if cost > 0 then
                     let ssas, scopeWithSSAs = FunctionScope.yieldSSAs cost scopeAfterChildren
                     let alloc = NodeSSAAllocation.multi ssas
-                    FunctionScope.assign node.Id alloc scopeWithSSAs
+                    FunctionScope.assign node.Id alloc scopeWithSSAs |> FunctionScope.meet node.Id meets
                 else
                     // Node produces a value conceptually but has 0 SSA cost (e.g., MemRef.store returning unit)
-                    scopeAfterChildren
+                    scopeAfterChildren |> FunctionScope.meet node.Id meets
             else
-                scopeAfterChildren
+                scopeAfterChildren |> FunctionScope.meet node.Id meets
 
 /// Collect all Lambdas in the graph and assign function names
 let private collectLambdas (graph: SemanticGraph) : Map<int, string> * Map<int, DeclRoot> =
@@ -1657,7 +1856,7 @@ let private deriveHardwareModuleLayout (targetPlatform: Core.Types.Dialects.Targ
             match Map.tryFind bodyId graph.Nodes with
             | Some bodyNode ->
                 match mapTy bodyNode.Type with
-                | TStruct (("Item1", _) :: ("Item2", outTy) :: _) -> Some outTy
+                | TStruct (("Item1", _) :: ("Item2", outTy) :: _, _) -> Some outTy
                 | _ -> None
             | None -> None
         let pinAttrs = pinMapping |> Option.map (fun m -> m.FieldPinAttrs) |> Option.defaultValue Map.empty
@@ -1669,7 +1868,7 @@ let private deriveHardwareModuleLayout (targetPlatform: Core.Types.Dialects.Targ
             | None -> false
         let inputPackCount, hasInputStruct =
             match pinMapping, inputType with
-            | Some _, Some (TStruct fields) ->
+            | Some _, Some (TStruct (fields, _)) ->
                 (fields |> List.sumBy (fun (name, ty) ->
                     match Map.tryFind name pinAttrs, ty with
                     | Some pins, TStruct _ when pins.Length > 1 -> 1
@@ -1701,14 +1900,17 @@ let private deriveHardwareModuleLayout (targetPlatform: Core.Types.Dialects.Targ
         }
     | _ -> None
 
-let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (saturatedCallArgCounts: Map<NodeId, int>) (pinMapping: PlatformPinMapping option) : SSAAssignment =
+let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (curry: CurryFlattening.CurryFlatteningResult) (pinMapping: PlatformPinMapping option) : SSAAssignment =
     let lambdaNames, declRootLambdas = collectLambdas graph
 
     let mutable allAssignments = Map.empty
+    let mutable allMeets : Map<int, Meet list> = Map.empty
     let mutableClosureLayouts = System.Collections.Generic.Dictionary<int, ClosureLayout>()
     let mutableDULayouts = System.Collections.Generic.Dictionary<int, DULayout>()
     let mutableInnerScopeAssignments = System.Collections.Generic.Dictionary<int, NodeSSAAllocation>()
+    let mutableInnerMeets = System.Collections.Generic.Dictionary<int, Meet list>()
     let mutableUnitReturns = System.Collections.Generic.Dictionary<int, SSA>()
+    let mutableReturnMeets = System.Collections.Generic.Dictionary<int, Meet>()
 
     let ctx : SSAContext = {
         TargetPlatform = targetPlatform
@@ -1717,8 +1919,10 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
         ClosureLayouts = mutableClosureLayouts
         DULayouts = mutableDULayouts
         InnerScopeAssignments = mutableInnerScopeAssignments
+        InnerMeets = mutableInnerMeets
         UnitReturns = mutableUnitReturns
-        SaturatedCallArgCounts = saturatedCallArgCounts
+        ReturnMeets = mutableReturnMeets
+        Curry = curry
     }
 
     // Find the main Lambda
@@ -1749,6 +1953,8 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
     // Merge module-level assignments
     for kvp in moduleLevelScope.Assignments do
         allAssignments <- Map.add kvp.Key kvp.Value allAssignments
+    for kvp in moduleLevelScope.Meets do
+        allMeets <- Map.add kvp.Key kvp.Value allMeets
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PASS 2: Lambda bodies (each gets its own scope)
@@ -1805,25 +2011,30 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
                         FunctionScope.assign nodeId (NodeSSAAllocation.single (Arg i)) scope
                     ) initialScope
 
-                // Assign SSAs to body nodes
+                // Assign SSAs to body nodes, then the return meet as the body's last value
                 // This will also compute ClosureLayouts for any nested lambdas found in the body
-                let bodyScope = assignFunctionBody ctx paramScope bodyId
+                let bodyScope = returnMeet ctx node.Id bodyId (assignFunctionBody ctx paramScope bodyId)
 
                 // Merge into global assignments (including parameter SSAs)
                 for kvp in paramScope.Assignments do
                     allAssignments <- Map.add kvp.Key kvp.Value allAssignments
                 for kvp in bodyScope.Assignments do
                     allAssignments <- Map.add kvp.Key kvp.Value allAssignments
+                for kvp in bodyScope.Meets do
+                    allMeets <- Map.add kvp.Key kvp.Value allMeets
 
                 // Merge nested lambda scope assignments collected during recursive traversal
                 for kvp in mutableInnerScopeAssignments do
                     allAssignments <- Map.add kvp.Key kvp.Value allAssignments
                 mutableInnerScopeAssignments.Clear()
+                for kvp in mutableInnerMeets do
+                    allMeets <- Map.add kvp.Key kvp.Value allMeets
+                mutableInnerMeets.Clear()
 
                 // Assign SSAs to the Lambda node itself (for closure value)
                 // Top-level Lambdas (not visited during body traversal) need SSA assignments
                 // for closure construction if they have captures
-                let cost = computeLambdaSSACost arch graph captures
+                let cost = computeLambdaSSACost targetPlatform arch graph captures
                 if cost > 0 then
                     // Lambda with captures needs SSAs for closure struct construction
                     let ssas = List.init cost (fun i -> V (topLevelCounter + i))
@@ -1860,6 +2071,8 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
             // Merge SeqExpr body assignments
             for kvp in bodyScope.Assignments do
                 allAssignments <- Map.add kvp.Key kvp.Value allAssignments
+            for kvp in bodyScope.Meets do
+                allMeets <- Map.add kvp.Key kvp.Value allMeets
 
         | _ -> ()
 
@@ -1918,6 +2131,8 @@ let assignSSA (targetPlatform: Core.Types.Dialects.TargetPlatform) (arch: Archit
                 | _ -> None)
             |> Map.ofList
         UnitReturns = mutableUnitReturns |> Seq.map (fun kv -> (kv.Key, kv.Value)) |> Map.ofSeq
+        Meets = allMeets
+        ReturnMeets = mutableReturnMeets |> Seq.map (fun kv -> (kv.Key, kv.Value)) |> Map.ofSeq
     }
 
 /// Look up the full SSA allocation for a node (coeffect lookup)
@@ -1967,13 +2182,25 @@ let lookupHardwareModuleLayout (bindingId: NodeId) (assignment: SSAAssignment) :
 let lookupUnitReturn (lambdaId: NodeId) (assignment: SSAAssignment) : SSA option =
     Map.tryFind (NodeId.value lambdaId) assignment.UnitReturns
 
+/// The meet derived for a consumer's operand (coeffect lookup): the value that brings the
+/// operand to the width of the slot it meets; None where the widths agree. A read of a slot
+/// names the consumer as its own operand.
+let lookupMeet (consumer: NodeId) (operand: NodeId) (assignment: SSAAssignment) : Meet option =
+    Map.tryFind (NodeId.value consumer) assignment.Meets
+    |> Option.bind (List.tryFind (fun m -> m.Operand = operand))
+
+/// The return meet of a lambda (coeffect lookup); None where the last value is held at the
+/// result's width
+let lookupReturnMeet (lambdaId: NodeId) (assignment: SSAAssignment) : Meet option =
+    Map.tryFind (NodeId.value lambdaId) assignment.ReturnMeets
+
 /// PRD-14/PRD-15: Get the actual return type for a function that may return a lazy or seq with captures.
 /// If the function body is a LazyExpr with captures, returns the actual lazy struct type
 /// including the inlined captures: {i1, T, ptr, cap0, cap1, ...}
 /// If the function body is a SeqExpr with captures, returns the actual seq struct type
 /// including the inlined captures: {i32, T, ptr, cap0, cap1, ...}
 /// Returns None if the function doesn't return a lazy/seq with captures.
-let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (defId: NodeId) (assignment: SSAAssignment) : MLIRType option =
+let getActualFunctionReturnType (platform: Core.Types.Dialects.TargetPlatform) (arch: Architecture) (graph: SemanticGraph) (defId: NodeId) (assignment: SSAAssignment) : MLIRType option =
     // defId may be a Binding node - need to find the Lambda child
     let lambdaNode =
         match Map.tryFind defId graph.Nodes with
@@ -2009,11 +2236,11 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
                     // Get element type from the LazyExpr's type
                     let elemMlir =
                         match bodyNode.Type with
-                        | NativeType.TLazy elemType -> mapCaptureType arch elemType
-                        | _ -> TInt (IntWidth 64)  // Fallback
+                        | NativeType.TLazy elemType -> mapNativeTypeForTarget platform arch graph elemType
+                        | other -> failwithf "getActualFunctionReturnType: a lazy body of type %s" (formatType other)
 
                     // Compute capture types using the same logic as closure construction
-                    let captureTypes = captures |> List.map (captureSlotType arch)
+                    let captureTypes = captures |> List.map (captureSlotType platform arch graph)
 
                     // Build the actual lazy struct type with captures inlined
                     let fieldTypes = TInt (IntWidth 1) :: elemMlir :: TIndex :: captureTypes
@@ -2032,17 +2259,17 @@ let getActualFunctionReturnType (arch: Architecture) (graph: SemanticGraph) (def
                         // where i32 is state (vs i1 computed flag for lazy)
                         let elemMlir =
                             match bodyNode.Type with
-                            | NativeType.TSeq elemType -> mapCaptureType arch elemType
-                            | _ -> TInt (IntWidth 64)  // Fallback
+                            | NativeType.TSeq elemType -> mapNativeTypeForTarget platform arch graph elemType
+                            | other -> failwithf "getActualFunctionReturnType: a seq body of type %s" (formatType other)
 
                         // Compute capture types using the same logic as closure construction
-                        let captureTypes = captures |> List.map (captureSlotType arch)
+                        let captureTypes = captures |> List.map (captureSlotType platform arch graph)
 
                         // PRD-15 THROUGH-LINE: Internal state fields are also part of struct
-                        // They're initialized to default (0), MoveNext state 0 sets actual values
-                        // For now, assume all internal state is i64 (platform word size)
-                        // A more precise approach would traverse the body to get actual types
-                        let internalStateTypes = List.replicate numInternalState (TInt (IntWidth 64))
+                        // They're initialized to default (0), MoveNext state 0 sets actual values.
+                        // Held at the declared Register width: a seq's internal state is the leg's
+                        // own aggregate (owed to the settled layouts with PRD-15)
+                        let internalStateTypes = List.replicate numInternalState (TInt (declaredWordWidth arch))
 
                         // Build the actual seq struct type with captures + internal state inlined
                         // Layout: {state: i32, current: T, code_ptr: ptr, cap0..., state0...}
