@@ -206,6 +206,7 @@ type ArithOp =
     // Float arithmetic
     | AddF of SSA * SSA * SSA * MLIRType                    // result, lhs, rhs, type
     | SubF of SSA * SSA * SSA * MLIRType                    // result, lhs, rhs, type
+    | NegF of SSA * SSA * MLIRType                          // result, operand, type
     | MulF of SSA * SSA * SSA * MLIRType                    // result, lhs, rhs, type
     | DivF of SSA * SSA * SSA * MLIRType                    // result, lhs, rhs, type
     | CmpF of SSA * FCmpPred * SSA * SSA * MLIRType         // result, predicate, lhs, rhs, type

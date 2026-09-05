@@ -80,6 +80,12 @@ let pSubF (ssa: SSA) (lhs: SSA) (rhs: SSA) (operandTy: MLIRType) : PSGParser<MLI
         return MLIROp.ArithOp (ArithOp.SubF (ssa, lhs, rhs, operandTy))
     }
 
+/// Emit NegF (floating-point negation)
+let pNegF (ssa: SSA) (operand: SSA) (operandTy: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.ArithOp (ArithOp.NegF (ssa, operand, operandTy))
+    }
+
 /// Emit MulF (floating-point multiplication)
 let pMulF (ssa: SSA) (lhs: SSA) (rhs: SSA) (operandTy: MLIRType) : PSGParser<MLIROp> =
     parser {

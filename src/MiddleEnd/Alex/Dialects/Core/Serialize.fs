@@ -155,6 +155,8 @@ let arithOpToString (op: ArithOp) : string =
         sprintf "%s = arith.addf %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
     | SubF (result, lhs, rhs, ty) ->
         sprintf "%s = arith.subf %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
+    | NegF (result, operand, ty) ->
+        sprintf "%s = arith.negf %s : %s" (ssaToString result) (ssaToString operand) (typeToString ty)
     | MulF (result, lhs, rhs, ty) ->
         sprintf "%s = arith.mulf %s, %s : %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs) (typeToString ty)
     | DivF (result, lhs, rhs, ty) ->

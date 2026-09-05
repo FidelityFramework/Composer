@@ -439,6 +439,69 @@ let pBitwiseNot (nodeId: NodeId)
         return (loadOps @ [constOp; xorOp], TRValue { SSA = resultSSA; Type = operandType })
     }
 
+/// Unary negation pattern (op_UnaryNegation, design (c) `κ<'u> -> κ<'u>`) — PULL model.
+/// An integer operand: arith.subi of a zero constant of the operand's type and the operand.
+/// A float operand: arith.negf. SSAs via nodeId: [0] = constant (integer case), [1] = result.
+let pUnaryNegate (nodeId: NodeId)
+                 : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! argIds = pGetApplicationArgs
+        do! ensure (argIds.Length >= 1) $"pUnaryNegate: Expected 1 arg, got {argIds.Length}"
+
+        let! (loadOps, operandSSA, operandType) = pRecallArgWithLoad argIds.[0]
+
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 2) $"pUnaryNegate: Expected 2 SSAs, got {ssas.Length}"
+        let constSSA = ssas.[0]
+        let resultSSA = ssas.[1]
+
+        match operandType with
+        | TFloat _ ->
+            let! negOp = pNegF resultSSA operandSSA operandType
+            return (loadOps @ [negOp], TRValue { SSA = resultSSA; Type = operandType })
+        | TInt _ ->
+            let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (constSSA, 0L, operandType))
+            let! subOp = pSubI resultSSA constSSA operandSSA operandType
+            return (loadOps @ [zeroOp; subOp], TRValue { SSA = resultSSA; Type = operandType })
+        | other ->
+            return! fail (Message $"pUnaryNegate: operand type {other} is neither integer nor float")
+    }
+
+/// Unary plus pattern (op_UnaryPlus, design (c) `κ<'u> -> κ<'u>`): the identity. Forwards the
+/// operand's SSA; no operation is emitted.
+let pUnaryPlus : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! argIds = pGetApplicationArgs
+        do! ensure (argIds.Length >= 1) $"pUnaryPlus: Expected 1 arg, got {argIds.Length}"
+        let! (loadOps, operandSSA, operandType) = pRecallArgWithLoad argIds.[0]
+        return (loadOps, TRValue { SSA = operandSSA; Type = operandType })
+    }
+
+/// `truncate` (the Math.truncate intrinsic; Dimensional_Range_Design.md §5, a real becomes an
+/// integer): arith.fptosi from the operand's float type to the integer type the node carries.
+let pTruncate (nodeId: NodeId)
+              : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! argIds = pGetApplicationArgs
+        do! ensure (argIds.Length >= 1) $"pTruncate: Expected 1 arg, got {argIds.Length}"
+
+        let! (loadOps, srcSSA, srcType) = pRecallArgWithLoad argIds.[0]
+
+        let! ssas = getNodeSSAs nodeId
+        do! ensure (ssas.Length >= 1) $"pTruncate: Expected at least 1 SSA, got {ssas.Length}"
+        let resultSSA = ssas.[0]
+
+        let! state = getUserState
+        let dstType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
+
+        match srcType, dstType with
+        | TFloat _, TInt _ ->
+            let! convOp = pFPToSI resultSSA srcSSA srcType dstType
+            return (loadOps @ [convOp], TRValue { SSA = resultSSA; Type = dstType })
+        | _ ->
+            return! fail (Message $"pTruncate: expected a float operand and an integer result, got {srcType} -> {dstType}")
+    }
+
 // ═══════════════════════════════════════════════════════════
 // TYPE CONVERSION PATTERN (IntrinsicModule.Convert)
 // ═══════════════════════════════════════════════════════════
@@ -564,7 +627,7 @@ let pBinaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
         | _ -> return! fail (Message $"Not binary arith: {info.Operation}")
     }
 
-/// Unary arithmetic intrinsic — boolean NOT (xori with 1)
+/// Unary arithmetic intrinsic — boolean NOT (xori with 1), bitwise complement, negation, plus
 let pUnaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Operators
@@ -574,7 +637,19 @@ let pUnaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
         match category with
         | UnaryArith "xori"       -> return! pUnaryNot node.Id
         | UnaryArith "complement" -> return! pBitwiseNot node.Id
+        | UnaryArith "neg"        -> return! pUnaryNegate node.Id
+        | UnaryArith "plus"       -> return! pUnaryPlus
         | _ -> return! fail (Message $"Not unary arith: {info.Operation}")
+    }
+
+/// `truncate` intrinsic (Math.truncate) — the one Math operation Alex witnesses atomically.
+let pTruncateIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Math
+        do! ensure (info.Operation = "truncate") "Not Math.truncate"
+        do! ensure (argIds.Length = 1) "truncate: Expected 1 arg"
+        let! node = getCurrentNode
+        return! pTruncate node.Id
     }
 
 /// Type conversion intrinsic — byte(), int(), float(), nativeint()

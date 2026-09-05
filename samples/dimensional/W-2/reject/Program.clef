@@ -6,9 +6,11 @@ module Vet
 
 let z = true + true
 let w = true - true
+let m = 1 + "a"
 
 [<EntryPoint>]
 let main _ =
     let _ = z
     let _ = w
+    let _ = m
     0

@@ -17,14 +17,14 @@ let backend : BackEnd = {
         let mlirPath =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, artifactFilename ArtifactId.Mlir)
-            | None -> Path.Combine(Path.GetTempPath(), "output.mlir")
+            | None -> Core.Utilities.IntermediateWriter.scratchPath "output.mlir"
         File.WriteAllText(mlirPath, mlirText)
 
         // Phase 1: Lower MLIR → LLVM IR (mlir-opt + mlir-translate)
         let llPath =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, artifactFilename ArtifactId.Llvm)
-            | None -> Path.Combine(Path.GetTempPath(), "output.ll")
+            | None -> Core.Utilities.IntermediateWriter.scratchPath "output.ll"
 
         timePhase "BackEnd.MLIRLower" "Lowering MLIR to LLVM IR" (fun () ->
             Lowering.lowerToLLVM mlirPath llPath)

@@ -3,7 +3,7 @@
 /// Composes per-operation parsers with <|> — no dispatch hub.
 /// Each parser self-checks via pIntrinsicApplication + ensure.
 ///
-/// NANOPASS: Handles Operators.* and Convert.* intrinsic applications.
+/// NANOPASS: Handles Operators.*, Convert.* and Math.truncate intrinsic applications.
 module Alex.Witnesses.ArithIntrinsicWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
@@ -15,7 +15,7 @@ open XParsec.Combinators  // <|>
 
 let private witnessArithIntrinsic (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     let combined =
-        pBinaryArithIntrinsic <|> pUnaryArithIntrinsic <|> pTypeConversionIntrinsic
+        pBinaryArithIntrinsic <|> pUnaryArithIntrinsic <|> pTypeConversionIntrinsic <|> pTruncateIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
     | None -> WitnessOutput.skip

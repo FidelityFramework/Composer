@@ -1,0 +1,6 @@
+# Expected outcome for W-8/reject. Read by vet.sh; keys are one-line strings.
+rule = "library schemes: abs, sign, min, max, clamp, floor, ceiling, round, truncate, sqrt, atan2 typed over kappa and measures, D10 section 5"
+verdict = "reject"
+code = "CCS8041"
+count = "1"  # sqrt 1.0<m> has no integer solution; abs true is CCS8000 and atan2 1.0<m> 1.0<s> is CCS8040 beside it
+pending = "step 3"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 3

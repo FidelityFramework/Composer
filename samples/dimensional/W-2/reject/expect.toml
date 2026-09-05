@@ -2,5 +2,5 @@
 rule = "operands of -, *, /, % are numeric; operands of + are both numeric or both string (D5), never bool"
 verdict = "reject"
 code = "CCS8000"
-count = "2"  # the code must appear at least this many times (one per reject site)
+count = "3"  # the code must appear at least this many times (one per reject site)
 pending = "step 3"  # the hardening step (plan §5) that gates this row; judged only when vet.sh --through >= 3

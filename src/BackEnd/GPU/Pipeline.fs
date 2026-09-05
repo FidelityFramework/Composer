@@ -16,7 +16,7 @@ let backend : BackEnd = {
         let mlirPath =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, "output.mlir")
-            | None -> Path.Combine(Path.GetTempPath(), "output_gpu.mlir")
+            | None -> Core.Utilities.IntermediateWriter.scratchPath "output_gpu.mlir"
         File.WriteAllText(mlirPath, mlirText)
 
         if ctx.EmitIntermediateOnly then

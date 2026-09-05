@@ -19,7 +19,7 @@ let backend : BackEnd = {
         let intermediateFile name =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, name)
-            | None -> Path.Combine(Path.GetTempPath(), name)
+            | None -> Core.Utilities.IntermediateWriter.scratchPath name
 
         // Write MLIR to file for tool input
         let mlirPath = intermediateFile "output.mlir"

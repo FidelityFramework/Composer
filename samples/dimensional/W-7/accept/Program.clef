@@ -4,13 +4,9 @@ module Vet
 [<Measure>] type kg
 [<Measure>] type N = kg m / s^2
 
-let z = 1 + 2
-let y = 1.5 + 2.5
-let f (x: int) = -x
+let t = "a" + "b"
 
 [<EntryPoint>]
 let main _ =
-    let _ = z
-    let _ = y
-    let _ = f z
+    Console.writeln t
     0

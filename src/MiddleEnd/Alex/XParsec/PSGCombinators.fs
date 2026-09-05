@@ -671,6 +671,10 @@ let classifyAtomicOp (info: IntrinsicInfo) : EmissionCategory =
     | IntrinsicModule.Operators, "op_BooleanOr" -> BinaryArith "ori"
     | IntrinsicModule.Operators, "not" -> UnaryArith "xori"
     | IntrinsicModule.Operators, "op_LogicalNot" -> UnaryArith "complement"  // ~~~ bitwise NOT
+    // Unary minus and plus (design (c): `κ<'u> -> κ<'u>`); the pattern selects subi-from-zero
+    // or negf by operand type, and plus forwards the operand (sequence CS-9).
+    | IntrinsicModule.Operators, "op_UnaryNegation" -> UnaryArith "neg"
+    | IntrinsicModule.Operators, "op_UnaryPlus" -> UnaryArith "plus"
     // Bitwise operators — type-preserving (int only, no float analog)
     | IntrinsicModule.Operators, "op_BitwiseAnd"  -> BinaryArith "andi"
     | IntrinsicModule.Operators, "op_BitwiseOr"   -> BinaryArith "ori"

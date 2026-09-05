@@ -1,0 +1,39 @@
+module Vet
+[<Measure>] type m
+[<Measure>] type s
+[<Measure>] type kg
+[<Measure>] type N = kg m / s^2
+
+let a = abs (-3)
+let g = sign (-3)
+let lo = min 1 2
+let hi = max 1 2
+let c = clamp 0 255 300
+let fl = floor 3.7
+let ce = ceiling 3.2
+let ro = round 2.5
+let tr = truncate 3.7
+let negInt (x: int) = -x
+let negReal (x: float) = -x
+
+// Typed, never witnessed: sqrt and atan2 have their schemes and no implementation yet. A
+// module-level value is initialised and a top-level function is emitted whether or not main
+// calls it, so the one binding the checker types and Alex never witnesses is a quotation (D9),
+// compile-time data read whole; referencing it from executed code would be CCS8066.
+let s = <@ (sqrt 4.0<m^2> : float<m>) @>
+let t = <@ (atan2 1.0<m> 2.0<m> : float) @>
+
+[<EntryPoint>]
+let main _ =
+    let _ = a
+    let _ = g
+    let _ = lo
+    let _ = hi
+    let _ = c
+    let _ = fl
+    let _ = ce
+    let _ = ro
+    let _ = tr
+    let _ = negInt 3
+    let _ = negReal 3.0
+    0

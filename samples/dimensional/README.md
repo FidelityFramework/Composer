@@ -17,7 +17,11 @@ hardening step of the plan (§5); a rule is green when both of its programs repo
     targets/         vet.sh transcripts (vet.<name>.stdout, vet.<name>.stderr); ignored by git
 ```
 
-Rules with no reject program (UoM-8, UoM-10, W-3, W-6, NS-4) have only `accept/`. UoM-10 (added with
+Rules with no reject program (UoM-8, UoM-10, W-3, W-6, W-7, NS-4) have only `accept/`. W-7 (`+` on
+strings concatenates, D5) and W-8 (the library schemes `abs`, `sign`, `min`, `max`, `clamp`, `floor`,
+`ceiling`, `round`, `truncate`, `sqrt`, `atan2` over carrier and measure variables) were added with CS-9;
+W-8/accept keeps `sqrt` and `atan2` typed but unwitnessed inside quotations, since a module value or a
+top-level function is emitted whether or not `main` uses it. UoM-10 (added with
 CS-6) is the generalisation row the sequence recommended: `let id (x: float<'u>) = x` used at `float<m>`
 and `float<s>`, its scheme `float<'u> -> float<'u>`. W-3 is the differential
 row: one `Program.clef` under two `.fidproj` platform contexts (Linux x86_64 and a Cortex-M33
