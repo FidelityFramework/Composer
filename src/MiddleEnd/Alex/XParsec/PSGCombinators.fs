@@ -24,7 +24,6 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Traversal.PSGZipper
 open Alex.Dialects.Core.Types
-open PSGElaboration.PlatformConfig
 open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -64,9 +63,8 @@ type PSGParserState = {
     /// Enables post-order dependency: recall child results to compose parent
     Accumulator: Alex.Traversal.TransferTypes.MLIRAccumulator
 
-    /// Platform resolution result (DEPRECATED - use Coeffects.Platform instead)
-    /// Kept for backward compatibility during migration
-    Platform: PlatformResolutionResult
+    /// The platform as emission reads it (the same value as Coeffects.Platform)
+    Platform: Alex.Traversal.TransferTypes.PlatformReads
 
     /// Optional execution trace collector (only enabled for diagnostic runs)
     ExecutionTrace: Alex.Traversal.TransferTypes.TraceCollector option
@@ -104,7 +102,7 @@ let platformWordType (state: PSGParserState) : MLIRType =
 
 /// The word width in bits: the declared Register width, or CCS8203's text.
 let platformWordBits (state: PSGParserState) : int =
-    match state.Platform.RegisterWidth with
+    match state.Platform.TargetArch.Register with
     | Ok bits -> bits
     | Error message -> failwith message
 
@@ -215,11 +213,11 @@ let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (grap
 /// The value a derived meet produces: the extension by the operand's sign or the truncation of a
 /// refined read that SSAAssignment derived for this consumer and operand (Coeffects.Meet). The
 /// witness transcribes it; nothing is decided here.
-let meetOp (meet: PSGElaboration.Coeffects.Meet) (value: SSA) : MLIROp =
-    match meet.Kind with
-    | PSGElaboration.Coeffects.MeetKind.ExtendUnsigned -> MLIROp.ArithOp (ArithOp.ExtUI (meet.SSA, value, TInt meet.From, TInt meet.To))
-    | PSGElaboration.Coeffects.MeetKind.ExtendSigned -> MLIROp.ArithOp (ArithOp.ExtSI (meet.SSA, value, TInt meet.From, TInt meet.To))
-    | PSGElaboration.Coeffects.MeetKind.Truncate -> MLIROp.ArithOp (ArithOp.TruncI (meet.SSA, value, TInt meet.From, TInt meet.To))
+let meetOp (meet: Meet) (result: SSA) (value: SSA) : MLIROp =
+    match meet.Adapt with
+    | MeetKind.ExtendUnsigned -> MLIROp.ArithOp (ArithOp.ExtUI (result, value, TInt (IntWidth meet.From), TInt (IntWidth meet.To)))
+    | MeetKind.ExtendSigned -> MLIROp.ArithOp (ArithOp.ExtSI (result, value, TInt (IntWidth meet.From), TInt (IntWidth meet.To)))
+    | MeetKind.Truncate -> MLIROp.ArithOp (ArithOp.TruncI (result, value, TInt (IntWidth meet.From), TInt (IntWidth meet.To)))
 
 /// The last value a node evaluates to: through a block's last child and an annotation (the node
 /// a value operand is derived and recalled at).
@@ -238,16 +236,16 @@ let rec private lastValueNode (graph: SemanticGraph) (id: NodeId) : NodeId =
 /// Returns the ops to emit before the consumer, and the value and type the consumer reads.
 let adaptOperand (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (graph: SemanticGraph) (consumer: NodeId) (operand: NodeId) (value: SSA) (ty: MLIRType) : MLIROp list * SSA * MLIRType =
     let found =
-        match PSGElaboration.SSAAssignment.lookupMeet consumer operand coeffects.SSA with
-        | Some meet -> Some meet
-        | None -> PSGElaboration.SSAAssignment.lookupMeet consumer (lastValueNode graph operand) coeffects.SSA
+        match Alex.Traversal.TransferTypes.meetFor graph consumer operand with
+        | Some found -> Some found
+        | None -> Alex.Traversal.TransferTypes.meetFor graph consumer (lastValueNode graph operand)
     match found with
-    | Some meet ->
+    | Some (meet, result) ->
         match ty with
-        | TInt from when from = meet.From -> ([ meetOp meet value ], meet.SSA, TInt meet.To)
+        | TInt (IntWidth from) when from = meet.From -> ([ meetOp meet result value ], result, TInt (IntWidth meet.To))
         | _ ->
-            failwithf "adaptOperand: the meet derived for node %d's operand %d adapts %A, but the operand arrives as %A; the derivation and the emission disagree"
-                (NodeId.value consumer) (NodeId.value operand) (TInt meet.From) ty
+            failwithf "adaptOperand: the meet derived for node %d's operand %d adapts i%d, but the operand arrives as %A; the derivation and the emission disagree"
+                (NodeId.value consumer) (NodeId.value operand) meet.From ty
     | None -> ([], value, ty)
 
 /// The monadic form of `adaptOperand`.
@@ -289,9 +287,7 @@ let mapNTUKindForPlatform (_state: PSGParserState) (kind: NTUKind) : MLIRType =
 let getNodeSSA (nodeId: NodeId) : PSGParser<Alex.Dialects.Core.Types.SSA> =
     parser {
         let! state = getUserState
-        match PSGElaboration.SSAAssignment.lookupSSA nodeId state.Coeffects.SSA with
-        | Some ssa -> return ssa
-        | None -> return! fail (Message (sprintf "Node %A has no SSA allocated" nodeId))
+        return Alex.Traversal.Values.resultOf state.Coeffects.TargetPlatform state.Graph nodeId
     }
 
 /// Extract all SSAs for a node from coeffects (monadic)
@@ -300,9 +296,7 @@ let getNodeSSA (nodeId: NodeId) : PSGParser<Alex.Dialects.Core.Types.SSA> =
 let getNodeSSAs (nodeId: NodeId) : PSGParser<Alex.Dialects.Core.Types.SSA list> =
     parser {
         let! state = getUserState
-        match PSGElaboration.SSAAssignment.lookupSSAs nodeId state.Coeffects.SSA with
-        | Some ssas -> return ssas
-        | None -> return! fail (Message (sprintf "Node %A has no SSA allocated" nodeId))
+        return Alex.Traversal.Values.valuesOf state.Coeffects.TargetPlatform state.Graph nodeId
     }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -318,7 +312,7 @@ let getGraph : PSGParser<SemanticGraph> =
     getUserState |>> (fun state -> state.Graph)
 
 /// Get platform info from state
-let getPlatform : PSGParser<PlatformResolutionResult> =
+let getPlatform : PSGParser<Alex.Traversal.TransferTypes.PlatformReads> =
     getUserState |>> (fun state -> state.Platform)
 
 /// Get target platform (CPU/FPGA/GPU/MCU/NPU) from coeffects

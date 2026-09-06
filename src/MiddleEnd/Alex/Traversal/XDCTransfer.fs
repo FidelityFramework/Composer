@@ -1,4 +1,4 @@
-/// XDCTransfer — Parallel transfer from PlatformPinMapping coeffect to XDC text
+/// XDCTransfer — the pin facts the graph carries (Codata.Pins) written as XDC text
 ///
 /// Architecturally parallel to MLIRTransfer. Both observe the same coeffects:
 ///   - MLIRTransfer: coeffects → MLIR ops (via witness traversal)
@@ -9,12 +9,12 @@
 /// Output: Xilinx XDC constraints file for Vivado synthesis.
 module Alex.Traversal.XDCTransfer
 
-open PSGElaboration.Coeffects
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
-/// Generate constraint text from a PlatformPinMapping coeffect.
-/// Pure function: PlatformPinMapping → string
+/// Generate constraint text from the graph's pin mapping.
+/// Pure function: PinMapping → string
 /// Port names are already normalized identifiers (computed in the coeffect).
-let transfer (mapping: PlatformPinMapping) : string =
+let transfer (mapping: PinMapping) : string =
     let sb = System.Text.StringBuilder()
 
     // Header

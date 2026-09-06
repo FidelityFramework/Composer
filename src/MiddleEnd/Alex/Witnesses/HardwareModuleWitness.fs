@@ -26,7 +26,6 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators  // narrowType
 open Alex.Patterns.HardwareModulePatterns
-open PSGElaboration.SSAAssignment  // lookupHardwareModuleLayout
 
 // ═══════════════════════════════════════════════════════════
 // PSG STRUCTURE EXTRACTION
@@ -364,13 +363,12 @@ let private witnessHardwareModule
                     OutputType = narrowedOutputType
                 }
 
-                // The module body's values are the layout SSAAssignment derived for this binding
-                match lookupHardwareModuleLayout node.Id ctx.Coeffects.SSA with
-                | None ->
-                    WitnessOutput.error $"HardwareModule '{name}': SSAAssignment derived no layout for binding {NodeId.value node.Id}; the derivation reads the Design record's InitialState and Step"
-                | Some layout ->
+                // The module body's values, named from this binding; the pin facts are the graph's
+                let pinMapping = ctx.Graph.Codata.Value.Pins
+                let layout = deriveLayout node.Id info pinMapping
+                begin
                     let hwModuleOp =
-                        match ctx.Coeffects.PinMapping with
+                        match pinMapping with
                         | Some pinMapping ->
                             buildFlatPortMealyModule info pinMapping pinMapping.FieldPinAttrs layout
                         | None ->
@@ -382,6 +380,7 @@ let private witnessHardwareModule
 
                     // HardwareModule binding is structural — no inline ops, no value
                     { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                end
 
             | _ ->
                 WitnessOutput.error $"HardwareModule '{name}': State type must be a record (TStruct), got {stateType}"

@@ -22,7 +22,7 @@ open Alex.Elements.MemRefElements
 open Alex.Elements.IndexElements
 open Alex.Elements.MLIRAtomics
 open Alex.Patterns.LiteralPatterns  // deriveGlobalRef, deriveByteLength (for dynamic extern string constants)
-open PSGElaboration.PlatformConfig
+open Alex.Traversal.TransferTypes
 
 // ═══════════════════════════════════════════════════════════
 // FFI BOUNDARY MARSHALING
@@ -100,15 +100,13 @@ let private pUnwrapOptionArgForFFI
 /// Resolve the target function name for a platform call from pre-computed coeffects.
 /// For LibcCall/ExternCall, returns the target function name.
 /// For Syscall/InlineAsm, falls back to the provided default (inline asm is future work).
-let private resolveCallTarget (nodeId: NodeId) (defaultName: string) (platform: PlatformResolutionResult) : string =
-    let (NodeId nodeIdInt) = nodeId
-    match Map.tryFind nodeIdInt platform.Bindings with
+let private resolveCallTarget (nodeId: NodeId) (defaultName: string) (platform: PlatformReads) : string =
+    match Map.tryFind nodeId platform.Bindings.Bindings with
     | Some binding ->
         match binding.Resolved with
-        | LibcCall funcName -> funcName
-        | ExternCall (_, symbol) -> symbol
-        | Syscall _ -> defaultName   // TODO: emit inline asm for freestanding
-        | InlineAsm _ -> defaultName // TODO: emit llvm.inline_asm
+        | ResolvedBinding.LibcCall funcName -> funcName
+        | ResolvedBinding.ExternCall (_, symbol) -> symbol
+        | ResolvedBinding.Syscall _ -> defaultName   // the freestanding leg's inline asm is owed
     | None -> defaultName
 
 // ═══════════════════════════════════════════════════════════
@@ -421,9 +419,8 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
         let! state = getUserState
 
         // Guard: check if this node has a STATIC ExternCall binding (library = "c")
-        let (NodeId nodeIdInt) = node.Id
-        match Map.tryFind nodeIdInt state.Platform.Bindings with
-        | Some { Resolved = ExternCall (library, symbol) } when library = "c" ->
+        match Map.tryFind node.Id state.Platform.Bindings.Bindings with
+        | Some { Resolved = ResolvedBinding.ExternCall (library, symbol) } when library = "c" ->
             // FFI namespace prefix: all extern symbols get "ffi." prefix in MLIR
             // to avoid collisions with MLIR infrastructure symbols (e.g., @malloc
             // from finalize-memref-to-llvm). The reconcile-ffi-externs plugin
@@ -691,9 +688,8 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
         let! node = getCurrentNode
         let! state = getUserState
 
-        let (NodeId nodeIdInt) = node.Id
-        match Map.tryFind nodeIdInt state.Platform.Bindings with
-        | Some { Resolved = ExternCall (library, symbol) } when library <> "c" ->
+        match Map.tryFind node.Id state.Platform.Bindings.Bindings with
+        | Some { Resolved = ResolvedBinding.ExternCall (library, symbol) } when library <> "c" ->
             let platformWordTy = state.Platform.PlatformWordType
             let! ssas = getNodeSSAs node.Id
             let! (argMeetOps, argPairs) = recallArgs node.Id argIds

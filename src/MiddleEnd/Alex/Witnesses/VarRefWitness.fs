@@ -98,7 +98,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                             { InlineOps = ops @ meetOps; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | Result.Error diagnostic -> WitnessOutput.error $"VarRef '{name}': {diagnostic}"
-                    elif Set.contains bindingId ctx.Coeffects.CurryFlattening.PartialAppBindings then
+                    elif Set.contains bindingId ctx.Graph.Codata.Value.Curry.PartialAppBindings then
                         // Partial application binding - no value SSA available
                         // ApplicationWitness handles saturated calls through the coeffect
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }

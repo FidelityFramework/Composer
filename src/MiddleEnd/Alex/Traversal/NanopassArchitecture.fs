@@ -155,7 +155,7 @@ let rec visitAllNodes
         // stored in the accumulator for re-emission at the saturated call site.
         // This prevents MLIR region isolation violations when partial app is at module
         // scope but saturated call is inside a function body.
-        let isDeferredArg = Set.contains currentNode.Id visitedCtx.Coeffects.CurryFlattening.DeferredArgNodes
+        let isDeferredArg = Set.contains currentNode.Id visitedCtx.Graph.Codata.Value.Curry.DeferredArgNodes
         if isDeferredArg && not (List.isEmpty output.InlineOps) then
             MLIRAccumulator.deferInlineOps currentNode.Id output.InlineOps visitedCtx.Accumulator
         else
@@ -366,9 +366,9 @@ let runAllNanopasses
     let isCPULike =
         coeffects.TargetPlatform <> Core.Types.Dialects.FPGA && coeffects.TargetPlatform <> Core.Types.Dialects.NPU
     let entryLambdaIds =
-        coeffects.DeclarationRootLambdas
+        graph.Codata.Value.DeclarationRootLambdas
         |> Map.toList
-        |> List.choose (fun (id, dr) -> if dr = DeclRoot.EntryPoint then Some (NodeId id) else None)
+        |> List.choose (fun (id, dr) -> if dr = DeclRoot.EntryPoint then Some id else None)
     let prologueInEntry = isCPULike && not (List.isEmpty entryLambdaIds)
     // A design has no prologue: on FPGA a module-level value is witnessed inside each hw.module
     // that reads it (the per-module visited set re-walks the binding at its reference), and the

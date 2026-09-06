@@ -20,7 +20,6 @@ open Alex.Elements.FuncElements
 open Alex.CodeGeneration.TypeMapping
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
-open PSGElaboration.EscapeAnalysis
 
 // ═══════════════════════════════════════════════════════════
 // FIELD EXTRACTION PATTERNS
@@ -240,17 +239,17 @@ let extractMemRefShape (arch: Architecture) (ty: MLIRType) =
 let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let escapeKind = getEscapeKindOrDefault nodeId state.Coeffects.EscapeAnalysis
+        let escapeKind = Alex.Traversal.TransferTypes.escapeOf state.Graph nodeId
         match escapeKind with
-        | StackScoped ->
+        | EscapeKind.StackScoped ->
             return! pUndef ssa ty
-        | StaticLifetime ->
+        | EscapeKind.StaticLifetime ->
             let count, elemType = extractMemRefShape state.Platform.TargetArch ty
             let storageTy = TMemRefStatic (count, elemType)
             let globalName = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
             MLIRAccumulator.tryEmitGlobalMemref globalName storageTy state.Accumulator
             return! pMemRefGetGlobal ssa globalName storageTy
-        | EscapesViaReturn | EscapesViaClosure _ | EscapesViaByRef ->
+        | EscapeKind.EscapesViaReturn | EscapeKind.EscapesViaClosure _ | EscapeKind.EscapesViaByRef ->
             let count, elemType = extractMemRefShape state.Platform.TargetArch ty
             return! pAllocStatic ssa count elemType None
     }

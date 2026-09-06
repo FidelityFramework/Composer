@@ -38,7 +38,75 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Clef.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
-open PSGElaboration.Coeffects
+module Values = Alex.Traversal.Values
+
+// ═══════════════════════════════════════════════════════════
+// THE MODULE BODY'S VALUES
+// ═══════════════════════════════════════════════════════════
+//
+// The Mealy machine an [<HardwareModule>] binding describes is built here from the Design record
+// and the pin facts the graph carries (Codata.Pins). Every value of its body is named by emission
+// from the binding node (Alex.Traversal.Values.hardwareValue), one family per role, and read by
+// the patterns below; nothing is counted against a pre-assignment.
+
+/// One hw.struct_extract the flat-port module emits while flattening the step's output record
+/// into pin-mapped ports, in emission order.
+type OutputExtraction = {
+    /// The extraction this one reads from (None: the step result's output struct)
+    Parent: int option
+    Field: string
+    ParentType: MLIRType
+    FieldType: MLIRType
+    /// The flat output port this extraction feeds, if it feeds one
+    Pin: string option
+}
+
+/// The extractions the flat-port module emits for an output type under the platform's pin
+/// attributes: a pinned field is extracted (a multi-pin tuple field then extracts each element
+/// for its pin); an unpinned record field is extracted and walked; any other unpinned field is
+/// left for synthesis to drop.
+let outputExtractions (pinAttrs: Map<string, string list>) (outputType: MLIRType) : OutputExtraction list =
+    let rec walk (parent: int option) (parentType: MLIRType) (acc: OutputExtraction list) : OutputExtraction list =
+        match parentType with
+        | TStruct (fields, _) ->
+            fields |> List.fold (fun (acc: OutputExtraction list) (fieldName, fieldTy) ->
+                let step pin = { Parent = parent; Field = fieldName; ParentType = parentType; FieldType = fieldTy; Pin = pin }
+                match Map.tryFind fieldName pinAttrs with
+                | Some [ single ] -> acc @ [ step (Some single) ]
+                | Some multiple ->
+                    match fieldTy with
+                    | TStruct (tupleFields, _) ->
+                        let acc' = acc @ [ step None ]
+                        let idx = acc'.Length - 1
+                        acc' @ (List.zip multiple tupleFields |> List.map (fun (pinName, (elemField, elemTy)) ->
+                            { Parent = Some idx; Field = elemField; ParentType = fieldTy; FieldType = elemTy; Pin = Some pinName }))
+                    | _ -> acc @ [ step (Some (List.head multiple)) ]
+                | None ->
+                    match fieldTy with
+                    | TStruct _ ->
+                        let acc' = acc @ [ step None ]
+                        walk (Some (acc'.Length - 1)) fieldTy acc'
+                    | _ -> acc) acc
+        | _ -> acc
+    walk None outputType []
+
+/// The values of the Mealy machine's hw.module body, by role.
+type HardwareModuleLayout = {
+    BindingNodeId: NodeId
+    /// The internal power-on reset (constant one, register, xor) of the flat-port module when the
+    /// platform declares no external reset; None with an external reset port or for the struct-port module
+    PowerOnReset: (SSA * SSA * SSA) option
+    ResetValues: SSA list
+    Registers: SSA list
+    /// One hw.struct_create per multi-pin tuple input field, in field order (flat-port module)
+    InputPacks: SSA list
+    InputStruct: SSA option
+    State: SSA
+    Instance: SSA
+    StepResult: (SSA * SSA) option
+    OutputFlatten: SSA list
+    NextFields: SSA list
+}
 
 // ═══════════════════════════════════════════════════════════
 // PSG METADATA EXTRACTION (compile-time, no MLIR emission)
@@ -235,7 +303,7 @@ let private flattenOutputStruct
 /// module gets flat ports. This is the residual of observing pin coeffects.
 let buildFlatPortMealyModule
     (info: MealyMachineInfo)
-    (pinMapping: PlatformPinMapping)
+    (pinMapping: PinMapping)
     (pinAttrs: Map<string, string list>)
     (layout: HardwareModuleLayout)
     : MLIROp =
@@ -369,3 +437,40 @@ let buildFlatPortMealyModule
             flatOutputPins |> List.map (fun (name, _, ty) -> (name, ty))
 
     MLIROp.HWOp (HWOp.HWModule (info.ModuleName, inputs, outputs, bodyOps))
+
+
+/// The body's values for a binding, named from the binding node: one family per role, one value
+/// per state field where the role is per field, one per packed input, one per output extraction.
+let deriveLayout (bindingId: NodeId) (info: MealyMachineInfo) (pinMapping: PinMapping option) : HardwareModuleLayout =
+    let n = info.StateFields.Length
+    let pinAttrs = pinMapping |> Option.map (fun m -> m.FieldPinAttrs) |> Option.defaultValue Map.empty
+    // the flat-port module synthesises a power-on reset unless the platform declares an external one
+    let internalReset =
+        match pinMapping with
+        | Some m -> not (m.Reset |> Option.map (fun r -> r.IsExternal) |> Option.defaultValue false)
+        | None -> false
+    let inputPackCount, hasInputStruct =
+        match pinMapping, info.InputType with
+        | Some _, Some (TStruct (fields, _)) ->
+            (fields |> List.sumBy (fun (name, ty) ->
+                match Map.tryFind name pinAttrs, ty with
+                | Some pins, TStruct _ when pins.Length > 1 -> 1
+                | _ -> 0)), true
+        | _ -> 0, false
+    let flattenCount =
+        match pinMapping, info.OutputType with
+        | Some _, Some outTy -> (outputExtractions pinAttrs outTy).Length
+        | _ -> 0
+    let v role k = Values.hardwareValue bindingId (role * 100 + k)
+    let vs role count = List.init count (v role)
+    { BindingNodeId = bindingId
+      PowerOnReset = (if internalReset then Some (v 0 0, v 0 1, v 0 2) else None)
+      ResetValues = vs 1 n
+      Registers = vs 2 n
+      InputPacks = vs 3 inputPackCount
+      InputStruct = (if hasInputStruct then Some (v 4 0) else None)
+      State = v 5 0
+      Instance = v 6 0
+      StepResult = (if info.OutputType.IsSome then Some (v 7 0, v 7 1) else None)
+      OutputFlatten = vs 8 flattenCount
+      NextFields = vs 9 n }

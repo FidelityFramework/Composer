@@ -16,7 +16,7 @@ module Alex.Pipeline.MLIRNanopass
 
 open Alex.Dialects.Core.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open PSGElaboration.PlatformConfig
+open Alex.Traversal.TransferTypes
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DECLARATION VALIDATION + RELOCATION PASS
@@ -137,7 +137,7 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
 /// as standard dialects (func, memref, arith, scf, index). There is no DCont or
 /// Inet lowering here and no dialect above the witness boundary for one to target.
 /// See docs/Thin_Middle_End_Design.md and docs/Delimited_Continuations_Architecture.md.
-let applyPasses (operations: MLIROp list) (platform: PlatformResolutionResult) (intermediatesDir: string option) : MLIROp list =
+let applyPasses (operations: MLIROp list) (platform: PlatformReads) (intermediatesDir: string option) : MLIROp list =
     // Declaration Collection Pass
     //
     // ARCHITECTURAL RATIONALE:

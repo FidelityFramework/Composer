@@ -17,7 +17,6 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Clef.Compiler.NativeTypedTree.NativeTypes
 open Alex.Dialects.Core.Types
-open PSGElaboration.PlatformConfig
 open Alex.CodeGeneration.TypeMapping
 open Alex.Traversal.PSGZipper
 open Alex.Traversal.ScopeContext
@@ -26,35 +25,28 @@ open Alex.Traversal.ScopeContext
 // MODULE ALIASES (for type definitions)
 // ═══════════════════════════════════════════════════════════════════════════
 
-module MutAnalysis = PSGElaboration.MutabilityAnalysis
-module SSAAssign = PSGElaboration.SSAAssignment
-module StringCollect = PSGElaboration.StringCollection
-module PatternAnalysis = PSGElaboration.PatternBindingAnalysis
-module YieldStateIndices = PSGElaboration.YieldStateIndices
-module EscapeAnalysis = PSGElaboration.EscapeAnalysis
-module CurryFlat = PSGElaboration.CurryFlattening
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TRANSFER COEFFECTS (Pre-computed, Immutable)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Pre-computed coeffects - computed ONCE before traversal, NEVER modified
+/// The platform as emission reads it: the instruction set and the declared Register and Pointer
+/// widths (from the CCS context), and the call-site resolutions the graph carries (Codata.Bindings).
+type PlatformReads = {
+    TargetArch: Architecture
+    Bindings: PlatformBindings
+}
+with
+    /// The platform word type: the declared Register width as an MLIR integer.
+    member this.PlatformWordType : MLIRType = TInt (declaredWordWidth this.TargetArch)
+
+/// What the traversal carries beside the graph. Every fact about the program is read from the
+/// graph (its nodes, layouts, ranges and Codata); these are the target and the platform reads.
 type TransferCoeffects = {
-    SSA: SSAAssign.SSAAssignment
-    Platform: PlatformResolutionResult
-    Mutability: MutAnalysis.MutabilityAnalysisResult
-    PatternBindings: PatternAnalysis.PatternBindingAnalysisResult
-    Strings: StringCollect.StringTable
-    YieldStates: YieldStateIndices.YieldStateCoeffect
-    EscapeAnalysis: EscapeAnalysis.EscapeAnalysisResult
-    CurryFlattening: CurryFlat.CurryFlatteningResult
-    DeclarationRootLambdas: Map<int, Clef.Compiler.PSGSaturation.SemanticGraph.Types.DeclRoot>
+    Platform: PlatformReads
     /// Target platform — determines which MLIR dialects Patterns emit
     /// CPU → func/arith/scf, FPGA → hw/comb/seq (codata-dependent elision)
     TargetPlatform: Core.Types.Dialects.TargetPlatform
-    /// Pin mapping for FPGA targets (None for CPU/MCU)
-    /// Observed by HardwareModulePatterns (flat ports) and XDCTransfer (constraints)
-    PinMapping: PSGElaboration.Coeffects.PlatformPinMapping option
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -318,7 +310,7 @@ module MLIRAccumulator =
                     true
                 | _ -> false
             if not isBenignMemRefRefinement then
-                let ssaStr = match ssa with | V n -> sprintf "%%v%d" n | Arg n -> sprintf "%%arg%d" n
+                let ssaStr = Alex.Dialects.Core.Serialize.ssaToString ssa
                 let diag = Diagnostic.errorWithDetails (Some nodeId) (Some "SSATypes") (Some "bindNode")
                             (sprintf "SSA type collision: %s already registered as %A, new type %A (keeping existing)" ssaStr existingTy ty)
                             (sprintf "%A" existingTy) (sprintf "%A" ty)
@@ -535,17 +527,26 @@ module ModuleValues =
 // COEFFECT ACCESSORS (Convenience functions)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Get single pre-assigned SSA for a node
+/// The result value a node names (Alex.Traversal.Values)
 let requireSSA (nodeId: NodeId) (ctx: WitnessContext) : SSA =
-    match SSAAssign.lookupSSA nodeId ctx.Coeffects.SSA with
-    | Some ssa -> ssa
-    | None -> failwithf "No SSA for node %A" nodeId
+    Alex.Traversal.Values.resultOf ctx.Coeffects.TargetPlatform ctx.Graph nodeId
 
-/// Get all pre-assigned SSAs for a node
+/// The values a node names (Alex.Traversal.Values)
 let requireSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
-    match SSAAssign.lookupSSAs nodeId ctx.Coeffects.SSA with
-    | Some ssas -> ssas
-    | None -> failwithf "No SSAs for node %A" nodeId
+    Alex.Traversal.Values.valuesOf ctx.Coeffects.TargetPlatform ctx.Graph nodeId
+
+/// The escape kind of an allocating site (Codata.Escapes); stack-scoped where the graph records none.
+let escapeOf (graph: SemanticGraph) (nodeId: NodeId) : EscapeKind =
+    graph.Codata.Value.Escapes |> Map.tryFind nodeId |> Option.defaultValue EscapeKind.StackScoped
+
+/// The meet the graph derived for a consumer's operand, with the value emission names for it;
+/// None where the widths agree. A read of a slot names the consumer as its own operand.
+let meetFor (graph: SemanticGraph) (consumer: NodeId) (operand: NodeId) : (Meet * SSA) option =
+    graph.Codata.Value.Meets
+    |> Map.tryFind consumer
+    |> Option.bind (fun meets ->
+        meets |> List.tryFindIndex (fun m -> m.Operand = operand)
+        |> Option.map (fun i -> meets.[i], Alex.Traversal.Values.meetValue consumer i))
 
 /// Get target architecture from coeffects
 let targetArch (ctx: WitnessContext) : Architecture =

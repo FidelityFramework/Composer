@@ -74,7 +74,7 @@ type Isa =
 
 /// The target architecture as Composer reads it (plan D8, L-10; Dimensional_Range_Design.md
 /// §8.3): the instruction set, and the width dimensions the platform description declares,
-/// `Register` and `Pointer`, read once from the CCS context (PlatformConfig.resolveOSArch). There
+/// `Register` and `Pointer`, read once from the CCS context (MLIRGeneration.architectureOf). There
 /// is no architecture table: a width the description does not declare carries CCS8203's text,
 /// and the site that needs it fails with that text, never with a number of its own. An FPGA
 /// description declares neither, and no site on the fabric leg reads them.
@@ -148,10 +148,14 @@ let mlirTypeSize (arch: Architecture) (ty: MLIRType) : int =
 
 /// SSA value reference - the currency of MLIR operations
 /// V = value from computation, Arg = function/block argument
+/// A value name. `V (node, k)` is the k-th value emission names for a graph node, a pure
+/// derivation from the node's identity (Alex.Traversal.Values); `Arg n` a block argument. No
+/// pass assigns names and no witness holds a counter: the graph identifies the node, the witness
+/// numbers what it emits for it.
 [<Struct>]
 type SSA =
-    | V of int      // %v0, %v1, ...
-    | Arg of int    // %arg0, %arg1, ...
+    | V of node: int * ordinal: int   // %v<node>_<k>
+    | Arg of int                      // %arg0, %arg1, ...
 
 /// Block label reference
 [<Struct>]

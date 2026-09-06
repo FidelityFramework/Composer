@@ -42,25 +42,12 @@
       <Compile Include="FrontEnd/Templates/TemplateTypes.fs" />
       <Compile Include="FrontEnd/Templates/TemplateLoader.fs" />
 
-      <!-- Alex CodeGeneration - TypeMapping first (no deps, used by SSAAssignment) -->
+      <!-- Alex CodeGeneration - TypeMapping first (no deps) -->
       <Compile Include="MiddleEnd/Alex/CodeGeneration/TypeMapping.fs" />
 
-      <!-- PSGElaboration - MLIR-aware coeffects (peer to Alex) -->
-      <Compile Include="MiddleEnd/PSGElaboration/Coeffects.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/PlatformPinResolution.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/CurryFlattening.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/SSAAssignment.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/YieldStateIndices.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/MutabilityAnalysis.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/EscapeAnalysis.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/StringCollection.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/ProofObligations.fs" />
-      <!-- Platform Config (depends on PlatformTypes) -->
-      <Compile Include="MiddleEnd/PSGElaboration/PlatformConfig.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/PlatformBindingResolution.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/PatternBindingAnalysis.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/CoeffectValidation.fs" />
-      <Compile Include="MiddleEnd/PSGElaboration/PreprocessingSerializer.fs" />
+      <!-- Values - the names emission derives for what it emits (no pass, no counter) -->
+      <Compile Include="MiddleEnd/Alex/Traversal/Values.fs" />
+
 
       <!-- Alex Traversal - PSGZipper: Pure Huet zipper for navigation -->
       <Compile Include="MiddleEnd/Alex/Traversal/PSGZipper.fs" />

@@ -50,7 +50,7 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                 | _ ->
                     // Check if this binding holds a partial application (curry flattening)
-                    if Set.contains node.Id ctx.Coeffects.CurryFlattening.PartialAppBindings then
+                    if Set.contains node.Id ctx.Graph.Codata.Value.Curry.PartialAppBindings then
                         // Partial application binding - no MLIR emitted
                         // Saturated call sites use the coeffect to emit direct calls
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }

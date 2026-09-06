@@ -102,7 +102,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
         // ═══════════════════════════════════════════════════════════
         // CURRY FLATTENING: Check for saturated call or partial app
         // ═══════════════════════════════════════════════════════════
-        let curryResult = ctx.Coeffects.CurryFlattening
+        let curryResult = ctx.Graph.Codata.Value.Curry
         match Map.tryFind node.Id curryResult.SaturatedCalls with
         | Some satInfo ->
             // Saturated call: emit direct call to flattened function with ALL args

@@ -88,7 +88,7 @@ let rec hwTypeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
 /// Convert SSA to MLIR SSA value string
 let ssaToString (ssa: SSA) : string =
     match ssa with
-    | V n -> sprintf "%%v%d" n
+    | V (n, k) -> sprintf "%%v%d_%d" n k
     | Arg n -> sprintf "%%arg%d" n
 
 /// Convert Val (SSA + type) to typed SSA value string

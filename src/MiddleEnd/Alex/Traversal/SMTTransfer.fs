@@ -31,7 +31,7 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 /// SSA numbering is fresh per scope (solver regions are isolated).
 let private scope (ob: ObligationInfo) : MLIROp list =
     let mutable n = -1
-    let v () = n <- n + 1; V n
+    let v () = n <- n + 1; Alex.Traversal.Values.solverValue n   // fresh per isolated solver scope: the SMT module, not the program graph
     let smt op = MLIROp.SMTOp op
 
     // Anchor discipline: %ob names the obligation; assert (ob = definition)

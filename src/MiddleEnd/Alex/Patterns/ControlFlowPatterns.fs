@@ -399,7 +399,7 @@ let pBuildMatchElimination
                                     }
                                 | None ->
                                     // No guard on non-last arm — shouldn't happen but handle gracefully
-                                    recallGuards (idx + 1) (V -1 :: acc)
+                                    recallGuards (idx + 1) (Alex.Traversal.Values.undefined :: acc)
                         recallGuards 0 []
 
                     // Build nested scf.if from inside-out using recursive builder
