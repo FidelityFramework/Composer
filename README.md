@@ -10,9 +10,17 @@
 <em>Early development (Feb 2026: 3/16 samples working). Not production-ready.</em>
 </p>
 
-Ahead-of-time Clef compiler producing native executables without managed runtime or garbage collection. Leverages [Clef Compiler Services (CCS)](https://github.com/FidelityFramework/fsnative) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
+Ahead-of-time Clef compiler producing native executables without managed runtime or garbage collection. Uses [Clef Compiler Services (CCS)](https://github.com/FidelityFramework/clef) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
 
-## Current Status (February 2026)
+## Compiler and editor integration
+
+[Lattice integration](docs/Lattice_Integration.md) coordinates work across CCS, Composer, the VSCode and Neovim/Vim clients, grammar and helper repositories. This solution now includes [CCS.Editor](src/CCS.Editor/README.md) and the [Lattice server](src/Lattice.Server/README.md), with a local [HelloDimensionsProof](samples/lattice/HelloDimensionsProof/README.md) editor demo. It shows dimensional hover, compiler diagnostics and expandable source obligations dispatched to cvc5. Compiler-branch reconciliation and the broader editor gates remain explicit in the integration design.
+
+[CCS architecture](docs/CCS_Architecture.md) describes the compiler-owned facts that both lowering and editor queries consume. [BAREWire](https://github.com/FidelityFramework/BAREWire) and [Fidelity.Platform](https://github.com/FidelityFramework/Fidelity.Platform) supply contracts and target declarations used in that reasoning. Language requirements remain in the [Clef specification](https://github.com/FidelityFramework/clef-lang-spec).
+
+The sample counts and recent-change lists below retain their February 2026 dates; they are historical measurements, not results from the current tooling integration gates.
+
+## Historical validation snapshot (February 2026)
 
 **Working Samples**: 3 of 16 console samples compile and execute correctly:
 - ✅ 01_HelloWorldDirect (static strings, basic Console)
@@ -42,13 +50,12 @@ Composer implements a true nanopass compiler architecture with ~25 distinct pass
 Clef Source
     ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ CCS (6 phases)                                             │
-│ Phase 0: FCS parse and type check                           │
-│ Phase 1: Structural construction (SynExpr → PSG)            │
-│ Phase 2: Symbol correlation (attach FSharpSymbol)           │
-│ Phase 3: Soft-delete reachability (mark unreachable)        │
-│ Phase 4: Typed tree overlay (type resolution via zipper)    │
-│ Phase 5+: Enrichment (def-use, operations, saturation)      │
+│ CCS: Clef Compiler Service                                  │
+│ • Parse Clef source and resolve project inputs               │
+│ • Infer native types and dimensional constraints             │
+│ • Construct and saturate the Program Semantic Graph          │
+│ • Carry range/layout facts and supported proof obligations   │
+│ • Return compiler-owned diagnostics and graph data           │
 └─────────────────────────────────────────────────────────────┘
     ↓ PSG (Program Semantic Graph)
 ┌─────────────────────────────────────────────────────────────┐
@@ -292,7 +299,9 @@ Previously blocked by hard-coded LLVM types. Now possible via target-specific ml
 
 | Document | Content |
 |----------|---------|
-| `docs/Architecture_Canonical.md` | CCS-first architecture, intrinsic modules |
+| [Lattice integration](docs/Lattice_Integration.md) | Repository map, server design, editor and proof-view gates |
+| [CCS architecture](docs/CCS_Architecture.md) | Current semantic service boundary and source references |
+| `docs/Architecture_Canonical.md` | CCS-first pipeline overview, intrinsic modules |
 | `docs/PSG_Nanopass_Architecture.md` | Phase 0-5+ detailed design |
 | `docs/Alex_Architecture_Overview.md` | Element/Pattern/Witness stratification |
 | `docs/XParsec_PSG_Architecture.md` | Pattern combinators, codata witnesses |

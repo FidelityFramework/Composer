@@ -1,10 +1,16 @@
-# Composer Architecture: Canonical Reference
+# Composer Pipeline Overview
 
-> **Memory Architecture**: For hardware targets (CMSIS, embedded), see [Quotation_Based_Memory_Architecture.md](./Quotation_Based_Memory_Architecture.md)
-> which describes the quotation + active pattern infrastructure spanning clef, BAREWire, and Farscape.
+> **Memory Architecture**: For hardware targets (CMSIS, embedded), see [BAREWire platform descriptions](https://github.com/FidelityFramework/BAREWire/blob/main/docs/11%20Platform%20Description.md)
+> which describe the memory and boundary declarations consumed by CCS and Composer, including generated bindings.
 >
 > **Desktop UI Stack**: For WebView-based desktop applications, see [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md)
 > which describes Partas.Solid frontend + Composer native backend with system webview rendering.
+
+## Current service boundary
+
+The [Clef specification](https://github.com/FidelityFramework/clef-lang-spec) governs language semantics. [CCS Architecture](CCS_Architecture.md) records the compiler facts and their current implementation status; [Lattice Integration](Lattice_Integration.md) is the shared entry point for editor tooling, the initial .NET host and its acceptance gates.
+
+The pipeline consumes source libraries and platform declarations as project inputs alongside compiler intrinsics. CCS owns the resulting type, range, layout and obligation facts. Composer witnesses those facts through lowering and must preserve or re-check affected properties; receiving a checked graph does not by itself certify every later transformation.
 
 ## The Pipeline Model
 
@@ -15,7 +21,7 @@
 │  Clef Application Code                                    │
 │  - Uses CCS intrinsics: Console.writeln, Sys.write    │
 │  - Types provided by NTUKind: string, int, Uuid, etc.  │
-│  - NO external library dependencies                     │
+│  - Project libraries and platform declarations          │
 └─────────────────────────────────────────────────────────┘
                           │
                           │ Compiled by CCS
@@ -44,7 +50,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │  Alex (Compiler Targeting Layer)                        │
 │  - Consumes PSG as "correct by construction"            │
-│  - NO type checking needed - trusts CCS                │
+│  - Read CCS facts; preserve or re-check properties       │
 │  - Zipper traversal + XParsec pattern matching          │
 │  - Intrinsic → MLIR mapping using NTUKind               │
 │  - Platform implementations for Sys.* intrinsics        │
@@ -56,7 +62,7 @@
 **CCS-First Architecture:** Types and operations ARE the compiler, not library code:
 - **CCS**: Defines NTUKind types, provides intrinsic modules, builds PSG with intrinsics marked
 - **Alex**: Traverses PSG → generates MLIR → LLVM → native binary
-- **No external library**: Following ML/Rust/Triton-CPU patterns, types ARE the language
+- **Project inputs**: Library and platform sources participate in CCS checking; compiler intrinsic ownership does not eliminate these dependencies.
 
 **Zipper Coherence:** Alex uses PSGZipper to traverse the PSG from CCS:
 - PSG comes from CCS with all type information attached
@@ -66,7 +72,7 @@
 ## Alloy: Historical Archive (Absorbed January 2026)
 
 > **Note**: Alloy has been absorbed into CCS. The repository is preserved as a historical artifact.
-> See blog entry: [Absorbing Alloy](/blog/absorbing-alloy/)
+> See [CCS Architecture](CCS_Architecture.md) for the current intrinsic and library boundaries.
 
 Alloy was a BCL-free Clef standard library that proved native compilation was possible. Its functionality is now provided by CCS intrinsic modules.
 
@@ -304,7 +310,7 @@ The samples use CCS intrinsics directly. Compilation flow:
 ### Core Architecture
 - [CCS_Architecture.md](./CCS_Architecture.md) - CCS and PSG construction (PRIMARY)
 - [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) - Nanopass principles
-- [Quotation_Based_Memory_Architecture.md](./Quotation_Based_Memory_Architecture.md) - Memory model for embedded targets
+- [BAREWire platform descriptions](https://github.com/FidelityFramework/BAREWire/blob/main/docs/11%20Platform%20Description.md) - Memory model for embedded targets
 - Note: Baker_Architecture.md is deprecated - CCS now handles type correlation
 
 ### Desktop UI Stack
@@ -314,7 +320,7 @@ The samples use CCS intrinsics directly. Compilation flow:
 
 ### QuantumCredential Demo
 - [QuantumCredential/](./QuantumCredential/) - Demo documentation folder
-- [QuantumCredential/01_Demo_Strategy_Integrated.md](./QuantumCredential/01_Demo_Strategy_Integrated.md) - Integrated demo strategy (desktop + embedded)
+- [QuantumCredential demo strategy](./QuantumCredential/Demo/D-01-Demo-Strategy.md) - Integrated demo strategy (desktop + embedded)
 
 ### Platform Bindings
 - See `~/repos/Farscape/docs/` for native library binding patterns (quotation-based architecture)

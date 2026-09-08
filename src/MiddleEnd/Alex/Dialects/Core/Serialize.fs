@@ -322,12 +322,16 @@ let smtOpToString (pointer: Result<int, string>) (inner: MLIROp -> string) (op: 
         sprintf "%s = smt.declare_fun \"%s\" : %s" (ssaToString result) name (smtTypeToString ty)
     | SMTIntConstant (result, value) ->
         sprintf "%s = smt.int.constant %d" (ssaToString result) value
+    | SMTBigIntConstant (result, value) ->
+        sprintf "%s = smt.int.constant %s" (ssaToString result) (value.ToString(System.Globalization.CultureInfo.InvariantCulture))
     | SMTBVConstant (result, value, width) ->
         sprintf "%s = smt.bv.constant #smt.bv<%d> : !smt.bv<%d>" (ssaToString result) value width
     | SMTIntAdd (result, lhs, rhs) ->
         sprintf "%s = smt.int.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
     | SMTIntSub (result, lhs, rhs) ->
         sprintf "%s = smt.int.sub %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
+    | SMTIntMul (result, lhs, rhs) ->
+        sprintf "%s = smt.int.mul %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
     | SMTIntCmp (result, pred, lhs, rhs) ->
         let predStr =
             match pred with
@@ -580,6 +584,14 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             | [] -> ""
             | names -> sprintf " {clef.obligations = [%s]}" (names |> List.map (sprintf "\"%s\"") |> String.concat ", ")
         sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]>%s" name storageLength denseStr attrs
+    | MLIROp.GlobalBytePool (name, bytes, alignment, obligations) ->
+        let dense = bytes |> List.map string |> String.concat ", "
+        let anchors =
+            match obligations with
+            | [] -> ""
+            | names -> sprintf ", clef.obligations = [%s]" (names |> List.map (sprintf "\"%s\"") |> String.concat ", ")
+        sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]> {alignment = %d : i64%s}"
+            name bytes.Length dense alignment anchors
     | MLIROp.GlobalMemref (name, memrefType) ->
         // Zero-initialized static storage for a program-lifetime value (the program-lifetime
         // point of the lifetime lattice). Not `constant`: the closure struct is written into

@@ -3,40 +3,44 @@
 **SpeakEZ Technologies | Fidelity Framework**
 **July 2026 — exploratory design series; nothing here is etched in stone**
 
-This series captures the shape of a problem space: compiling Clef to eBPF such that
-admission by the kernel's verifier is a *compile-time guarantee* rather than a
-load-time gamble. It exists to sound out where eBPF targeting should reside in the
-Clef/CCS/Composer maturation pipeline — what it forces, what it waits on, and what
-it uniquely validates.
+This series designs a bounded Clef-to-eBPF path whose compilation results agree
+with admission on a pinned kernel profile. It places the required obligations in
+the Clef/CCS/Composer pipeline, so failures can be explained while editing and the
+delivered bytecode can be checked independently. The composed implementation and
+its agreement evidence remain work to establish.
 
 ## The thesis in one sentence
 
-**If it compiles, it loads.**
+**Within the supported subset and pinned host contract, compilation should agree with kernel admission.**
 
 The Linux kernel verifier is an abstract interpreter run at load time: it tracks
-per-register value ranges, proves loop termination, bounds stack depth, and checks
+per-register value ranges, checks supported loop bounds, bounds stack depth, and checks
 pointer provenance before a program is allowed to exist in the kernel. Fidelity
 already runs the same *family* of analysis at design time — integer interval
 analysis, escape classification, the numeric-selection machinery's range-driven
 representation choice. The [Decidable By Construction](../../../arxiv-papers/decidable-by-construction.md)
-capstone gives this a precise home: the verifier's obligations are almost entirely
-expressible in QF_LIA — Tier 2 of the graduated verification model — and the one
-obligation that is undecidable in general (termination) becomes decidable *by
-construction* when the source language admits only loops with provable bounds.
-That is the capstone's titular move, applied to a new gatekeeper.
+capstone motivates restricting the accepted questions. Linear containment can
+use QF_LIA; wrap-sensitive arithmetic can use QF_BV; capability membership is a
+structural check. Establishing the premises is a separate task. Loop bounds come
+from supported inference, checked library laws or declared contracts, with no
+source-seal escape hatch. Decidability does not bound solver cost: timeout,
+unknown or missing premises remain unresolved, and yield a stable, located
+diagnostic when admission requires discharge.
 
 The claim has two halves, and both are required:
 
-1. **The proof half.** Every obligation the verifier checks is discharged at
-   design time, per site, through the SMT-LIB2-mediated proof dispatch that the
-   graduated verification model already specifies.
+1. **The proof half.** The supported subset's obligations are discharged per
+   site by their designated procedures, with premises and external assumptions
+   retained in the joint obligation graph through lowering.
 2. **The legibility half.** Passing the verifier is not just about *being* safe —
    it is about being *visibly* safe in the specific idioms the checker recognizes.
    The notorious pain of the clang→BPF path is the optimizer transforming a sound
    bounds check into a shape the verifier cannot track. Fidelity owns every emitted
    shape: witnesses observe coeffects, patterns elide known-good idioms, and
-   nothing between the PSG and the bytecode is permitted to optimize a guard out
-   of legibility. Admissibility = semantic safety ∧ syntactic legibility.
+   transformations must establish preservation before proceeding. CI then checks
+   the actual artifact on the pinned hosts. This is evidence about admission;
+   payload preservation, application policy and numerical accuracy have separate
+   contracts. The verifier, JIT and helpers remain part of the trusted boundary.
 
 ## Why this target is worth the trouble
 
@@ -47,31 +51,25 @@ Designing for the class rather than the member pays twice.
 
 Three properties make it strategically valuable *now*:
 
-- **It is a forcing function for the proof infrastructure.** Clef/CCS does not yet
-  have proof-discharge capacity; that design is early. eBPF admissibility is the
-  smallest complete, externally-validated deployment of the graduated verification
-  model: a bounded set of QF_LIA obligations, a fixed target subset, and a
-  measurable success criterion. The way MCU work forces the reactive intrinsics,
-  eBPF forces the SMT-LIB2 adaptation.
-- **It comes with a free, adversarial oracle.** The kernel verifier (and PREVAIL
-  on Windows — a published, principled abstract interpreter) independently checks
-  every claim our proof engine makes. A CI gate that loads every compiled probe is
-  an empirical validation harness *for the prover itself*. No other planned target
-  grades our proof work for us.
-- **The cost-structure argument applies verbatim.** The verifier is post-hoc
-  enforcement: every load pays the analysis cost again, bounded by a one-million
-  instruction budget, and programs are routinely rejected for being illegible
-  rather than unsafe. Design-time discharge pays once, at elaboration, and
-  surfaces failures in the editor (through the Lattice language server) with
-  source spans — not in `dmesg` after deployment.
+- **It exercises the proof infrastructure.** A bounded target subset gives
+  the joint obligation graph, diagnostics and preservation checks a concrete
+  compiler-to-kernel agreement criterion.
+- **It comes with an independent admission oracle.** The kernel verifier and
+  separate PREVAIL checks judge delivered objects under their supported rules.
+  Their agreement is useful artifact evidence, not validation of every claim
+  the compiler or application makes.
+- **It makes failures actionable earlier.** Host-dependent verifier budgets
+  and bytecode legibility remain deployment constraints. Design-time analysis
+  can surface those concerns in the editor; it does not eliminate load-time
+  checking or guarantee that a solver query is cheap.
 
 ## What eBPF forces, waits on, and validates
 
 | Relationship | Item |
 |---|---|
 | **Forces** | SMT-LIB2 proof dispatch (Tier 2 / QF_LIA) in its first bounded deployment; capability-keyed witness gating (retiring the binary `isCPULike` predicate); a versioned capability matrix in `Fidelity.Platform/Contracts`; BTF emission from Clef types |
-| **Waits on** | Nothing hard — the LLVM BPF backend exists today, and the admissibility coeffect layer composes from standing analysis art (interval analysis, escape classification, coeffect plumbing). Proof *certificates* deepen as the proof infrastructure matures |
-| **Validates** | The proof engine (via the external oracle); the hooks-as-pins generalization of platform descriptors; the hosted-verified-ISA class design that WASM will reuse |
+| **Waits on** | A composed path connecting supported obligations, diagnostics, preservation through lowering and pinned-host artifact checks |
+| **Validates** | Admission agreement for the tested subset and hosts; use of shared platform declarations for hooks, helpers and limits |
 
 ## The io_uring companion
 
@@ -104,5 +102,6 @@ concurrency/async track.
   discussion that motivates BTF-from-Clef-types in [03](03_lowering_and_artifacts.md).
 - [Numeric_Selection_Implementation.md](../Numeric_Selection_Implementation.md)
   and the normative spec it points to — the ratified vocabulary (coverage
-  filters, capability gates, witnessed failures, three-tier range authority)
+  filters, capability gates, located failures, and range evidence checked against
+  boundary constraints)
   that the admissibility story reuses rather than reinvents.

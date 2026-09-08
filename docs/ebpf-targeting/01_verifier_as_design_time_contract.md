@@ -79,7 +79,7 @@ occupy.
 
 | Verifier obligation | Fidelity machinery | Where it lives |
 |---|---|---|
-| Loop termination | Integer interval analysis + the three-tier range-authority model (intrinsic dataflow / library law / developer seal) from the numeric-selection spec, applied to iteration bounds | Tier 1/2; by-construction subset restriction ([04](04_admissibility_as_proof_obligations.md)) |
+| Loop termination | Integer interval analysis over dataflow and guards, checked library laws, and declared input/boundary constraints, applied jointly to iteration bounds | Tier 1/2; by-construction subset restriction ([04](04_admissibility_as_proof_obligations.md)) |
 | Register ranges | Interval analysis — the same image computation that drives width inference and representation selection | Feeds Tier 2 obligations |
 | Pointer bounds | Interval analysis on offsets; emission of dominating guards in recognized shapes | Tier 2 (QF_LIA) + legibility contract |
 | Stack ≤ 512B | Escape classification (stack-scoped lattice) + a linear byte-sum obligation | Tier 1 classification, Tier 2 sum |
@@ -123,9 +123,11 @@ Two asymmetries to respect:
 ## What this buys, concretely
 
 For the developer: admissibility failures appear in the editor, through the
-Lattice language server, at the offending expression — "this loop's bound is not
-established by any authority tier; seal it or supply a range law" — instead of as
-a truncated verifier log after a failed load on a production host.
+Lattice language server, at the offending expression — "this loop's bound remains
+unresolved; establish the input bound or the premises of a checked range law" —
+instead of as a truncated verifier log after a failed load on a production host.
+The editor can retain that pending obligation while its context is incomplete;
+concrete admission requires it to be discharged, without a source seal.
 
 For the pipeline: a BPF object that leaves Composer carries its discharge record.
 The kernel's verifier becomes what a type checker's runtime is to a well-typed

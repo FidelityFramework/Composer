@@ -5,35 +5,36 @@
 
 This document places eBPF admissibility inside the graduated verification model:
 which obligations arise, which tier and fragment each falls in, how they ride the
-existing coeffect machinery, and why eBPF is the smallest complete, externally
-graded deployment of a proof infrastructure that is — today — design-mature but
-implementation-early. It is written against the framework's own proof-layer
+existing coeffect machinery, and how a bounded eBPF subset can exercise the
+proposed proof infrastructure against an independent admission gate. The
+composed path remains implementation work. This note uses the framework's proof-layer
 design notes and the [Decidable By Construction](../../../arxiv-papers/decidable-by-construction.md)
 capstone; it does not assume that layer is built, and it is explicit about what it
 waits on.
 
 > **Solver naming.** This note writes obligations in **SMT-LIB2** and names
-> fragments (`QF_LIA`, `QF_BV`), not solvers. Z3 is the first and easiest reach
-> for demonstrations, but the fragments here are deliberately narrow so that
-> CVC5 or a specialized decision procedure can discharge the hot paths where that
-> preserves performance. The architecture commits to the *fragment*, not the
-> engine.
+> fragments (`QF_LIA`, `QF_BV`), not solvers. Each obligation must identify its
+> supported fragment and premises. Z3, cvc5 or a specialized decision procedure
+> may discharge it; solver choice does not expand the accepted contract.
+> Decidability is not a cost bound. Timeout, unknown and missing-premise results
+> remain unresolved, with a stable diagnostic when commitment requires discharge.
 
 ## The state of the proof layer (read this first)
 
-The framework's verification design is unusually complete on paper and explicitly
-pre-implementation in the compiler. The PSG, elaboration, and saturation pipeline
-exist; **the proof layer that reads obligations off the graph and discharges them
-is upcoming work.** The graduated model is designed as:
+The PSG, elaboration and saturation pipeline provide the foundation. **Complete
+eBPF obligation discharge, preservation through lowering and agreement with the
+pinned kernel still need composed implementation evidence.** The graduated model
+organizes that work; the actual obligation, not its tier label, determines which
+decision procedure applies:
 
 | Tier | Fragment | Discharge | Cost |
 |---|---|---|---|
-| **Tier 1** | `ℤⁿ` (dimensions, grades, escape lattice) | abelian-group unification; graph-integrity via SMT | free by parametricity |
-| **Tier 2** | `QF_LIA` (+ `QF_LRA`, `QF_BV`) — bounds, ranges, lifetimes, acyclicity | SMT, sound and complete | moderate |
-| **Tier 3** | restricted probabilistic / nonlinear | SMT + library lemmas proved once | higher |
-| **Tier 4** | relational / probabilistic (constant-time, crypto) | pRHL checker + proof-assistant kernel | highest |
+| **Tier 1** | dimensional equations and structural classifications | the decision procedure for that classification | analysis-dependent |
+| **Tier 2** | supported `QF_LIA`, `QF_LRA`, `QF_BV` obligations | SMT or a specialized decision procedure | query-dependent, budgeted |
+| **Tier 3** | restricted probabilistic / nonlinear obligations | justified enclosures or library lemmas with checked premises | obligation-dependent |
+| **Tier 4** | relational / probabilistic contracts | the designated proof system | obligation-dependent |
 
-The proof dispatch is **staged**: obligations are discharged at design time
+The proposed proof dispatch is **staged** over the same obligation graph: obligations are discharged at design time
 (weakest-precondition reading, surfaced live through the Lattice language server)
 and **re-validated at each MLIR lowering pass** through the SMT-dialect
 translation-validation mechanism (the consequence-rule reading — every lowering
@@ -45,30 +46,34 @@ and interaction-net crossings intact through lowering. eBPF is a clean early
 exercise of the *front-end/build-time* coupling on a target whose gate is external
 and unforgiving.
 
-**Why eBPF is the right first bite.** Its obligations are almost entirely Tier 1
-and Tier 2 — no Tier 4 relational reasoning, a bounded and enumerable obligation
-set, a fixed target subset, and (uniquely) an external oracle that grades the
-result ([01](01_verifier_as_design_time_contract.md)). It is the minimal complete
-deployment of the design: small enough to build against an early proof layer, real
-enough that the kernel checks our work.
+**Why eBPF is a useful first bite.** The initial subset can concentrate on
+structural checks and bounded arithmetic, with an independent oracle for
+admission ([01](01_verifier_as_design_time_contract.md)). That oracle judges the
+delivered bytecode under the host's rules. It does not validate every compiler
+proof, payload preservation, application policy or numerical accuracy. Those
+remain separate obligations; kernel, JIT and helper contracts remain explicit
+external assumptions.
 
 ## Obligations, tier by tier
 
-### Tier 1 — free, carried as coeffects, no solver query
+### Tier 1 — structural facts carried as coeffects
 
-These fall out of elaboration; the capstone's whole argument is that this class is
-decidable, polynomial, and principal over `ℤⁿ`, at negligible marginal cost.
+These classifications are inputs to later obligations. Dimensional unification
+has its own algebra; it does not by itself establish pointer bounds, numeric
+coverage or the cost of an escape analysis.
 
-- **No floating point.** Representation selection over the target's capability set;
-  with the FP capability absent, IEEE and posit fall out of the candidate set by
-  the coverage filter, leaving fixed-point or a witnessed `coverage-empty` error.
-  A representation-selection coeffect, not a proof query.
+- **Target capabilities.** The program may use only representations and
+  operations the target declares. Removing unsupported candidates does not prove
+  that a remaining representation covers the inferred range; coverage is its own
+  obligation. The initial integer-only subset need not introduce numerical
+  selection merely to classify and route an opaque packet payload.
 - **Context typing.** The `BpfProgram` root's signature `XdpMd -> XdpAction` is a
-  type fact; accessing outside the typed context window is a type error, not a
-  verifier surprise.
-- **No pointer leaks.** Map value types are pointer-free records by construction —
-  a "cannot form" property in the same sense the capstone gives buffer overflows
-  at Tier 1.
+  type fact. Proving that a computed access stays inside that context also needs
+  the range and dominance obligations below.
+- **Declared pointer-free layout.** Map-value descriptors can exclude pointer
+  fields structurally. That check requires a resolved layout; it does not prove
+  that arbitrary integer bytes never encode a pointer. Information-flow claims
+  need their own premises and evidence.
 - **Stack-scoped classification.** Escape analysis assigns each value a class in
   the `stack < arena < heap < static` lattice; for BPF, "heap" is simply not in
   the capability set, so any value classified there is a witnessed failure before
@@ -82,38 +87,49 @@ machinery with the lattice ceiling lowered.
 
 ### Tier 2 — `QF_LIA` / `QF_BV`, the verifier's arithmetic
 
-This is the bulk of what the kernel verifier itself computes, and it is exactly
-the fragment the graduated model designates for Z3-class discharge.
+For this subset, bounded arithmetic obligations can use the following fragments
+once their input facts have been established. The compiler must select the
+fragment that models the actual operation, including machine wrap where relevant.
 
-- **Loop termination → a bound obligation.** eBPF forbids loops without a provable
-  bound. The three-tier *range authority* model (intrinsic dataflow / library law
-  / developer seal) supplies iteration bounds the same way it supplies value
-  ranges: inferred where dataflow fixes them, supplied by a library law, or
-  developer-sealed — with lower tiers becoming diagnostic obligations. The
-  obligation "this loop's trip count ≤ N" is `QF_LIA`. Where no authority
-  establishes a bound, the program *correctly falls through* to a witnessed
-  failure — the same loud fall-through the ThreeBody close-encounter node relies
-  on, here meaning "seal this loop or it cannot be admitted." (Legible emission —
-  `bpf_loop`, open-coded iterators — is the [03](03_lowering_and_artifacts.md)
-  half; the *bound proof* is here.)
+Range evidence combines dataflow and guards with checked library laws and their
+premises; boundary declarations constrain what must fit. These are named facts
+with different roles, not competing authority tiers. A declared capacity limits
+what an endpoint admits; it does not prove the program's value lies within that
+capacity. Conversely, a sound inferred interval extending beyond a boundary is
+not itself a reachable counterexample: its excess may come from approximation.
+Refine the enclosure or establish the missing relation before committing an
+access. An unresolved containment obligation must prevent that commitment, but
+the diagnostic must distinguish missing proof from an exhibited violating value.
+See [range evidence and boundary constraints](../../../clef-lang-spec/spec/numeric-selection.md#3-range-evidence-and-boundary-constraints).
 
-  A subtlety worth stating: general loop termination is undecidable (it is Tier 3+
-  in the model, and outside all tiers in the limit). eBPF sidesteps this exactly
-  as the capstone's title move prescribes — by **construction**: the source
-  language admits only loops whose bound is establishable by an authority tier, so
-  the admissible subset is decidable not because termination became decidable but
-  because the un-boundable programs cannot be expressed as admissible.
+- **Loop termination → justified premises and a bound obligation.** The initial
+  subset requires bounds established by dataflow, a library law with checked
+  premises, or a declared input/helper contract whose assumptions remain visible.
+  Once the trip-count relation is linear, its containment in a declared limit is
+  a `QF_LIA` query. Deriving that relation is not automatically linear or free.
+  Current D10 introduces no source seal or width-named numeric type as a remedy.
+  An unresolved bound stays pending during elaboration and becomes a located,
+  stable diagnostic when admission requires it. Legible emission — including
+  `bpf_loop` or supported iterators — belongs to [03](03_lowering_and_artifacts.md).
+
+  General termination remains undecidable. The proposed subset accepts only the
+  loop forms and premises its analyses support; it does not turn arbitrary
+  termination into a decidable question or authorize an unchecked assertion.
 
 - **Pointer bounds → a range containment obligation.** Every packet/map access
   must be dominated by a guard proving the offset in range. Interval analysis (the
   same image computation that drives width inference) produces the range; the
-  obligation "0 ≤ off ∧ off + len ≤ end" is `QF_LIA`. The *emission* of the
+  obligation "0 ≤ off ∧ off + len ≤ end" is `QF_LIA` when the arithmetic is
+  justified over integers; wrap-sensitive operations need a suitable bit-vector
+  model or established no-overflow premises. The *emission* of the
   dominating guard in a verifier-legible shape is the legibility contract; the
   *proof that a guard suffices* is this obligation.
 
 - **Register ranges → range facts, threaded.** The verifier tracks per-register
-  ranges through every path. Interval analysis carries the identical information
-  as a coeffect; downstream containment obligations are `QF_LIA`/`QF_BV`.
+  ranges through control flow. Compiler range facts must be sound for the chosen
+  operations and legible in the emitted guards; the two analyses need not have
+  identical internal states. Downstream containment chooses `QF_LIA` or `QF_BV`
+  according to those semantics.
 
 - **Stack byte budget → a linear sum.** Given stack-scoped classification (Tier 1),
   the obligation "Σ frame_bytes ≤ 512" is a single linear inequality — the
@@ -127,8 +143,8 @@ the fragment the graduated model designates for Z3-class discharge.
 
 ### Advisory — the analysis-budget estimate
 
-The verifier abandons analysis after ~1M instructions of path state, and can
-reject *correct* programs for exhausting it. A **complexity-estimate coeffect**
+The verifier has host-dependent analysis limits and can reject programs that
+exhaust them. A **complexity-estimate coeffect**
 (path-state growth as a function of branch structure) lets the language server
 warn "this program's estimated verifier cost approaches the budget; consider
 splitting via tail calls" before a load fails. This one is honestly heuristic at
@@ -146,7 +162,8 @@ already defines —
 Dimension --range--> Representation --width--> Footprint --escape--> Allocation
 ```
 
-— is a chain of coeffects, every arrow settled at design time and carried forward.
+— is a chain of coeffects whose required facts are established before commitment
+and carried forward, with unresolved premises kept visible during elaboration.
 eBPF adds obligations that hang off the *same arrows*: representation selection
 (no FP) hangs off `range→Representation`; the stack budget hangs off
 `escape→Allocation`; loop bounds and pointer ranges are the interval-analysis
@@ -160,20 +177,23 @@ the framework was built to perform.
 ## The staged discharge, made concrete for a BPF program
 
 1. **Design time (front end).** As the developer writes an XDP filter, the PSG
-   accrues coeffects; the language server discharges the Tier-1 classifications
-   for free and the Tier-2 obligations (loop bound, pointer range, stack sum,
-   helper availability) as `QF_LIA`/`QF_BV` queries, surfacing any failure at the
-   offending span. The program is *known admissible before it is compiled.*
+   accrues coeffects and obligations. Structural capability checks and supported
+   arithmetic queries use their respective procedures. Diagnostics identify the
+   source span, boundary declaration and failed or unresolved premise. A solver
+   timeout or unknown result is not discharge. The resulting claim is scoped to
+   the supported subset, pinned host and recorded assumptions.
 2. **Build time (middle end).** Each MLIR lowering pass toward the BPF object is
    translation-validated by the SMT-dialect: a transformation that would move an
    access out from under its dominating guard, or unroll a loop past its certified
-   bound, or otherwise deform a certified property, is rejected. This is the
-   contractual answer to the clang-vs-verifier fight — the optimizer *cannot*
-   optimize a proof away.
+   bound, or otherwise deform a certified property, must be rejected when
+   preservation cannot be established. Evidence is tied to the actual lowered
+   artifact, not just the source-level claim.
 3. **External grade.** The CI oracle loads the object on the pinned kernel matrix
-   (and PREVAIL). Agreement is the expected case; disagreement is a reproducible
-   bug against either the proof layer (unsound) or the emission vocabulary
-   (illegible) — see [01](01_verifier_as_design_time_contract.md).
+   (and separately checks supported objects with PREVAIL). Agreement is evidence
+   for admission on those hosts, not a general validation of the proof engine.
+   Unexpected rejection is a reproducible contract, analysis or emission bug —
+   see [01](01_verifier_as_design_time_contract.md). Payload and numerical
+   preservation need their own checks, as [05](05_threebody_integration.md) explains.
 
 ## The braid connection, briefly
 
@@ -187,23 +207,23 @@ handshake on obligations that are almost all Tier 1/2, without simultaneously
 demanding the non-abelian braid sheaf that remains open research. The braid rides
 on delimited continuations and interaction nets preserved through MLIR; eBPF rides
 on the *same preservation discipline* applied to verifier guards. Proving the
-coupling on eBPF's tractable obligation set is a rehearsal that de-risks the
-harder braid demonstration later — same handshake, decidable payload.
+coupling on a bounded eBPF obligation set is a rehearsal for the harder braid
+demonstration later; tractability must be measured on the actual queries.
 
 ## What this waits on, honestly
 
-- **Tier-2 SMT integration.** The solver is available; the integration with Clef
-  attribute syntax and the PSG coeffect infrastructure is in design. eBPF's
-  obligations are squarely in the fragment that integration targets first, so eBPF
-  is a *driver* for it, not blocked behind something more distant.
+- **Tier-2 SMT integration.** Solvers are available; the eBPF path needs
+  supported obligations connected to the PSG, source diagnostics and target
+  declarations. It does not depend on inventing source seal attributes.
 - **The SMT-dialect obligation as an in-IR operation.** Named as current focus in
   the framework's own status notes; the build-time half of the staged discharge depends
-  on it. Until it lands, the design-time half plus the external oracle already
-  gives a working (if less airtight) admissibility story.
-- **Nothing at Tier 3/4.** eBPF admissibility deliberately requires none of the
-  probabilistic/relational machinery, the lemma library, or the pRHL checker.
-  That is the point: it is the deployment you can build while those mature.
+  on it. A smaller front-end-plus-load-test slice can supply bounded evidence
+  before complete lowering preservation is implemented.
+- **A bounded initial subset.** The first admission examples can use structural
+  checks and linear/bit-vector bounds without requiring the full relational or
+  nonlinear machinery. A program using a library lemma must still justify that
+  lemma's premises; broader application claims do not inherit admission's scope.
 
-The honest summary: the proof *design* is ready and the proof *engine* is early,
-and eBPF is precisely the target whose demands sit inside the ready part while
-supplying an external oracle that grades the early engine as it comes up.
+The deliverable is a bounded compiler-to-kernel agreement result, with located
+diagnostics and explicit assumptions. It supports the later composition without
+claiming that admission proves the whole application correct.

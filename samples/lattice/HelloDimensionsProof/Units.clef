@@ -1,0 +1,6 @@
+module HelloDimensionsProof.Units
+
+[<Measure>] type m
+[<Measure>] type s
+
+let speed (distance: float<m>) (elapsed: float<s>) = distance / elapsed

@@ -1,0 +1,19 @@
+module HelloDimensionsProof.Main
+
+open HelloDimensionsProof.Units
+
+let greet prefix =
+    fun name -> Console.writeln $"{prefix}, {name}!"
+
+[<EntryPoint>]
+let main argv =
+    let distance = 12.0<m>
+    let elapsed = 3.0<s>
+    let velocity = speed distance elapsed
+    Console.write "Enter your name: "
+    let name = Console.readln()
+    if velocity > 0.0<m/s> then
+        greet "Hello" name
+    else
+        Console.writeln "No forward motion."
+    0

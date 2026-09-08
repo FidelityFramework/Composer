@@ -26,6 +26,7 @@ bld/
 # .NET Core
 project.lock.json
 project.fragment.lock.json
+Directory.Build.local.props
 artifacts/
 
 # ASP.NET Scaffolding

@@ -25,6 +25,8 @@ module Alex.Traversal.SMTTransfer
 
 open Alex.Dialects.Core.Types
 open Alex.Dialects.Core.Serialize
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.DimensionAlgebra
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
 /// Transcribe one obligation into an isolated smt.solver scope.
@@ -47,8 +49,135 @@ let private scope (ob: ObligationInfo) : MLIROp list =
             smt (SMTNot (neg, ob'))
             smt (SMTAssert neg) ]
 
+    // The current SMT dialect has no Real sort. For these ground rational
+    // facts, a/b <= c/d is exactly a*d <= c*b when b,d > 0. Transcribe the
+    // products of integer constants rather than evaluating the comparison;
+    // this preserves the source QF_LRA claim in a QF_LIA solver scope.
+    let rationalComparisons (pairs: (ExactRational * ExactRational) list) : MLIROp list =
+        let statements = ResizeArray<MLIROp>()
+        let constant value =
+            let ssa = v ()
+            statements.Add(smt (SMTBigIntConstant(ssa, value)))
+            ssa
+        let product numerator denominator =
+            let a, b, output = constant numerator, constant denominator, v ()
+            statements.Add(smt (SMTIntMul(output, a, b)))
+            output
+        let clauses = pairs |> List.map (fun (left, right) ->
+            if left.Denominator <= 0I || right.Denominator <= 0I then
+                invalidArg "ob" (sprintf "Obligation '%s' requires positive rational denominators." ob.Id)
+            let l = product left.Numerator right.Denominator
+            let r = product right.Numerator left.Denominator
+            let clause = v ()
+            statements.Add(smt (SMTIntCmp(clause, SmtLe, l, r)))
+            clause)
+        let conjunction = v ()
+        statements.Add(smt (SMTAnd(conjunction, clauses)))
+        anchor conjunction (List.ofSeq statements)
+
+    let integerComparisons (pairs: (bigint * bigint) list) : MLIROp list =
+        let statements = ResizeArray<MLIROp>()
+        let clauses = pairs |> List.map (fun (left, right) ->
+            let l, r, comparison = v (), v (), v ()
+            statements.Add(smt (SMTBigIntConstant(l, left)))
+            statements.Add(smt (SMTBigIntConstant(r, right)))
+            statements.Add(smt (SMTIntCmp(comparison, SmtLe, l, r)))
+            comparison)
+        let conjunction = v ()
+        statements.Add(smt (SMTAnd(conjunction, clauses)))
+        anchor conjunction (List.ofSeq statements)
+
     let ops =
         match ob.Body with
+        | ObligationBody.IntegerLiteralRange (value, lower, upper) ->
+            integerComparisons [ lower, value; value, upper ]
+        | ObligationBody.IntegerRepresentationCoverage (lower, upper, minimum, maximum) ->
+            integerComparisons [ minimum, lower; lower, upper; upper, maximum ]
+        | ObligationBody.RealLiteralRange (value, lower, upper) ->
+            rationalComparisons [ lower, value; value, upper ]
+        | ObligationBody.RealRepresentationCoverage (lower, upper, minimum, maximum) ->
+            rationalComparisons [ minimum, lower; lower, upper; upper, maximum ]
+        | ObligationBody.ApplicationDimensions comparisons ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let ssa = v ()
+                statements.Add(smt (SMTIntConstant(ssa, int64 value)))
+                ssa
+            let equation left right =
+                let l, r, output = constant left, constant right, v ()
+                statements.Add(smt (SMTEq(output, l, r, SMTInt)))
+                output
+            let clauses =
+                [ for _, expected, actual in comparisons do
+                    match expected, actual with
+                    | Some expected, Some actual ->
+                        let coordinates project =
+                            let left, right = project expected, project actual
+                            Set.union (left |> Map.keys |> Set.ofSeq) (right |> Map.keys |> Set.ofSeq)
+                            |> Set.toList
+                            |> List.map (fun axis ->
+                                (Map.tryFind axis left |> Option.defaultValue 0),
+                                (Map.tryFind axis right |> Option.defaultValue 0))
+                        let axes = coordinates (fun d -> d.Bases) @ coordinates (fun d -> d.Vars)
+                        match axes with
+                        | [] -> yield equation 0 0 // Both dimensions are explicitly dimensionless.
+                        | _ ->
+                            for left, right in axes do
+                                yield equation left right
+                    | _ -> yield equation 0 1 ] // Missing evidence cannot establish compatibility.
+            let definition =
+                match clauses with
+                | [] -> equation 0 1
+                | [single] -> single
+                | _ ->
+                    let conjunction = v ()
+                    statements.Add(smt (SMTAnd(conjunction, clauses)))
+                    conjunction
+            anchor definition (List.ofSeq statements)
+        | ObligationBody.DimensionalRelation (rule, left, right, result) ->
+            let dimensions = left :: right :: Option.toList result
+            let coordinates project =
+                dimensions |> List.collect (project >> Map.toList >> List.map fst)
+                |> Set.ofList |> Set.toList
+                |> List.map (fun axis ->
+                    let exponent dim = project dim |> Map.tryFind axis |> Option.defaultValue 0
+                    exponent left, exponent right, Option.map exponent result)
+            let axes = coordinates (fun d -> d.Bases) @ coordinates (fun d -> d.Vars)
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let ssa = v ()
+                statements.Add(smt (SMTIntConstant(ssa, int64 value)))
+                ssa
+            let equation left right =
+                let ssa = v ()
+                statements.Add(smt (SMTEq(ssa, left, right, SMTInt)))
+                ssa
+            let clauses =
+                [ for left, right, output in axes do
+                    let l, r = constant left, constant right
+                    match rule, output with
+                    | DimensionalRule.Product, Some output
+                    | DimensionalRule.Quotient, Some output ->
+                        let expected = v ()
+                        statements.Add(smt (if rule = DimensionalRule.Product then SMTIntAdd(expected, l, r) else SMTIntSub(expected, l, r)))
+                        yield equation (constant output) expected
+                    | DimensionalRule.SameDimension, Some output ->
+                        yield equation l r
+                        yield equation (constant output) l
+                    | DimensionalRule.Comparison, None -> yield equation l r
+                    | _ -> () ]
+            let definition =
+                if (rule = DimensionalRule.Comparison) <> Option.isNone result then
+                    equation (constant 0) (constant 1)
+                else
+                    match clauses with
+                    | [] -> equation (constant 0) (constant 0)
+                    | [single] -> single
+                    | _ ->
+                        let conjunction = v ()
+                        statements.Add(smt (SMTAnd(conjunction, clauses)))
+                        conjunction
+            anchor definition (List.ofSeq statements)
         | ObligationBody.StorageReservation (len, storage) ->
             let s = v ()
             let l = v ()
@@ -247,9 +376,14 @@ let private scope (ob: ObligationInfo) : MLIROp list =
                   smt (SMTIntConstant (b, bound))
                   smt (SMTIntCmp (def, SmtLe, rm1, b)) ]
 
+    let logic, transformation =
+        match ob.Body with
+        | ObligationBody.RealLiteralRange _ | ObligationBody.RealRepresentationCoverage _ ->
+            "QF_LIA", [ MLIROp.RawMLIR "// Exact rational bounds: QF_LRA comparisons with positive denominators cleared to QF_LIA." ]
+        | _ -> ob.Logic, []
     [ MLIROp.RawMLIR (sprintf "// %s: %s" ob.Id ob.Statement)
       MLIROp.RawMLIR (sprintf "// origin: %s" ob.Source)
-      smt (SMTSolver (smt (SMTSetLogic ob.Logic) :: ops @ [ smt SMTCheck ])) ]
+    ] @ transformation @ [ smt (SMTSolver (smt (SMTSetLogic logic) :: ops @ [ smt SMTCheck ])) ]
 
 /// The verification module from the graph's obligations.
 /// Pure function: ObligationInfo list -> MLIR text. The list is

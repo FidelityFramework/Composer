@@ -1,0 +1,7 @@
+<Project>
+  <!-- Optional local checkout selection; command-line properties still take precedence. -->
+  <Import Project="$(MSBuildThisFileDirectory)Directory.Build.local.props" Condition="Exists('$(MSBuildThisFileDirectory)Directory.Build.local.props')" />
+  <PropertyGroup>
+    <ClefCompilerServiceProject Condition="'$(ClefCompilerServiceProject)' == ''">$(MSBuildThisFileDirectory)../clef/src/Compiler/Clef.Compiler.Service.fsproj</ClefCompilerServiceProject>
+  </PropertyGroup>
+</Project>

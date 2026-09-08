@@ -1,188 +1,182 @@
 # ThreeBody Integration: The Kernel in the Heterogeneous Weave
 
 **SpeakEZ Technologies | Fidelity Framework**
-**July 2026 — exploratory design note**
+**July 2026 — exploratory design note; aligned with the current contract model September 2026**
 
-ThreeBody routes each regime of a gravitational simulation to the substrate that
-suits it — close encounters to an FPGA (b-posit + quire, where IEEE FP64
-catastrophically cancels), the bulk to a GPU, the far field to an NPU,
-orchestration to the CPU. This document adds the substrate ThreeBody is currently
-missing: the **kernel**, in two roles. The headline role is the one that turns
-heads — the **CPU↔FPGA weld over a Layer-2 link**, where eBPF/XDP routes the
-FPGA's frames *without traversing the full network stack*, making the sidecar a
-genuine two-way kernel/userspace participant whose computational integrity is
-preserved across the boundary. The second role is observation: kernel-verified
-instrumentation that lets the demo watch itself.
+ThreeBody aims to demonstrate how posit/quire precision can extend useful
+prediction and tape-free numerical reversal in a chaotic gravitational
+simulation. It compares trajectories with an independent reference and IEEE
+controls, then recomputes the return trajectory without a saved tape. The useful
+prediction horizon and reversal residual are the measurements that establish
+what each representation achieves.
 
-> **Status honesty.** ThreeBody is documentation-only today — empty `src/`, and
-> Composer's numeric-selection guide §13 labels it "a design proposal to rebuild"
-> whose repo docs carry drift the spec now polices (quire size, `es`, the
-> four-architecture framing). The eBPF track must **not** hang its MVP on
-> ThreeBody's rebuild. eBPF gets its own hello-world progression
+The proposed placement puts close encounters on an FPGA, bulk work on a GPU,
+far-field work on an NPU and orchestration on the CPU. This note adds the kernel's
+data and observation paths. Those paths, BAREWire's shared contracts and the
+compiler's proof machinery support the numerical experiment; they are not its
+primary purpose. BAREWire is the glue between these substrates. The same glue
+also serves Conclave, a platform for intelligent distributed systems on Cloudflare.
+
+> **Status honesty.** ThreeBody is documentation-only today — empty `src/`;
+> the placements and supervisor described here are proposals, not an executed
+> CPU→kernel→FPGA round trip. The current [numeric-selection specification](../../../clef-lang-spec/spec/numeric-selection.md)
+> governs representation and quire adequacy. The eBPF track must **not** hang its
+> MVP on ThreeBody's rebuild. eBPF gets its own hello-world progression
 > ([below](#the-ebpf-hello-progression-comes-first)); ThreeBody integration is
-> the *later synthesis*, honoring §13's corrections.
+> the later synthesis.
 
-## The headline: the FPGA weld as a proof of fusion
+## The data plane supports the numerical experiment
 
-ThreeBody reaches the Arty A7 sidecar over a **Layer-2 network link** — not a
-local bus. That choice is not incidental; it is the demo's most interesting claim.
-A user-space-only heterogeneous demo (marshal, `send()`, `recv()`, unmarshal
-through the full TCP/IP stack) is *satisfying* but unremarkable. A demo where the
-close-encounter frames reach the FPGA and return **through kernel-level routing
-that skips the stack** is a different statement: that the CPU and FPGA are welded
-into one computation whose integrity survives the substrate crossing, at a latency
-the full stack cannot offer.
+The proposed Arty A7 sidecar uses a **Layer-2 network link**. Its transport must
+preserve the agreed representation and keep the experiment's latency measurable.
+Stack bypass is a candidate mechanism, not evidence by itself that the numerical
+result is preserved or that a deadline is met.
 
-The physics makes this a hard requirement, not a flourish. Close encounters are
-~0.1% of interactions but they are the *timestep-critical* ones — the integrator
-cannot advance until the exact b-posit force comes back from the sidecar. Every
-microsecond of stack traversal on that path is integrator stall. So the transport
-for the FPGA weld wants to be:
+Close-encounter results can lie on the integrator's critical path. The workload
+must establish their frequency, payload and deadline; the transport design is:
 
-- **On the fast path in:** an **XDP** program at the driver, before the `sk_buff`
-  exists, recognizing the sidecar's return frames by their L2 signature and
-  `XDP_REDIRECT`-ing them straight to the consumer — or into an **AF_XDP** socket
-  whose UMEM rings the orchestrator reads with zero copy. The frame never climbs
-  the IP/TCP layers it does not need.
-- **On the fast path out:** frames to the sidecar emitted through the same
-  AF_XDP path, bypassing the stack in the other direction.
-- **Bounded and legible:** the XDP classifier is exactly the kind of program
+- **In:** native-driver **XDP** classifies received frames and redirects matching
+  traffic through an XSKMAP to the AF_XDP RX ring.
+- **Out:** userspace submits frames through the **AF_XDP TX ring**. This does not
+  require outgoing traffic to traverse an XDP receive program.
+- **Ownership:** FILL/RX and TX/COMPLETION transfer UMEM ownership. Completion
+  returns a buffer for reuse; it is not an application reply or proof of delivery.
+- **Bounded and legible:** the classifier is the kind of program
   [01](01_verifier_as_design_time_contract.md)–[04](04_admissibility_as_proof_obligations.md)
-  describe — straight-line parse, one bounded loop at most, a map lookup, a verdict
-  — admissible *by construction* from Clef source.
+  describe — bounded parse, guarded lookup, typed verdict — whose emitted
+  bytecode must pass the pinned kernel's verifier.
 
-This is where the two kernel transcripts fuse. **eBPF/XDP** is the verified
-routing that keeps the FPGA frames off the slow path; **io_uring / AF_XDP shared
-rings** are the zero-copy hand-off between kernel and orchestrator — BAREWire's
-zero-copy philosophy meeting the kernel's own ring buffers. (io_uring itself is a
-userspace-runtime concern of the async track, not a compile target; it appears
-here only at this seam.)
+AF_XDP zero-copy depends on the driver, device and bind mode; copy mode remains
+possible. A benchmark must record the selected mode, and a profile requiring
+zero-copy must fail when unavailable. Ring producers and consumers must obey
+their ownership and synchronization rules. See the [Linux AF_XDP documentation](https://docs.kernel.org/networking/af_xdp.html).
+io_uring is a separate userspace I/O mechanism; it is not the AF_XDP transport.
 
-### Why the weld preserves computational integrity
+### The joint contract, and what each check establishes
 
-The claim that turns heads is not "it's fast." It is that **the fusion does not
-deform the computation.** Three properties, each traceable to standing framework
-art:
+Integrity needs several obligations to agree on the same declarations. Passing
+one does not discharge the others:
 
-1. **The number type crosses intact.** The close-encounter contract is b-posit32 +
-   800-bit quire, sealed at the force site (Tier 3 seal, per numeric-selection
-   §13). BAREWire carries that value across the L2 link as schema-verified,
-   zero-copy bytes — the *same* representation the FPGA computed and the CPU
-   integrator consumes. No re-encoding, no silent widening, no JSON-lossy
-   round-trip. The dimensional metadata (`float<N>`, the force law's units) rides
-   with it. The weld is a data-plane crossing that a *type* survives, which is the
-   javascript-targeting / BTF thesis ([03](03_lowering_and_artifacts.md)) applied
-   to a wire.
+1. **Numerical meaning and representation.** The application fixes the force
+   law, dimensions, normalization and error experiment. A boundary descriptor
+   fixes the selected format, widths, byte/limb order and payload layout; the
+   compiler checks coverage at that boundary. Under current D10 there are no
+   source seals or width-named numeric source types. Names such as b-posit32 and
+   800-bit quire describe a boundary format, not an annotation the developer puts
+   on a value. Both endpoints must agree before representation erasure: the
+   untagged bytes do not carry dimensions or reconstruct the contract themselves.
 
-2. **The routing is proven not to corrupt.** The XDP classifier that redirects the
-   frames is itself admissible-by-construction: its bounds are proven, its map
-   accesses guarded, its verdict typed. The frame that reaches the orchestrator
-   was routed by a program the kernel certified cannot have mangled it. Contrast a
-   hand-written C XDP program whose correctness is a load-time gamble — here the
-   routing layer inherits the same design-time guarantee as the physics.
+2. **Kernel admission and payload preservation.** The verifier checks the
+   delivered program against its safety rules. A legal program can still modify
+   or drop a payload. A read-only classifier therefore needs a separate effect
+   or equivalence argument that it preserves the payload bytes it redirects,
+   alongside bounds, helper availability and map-layout checks. The kernel,
+   JIT, helpers, driver and FPGA implementation remain explicit external
+   assumptions unless independently justified. Admission is not a proof of
+   force accuracy, packet authenticity or end-to-end delivery.
 
-3. **The crossing is a supervised, two-way process.** The FPGA actor
-   (`FpgaBPosit`) already lives under Prospero's OneForOne supervision, and the
-   demo's fault story is "USB-C disconnect → actor dies → restart on reconnection."
-   Over an L2 link, the *link itself* becomes the observable: the XDP path can
-   feed real frame-arrival timing and loss into the supervisor, so a degraded or
-   silent sidecar is detected from kernel-level evidence rather than a userspace
-   timeout. The weld is genuinely bidirectional — commands and frames out,
-   forces and link-health in — and the health signal is itself kernel-verified.
+3. **Framing, resources and session state.** BAREWire supplies the envelope and
+   correlation field, bounded decoding, layout validation and declared buffer
+   bounds. Endpoint logic must enforce schema agreement, request/timestep
+   matching, length checks, ownership, duplicate/stale-result policy and timeout.
+   Timestamps and counters can inform a proposed Prospero supervisor; silence
+   still requires a deadline and a decision in the host. Restart policy must
+   not allow a result from an earlier session to advance the current simulation.
 
-The heterogeneous-compute thesis was: *place each regime on the substrate whose
-structure fits it.* The FPGA weld extends the thesis one level — **place the
-transport of a regime on the substrate whose structure fits it too.** The
-timestep-critical path gets kernel-verified, stack-bypassing routing because that
-is what its latency and integrity demand, and that placement is a design-time
-decision exactly like the regime routing above it.
+The existing BAREWire ThreeBody fixture derives a 124-byte layout: three U32
+identifiers, three U32 force components and 25 U32 quire words. It checks layout
+and BTF offsets and asks cvc5 whether that declared buffer fits a 1500-byte unit.
+This is useful bounded evidence, not a numerical codec or a hardware round trip
+([fixture](../../../BAREWire/tests/PlatformTests.fs)). The real transport must
+account for its envelope and framing overhead; a throughput obligation also needs
+the simulation's period and traffic volume.
+
+Keep these checks located and diagnosable: a stable diagnostic identifies the
+obligation, source or boundary declaration and failed premise. Linear bounds fit
+QF_LIA; finite bit-layout checks can use QF_BV. Decidability does not promise a
+small solving cost, and nonlinear numerical bounds need their own justified
+enclosures. A timeout, unknown result or missing premise remains unresolved;
+it cannot silently become proof. The proposed joint proof graph must retain
+both discharged obligations and external assumptions through lowering.
 
 ## The second role: the observation plane
 
-The demo already reserves a `Telemetry` actor for "hardware counter collection +
-display." eBPF completes the thesis by making the *observation regime* another
-placed substrate: kernel-verified instrumentation, compiled from the same language
-as the physics, streaming into that actor.
+The proposed `Telemetry` actor can receive instrumentation compiled from the same
+language as the physics. This helps explain the numerical and latency results.
 
-- **USB URB / link latency** to the sidecar (a kprobe or the XDP path's own
-  timestamps) — the ground truth behind Prospero's restart decisions.
-- **GPU submission latency** (ioctl / fence-wait kprobes on the DRM path) — is the
-  medium-distance regime keeping up?
-- **Scheduler latency** across the actor threads (`sched` tracepoints) — are the
-  four regime actors getting their cores?
+- **Frame arrival, loss counters and link latency** from the receive path —
+  observations for the host's deadline and restart decisions.
+- **GPU submission latency** (ioctl / fence-wait probes on the DRM path) —
+  is the medium-distance regime keeping up?
+- **Scheduler latency** across the actor threads (`sched` tracepoints) —
+  are the regime actors getting their cores?
 
-Each stream is integers — histograms and counters, which is all eBPF can compute
-(no FP) and exactly what telemetry wants — framed as BAREWire records through a
-ring-buffer map into the Telemetry actor, rendered in the demo's own Wayland
-panels (`Platform.Display`, no WebView). **The demo watches itself with
-kernel-verified instrumentation.** Every regime of the problem — including the
-meta-regime of observing the problem, and the transport of the regimes — is placed
-by design-time analysis.
+Each stream uses integer histograms and counters rather than floating-point
+arithmetic, framed as BAREWire records through a ring-buffer map into the
+Telemetry actor and rendered in the proposed Wayland panels (`Platform.Display`,
+no WebView). Verifier admission protects the probe's permitted operations;
+timestamp interpretation, dropped events and the observer's effect on timing
+still belong in the experiment's evidence.
 
 ## The full picture
 
-```
-                         ┌─────────────────────────────────────────┐
-                         │  Orchestrator (CPU actor, Clef→native)   │
-                         │  timestep · regime classify · Prospero   │
-                         └───▲───────────────▲──────────────▲───────┘
-  forces (b-posit+quire) │   telemetry    │   verdicts   │
-        BAREWire, zero-copy  │  (ring buffer)  │             │
-                    ┌────────┴───────┐  ┌──────┴──────┐  ┌───┴────────┐
-                    │  AF_XDP UMEM   │  │ ringbuf map │  │  GPU / NPU │
-                    │  rings (kernel)│  │  (kernel)   │  │  actors    │
-                    └────────▲───────┘  └──────▲──────┘  └────────────┘
-     ══ L2 link ══▶ ┌────────┴───────┐         │
-     Arty A7 frames │  XDP program   │─────────┘  observation-plane probes
-     (close-encntr) │  (Clef→BPF .o) │            (kprobe/tracepoint → ringbuf)
-                    │  parse·guard·  │            all Clef→BPF, admissible
-                    │  REDIRECT      │            by construction
-                    └────────────────┘
+```text
+CPU orchestrator ── AF_XDP TX / NIC ── L2 request ──▶ FPGA
+CPU orchestrator ◀─ AF_XDP RX / XDP ◀─ L2 reply ───── FPGA
+       ▲                 │
+       └── telemetry ring / probes
+
+Shared boundary contract: format · layout · bounds · session/timestep
+Separate evidence: admission · payload preservation · numerical accuracy
 ```
 
-Two kernel-resident Clef→BPF artifacts (the XDP router; the probe set), both
-admissible by construction; two kernel/userspace zero-copy seams (AF_XDP rings for
-the data plane, a ring-buffer map for telemetry); one L2 weld that a sealed
-b-posit+quire value crosses without deformation.
+The intended artifacts are an XDP classifier and a probe set, each admitted on
+the pinned kernel. Their evidence supports the shared computation; neither
+replaces evidence about the numerical kernel or its transport.
 
 ## The eBPF hello progression comes first
 
-Before any of the above, eBPF earns its place with a standalone progression
-modeled on FidelityHelloWorld / HelloArty — each step a compile→load→run proof
-that the pipeline works, graded by the external oracle:
+Before this synthesis, eBPF earns its place with a standalone progression
+modeled on FidelityHelloWorld / HelloArty — each step a compile→load→run check
+graded by the external oracle:
 
-| Step | Program | Proves |
+| Step | Program | Establishes |
 |---|---|---|
-| **B-01** | XDP packet counter, per-CPU array map | The whole pipeline: `DeclRoot.BpfProgram`, the LLVM BPF artifact tail, a map, load + attach + run |
-| **B-02** | XDP drop-by-blocklist, `.rodata`/array-map config from userspace | The capability gate + static-placement of pushed-down config; a bounded map-lookup verdict |
-| **B-03** | kprobe latency histogram → ring buffer | The observation-plane primitive; ring-buffer streaming to userspace |
-| **B-04** | AF_XDP redirect to a userspace ring | The data-plane hand-off the FPGA weld needs |
-| **B-05 (synthesis)** | ThreeBody FPGA-weld router + telemetry probes | The full circle, on a rebuilt ThreeBody honoring §13 |
+| **B-01** | XDP packet counter, per-CPU array map | The pipeline: `DeclRoot.BpfProgram`, LLVM BPF artifact, map, load + attach + run |
+| **B-02** | XDP drop-by-blocklist, `.rodata`/array-map config from userspace | Capability and placement gates; bounded map-lookup verdict |
+| **B-03** | kprobe latency histogram → ring buffer | Observation-plane streaming to userspace |
+| **B-04** | AF_XDP redirect to a userspace ring | Data-plane hand-off, with the selected driver/bind mode recorded |
+| **B-05 (synthesis)** | ThreeBody FPGA router + telemetry probes | Composition evidence supporting the rebuilt numerical experiment |
 
-B-01 through B-04 are independent of ThreeBody and prove the target on their own.
-B-05 is the synthesis, gated on ThreeBody's rebuild — not on eBPF.
+B-01 through B-04 are independent of ThreeBody and validate the target on their
+own. B-05 is gated on both that progression and the numerical rebuild.
 
 ## Corrections inherited from ThreeBody §13
 
-When B-05 is built, it inherits the numeric-selection guide's required
-corrections so the demo argues *for* the framework rather than against it:
-normalize to natural units (G = 1) so constants do not land in the wide-dynamic
-band that routes to IEEE; 800-bit quire (fixed 25×32-bit vector for b-posit, independent of precision), not 512-bit;
-`eS = 5`; a symplectic/time-reversible integrator with an independent
-high-precision reference; conserved-quantity drift (energy, angular momentum, and
-the currently-omitted linear momentum) as the witnessed evidence. The eBPF layer
-does not touch the arithmetic; it routes and observes. But the synthesis demo is
-only credible on a corrected simulation, so B-05 waits for that rebuild by design.
+When B-05 is built, the numerical experiment needs normalized, justified input
+ranges; units alone do not establish coverage. The selected b-posit32 boundary
+uses the documented `eS = 5` and 800-bit quire layout (25×32-bit words). A finite
+quire requires exact product representation and bounds on every reachable
+partial sum in evaluation order. Its fixed allocation does not permit unlimited
+exact accumulation; final rounding and prior input error remain. The
+[normative adequacy contract](../../../clef-lang-spec/spec/numeric-selection.md#1021-the-quire-adequacy-invariant)
+governs this independently of the kernel's admission rules.
 
-## Why this is the full-circle moment
+Use a symplectic, time-reversible integrator and an independent high-precision
+reference. Compare energy, angular and linear momentum drift, useful trajectory
+horizon and reversal residual against the number of steps, with FP64 and
+compensated-summation controls. Reversal means negating momenta and recomputing
+with the same forward operator, without replaying saved states. It does not mean
+bit-exact recovery. Measure whether posit/quire extends the useful horizon; it
+does not change the physical system's Lyapunov exponent. A proposed structural
+reversibility type would be representation-agnostic and is not a numerical
+accuracy certificate.
 
-HelloArty proved width inference to real silicon: dimensional and coeffect
-guarantees carried into an Artix-7 bitstream through place-and-route. The eBPF
-weld proves the *complementary* half — that a design-time proof obligation
-(admissibility) can be discharged such that a **verified artifact loads into a
-production kernel by construction**, and that the resulting kernel/userspace
-fusion carries a computation across substrates without deforming it. One end of
-the story is "our proofs reach the fabric." The other is "our proofs reach the
-kernel, and weld two substrates into one integer-honest, posit-exact computation
-that skips the stack." ThreeBody is where both ends meet in a single running
-demo — the heterogeneous weave with the kernel finally in it.
+## What a successful synthesis would show
+
+HelloArty supplies precedent for carrying width information into a hardware
+artifact. The eBPF progression adds an independent kernel admission gate.
+ThreeBody then asks the application question: can the composed system preserve
+enough numerical information to extend useful prediction and tape-free reversal,
+within its measured latency budget? Answer that with the numerical curves and
+the declared assumptions alongside the layout, transport and compiler evidence.

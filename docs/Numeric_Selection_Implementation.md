@@ -2,17 +2,19 @@
 
 > **Audience:** Composer compiler implementers.
 > **Scope:** Building compile-time selection of the numeric *representation* of real-valued quantities (posit / IEEE-754 / fixed-point) as the real-valued sibling of integer width inference.
-> **Single source of truth.** The **normative** account of numeric selection — the objective, the side-conditions, the tiered authority model, the capability gate, the default/unobservable contract, the representation scope split, the quire pass, the preservation chain, and the citation posture — lives in the ratified spec chapter [`numeric-selection.md`](../../clef-lang-spec/spec/numeric-selection.md). **This guide carries implementation-HOW only** (where the code goes, what the passes compute, what data structures carry the results, milestone order). It **links** every normative claim into the spec and does **not** restate it. If a WHAT question arises, the spec answers it; do not duplicate spec text here, or the two drift.
+> **Single source of truth.** The **normative** account of numeric selection — the objective, the side-conditions, range evidence and boundary constraints, the capability gate, the default/unobservable contract, the representation scope split, the quire pass, the preservation chain, and the citation posture — lives in the ratified spec chapter [`numeric-selection.md`](../../clef-lang-spec/spec/numeric-selection.md). **This guide carries implementation-HOW only** (where the code goes, what the passes compute, what data structures carry the results, milestone order). It **links** every normative claim into the spec and does **not** restate it. If a WHAT question arises, the spec answers it; do not duplicate spec text here, or the two drift.
 
-> **What to build toward.** The highest-leverage user-facing payoff is **design-time relative-accuracy preservation** (§10): showing, per target, how much accuracy each candidate representation preserves across a value's actual range, before anything runs. Prioritize that surfacing early, even atop a coarse objective, because that is where "this compiler is materially different" shows.
+> **What to build toward.** The user-facing payoff is **design-time relative-accuracy preservation** (§10): showing, per target, how much accuracy each candidate representation preserves across a value's justified range, before anything runs. Surface the supported cases early and make unresolved range obligations visible alongside them.
 
 ---
 
 ## 0. Orientation
 
-Composer already ships a complete *integer* representation-selection pipeline: `IntervalAnalysis.fs` (interval domain) → an abstract `IntWidth 0` sentinel at type-lowering → a single `narrowType` resolver → a hard error (`FPGA0001`) when a node's range is unobservable → check-time diagnostics → platform capability facts. **Numeric selection is the missing real-number twin of that pipeline.** Reals currently bypass it: `TypeMapping.fs` hard-binds `NTUfloat (Fixed 32/64) → TFloat F32/F64` before any analysis can run. The work is to slot a parallel real-number flow into the *same frame*. Reusable: the PSG traversal skeleton, the coeffect-carriage discipline, the sentinel/resolver pattern, the diagnostic plumbing. Not reusable: the *transfer functions* — the real interval domain is a new, research-grade abstract interpreter, not a port of the int64 one (§3.2). Plan the project around that asymmetry.
+Numeric selection extends the range-analysis and PSG-coeffect machinery used for integer width inference. Range propagation runs during elaboration; saturation settles the range and representation against the section's platform declaration before the witness boundary. Later lowering consumes that decision. The real interval domain needs its own transfer functions, sound enclosure method, and terminating widening (§3.2).
 
-*(The normative model this pipeline implements — objective, tiers, defaults, quire, preservation chain — is [`numeric-selection.md`](../../clef-lang-spec/spec/numeric-selection.md). This section is the Composer-internal framing of how it maps onto the existing width-inference machinery.)*
+This guide is an implementation design, updated in September 2026, rather than a completion ledger. Earlier drafts used `IntervalAnalysis`, `IntWidth 0`, `narrowType`, and fixed `NTUfloat` cases as their starting points. Those names are historical navigation aids, not authority to retain backend selection or width-bearing source types. [NTU Types](../../clef-lang-spec/spec/ntu-types.md) governs the phase boundary: kind and dimension define numeric identity; range and representation travel beside it.
+
+*(The normative model this pipeline implements — objective, range evidence, defaults, quire, preservation chain — is [`numeric-selection.md`](../../clef-lang-spec/spec/numeric-selection.md). This section is the Composer-internal framing of how it maps onto the existing width-inference machinery.)*
 
 ---
 
@@ -25,6 +27,7 @@ The resolver is the single choke point the spec's objective is realized at. It i
 ```fsharp
 /// Returns Ok r* | Error <coverage-empty | near-zero-degenerate>
 /// Implements numeric-selection.md §2 (objective + both side-conditions).
+/// Called after required range/platform facts resolve; pending facts never mean unavailable.
 let selectRepresentation
         (target: Target)
         (range: RealInterval)
@@ -46,33 +49,34 @@ let selectRepresentation
 
 ---
 
-## 2. Tier plumbing — how the range input reaches the resolver
+<a id="2-tier-plumbing--how-the-range-input-reaches-the-resolver"></a>
 
-**Normative tier model + precedence-override composition:** [`numeric-selection.md` §3](../../clef-lang-spec/spec/numeric-selection.md#3-the-tiered-authority-model). The three tiers are provenances of the one resolver's `[a,b]` input, not three algorithms; composition is precedence-override, not intersection. Do not restate the rules — implement the carriage.
+## 2. Range-evidence plumbing — how facts reach the resolver
 
-```fsharp
-type TierClaim =
-    | Tier1 of RealInterval          // dataflow, if analysis terminated with a bound
-    | Tier2 of RealInterval          // Fidelity.Physics library
-    | Tier3 of Representation         // sealed; implies its dynrange as a range claim
+**Normative evidence and boundary contract:** [`numeric-selection.md` §3](../../clef-lang-spec/spec/numeric-selection.md#3-range-evidence-and-boundary-constraints). Carry each fact's justification and applicability on the PSG. Its origin does not give it priority over another fact or determine its verification tier.
 
-/// Highest present tier binds; lower tiers become consistency obligations (diagnostics),
-/// never inputs to the bound range. Total and decidable — no empty-intersection state.
-/// Implements the composition rule of numeric-selection.md §3.4.
-let composeTiers (claims: TierClaim list) : RealInterval * Disagreement list =
-    let binding = claims |> List.sortByDescending tierRank |> List.head |> claimRange
-    let obligations =
-        claims |> List.choose (fun c ->
-            let lower = claimRange c
-            if not (contains binding (inflate lower tolerance) lower)
-            then Some (TierDisagreement (c, binding))   // diagnostic; does NOT change binding
-            else None)
-    binding, obligations
-```
+Typical inputs and their implementation obligations include:
 
-**Tier 3 is sealing (selection-in-reverse):** the developer fixes a representation; the resolver runs the coverage check on a singleton `R` (spec §5, Sealing and Reverse Selection). A covering-but-suboptimal seal still compiles; Lattice witnesses the suboptimality (`suboptimal-seal` diagnostic).
+| Input | Carriage | Admission or use-site obligation |
+|---|---|---|
+| Dataflow analysis and guards | Sound enclosure or relation, derivation, value identities, branch polarity, and storage dependencies | Establish validity in the current context; invalidate storage-dependent facts after relevant writes |
+| Checked domain law | Law identity, dimensional substitution, instantiated premises, accepted justification, and resulting enclosure | Check the law's premises and supported bound evaluation at the use site |
+| Input contract or supplied hypothesis | The asserted property, its subject and scope, and whether it is assumed or established by a guard, decoder, or other check | Retain the assumption or discharge its validation obligation; a declaration alone is not a proof about arbitrary input |
+| Declared boundary representation | Site, format, capacity, dimensional correspondence, and transfer semantics | Establish that the value fits the declared capacity and satisfies transfer fidelity; capacity alone supplies no bound on an outgoing value |
 
-**Honest Tier-1 scope (implementation reality).** Tier 1 succeeds automatically only when the range is bounded by dataflow alone: closed-form, division-free or division-with-known-nonzero-lower-bound, profiled, or annotated. Real physics with division by a quantity whose lower bound is not in dataflow (e.g. `r²` in a denominator) falls through to Tier 2/3 or the §6 error. Do not over-promise the garden path.
+These are common sources of evidence and constraints, not an exhaustive classification or an authority hierarchy. Keep observed profiling bounds separate from universal range evidence: a sample range is not a sound enclosure of every execution. Admission of profiling evidence still needs its specified trust and validation model.
+
+The range-carriage pass should:
+
+1. Associate each enclosure with the same value identity, dimension, validity context, and premises used to justify it. Preserve relations as well as interval consequences; bounds on different values or mutually exclusive paths cannot simply be intersected.
+2. Admit a law's consequence only when its justification applies and its required premises hold. Missing premises remain pending, retaining their provenance for later context or a located diagnostic.
+3. Refine jointly with compatible justified enclosures for that value in that context. Their intersection is a sound enclosure. A broad dataflow enclosure extending outside a narrower checked-law enclosure is not evidence of a reachable counterexample; the broad enclosure may include unreachable values.
+4. Keep inconsistent premises, unresolved consistency, and established unreachability distinct. An empty intersection requires examining the derivations and context. Conflicting declarations or unjustified assumptions cannot discharge coverage vacuously. An accepted proof of path unreachability instead produces a reachability fact; it is not a selected representation for a reachable value.
+5. Pass the justified range and retained evidence to selection. At a declared boundary, restrict selection to its declared candidate and establish coverage separately. Containment of a sound enclosure in the capacity is sufficient; a supported guard or proof may establish coverage when a coarse enclosure does not. If coverage is still unresolved at commitment, compilation fails there. A proven violation and an inability to establish coverage need distinct diagnostic explanations.
+
+**Boundary selection.** A platform description, wire schema, or binding descriptor fixes the representation at a site (spec §5). It does not override an inferred range. A covering-but-suboptimal declaration receives the CCS8014 informational finding only after the required coverage and transfer-fidelity obligations hold. No source seal or width-named numeric type is introduced. Justified bounds must include any required uncertainty allowance; a tolerance cannot waive a known inconsistency. The pass names and sketches in this guide are illustrative implementation planning, not existing public APIs.
+
+**Automatic range-analysis scope.** Closed-form arithmetic can yield bounds when its operands and domain conditions are established. Division by a quantity with no known nonzero lower bound (e.g. `r²`) may remain unbounded. A checked law, guard, or justified input premise can supply the missing fact; merely importing a library cannot establish a fact about every caller. Keep an unresolved obligation pending until the commitment rule in §6 applies.
 
 ---
 
@@ -82,28 +86,28 @@ let composeTiers (claims: TierClaim list) : RealInterval * Disagreement list =
 
 The integer twin gives six reusable patterns:
 
-1. **Coeffect computed pre-emission.** `IntervalAnalysis.analyze` runs once-per-graph as `TransferCoeffects.WidthInference`, computed in `MLIRGeneration.fs`. Add a **sibling field** `RepresentationSelection` on `TransferCoeffects`, computed beside `widthInference`. *(Cheap.)*
-2. **Abstract sentinel at type-lowering.** Integers lower to `TInt (IntWidth 0)`, resolved by `narrowType`. Add an abstract `Real`/`FloatWidth 0` sentinel and the `selectRepresentation` resolver. *(Moderate.)*
-3. **Single resolver choke point** — resolve at one `selectRepresentation` site, analogous to `narrowType`.
-4. **Hard error on unobservability** — `FPGA0001` fires on unbounded ranges; inherit the contract, split on dimensionedness (§6).
+1. **Coeffect settled before witnessing.** Produce `RepresentationSelection` on the PSG at saturation, alongside the accepted range, declaration provenance, and obligations. Transfer structures carry the result rather than decide it. *(A field is cheap; its producer and proof obligations are separate work.)*
+2. **Explicit pending state.** Keep unresolved real ranges and platform facts available during elaboration. A sentinel is an internal representation of pending work, never permission to pick a default in type lowering.
+3. **Single resolver** — call `selectRepresentation` where saturation has the required range and platform facts; the backend reads the selected representation.
+4. **Hard error on unobservability at representation commitment** — retain pending facts during elaboration; apply the dimensioned/bare distinction in §6 when a concrete representation is required.
 5. **Check-time diagnostics** — emit codes inside `checkProgram` exactly as `CCS0100`/`FPGA0001` do.
 6. **Platform capability facts** — `PlatformContext.RuntimeModel` is the seat for "does this target have b-posit HW / Xposit / quire support?" (§4).
 
 ### 3.2 What is NOT free — the real interval domain is a new abstract interpreter [research-grade]
 
-`IntervalAnalysis.fs` is `{ Min: int64; Max: int64 }` with `modInterval`, `unsignedBitsFor`, and two's-complement bit-counting — **integer-only** (verified: lines 27–31 are the int64 `ValueInterval`). You reuse its *traversal skeleton and carriage discipline* and **nothing of its transfer functions.** The new domain requires, at minimum:
+The integer domain and its bit-counting operations are a useful architectural precedent. The real domain requires different transfer functions and infinity/rounding behavior; copying an older `{ Min: int64; Max: int64 }` representation does not provide them. The new domain requires, at minimum:
 
 - **Outward-rounded FP interval arithmetic** — endpoints round outward to remain a sound superset.
-- **Sign-crossing reciprocal/division** — `1/[lo,hi]` with `0 ∈ [lo,hi]` splits into two unbounded pieces (the `r²`-in-denominator case that makes Tier 1 fall through).
+- **Sign-crossing reciprocal/division** — `1/[lo,hi]` with `0 ∈ [lo,hi]` can require unbounded pieces and a domain obligation (as when dataflow has no nonzero bound for `r²` in a denominator).
 - **Transcendentals** — `sqrt`, `log`, `exp`, `sin`.
 - **Terminating widening over a continuous lattice** — the int64 monotone-widening fixpoint does **not** transfer; you need explicit widening operators with thresholds.
 
 ```fsharp
 /// NEW abstract domain — sibling of IntervalAnalysis, NOT a port of it.
 type RealInterval = {
-    Lo: float        // outward-rounded toward -inf
-    Hi: float        // outward-rounded toward +inf
-    Dim: Dimension   // Kennedy unit; carried alongside, not as a type index
+    Lo: Bound        // outward bound, including unbounded endpoints
+    Hi: Bound
+    Dim: Dimension   // must agree with the measured type on the PSG
 }
 
 module RealIntervalDomain =
@@ -121,7 +125,7 @@ module RealIntervalDomain =
 
 Width inference is the *spatial* reading (bits/value); depth/budget inference (`DepthAnalysis.fs`, `foldWithLambdaPreBind`) is the *temporal* reading; numeric selection is the *third* reading (consume the dimensional range, select a representation). "Same traversal" means the same graph walk and carriage — **not** the same transfer functions (§3.2).
 
-> **Terminology trap.** "Saturation" is overloaded. `04_saturation_recipes.json` is Baker elaboration, **not** the interval pass. Numeric selection rides `IntervalAnalysis.fs`-style analysis and surfaces only baked into final MLIR types. There is no separate "computation budget" pass — the budget is the clock-period budget spent by depth analysis; numeric selection does not consume it.
+Range propagation begins in elaboration and closes at saturation with the section's platform facts. Numeric selection remains visible as PSG metadata and design-time diagnostics; it is not reconstructed from final MLIR types. Clock-depth analysis and numeric accuracy have different transfer functions and obligations even where they share graph traversal.
 
 ---
 
@@ -142,73 +146,62 @@ let applyEmulationPolicy target policy (cands: Representation list) =
 
 Layering (so reviewers don't mistake it for the paper's equation): `R(target) = { r : capability ≠ unavailable }` is the flat `R`; `R_cov` and the emulation policy are refinements layered on top. `allow-emulated-warn` influences *which diagnostic fires*, never *which representation is chosen* — the purity invariant is scoped to the choice.
 
-*(b-posit hardware framing and its qualitative-only citation posture are normative in [`numeric-selection.md` §7](../../clef-lang-spec/spec/numeric-selection.md#7-performance-as-a-capability-gate). Do not reproduce the parity figures here.)*
+The hardware evidence and format references live in [`numeric-selection.md` §7](../../clef-lang-spec/spec/numeric-selection.md#7-performance-as-a-capability-gate). Capability descriptions must identify the actual implementation; published decoder results do not establish a complete application's throughput.
 
 ---
 
-## 5. The Fidelity.Physics integration surface [design not yet ratified — implementation obstacle]
+## 5. The Fidelity.Physics integration surface
 
-**`Fidelity.Physics` is planned, not built.** Its normative surface is the design sketch in [`numeric-selection.md` §4](../../clef-lang-spec/spec/numeric-selection.md#4-the-fidelityphysics-mechanism-design-sketch); do not write integration code until the binding contract is ratified. This section records the *implementation obstacle* the contract must resolve — which is Composer-HOW, not spec-WHAT.
+**`Fidelity.Physics` remains a planned library.** The current design in [`numeric-selection.md` §4](../../clef-lang-spec/spec/numeric-selection.md#4-the-fidelityphysics-mechanism-design-sketch) carries a typed range-law quotation, its dimensional parameters, its premises, and the provenance of its justification. The precise admission/registration API still needs definition. Implement against that contract rather than reviving the earlier choice between an erased quotation and a value registry.
 
-**The type-checking obstacle.** `Expr<DomainRange<measure>>` **does not type-check**: F# `[<Measure>]` types are a separate kind, not first-class type arguments, and quotations reflect over value-level `Expr<'T>`, not measure-level indices. Two coherent designs:
+A native Clef quotation retains the law's measured inputs and result. Where a hosted F# encoding needs an unmeasured quotation plus companion metadata, elaboration must reconstruct and validate that dimensional correspondence before using the law. Missing dimensions are diagnostics. Host encoding restrictions cannot redefine the native type identity.
 
-- **Design A — quotation-symbolic (recommended).** The range law is `Expr<float -> ... -> float>` over *unmeasured* floats, its dimension carried by a separate companion attribute (not a measure type-argument). PSG elaboration **symbolically interval-evaluates the quotation AST** to produce `[a,b]`; regime classification then runs over the resulting `[a,b]` *value*, so active patterns are value classifiers, not AST matchers. Matches the Farscape `Expr<PeripheralDescriptor>` precedent.
-- **Design B — value-level registry.** The library registers ordinary runtime `DomainRange` values keyed by dimension via an attribute; no quotations. Simpler, but loses compile-time symbolic derivation of derived ranges.
+The bound evaluator admits a terminating expression language with supported arithmetic and defined domain conditions. It computes a sound enclosure; a regime classifier may then classify that enclosure. The spec has settled this direction. Per-transcendental segment splitting and enclosure tightness remain open details. No arbitrary real formula is silently dispatched to QF_LIA because its eventual representation choice is finite.
 
-**Decidability precondition (mandatory for Design A).** Symbolic interval evaluation of an arbitrary quotation does not terminate — the dependent-type capability DTS deliberately excludes. The quotation language **must be restricted to a total, terminating sub-language** (closed-form arithmetic + the fixed transcendental set; no recursion, no unbounded fixpoint), or the "decidable-by-construction" claim is unearned. The exact sub-language is OPEN and is a spec deliverable before code.
+The implementation sequence is:
 
-```fsharp
-// Design A surface, five-horsemen attributions preserved:
-[<Measure>] type N = kg m / s^2                              // 1. Units of Measure (Kennedy) — keys the range
+1. Locate the registered law and retain its declaration provenance.
+2. Check its dimensions and instantiate its input premises at the use site.
+3. Evaluate the admitted law over justified bounds, with outward enclosure.
+4. Retain the enclosure and justification; perform any regime classification afterward.
+5. Combine the justified enclosure with other applicable range evidence (§2), then perform representation selection. An unjustified premise stays pending until required, then receives a diagnostic if unresolved.
 
-[<DomainRange("OrbitalMechanics")>]                          // 4. registration glue
-let forceLaw : Expr<float -> float -> float -> float> =      // 2. Quotations (Syme) — range LAW over unmeasured floats
-    <@ fun gravConst m1Times2 rSquared -> gravConst * m1Times2 / rSquared @>
-
-let (|NearUnityTaper|WideDynamic|MLActivation|)             // 3. Active patterns (Syme) — classify the EVALUATED [a,b]
-        (range: RealInterval) = ...
-
-let tier2Claim (psgNode: Node) : RealInterval option =
-    lookupDomainRangeAttr psgNode.Dimension
-    |> Option.map (fun law ->
-        symInterval law (gatherArgIntervals psgNode)          // symbolic interval-eval (terminating sub-language)
-        |> tagDimension psgNode.Dimension)
-```
-
-**Honest headline.** The `gravForce` example is a **Tier-2 success, not a garden-path success** — Tier 1 cannot lower-bound `r` in the `r²` denominator:
+The gravitation example obtains a bounded force only when justified mass bounds and a distance bound `r ≥ r_min > 0` are available. A registered library law can connect those bounds to the result; its premises still have to hold for this call. The illustrative source below does not supply that premise merely by opening the library:
 
 ```fsharp
 open Fidelity.Physics.OrbitalMechanics
 let gravForce (m1: float<kg>) (m2: float<kg>) (r: float<m>) : float<N> =
-    GravConst * m1 * m2 / (r * r)   // dim N inferred free; RANGE supplied by the Tier-2 library
+    GravConst * m1 * m2 / (r * r)   // dim N inferred; range requires input bounds including r >= r_min > 0
 ```
 
-**ML routing.** A `Fidelity.ML` sibling supplies the range and asymmetric-bias recommendation. Its objective stays on the spec's symmetric argmin fed a **pre-skewed range** (single-objective, per [`numeric-selection.md` §4](../../clef-lang-spec/spec/numeric-selection.md#4-the-fidelityphysics-mechanism-design-sketch) and Requirement 4); a distribution-weighted objective is optional ML-library-only future work, never the general selector.
+**ML routing.** A planned `Fidelity.ML` sibling supplies a justified enclosure and an asymmetric-bias recommendation. The general selector evaluates the spec's worst-case objective over that enclosure ([`numeric-selection.md` §4](../../clef-lang-spec/spec/numeric-selection.md#4-the-fidelityphysics-mechanism-design-sketch) and Requirement 4). A recommended configuration must pass coverage and capability filtering and need not win the objective. Observed concentration or a distribution's mode cannot justify excluding possible outliers from a hard coverage obligation. A distribution-weighted objective remains optional ML-library future work with its own probability model and error contract.
 
 ---
 
 ## 6. The default / unobservable case — as code
 
-**Normative contract:** [`numeric-selection.md` §6](../../clef-lang-spec/spec/numeric-selection.md#6-the-default-and-unobservable-case) (report-an-error, no silent default; split on dimensionedness; bare-float→IEEE `f64` is the argmin outcome for an unknown range, not a bypass). Implement:
+**Normative contract:** [`numeric-selection.md` §6](../../clef-lang-spec/spec/numeric-selection.md#6-the-default-and-unobservable-case). During elaboration, missing facts remain pending. At representation commitment, a dimensioned real whose range is still unobservable is diagnosed. The bare-float `f64` path is an explicit exception requiring an offered and permitted capability; it is not proof that an unbounded mathematical range fits `f64`.
 
 ```fsharp
-let resolveUnobservable (node: Node) : Result<Representation, SelectionError> =
+// Called only at commitment, after available context has been applied.
+let resolveUnobservable target policy (node: Node) : Result<Representation, SelectionError> =
     match node.Dimension with
-    | Dimensioned _ -> Error (UnboundedDimensionedRange node)   // hard error — like FPGA0001
-    | Bare          -> Ok (IEEE F64)                            // the argmin's output for an unknown range
+    | Dimensioned _ -> Error (UnboundedDimensionedRange node)
+    | Bare when offeredAndPermitted target policy (IEEE F64) -> Ok (IEEE F64)
+    | Bare -> Error (MissingBareFloatCapability node)
 ```
 
 ### 6.1 The bare/dimensioned seam — handle it explicitly
 
-Normative seam contract: [`numeric-selection.md` §6.1](../../clef-lang-spec/spec/numeric-selection.md#61-the-baredimensioned-seam). Implementation reality: bare floats **do** carry interval analysis (the same real domain of §3.2; "bare works like today" means only that a bare `float` with an unobservable range incurs no error and lowers to f64 — it does not exempt bare floats from range propagation). The error fires **at the dimensioning boundary** with a diagnostic that names the upstream bare source:
+Normative seam contract: [`numeric-selection.md` §6.1](../../clef-lang-spec/spec/numeric-selection.md#61-the-baredimensioned-seam). Bare floats participate in the same range propagation. When commitment still requires an unavailable bound, the diagnostic points to the dimensioning boundary and names the upstream bare source:
 
 ```
 error: y : float<newtons> requires a bounded range; its range derives from
         x (bare float, unbounded at <site>). Annotate x's range, import a
-        domain library, or seal y's representation.
+        domain library, or establish a valid bound through the input contract.
 ```
 
-*(The `native-type-universe.md §2.4` amendment this seam once forced has been applied: `float`/`float32` are now the bare IEEE lowering targets, representation selected for dimensioned/ranged reals. No further spec change is owed here.)*
+The source type remains `float` with its dimension; `f32` and `f64` name representations in the platform/lowering vocabulary.
 
 ---
 
@@ -216,41 +209,51 @@ error: y : float<newtons> requires a bounded range; its range derives from
 
 **Normative scope split:** [`numeric-selection.md` §8](../../clef-lang-spec/spec/numeric-selection.md#8-concrete-vs-parameterized-representations). Implementation placement:
 
-1. **Surface (Tiers 1–2):** `float<dim>` or a ranged real. Concrete `posit<n,es>` is the Level-3 escape hatch only (seal syntax OPEN).
-2. **Lowering codomain on fixed-ISA (CPU/SIMD/RISC-V):** four concrete `Posit8/16/32/64` — direct struct layout, clean SRTP dispatch, clean quire pairing (`Quire32.fma` takes `Posit32` by construction). Selection chooses among the four concretes plus IEEE/fixed. **Concrete types are the codomain of selection, not the surface syntax.**
+1. **Surface:** `float<dim>`, with range and representation as coeffects. A boundary declaration fixes the site's representation; it adds no posit type or seal syntax.
+2. **Lowering codomain on fixed-ISA (CPU/SIMD/RISC-V):** concrete `Posit8/16/32/64` representations among the platform's candidates, alongside IEEE/fixed. Such names designate internal carriers or descriptors, never source numeric types. Quire pairing follows the complete declared format, including standard-versus-bounded family and configuration; operand width alone is insufficient.
 3. **Parameterized `posit<n,es,rs,bias>`:** FPGA/reconfigurable-only synthesis search — **future work** (CIRCT posit pipeline parameterization not built). The `(rs,es)` grid is enumerable (≤25 points); bias/asymmetry are bounded-but-continuous, explored heuristically.
 
 ---
 
 ## 8. The quire recognition / sizing / lowering nanopass
 
-**Normative quire semantics** (the `n²/2` adequacy invariant, exactness-not-near-zero-precision, per-target capability): [`numeric-selection.md` §10.2](../../clef-lang-spec/spec/numeric-selection.md#102-the-quire-pass). A Composer nanopass, **downstream of selection** and **before the target-lowering fork**, emitting annotations, not instructions:
+**Normative quire semantics:** [`numeric-selection.md` §10.2](../../clef-lang-spec/spec/numeric-selection.md#102-the-quire-pass), particularly the product and partial-sum obligations in §10.2.1. Recognition, layout selection, and adequacy checks occur before target lowering. The accepted facts and their justifications reside on the PSG; witnesses consume them.
 
 ```fsharp
 let (|QuireMAC|_|) (node: Node) =                  // RECOGNITION — fma/fold/reduce-of-products over a selected posit
     matchFusedProductAccumulation node
 
-let quireWidthBits (n: int) = n * n / 2            // SIZING — n²/2 bits (posit32 → 512 = one cache line)
+// Read the selected format's declared quire layout; operand width alone is insufficient.
+// Standard 2022 full-gamut posit: 16n bits (posit32 -> 512 bits).
+// Cited b-posit design: 800 bits for n > 12 (b-posit32 -> 25 x 32-bit words).
+let quireLayout (format: Representation) = format.DeclaredQuireLayout
 
-type QuireCoeffect = {                             // COEFFECT EMISSION — four coeffects on one PSG node
-    Allocation : ByteCount * EscapeClass           // 64 B, stack/arena by escape class (reuse escape analysis)
+type QuireCoeffect = {                             // conceptual internal record
+    Layout     : QuireLayout                       // format, field layout, finite range
+    Allocation : ByteCount * EscapeClass           // 100 B for b-posit, before target padding
     Lifetime   : Scope
     Capability : ExactAccumulation                 // can this target accumulate exactly?
     Dimension  : Dimension                         // fma of newtons×meters accumulates as joules; dim verified at output
+    Adequacy   : AcceptedObligationRefs             // product exactness + every partial sum fits
+    Rounding   : DeclaredRoundingSite
 }
 // LOWERING deferred to target-binding (the fork).
 ```
 
-**The sizing invariant is NOT a `k`-cap (implementation trap).** The Posit Standard sizes the quire at `n²/2` precisely so that any practical number of fused products accumulates without overflow — `k` is **not** bounded by the accumulator. **Do not implement a `k·bits-per-product ≤ n²/2` check** (that re-imposes the bound the quire eliminates). The correct QF_BV obligation: for selected width `n`, allocate exactly `n²/2` bits and verify the *per-product intermediate* (full-width product + carry/guard bits) fits the quire field layout — **independent of `k`.** (Normative statement: [`numeric-selection.md` §10.2](../../clef-lang-spec/spec/numeric-selection.md#102-the-quire-pass).)
+The format fixes allocation width; it does not grant unlimited accumulation. Establish that each represented product is exact in the quire layout and every reachable partial sum stays in its finite range. Operand bounds plus a term-count bound can establish this; an accepted invariant can establish it without a fixed count. `k × bits-per-product ≤ Q` is not the addition capacity law, and checking each product alone is insufficient.
+
+Use QF_BV for a faithful finite bit-level encoding and QF_LIA where a bounds obligation has actually reduced to linear integer constraints. Record the encoding and premises with each obligation. A finite representation catalogue does not make arbitrary products or real-valued laws linear. Missing evidence can remain pending during elaboration but must be diagnosed before exact-accumulation commitment. Inserting intermediate rounding would change the operation's contract.
 
 **Per-target capability (implementation table):**
 
 | Target | Quire support | Resolution |
 |---|---|---|
-| x86_64 | Software emulation (64 B on stack) | stack; ~50 cycles/FMA |
-| Xilinx FPGA | 512-bit fabric pipeline | fabric; 1 cycle/FMA |
-| RISC-V + Xposit | Hardware quire instruction | arch. register; 1 cycle/FMA |
-| Neuromorphic (Loihi 2) | Not available | **Capability failure** |
+| CPU/SIMD | Software or declared instruction support | Allocate the declared layout by escape/lifetime analysis; measure implementation cost |
+| FPGA | Synthesized accumulator matching the format | Derive latency and throughput from the actual pipeline and synthesis result |
+| RISC-V with a posit extension | Extension-specific quire | Require agreement with the extension's format and instruction semantics |
+| Target without admitted exact accumulation | Unavailable | **Capability failure** |
+
+The quire may remain beside the FPGA arithmetic and return a rounded result, or its full state may cross a boundary for further accumulation. Those are different interface contracts: record the rounding site, and specify limb order and format identity whenever the accumulator itself crosses. A quire preserves the represented sum of products; surrounding division, integration, and boundary rounding retain their own error obligations.
 
 ---
 
@@ -260,14 +263,14 @@ type QuireCoeffect = {                             // COEFFECT EMISSION — four
 
 ```
 Dimension --(range)--> Representation --(width)--> Footprint --(escape)--> Allocation
-   DTS        Tier 1/2/3     selection coeffect       n²/2 quire pass    escape analysis
-            (composeTiers)   (selectRepresentation)
+   DTS      justified range   selection coeffect     declared layout   escape analysis
+             and premises    (selectRepresentation)
 ```
 
 Implementation invariants (all normatively grounded in spec §10.1):
-- **Every arrow is a coeffect on the PSG, deferred to target-binding** — later stages have strictly more information. Never resolve a representation eagerly during a pass that only needs to transport it.
-- **Carriage.** The representation choice is codata on the PSG beside the dimension, grade, and escape class; a pass that does not touch representation leaves the annotation as it found it. The Composer fixed-point combinator transports the bundle through nanopass lowering; certified proof-transformer passes preserve it by construction; uncertified passes get a per-edge QF_BV Z3 re-check. Codata is navigated, not recomputed (Huet-zipper passive traversal).
-- **Transfer fidelity is a separate annotation** — cast fidelity and cross-target transfer fidelity are normatively specified in [`numeric-selection.md` §10.1](../../clef-lang-spec/spec/numeric-selection.md#101-preservation-chain). Implement the transfer-edge annotation (directional, compile-time-derived, 1.0 iff target range covers source range); do not restate the rule here.
+- **Settle before witnessing.** Elaboration can carry pending facts; saturation closes the required constraints against the section's declarations. Later passes consume the recorded choice instead of choosing a new width or representation.
+- **Carriage and obligation residency.** Keep representation, range, dimension, grade, lifetime, and the obligations that relate them on the PSG. A transformation must preserve an applicable justification or discharge the affected obligation under its supported theory. The external ledger checks this implementation while the graph mechanism matures; it is not the canonical proof store. No blanket QF_BV re-check covers every property.
+- **Transfer fidelity is directional.** Follow [`numeric-selection.md` §10.1](../../clef-lang-spec/spec/numeric-selection.md#101-preservation-chain): range coverage is necessary but does not establish exact representability. Carry any error enclosure and declared rounding behavior. A change in representation must not silently erase the source dimension or introduce undeclared loss.
 
 ---
 
@@ -275,30 +278,33 @@ Implementation invariants (all normatively grounded in spec §10.1):
 
 Numeric selection emits **check-time diagnostics** in the same shape as `CCS0100`/`FPGA0001` (`Severity`, `Range`, `RelatedNodes`, `Reachability`), from a pass inside `checkProgram`, surfaced as squiggles/hovers. "Design time" = continuous Lattice elaboration; representation-adequacy is a warm-rotation elaboration certificate.
 
-Canonical readouts (figures are illustrative continuous-taper anchors, not a fixed two-point model):
+Readouts should display computed bounds and errors, not fixed example scores presented as analysis. An illustrative layout:
 
 ```
 force: float<newtons>
-  Dimensional range: [1e-11, 1e30] (from gravitational constant + stellar masses; Tier 2)
-  ├── x86_64:  float64         (worst-case rel error: 1.11e-16, uniform)      [WideDynamic → IEEE]
-  ├── xilinx:  posit<32, es=2> (~2.3e-8 at range extremes, ~1.5e-9 near 1.0)  [NearUnityTaper]
-  └── Note: posit gives ~10x better precision in [0.01,100] where 94% of forces reside
+  Range: <sound enclosure>, from <library law and accepted premises>
+  Platform: <declared candidate formats and capabilities>
+  Selected representation: <format and configuration>
+  Worst-case error over this range: <computed bound>
+  Accumulation: <quire layout, accepted adequacy, rounding site>
 ```
 ```
-Warning: posit<32,es=2> dynamic range [1e-36,1e36] does NOT cover full dimensional
-  range [1e-11,1e72] of astronomicalDistance<meters>          (R_cov filter)
-  Consider: float64 (covers full range) or scaling to AU (fits posit range)
+Error CCS8012: coverage by the representation declared by <boundary> could
+  not be established for <value>. Establish a tighter valid bound, change the
+  declaration, or express intended loss in arithmetic.
 ```
 
 **New diagnostic codes** (numeric-selection family, siblings of `CCS0100`/`FPGA0001`):
 - `coverage-empty` — `R_cov = ∅`
 - `near-zero-degeneracy` — range straddles 0 with no representation resolving it under the ULP floor
 - `bare-source-unbounded-at-seam` — §6.1
-- `tier-disagreement` — lower-tier claim not contained in the bound range (§2)
-- `suboptimal-seal` — covering but accuracy-suboptimal Tier-3 seal
+- `range-evidence-inconsistent` — incompatible premises or declarations, with their derivations and scope (§2)
+- `boundary-coverage-unresolved` — available evidence does not establish coverage at commitment; distinguish this from a proven reachable violation (§2)
+- `suboptimal-boundary` — informational CCS8014 for a covering but accuracy-suboptimal declaration
 - `quire-capability-failure` — §8
+- `quire-adequacy-unresolved` — product or partial-sum evidence missing at commitment (§8)
 
-> **Citation posture.** The b-posit parity figures and the 5-bit-floor/4-bit-cliff result are qualitative-only and their source identifier is unverified; the normative chapter handles the disclaimer ([`numeric-selection.md` §7](../../clef-lang-spec/spec/numeric-selection.md#7-performance-as-a-capability-gate) and References). Do not reproduce the figures as fact in Composer surfacing or docs.
+These descriptive names are implementation planning labels; use the normative diagnostic IDs where specified. The b-posit paper cited by the spec supplies hardware evidence for its evaluated designs. It does not supply this application's precision or latency measurements.
 
 ---
 
@@ -306,16 +312,15 @@ Warning: posit<32,es=2> dynamic range [1e-36,1e36] does NOT cover full dimension
 
 | Component | Location | Cost |
 |---|---|---|
-| **New coeffect** `RepresentationSelection` field on `TransferCoeffects` | `Coeffects.fs` / `TransferTypes.fs`; computed in `MLIRGeneration.fs` beside `widthInference` | Cheap (field + producer) |
-| **New sentinel + resolver** abstract `Real`/`FloatWidth 0`; `selectRepresentation` choke point | `TypeMapping.fs` (replace fixed `NTUfloat (Fixed n) → TFloat Fn` ~lines 99–101, 171–173); resolver beside `narrowType` in `PSGCombinators.fs` (~106–157) | Moderate |
+| **Representation coeffect** with range and declaration provenance | PSG elaboration/saturation produces it; `Coeffects.fs` / transfer structures carry it into witnessing | Field plus producer and preservation checks |
+| **Pending state + resolver** `selectRepresentation` | Saturation, before the witness boundary; `TypeMapping.fs` reads the result | Moderate |
 | **New abstract domain** real/dimensional interval (outward FP rounding, sign-crossing division, transcendentals, terminating widening) | new module sibling of `IntervalAnalysis.fs` (which stays int64-only) | **Research-grade — dominant cost** |
-| **New diagnostics** numeric-selection family | check-time pass merged in `NativeService.checkProgram` (~line 535) | Moderate |
-| **New nanopass** quire recognize/size(`n²/2`)/per-product-fit/coeffect-emit | Composer, downstream of selection, before target fork (§8 — no `k`-cap) | Moderate |
-| **Capability facts** three-valued b-posit / Xposit / quire-width predicates | extend `PlatformContext` in `NativeTypes.fs` (~357–433, beside `RuntimeModel`/`NsPerWeightUnit`) | Cheap |
-| **`Fidelity.Physics`** | ratify Design A vs B + the terminating sub-language *before any code*; do **not** ship `Expr<DomainRange<measure>>` (does not type-check) | Spec-blocked (§5) |
+| **Diagnostics** numeric-selection family | check-time service, retaining source spans and pending/commitment distinction | Moderate |
+| **Quire recognition, declared layout, product/partial-sum adequacy** | Before target fork, with obligations resident on the graph (§8) | Encoding and proof work in addition to recognition |
+| **Capability facts** b-posit / extension / quire layout and semantics | Section's platform description, resolved into `PlatformContext` | Declaration and validation |
+| **`Fidelity.Physics`** | Typed quotation admission, registration, premise checking and bound evaluation (§5) | Remaining API and bound-method details need specification |
 
-**Verified key source files (absolute):**
-`/home/hhh/repos/Composer/src/MiddleEnd/PSGElaboration/IntervalAnalysis.fs` (int64-only `ValueInterval`, lines 27–31 — confirms §3.2) · `/home/hhh/repos/Composer/src/MiddleEnd/Alex/XParsec/PSGCombinators.fs` (`narrowType`/`FPGA0001`) · `/home/hhh/repos/Composer/src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs` (`IntWidth 0` sentinel; fixed float dispatch ~99–101, 171–173) · `/home/hhh/repos/Composer/src/MiddleEnd/PSGElaboration/Coeffects.fs` · `/home/hhh/repos/clef/src/Compiler/PSGSaturation/SemanticGraph/DepthAnalysis.fs` · `/home/hhh/repos/clef/src/Compiler/NativeTypedTree/NativeTypes.fs` (~357–433) · `/home/hhh/repos/clef/src/Compiler/NativeTypedTree/NativeService.fs` (~535).
+**Source navigation from the original implementation study:** `src/MiddleEnd/PSGElaboration/IntervalAnalysis.fs`, `src/MiddleEnd/Alex/XParsec/PSGCombinators.fs`, `src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs`, and `src/MiddleEnd/PSGElaboration/Coeffects.fs` in Composer; `PSGSaturation/SemanticGraph/DepthAnalysis.fs`, `NativeTypedTree/NativeTypes.fs`, and `NativeTypedTree/NativeService.fs` under Clef's compiler sources. Revalidate the current paths and phase ownership when implementing; historical backend hooks do not override the spec's saturation boundary.
 
 *(Normative dependencies this implementation carries: [`numeric-selection.md`](../../clef-lang-spec/spec/numeric-selection.md) is the authority; it cross-references `width-inference.md`, `native-type-universe.md` §2.4, `units-of-measure.md`, `ntu-dimensional-architecture.md`, and `incremental-computation.md`. Do not restate their content here — link it.)*
 
@@ -325,49 +330,56 @@ Warning: posit<32,es=2> dynamic range [1e-36,1e36] does NOT cover full dimension
 
 Order chosen so each milestone is independently testable and the highest-risk research item is de-risked early.
 
-**Milestone 0 — Scaffolding (cheap, no behavior change).** Add `RepresentationSelection` to `TransferCoeffects` (trivially populated); add the `Real`/`FloatWidth 0` sentinel behind a flag (current `→ TFloat F32/F64` stays the default resolver output until selection lands); add three-valued capability predicates to `PlatformContext`. *Exit:* full build green, no observable change; the frame exists.
+**Milestone 0 — Carriage.** Add explicit pending/selected representation states and declaration provenance on the PSG, with transfer structures preserving them. Populate capability facts from the platform description. *Exit:* metadata survives the relevant passes without inventing dimensional or representation facts; existing supported behavior remains validated.
 
-**Milestone 1 — Tier 3 + the objective, on fixed-ISA (smallest end-to-end slice).** Implement `selectRepresentation` (§1) with `R_cov` + the ULP-floored metric over the four concrete `Posit8/16/32/64` + IEEE + fixed; implement Tier-3 sealing (coverage check on a singleton `R`); emit `coverage-empty`, `near-zero-degeneracy`, `suboptimal-seal`. **Blocked on:** seal *syntax* (OPEN — coordinate with the spec). *Exit:* a sealed `float<dim> as posit32` selects/verifies and produces a Lattice readout — proves objective + resolver + diagnostics end-to-end without the hard interval domain.
+**Milestone 1 — Boundary selection and the objective.** Implement `selectRepresentation` (§1) over the concrete formats the target declares, and coverage checks at a declared boundary. Report hard failures when required coverage cannot be established and informational suboptimal-boundary findings after the boundary obligations pass. *Exit:* a measured real with a justified range is checked against a binding or wire declaration and produces a Lattice readout. There is no dependency on new seal syntax.
 
-**Milestone 2 — The real interval domain (research-grade core).** Build `RealIntervalDomain` (§3.2); wire into the PSG traversal skeleton; enable Tier 1 for dataflow-bounded ranges; implement the bare/dimensioned split (§6) and the seam diagnostic (§6.1). *Exit:* a closed-form `float<dim>` computation selects automatically; `r²`-in-denominator correctly falls through with a clear error.
+**Milestone 2 — The real interval domain.** Build `RealIntervalDomain` (§3.2); propagate dataflow-bounded ranges with their derivations; implement the bare/dimensioned split and seam diagnostic (§6). *Exit:* a closed-form measured computation selects automatically; a denominator without a nonzero bound remains pending for later context and is diagnosed if still unresolved at commitment.
 
-**Milestone 3 — The quire nanopass.** Recognition active pattern, `n²/2` sizing, four-coeffect bundle, per-product-fit QF_BV obligation (§8 — **no `k`-cap**), per-target capability lowering at the fork, `quire-capability-failure`. *Exit:* a `fold`-of-products over `Posit32` lowers to a quire MAC on x86/FPGA/Xposit and fails loudly on Loihi 2.
+**Milestone 3 — The quire nanopass.** Recognize eligible fused-product reductions, obtain the selected format's quire layout, establish product and partial-sum adequacy, and retain lifetime, dimension, rounding, and capability facts (§8). *Exit:* an admitted reduction lowers to matching arithmetic on an available target; insufficient capacity or an unavailable capability is diagnosed. Bit-level reference vectors validate the implementation separately from the obligation encoding.
 
-**Milestone 4 — Tier 2 (`Fidelity.Physics`).** *Spec-blocked:* ratify Design A vs B and the terminating range-expression sub-language **first** (§5). Then implement registration glue, the symbolic interval-evaluator over the restricted sub-language, regime active patterns, and `tier-disagreement` diagnostics. *Exit:* `open Fidelity.Physics.OrbitalMechanics` makes `gravForce` select via Tier 2.
+**Milestone 4 — Checked domain laws (`Fidelity.Physics`).** Settle the remaining quotation-admission and bound-evaluation details (§5), then implement registration, dimensional/premise checking, enclosure evaluation, and evidence-consistency diagnostics. *Exit:* an applicable library law and checked premises supply the justified range for `gravForce` without erasing its measured type; compatible enclosures refine jointly, while missing premises remain pending.
 
 **Future work (do not schedule into the above):** parameterized `posit<n,es,rs,bias>` FPGA synthesis search (§7); the ML distribution-weighted objective (scoped to `Fidelity.ML` only, never the general selector); profiling-evidence provenance/trust model.
 
-**Cross-cutting reminder:** results are coeffects on the PSG, deferred to target-binding, navigated not recomputed (§9). Never resolve a representation eagerly during a pass that only needs to transport it.
+**Cross-cutting reminder:** results and obligations reside on the PSG, settled before witnessing and consumed by target lowering (§9). Missing facts are never fabricated to pass an implementation gate.
 
 ---
 
-## 13. The ThreeBody demonstrator (intended accuracy harness)
+## 13. ThreeBody: precision, useful horizon, and reversal without a tape
 
-The **ThreeBody** project (`/home/hhh/repos/ThreeBody`) is meant to be to numeric selection what HelloArty was to width inference: the end-to-end demonstrator of b-posit + quire vs. IEEE-754 accuracy. It is **not yet that** — currently documentation-only (empty `src/.gitkeep`, no `.clef`, no pipeline run), and its docs predate this design and carry drift the spec actively polices. Treat it as a *design proposal to rebuild*, with these guardrails:
+**ThreeBody's central experiment is numerical:** show how posit/quire arithmetic can preserve a chaotic gravitational trajectory longer, delay its useful Lyapunov break point, and recompute a more faithful return path after momentum reversal without a stored trajectory tape. The project is currently design-only. Compiler, transport, and proof evidence support the credibility of that experiment; a demonstration of compilation failures is not its purpose.
 
-- **Cite it (once built and corrected) only for what is true:** quire exactness against catastrophic cancellation (spec §10.2), witnessed by conserved-quantity drift — total energy, angular momentum, and especially **linear momentum** (exactly zero from rest → the tightest pure-arithmetic-drift sensor; the current design omits it). It is a **poor** example for "tapered precision near unity" and not a coverage example until normalization is shown.
-- **Normalize to natural units (G = 1)** and state the resulting ranges. Unnormalized SI puts `G ≈ 6.7e-11` into the `[1e-11, 1e30]` wide-dynamic band that routes to **IEEE, not posit** — so without normalization the demo argues against itself.
-- **Swap only the number type** across the entire force + integration path; do not confound representation with which subset got exact treatment.
-- **Use a symplectic, time-reversible integrator** (leapfrog/Verlet) and an independent high-precision reference trajectory; a non-symplectic method's own secular drift would dwarf the arithmetic signal.
-- **Scrub the audit-flagged drift before reuse:** reconcile the b-posit config to a **fixed 800-bit quire** (25×32-bit vector, independent of precision) with **`eS = 5`**; delete the uncited "39% faster decode" claim (cite instead Jonnalagadda et al.'s measured 79% power / 71% area / 60% latency decoder wins, arXiv:2603.01615); remove all "tapered precision near zero/the golden zone" framing.
+Here, a longer useful horizon means a later crossing of a stated numerical-error tolerance. It does not mean changing the physical system's Lyapunov exponent. Reduced arithmetic error can delay that crossing, while integration truncation, input error, and later rounding still contribute. Measure the gain for the specified initial conditions, force law, timestep, and comparison method.
 
-### 13.1 Reversibility: live re-computation, not tape replay; certification, not identity
+Use natural units (`G = 1`) and record the corresponding dimensional scaling and analyzed ranges. Normalization can place relevant values near a posit's high-precision region around magnitude one; it does not itself prove coverage or select the winner. The intended bounded format is b-posit32 with `rS = 6`, `eS = 5`, and an 800-bit quire. Standard full-gamut posit32 (`eS = 2`, 512-bit quire) is a distinct comparison configuration. Each boundary declares the complete format and rounding behavior.
 
-If ThreeBody is built as a **negative-types** showcase (typed reversibility) alongside the posit/quire accuracy story, hold these distinctions precisely. **Note:** negative/fractional types are a *proposed, non-normative* extension (see `terms-and-definitions.md`); this section is a demonstrator design sketch, not an implementation commitment.
+### 13.1 Recompute the return path
 
-- **The reversal is live re-computation, never a replayed tape.** At turnaround you negate the momenta and re-run the *same forward operator* (`Φ⁻¹ = S∘Φ∘S`); the backward trajectory is recomputed on the fly, no forward-state history stored. Express it native-Clef: a lazy/thunk-driven reverse pass, region-allocated, with no materialized history buffer. This is the opposite of reverse-mode AD, which tapes a cotangent trace — do not equate them.
-- **The negative type *certifies*, it does not *constitute*, the reversal.** The integrator's reversibility is a time-symmetry of the map; the negative type would certify the inverse is structurally complete. Present `S`-conjugacy as "reconstructed from the pairing," never "running the integrator backward."
-- **Do not type the velocity flip as `Neg<Velocity>`.** That is value-level additive inverse (`−v`), not a backward-flowing dual. The negative type would ride the step's reverse (adjoint) channel: `SymplecticStep = { forward : State -> State ; adjoint : Neg<State> -> Neg<State> }`, with the N-step reverse as the type-level composition of adjoints.
-- **Both IEEE and posit type-check the contract.** A reversibility type is representation-agnostic; what differs is *numerical* reversibility (the measured residual after forward-then-back). The honest claim is **horizon extension, not a typed-contract violation**: b-posit+quire holds the reversal far longer than FP64; neither makes it exact.
-- **The quire shrinks the residual; it does not zero it.** Every step still rounds once, and chaos amplifies any residual. "Tracks / returns near" is honest; "bit-reversible" is not — that needs fixed-point/integer invertible steps.
+Start with a fixed-step, time-reversible mathematical integrator; KDK leapfrog/Verlet is the proposed baseline. For momentum reversal `S(q,p) = (q,-p)`, a reversible map satisfies `Φ_h⁻¹ = S ∘ Φ_h ∘ S`. Advance for `N` steps, flip momentum, and apply the same forward map for another `N` steps. Apply the final momentum flip when comparing the full returned state with the initial state. This constructs the return from the current state and equations, without reading a forward-history buffer. Diagnostic snapshots may be retained for measurement, but never drive the reverse computation.
 
-### 13.2 The demo as a curve, with the right panes
+Finite-precision execution need not satisfy that inverse identity exactly. The return residual is the measurement ThreeBody should make visible. A quire removes intermediate rounding inside an admitted accumulation, subject to §8; other operations and the final rounding remain. A step may contain several such sites. Tape-free reversal is therefore part of the core experiment, independent of a future negative-type facility.
 
-Show the **reversal-residual-vs-N curve**, not a single tuned freeze-frame:
+For the initial numerical comparison, keep timestep and force ordering fixed. Later encounter routing, adaptive steps, or different arithmetic on the return path must be included in the reversibility argument for the composite map. A symmetric integrator alone does not establish that a state-dependent scheduler is reversible. See [Hairer and Söderlind, Explicit, Time Reversible, Adaptive Step Size Control](https://www.unige.ch/~hairer/preprints/revstep.pdf).
 
-- **IEEE FP64** — large, fast-growing residual.
-- **b-posit32 + quire** — small, slowly-growing (the headline).
-- **fixed-point** — the bit-exact limiting case (the spec offers fixed-point as a selectable representation).
-- **FP64 + Kahan summation** — the load-bearing control: the quire is exact compensated summation in the limit, so a skeptic will say Kahan closes the gap. Run this pane and set the thesis strength from the *measured* result. The posit edge that survives Kahan is cancellation in the single subtraction `qᵢ−qⱼ` and in `1/r²`, and posit32 winning there is a genuine taper+accumulation result.
+Negative/fractional types remain proposed and non-normative in [the spec](../../clef-lang-spec/spec/terms-and-definitions.md). A later type discipline may express and check the intended forward/reverse composition, with the required laws stated separately. A momentum sign flip, inverse state evolution, numerical-method adjoint, and differentiation pullback are distinct operations; naming a reverse channel does not establish their equivalence or certify floating-point inversion.
 
-Overlay a design-time **"reversal contract: typechecked ✓"** badge on *both* panes (the structural contract holds for IEEE and posit alike), above the runtime residual curve where only b-posit+quire tracks — separating *structural* reversibility (type, both) from *numerical* reversibility (arithmetic, posit).
+### 13.2 Make the numerical benefit visible
+
+The main display compares trajectory fidelity and reversal residual over physical time, with a stated norm and tolerance marking the useful horizon. Conserved-quantity drift (energy, angular momentum, and linear momentum) and an independently convergence-checked high-precision reference support that display. A close return alone does not establish an accurate forward trajectory.
+
+Compare matched equations, initial conditions, timestep, force ordering, and computational scope:
+
+- **IEEE FP64** supplies the familiar baseline.
+- **FP64 with specified compensated summation** tests how much of the difference is due to accumulation. Kahan summation is not an exact quire.
+- **Posit without quire** isolates the representation's contribution.
+- **The same posit configuration with quire** tests the intended precision and horizon gain. Record formats at force, integration, and return boundaries, rather than changing only an unreported subset of the computation.
+- **An explicitly invertible discrete integrator**, if included, provides a bit-exact reversal control. Selecting a fixed-point datatype alone does not make an update invertible; [JANUS](https://arxiv.org/abs/1704.07715) is a relevant construction.
+
+Let the measured curves establish the size and conditions of the advantage. The intended posit/quire result remains the headline; the controls explain which parts of the arithmetic earn it.
+
+### 13.3 Supporting evidence across substrates
+
+BAREWire is the glue layer for memory layout, IPC, and network contracts. Conclave is the platform for intelligent distributed systems on Cloudflare. ThreeBody's CPU/eBPF/FPGA path exercises the same contract continuity that BAREWire supplies across the broader Fidelity framework.
+
+Keep the numerical contract and its obligations attached to the PSG before target-specific lowering. Layout/bounds checks, payload-preservation obligations, kernel admission, and FPGA arithmetic validation establish different parts of the execution. The external ledger checks agreement while the proof-carrying graph matures. These details can support a technical deep dive without displacing the visible precision, horizon, and live-reversal experiment. The [eBPF integration design](ebpf-targeting/05_threebody_integration.md) describes that supporting path.

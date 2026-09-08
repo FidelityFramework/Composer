@@ -1,3 +1,5 @@
 <Solution>
   <Project Path="src/Composer.fsproj" />
+  <Project Path="src/CCS.Editor/CCS.Editor.fsproj" />
+  <Project Path="src/Lattice.Server/Lattice.Server.fsproj" />
 </Solution>

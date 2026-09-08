@@ -183,7 +183,7 @@
   <ItemGroup>
     <PackageReference Include="FSharp.Core" Version="10.1.400" />
     <!-- CCS: F# Native Compiler Services (native type universe) -->
-    <ProjectReference Include="../../clef/src/Compiler/Clef.Compiler.Service.fsproj" />
+    <ProjectReference Include="$(ClefCompilerServiceProject)" />
     <!-- TUI foundation (Color/Style types now, full TUI later) -->
     <ProjectReference Include="../../Thuja/src/Thuja/Thuja.fsproj" />
     <PackageReference Include="XParsec" Version="0.3.0" />

@@ -354,6 +354,8 @@ type MLIROp =
     | Region of MLIROp list                                         // blocks
     // Module-level declarations (backend-agnostic)
     | GlobalString of name: string * content: string * byteLength: int * obligations: string list  // obligations: anchor names of the obligations constraining this storage (PHG 2.4b), reified as {clef.obligations = [...]}
+    /// One immutable allocation whose bytes and alignment were settled in the PSG.
+    | GlobalBytePool of name: string * bytes: byte list * alignment: int * obligations: string list
     | GlobalMemref of string * MLIRType                             // name, memrefType — zero-initialized static storage for a program-lifetime value (referenced via memref.get_global)
     // CIRCT hardware dialects (FPGA targets)
     | CombOp of CombOp
@@ -420,9 +422,11 @@ and SMTOp =
     | SMTSetLogic of string                         // smt.set_logic "QF_LIA"
     | SMTDeclareFun of SSA * string * SMTType       // result, name (exported verbatim), type
     | SMTIntConstant of SSA * int64                 // smt.int.constant
+    | SMTBigIntConstant of SSA * bigint             // exact unbounded smt.int.constant
     | SMTBVConstant of SSA * int64 * int            // result, value, width
     | SMTIntAdd of SSA * SSA * SSA                  // result, lhs, rhs
     | SMTIntSub of SSA * SSA * SSA                  // result, lhs, rhs
+    | SMTIntMul of SSA * SSA * SSA                  // result, lhs, rhs
     | SMTIntCmp of SSA * SMTCmpPred * SSA * SSA     // result, predicate, lhs, rhs
     | SMTEq of SSA * SSA * SSA * SMTType            // result, lhs, rhs, operand type
     | SMTAnd of SSA * SSA list                      // result, operands (variadic)
