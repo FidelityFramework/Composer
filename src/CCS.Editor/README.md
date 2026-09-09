@@ -1,8 +1,8 @@
 # CCS editor read service
 
-This .NET-hosted service uses the same `ClefCompilerServiceProject` selection as Composer. The default is the sibling `clef/src/Compiler/Clef.Compiler.Service.fsproj`. Override it with an MSBuild property or an ignored `Directory.Build.local.props` at the Composer root. This workstation currently selects the validated `clef-scope-integration` checkout; reconciliation onto `fidelity` remains a separate checkpoint.
+This .NET-hosted service uses the same `ClefCompilerServiceProject` selection as Composer. The normal build uses the sibling `clef/src/Compiler/Clef.Compiler.Service.fsproj`. The compiler integration is merged into Clef's `main`, and this workstation uses that normal checkout without a local override.
 
-For a different local compiler checkout, the optional file contains:
+For an intentional alternative compiler checkout, pass an MSBuild property or create an ignored `Directory.Build.local.props` at the Composer root:
 
 ```xml
 <Project>

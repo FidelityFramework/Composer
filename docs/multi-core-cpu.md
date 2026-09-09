@@ -1,7 +1,13 @@
 # Multi-Core CPU Through Ariel
 
-Status: native typed pthread carrier, renderer equivalence and live window
-lifecycle gates pass, September 9, 2026. A final visual preservation check remains.
+Status: native typed pthread carrier, renderer equivalence and live animated
+window acceptance gates pass, September 9, 2026.
+The compiler integration is merged into the normal Clef repository at `534429798`.
+Composer and Lattice.Server build through the standard sibling compiler path;
+the temporary compiler override and worktree have been removed. The complete
+compiler suite passes 169 tests, and native mapped-carrier and animated-window
+acceptance were repeated after reconciliation. See the
+[repository and recovery record](Ariel_Integration_Changes.md).
 HelloWayland's CPU window uses persistent Ariel carriers. The current scheduling
 layer implementation is `Fidelity.Platform/CPU/Linux/x86_64/Ariel/Region.clef`;
 its typed renderer gate is `HelloWayland/tests/ariel-typed`. The older raw-pointer
@@ -40,8 +46,10 @@ Wayland buffers on release. A 30-second native window observation identified all
 31 Ariel worker threads separately from driver helper threads and measured active
 CPU time on each. Resize to 820 × 960 succeeded; normal close joined the carriers
 and exited with status zero. Observed resident memory was approximately 66–69 MiB.
-Focused captures also confirmed animation; static caption preservation between
-maps is being checked separately before final visual acceptance.
+Focused captures confirmed animation. Direct pixel comparisons established that
+the static caption and panel are byte-identical between equal-size screenshots
+and between native mapped frames. An apparent lettering loss during image
+inspection was not present in the actual pixel data.
 The separate [`HelloWayland.CpuCarriers.fidproj`](../../HelloWayland/HelloWayland.CpuCarriers.fidproj)
 is the successful headless renderer gate: it writes a PPM and exits. That gate
 alone does not establish the animated window or general closure reclamation.
