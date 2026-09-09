@@ -1,0 +1,17 @@
+module NativeCallbacks
+
+let add (left: int) (right: int) : int = left + right
+let subtract (left: int) (right: int) : int = left - right
+
+let choose addition : FnPtr<int -> int -> int> =
+    if addition then FnPtr.ofFunction add else FnPtr.ofFunction subtract
+
+let apply (entry: FnPtr<int -> int -> int>) (left: int) (right: int) : int =
+    FnPtr.invoke entry left right
+
+[<EntryPoint>]
+let main _ =
+    if apply (choose true) 40 2 = 42
+       && apply (choose false) 40 2 = 38
+       && apply (choose true) (-40) 2 = -38 then 0
+    else 1

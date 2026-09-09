@@ -56,8 +56,8 @@ let doctor (args: ParseResults<DoctorArgs>) =
         
         if verbose then
             printfn ""
-            printfn "You can compile F# programs with:"
-            printfn "  composer compile --input Program.fs --output Program.exe"
+            printfn "You can compile Clef projects with:"
+            printfn "  composer compile Project.fidproj"
         
         0 // Success exit code
     

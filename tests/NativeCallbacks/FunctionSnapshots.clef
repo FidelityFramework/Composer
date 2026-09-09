@@ -1,0 +1,25 @@
+module FunctionSnapshots
+
+let mutable selected: int -> int -> int = fun left right -> left + right
+
+let add (left: int) (right: int) = left + right
+let subtract (left: int) (right: int) = left - right
+
+let addThroughAlias left right =
+    let saved = add
+    saved left right
+
+let subtractThroughAlias left right =
+    let saved = subtract
+    saved left right
+
+let invoke (work: int -> int -> int) (left: int) (right: int) : int =
+    let saved = work
+    saved left right
+
+[<EntryPoint>]
+let main _ =
+    let saved = selected
+    selected <- fun left right -> left - right
+    if invoke saved 7 3 = 10 && selected 7 3 = 4
+       && addThroughAlias 7 3 = 10 && subtractThroughAlias 7 3 = 4 then 0 else 91

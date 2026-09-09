@@ -1,0 +1,47 @@
+module PointerCells
+
+open BAREWire.Descriptors
+
+[<FidelityExtern("c", "posix_memalign")>]
+let allocate (cell: option<CHandle<unit>> array) (alignment: int) (bytes: int) : int = NativeDefault.zeroed ()
+let allocateDescriptor : Expr<FunctionDescriptor> =
+    <@ { CName = "posix_memalign"
+         Parameters = [| { Name = "cell"; Type = Pointer 64; PassBy = Reference }
+                         { Name = "alignment"; Type = Integer (Unsigned, 64); PassBy = Value }
+                         { Name = "bytes"; Type = Integer (Unsigned, 64); PassBy = Value } |]
+         ReturnType = Integer (Signed, 32); CallingConvention = CDecl; OwnershipTransfer = CallerOwns } @>
+
+[<FidelityExtern("c", "free")>]
+let release (handle: CHandle<unit>) : unit = NativeDefault.zeroed ()
+let releaseDescriptor : Expr<FunctionDescriptor> =
+    <@ { CName = "free"; Parameters = [| { Name = "handle"; Type = Pointer 64; PassBy = Value } |]
+         ReturnType = Void; CallingConvention = CDecl; OwnershipTransfer = CalleeOwns } @>
+
+[<EntryPoint>]
+let main _ =
+    let cell: option<CHandle<unit>> array = Array.zeroCreate 1
+    let copied: option<CHandle<unit>> array = Array.zeroCreate 1
+    match Array.get cell 0 with
+    | Some _ -> 91
+    | None ->
+        let invalid = allocate cell 3 128
+        if invalid = 0 then 92
+        else
+            match Array.get cell 0 with
+            | Some _ -> 93
+            | None ->
+                let status = allocate cell 16 128
+                if status <> 0 then 94
+                else
+                    match Array.get cell 0 with
+                    | None -> 95
+                    | Some handle ->
+                        Array.set copied 0 (Some handle)
+                        Array.set cell 0 None
+                        match Array.get copied 0 with
+                        | None -> 96
+                        | Some owned ->
+                            release owned
+                            match Array.get cell 0 with
+                            | Some _ -> 97
+                            | None -> 0

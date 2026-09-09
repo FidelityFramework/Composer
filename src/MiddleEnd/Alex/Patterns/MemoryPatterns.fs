@@ -17,6 +17,7 @@ open Alex.Elements.MemRefElements
 open Alex.Elements.ArithElements
 open Alex.Elements.IndexElements
 open Alex.Elements.FuncElements
+open Alex.Elements.SCFElements
 open Alex.CodeGeneration.TypeMapping
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
@@ -366,11 +367,27 @@ let pArenaAllocIntrinsic : PSGParser<MLIROp list * TransferResult> =
 // ARRAY INTRINSIC PARSERS
 // ═══════════════════════════════════════════════════════════
 
+/// Index extension follows the established operand range. In particular, an
+/// unsigned narrow carrier's high bit is data, while a possibly negative index
+/// must keep its sign. Empty does not establish a non-negative runtime value.
+let indexCastForRange (range: ValueRange) (result: SSA) (operand: SSA) (operandType: MLIRType) : MLIROp =
+    if range <> ValueRange.Empty && ValueRange.isNonNegative range then
+        MLIROp.IndexOp (IndexOp.IndexCastU (result, operand, operandType, TIndex))
+    else
+        MLIROp.IndexOp (IndexOp.IndexCastS (result, operand, operandType, TIndex))
+
+let private pArrayIndex (nodeId: NodeId) (result: SSA) (operand: SSA) (operandType: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        let range = nodeRange state.Graph nodeId |> Option.defaultValue ValueRange.Unbounded
+        return indexCastForRange range result operand operandType
+    }
+
 /// Array.zeroCreate<'T> intrinsic — allocate zeroed array
 /// int -> 'T[]  (size -> memref<?xelemType>)
 ///
-/// SSA layout (1 SSA):
-///   [0] = resultSSA (memref.alloc result)
+/// Node-owned SSAs: array, length, zero index, one index, element zero, counter,
+/// condition index, condition, body index, incremented index.
 let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
@@ -378,7 +395,7 @@ let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (argIds.Length >= 1) "Array.zeroCreate: Expected 1 arg"
         let! node = getCurrentNode
         let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 2) $"pArrayZeroCreate: Expected 2 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 10) $"pArrayZeroCreate: Expected 10 SSAs, got {ssas.Length}"
         let resultSSA = ssas.[0]
         let sizeIndexSSA = ssas.[1]
 
@@ -386,7 +403,7 @@ let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (_, sizeSSA, sizeType) = pRecallArgWithLoad argIds.[0]
 
         // Cast size to index type (memref.alloc requires index)
-        let! castOp = pIndexCastS sizeIndexSSA sizeSSA sizeType TIndex
+        let! castOp = pArrayIndex argIds.[0] sizeIndexSSA sizeSSA sizeType
 
         // The element type of the array node's type: an element of the bare kind at the element
         // range's settled width, a record at its physical storage
@@ -395,7 +412,42 @@ let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
 
         let! allocOp = pAlloc resultSSA sizeIndexSSA elemType
         let resultType = TMemRef elemType
-        return ([castOp; allocOp], TRValue { SSA = resultSSA; Type = resultType })
+        let! zeroOps =
+            match elemType with
+            | TInt _ -> parser { let! op = pConstI ssas.[4] 0L elemType in return [op] }
+            | TFloat _ -> parser { let! op = pConstF ssas.[4] 0.0 elemType in return [op] }
+            | TMemRefStatic (bytes, TInt (IntWidth 8)) when
+                (match state.Current.Type with NativeType.TApp (_, [elem]) -> isNullableHandle elem | _ -> false) ->
+                parser {
+                    // Immutable None value shared by initially empty cells. C pointer
+                    // words are produced only by the foreign reference adapter.
+                    let! alloc = pAllocStatic ssas.[4] bytes (TInt (IntWidth 8)) None
+                    let! tag = pConstI ssas.[10] 0L (TInt (IntWidth 8))
+                    let! tagOps = pTypedInsert ssas.[4] ssas.[10] 0 ssas.[11] ssas.[12] (TInt (IntWidth 8)) elemType
+                    let! word = pConstI ssas.[13] 0L TIndex
+                    let inner = match state.Current.Type with NativeType.TApp (_, [elem]) -> elem | _ -> failwith "Expected array type"
+                    let offset = unionPayloadOffset state.Graph inner
+                    let! payload = pTypedInsertView ssas.[4] ssas.[13] offset ssas.[14] ssas.[15] ssas.[16] TIndex elemType
+                    return [alloc; tag; word] @ tagOps @ payload
+                }
+            | other -> fail (Message $"Array.zeroCreate: no valid scalar zero initialization for {other}")
+        let! zeroIndex = pConstI ssas.[2] 0L TIndex
+        let! oneIndex = pConstI ssas.[3] 1L TIndex
+        let! counter = pAlloca ssas.[5] 1 TIndex None
+        let counterType = TMemRefStatic (1, TIndex)
+        let! initialize = pStore ssas.[2] ssas.[5] [ssas.[2]] TIndex counterType
+        let! conditionIndex = pLoad ssas.[6] ssas.[5] [ssas.[2]]
+        let! condition = pIndexCmp ssas.[7] IndexCmpPred.Slt ssas.[6] sizeIndexSSA
+        let! continuation = pSCFCondition ssas.[7] []
+        let! bodyIndex = pLoad ssas.[8] ssas.[5] [ssas.[2]]
+        let! storeZero = pStore ssas.[4] resultSSA [ssas.[8]] elemType resultType
+        let! increment = pIndexAdd ssas.[9] ssas.[8] ssas.[3]
+        let! storeIndex = pStore ssas.[9] ssas.[5] [ssas.[2]] TIndex counterType
+        let! yieldOp = pSCFYield []
+        let! fill = pSCFWhile [conditionIndex; condition; continuation]
+                             [bodyIndex; storeZero; increment; storeIndex; yieldOp]
+        return ([castOp; allocOp] @ zeroOps @ [zeroIndex; oneIndex; counter; initialize; fill],
+                TRValue { SSA = resultSSA; Type = resultType })
     }
 
 /// Array.set intrinsic — store element at index
@@ -420,7 +472,7 @@ let pArraySetIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (meetOps, valueSSA, _) = pAdapt node.Id argIds.[2] rawValueSSA rawValueTy
 
         // Cast index to index type (memref.store requires index-typed indices)
-        let! castOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
+        let! castOp = pArrayIndex argIds.[1] indexCastSSA indexSSA indexType
 
         // Element type from the array type (NOT current node type which is unit)
         let! elemType =
@@ -429,7 +481,6 @@ let pArraySetIntrinsic : PSGParser<MLIROp list * TransferResult> =
             | TMemRefStatic (_, t) -> preturn t
             | other -> fail (Message $"Array.set: expected an array (memref), got {other}")
 
-        // Direct memref.store (no SubView needed)
         let! storeOp = pStore valueSSA arraySSA [indexCastSSA] elemType arrayType
         return (meetOps @ [castOp; storeOp], TRVoid)
     }
@@ -470,7 +521,7 @@ let pArrayGetIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
 
         // Cast index to index type (memref.load requires index-typed indices)
-        let! castOp = pIndexCastS indexCastSSA indexSSA indexType TIndex
+        let! castOp = pArrayIndex argIds.[1] indexCastSSA indexSSA indexType
 
         // Direct memref.load at cast index: the element's slot, then the read's own width
         // (a scalar through its derived meet; a record or tuple keeps its logical struct type
@@ -513,8 +564,8 @@ let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (_, countSSA, countType) = pRecallArgWithLoad argIds.[2]
 
         // Cast offset and count to index type (memref.subview requires index)
-        let! offsetCastOp = pIndexCastS offsetIndexSSA offsetSSA offsetType TIndex
-        let! countCastOp = pIndexCastS countIndexSSA countSSA countType TIndex
+        let! offsetCastOp = pArrayIndex argIds.[1] offsetIndexSSA offsetSSA offsetType
+        let! countCastOp = pArrayIndex argIds.[2] countIndexSSA countSSA countType
 
         // SubViewCopy: subview + alloc + copy → fresh contiguous buffer
         let subviewCopyOp = MLIROp.MemRefOp (MemRefOp.SubViewCopy (resultSSA, sourceSSA, [offsetIndexSSA], [SubViewParam.Dynamic countIndexSSA], [SubViewParam.Static 1L], countIndexSSA, sourceType))
@@ -691,4 +742,3 @@ let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
             return (sizeOp :: allocOp :: List.concat storeOpLists, TRValue { SSA = ssas.[1]; Type = arrayType })
         | _ -> return! fail (Message "Expected ArrayExpr")
     }
-

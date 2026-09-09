@@ -1,0 +1,47 @@
+module ListenerEntry
+
+open BAREWire.Descriptors
+
+type Listener = { Done: FnPtr<CHandle<unit> -> int -> unit>; Marker: bool }
+type IntegerListener = { Apply: FnPtr<int -> int> }
+let mutable private observed: int = 0
+let private onDone (_data: CHandle<unit>) (serial: int) : unit = observed <- serial
+let DoneDescriptor: Expr<CallbackDescriptor> = <@ {
+    Record = "Listener"; Field = "Done"
+    Signature = {
+        CName = "listener.done"
+        Parameters = [| { Name = "data"; Type = Pointer 64; PassBy = Value }
+                        { Name = "serial"; Type = Integer (Unsigned, 32); PassBy = Value } |]
+        ReturnType = Void; CallingConvention = CDecl; OwnershipTransfer = Borrowed
+    }
+} @>
+let private identity (value: int) : int = value
+let ApplyDescriptor: Expr<CallbackDescriptor> = <@ {
+    Record = "IntegerListener"; Field = "Apply"
+    Signature = {
+        CName = "listener.apply"
+        Parameters = [| { Name = "value"; Type = Integer (Signed, 32); PassBy = Value } |]
+        ReturnType = Integer (Signed, 32); CallingConvention = CDecl; OwnershipTransfer = Borrowed
+    }
+} @>
+
+[<EntryPoint>]
+let main _ =
+    match Fidelity.Pthread.Storage.mallocContext 1 with
+    | None -> 2
+    | Some context ->
+        let listener = { Done = FnPtr.ofFunction onDone; Marker = true }
+        onDone context 17
+        let direct = observed = 17
+        let pointer = listener.Done
+        FnPtr.invoke pointer context 4294967295
+        let invoked = observed = 4294967295
+        let again = FnPtr.ofFunction onDone
+        FnPtr.invoke again context 4294967294
+        let repeated = observed = 4294967294
+        let integers = { Apply = FnPtr.ofFunction identity }
+        let first = FnPtr.invoke integers.Apply -1
+        let other = FnPtr.ofFunction identity
+        let second = FnPtr.invoke other -2
+        Fidelity.Pthread.Storage.freeContext context
+        if listener.Marker && direct && invoked && repeated && first = -1 && second = -2 then 0 else 1

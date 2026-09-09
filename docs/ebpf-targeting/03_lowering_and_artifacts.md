@@ -159,7 +159,7 @@ the compiler surfaces.
 ## The artifact tail: no link step
 
 This is where eBPF departs hardest from the existing LLVM backend. The current
-backend runs `llc` then `clang` to link an executable — three `DeploymentMode`
+backend prepares target bitcode with `opt` and uses `ld.lld` for code generation and executable linking — three `DeploymentMode`
 branches (console `-lc`, freestanding `-nostdlib -Wl,-e,_start`, shared
 `-shared`). **None of them fit.** eBPF wants:
 

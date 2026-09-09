@@ -63,6 +63,13 @@ let private enumTagRepresentation (caseCount: int) : MLIRType =
     | Some FPGA -> TTag caseCount
     | _ -> TMemRefStatic (1, TInt (IntWidth 8))
 
+/// Identify the source option used for nullable C data pointers. Its interior
+/// representation remains the ordinary option; null encoding belongs to FFI.
+let isNullableHandle (ty: NativeType) =
+    match ty with
+    | NativeType.TApp (tc, [inner]) when tc.Name = "option" -> Types.tryGetNTUKind inner = Some NTUKind.NTUptr
+    | _ -> false
+
 // ═══════════════════════════════════════════════════════════════════════════
 // WIDTH READS (the node's selection, the settled slot, the element range)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -397,6 +404,16 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
     let core = platform <> FPGA
     let layoutOf (t: NativeType) = if core then settledLayout graph t else None
     match ty with
+    | NativeType.TApp (tc, _) when tc.NTUKind = Some NTUKind.NTUborrowedview ->
+        let layout =
+            match Clef.Compiler.PSGSaturation.SemanticGraph.BorrowedViews.layout graph ty with
+            | Ok layout -> layout
+            | Error message -> failwith message
+        // The scope owns this stack header; the data descriptor refers to the
+        // native mapping. Its element representation comes from BAREWire.
+        let word = mlirTypeSize arch TIndex
+        TStruct (["Data", TMemRef (TInt (IntWidth layout.ElementBits)); "RowStride", TIndex],
+                 Some { Offsets = [0; 5 * word]; Size = 6 * word; Align = word })
     // A value of a width-named spelling (CS-12 step 5a, the alias): its width is the declaration
     // the spelling writes, read from CCS (`RangeAnalysis.declaredWidthOfKind`, the platform's
     // representation of that name), never the spelling's own bits. A node at hand reads

@@ -1,6 +1,6 @@
 /// LLVM Pipeline - Composes MLIR lowering + native codegen into a BackEnd value
 ///
-/// This is the LLVM backend: MLIR → mlir-opt → mlir-translate → llc → clang → native binary.
+/// This is the LLVM backend: MLIR → mlir-opt → mlir-translate → opt (target bitcode) → ld.lld → native binary.
 /// Assembled as a function value, consumed by the orchestrator without dispatch.
 module BackEnd.LLVM.Pipeline
 
@@ -33,9 +33,9 @@ let backend : BackEnd = {
                 printfn "Stopped after LLVM IR generation (--emit-llvm)"
                 Ok (IntermediateOnly "LLVM IR")
             else
-                // Phase 2: LLVM IR → native binary (llc + clang)
+                // Phase 2: LLVM IR → native binary (target bitcode + LLD)
                 timePhase "BackEnd.Link" "Linking to native binary" (fun () ->
                     let targetTriple = ctx.TargetTripleOverride |> Option.defaultValue (Codegen.getDefaultTarget())
-                    Codegen.compileToNative llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries)
+                    Codegen.compileToNative llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink)
                 |> Result.map (fun () -> NativeBinary ctx.OutputPath))
 }

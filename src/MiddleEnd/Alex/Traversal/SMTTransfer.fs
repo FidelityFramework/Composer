@@ -89,6 +89,47 @@ let private scope (ob: ObligationInfo) : MLIROp list =
 
     let ops =
         match ob.Body with
+        | ObligationBody.MappedElementSpan model ->
+            let statements = ResizeArray<MLIROp>()
+            let declare name =
+                let output = v ()
+                statements.Add(smt (SMTDeclareFun(output, name, SMTInt)))
+                output
+            let constant value =
+                let output = v ()
+                statements.Add(smt (SMTBigIntConstant(output, value)))
+                output
+            let binary make left right =
+                let output = v ()
+                statements.Add(smt (make (output, left, right)))
+                output
+            let cmp pred left right =
+                let output = v ()
+                statements.Add(smt (SMTIntCmp(output, pred, left, right)))
+                output
+            let equal left right =
+                let output = v ()
+                statements.Add(smt (SMTEq(output, left, right, SMTInt)))
+                output
+            let assume value = statements.Add(smt (SMTAssert value))
+            let baseAddress, bytes, index = declare "mapped_base", declare "mapped_bytes", declare "mapped_index"
+            let zero, maximum = constant 0I, constant model.MaximumExtent
+            let elementBytes, baseAlignment, elementAlignment = constant (bigint model.ElementBytes), constant (bigint model.BaseAlignment), constant (bigint model.ElementAlignment)
+            cmp SmtGt baseAddress zero |> assume
+            cmp SmtGt bytes zero |> assume
+            cmp SmtLe bytes maximum |> assume
+            cmp SmtLe baseAddress (binary SMTIntSub maximum bytes) |> assume
+            equal (binary SMTIntMod bytes elementBytes) zero |> assume
+            equal (binary SMTIntMod baseAddress baseAlignment) zero |> assume
+            cmp SmtLe zero index |> assume
+            cmp SmtLt index (binary SMTIntDiv bytes elementBytes) |> assume
+            let start = binary SMTIntAdd baseAddress (binary SMTIntMul index elementBytes)
+            let ending = binary SMTIntAdd start elementBytes
+            let clauses = [cmp SmtLe baseAddress start; cmp SmtLe ending (binary SMTIntAdd baseAddress bytes)
+                           cmp SmtLe ending maximum; equal (binary SMTIntMod start elementAlignment) zero]
+            let conclusion = v ()
+            statements.Add(smt (SMTAnd(conclusion, clauses)))
+            anchor conclusion (List.ofSeq statements)
         | ObligationBody.IntegerLiteralRange (value, lower, upper) ->
             integerComparisons [ lower, value; value, upper ]
         | ObligationBody.IntegerRepresentationCoverage (lower, upper, minimum, maximum) ->
@@ -212,6 +253,71 @@ let private scope (ob: ObligationInfo) : MLIROp list =
                 [ smt (SMTBVConstant (b, int64 lastByte, 8))
                   smt (SMTBVConstant (z, 0L, 8))
                   smt (SMTEq (def, b, z, SMTBV 8)) ]
+        | ObligationBody.StaticStorageLayout (slots, usedSize, allocationSize, poolAlignment, capacity, spaceAlignment, granularity) ->
+            // Every placement is a concrete compiler fact. No adjacency premise
+            // assumes the layout that this claim is meant to establish.
+            let statements = ResizeArray<MLIROp>()
+            let constant (value: bigint) =
+                let result = v ()
+                statements.Add(smt (SMTBigIntConstant(result, value)))
+                result
+            let cmp pred a b =
+                let result = v ()
+                statements.Add(smt (SMTIntCmp(result, pred, a, b)))
+                result
+            let equal a b =
+                let result = v ()
+                statements.Add(smt (SMTEq(result, a, b, SMTInt)))
+                result
+            let any clauses =
+                match clauses with
+                | [only] -> only
+                | _ ->
+                    let result = v ()
+                    statements.Add(smt (SMTOr(result, clauses)))
+                    result
+            let zero = constant 0I
+            let divisible value divisor =
+                // Invalid zero/negative alignments fail a separate conjunct;
+                // use a defined modulus so they cannot introduce vacuity.
+                let denominator = constant (bigint (max 1 divisor))
+                let remainder = v ()
+                statements.Add(smt (SMTIntMod(remainder, value, denominator)))
+                equal remainder zero
+            let used, allocation = constant (bigint usedSize), constant (bigint allocationSize)
+            let pool, space, grain, cap = constant (bigint poolAlignment), constant (bigint spaceAlignment), constant (bigint granularity), constant (bigint capacity)
+            let clauses = ResizeArray<SSA>()
+            for term in [pool; space; grain] do clauses.Add(cmp SmtGt term zero)
+            clauses.Add(cmp SmtGe used zero)
+            clauses.Add(cmp SmtGe cap zero)
+            clauses.Add(cmp SmtLe used allocation)
+            clauses.Add(cmp SmtLe allocation cap)
+            clauses.Add(cmp SmtGe pool space)
+            clauses.Add(divisible allocation granularity)
+            clauses.Add(divisible pool spaceAlignment)
+            let placements = slots |> List.map (fun (offset, length, alignment) ->
+                let beginAt = constant (bigint offset)
+                let lengthTerm = constant (bigint length)
+                let align = constant (bigint alignment)
+                let endAt = v ()
+                statements.Add(smt (SMTIntAdd(endAt, beginAt, lengthTerm)))
+                clauses.Add(cmp SmtGe beginAt zero)
+                clauses.Add(cmp SmtGt lengthTerm zero)
+                clauses.Add(cmp SmtGt align zero)
+                clauses.Add(divisible beginAt alignment)
+                clauses.Add(divisible pool alignment)
+                clauses.Add(cmp SmtLe endAt allocation)
+                clauses.Add(cmp SmtLe endAt used)
+                beginAt, endAt)
+            match placements with
+            | [] -> clauses.Add(equal used zero)
+            | _ -> clauses.Add(placements |> List.map (fun (_, ending) -> equal ending used) |> any)
+            for i, (leftBegin, leftEnd) in List.indexed placements do
+                for rightBegin, rightEnd in List.skip (i + 1) placements do
+                    clauses.Add(any [cmp SmtLe leftEnd rightBegin; cmp SmtLe rightEnd leftBegin])
+            let definition = v ()
+            statements.Add(smt (SMTAnd(definition, List.ofSeq clauses)))
+            anchor definition (List.ofSeq statements)
         | ObligationBody.ConsecutiveLayout (storages, span, capacity) ->
             let sizes = List.toArray storages
             let n' = sizes.Length

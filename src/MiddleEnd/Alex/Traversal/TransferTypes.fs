@@ -33,6 +33,7 @@ open Alex.Traversal.ScopeContext
 /// The platform as emission reads it: the instruction set and the declared Register and Pointer
 /// widths (from the CCS context), and the call-site resolutions the graph carries (Codata.Bindings).
 type PlatformReads = {
+    LinkedLibraries: Set<string>
     TargetArch: Architecture
     Bindings: PlatformBindings
 }

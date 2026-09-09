@@ -147,7 +147,7 @@ Both paths share CCS, PSG construction, and Baker saturation. They diverge at Al
 | Primary field | (function body) | `Step: 'S -> 'S` | `Compute: 'T -> 'T -> 'T` | `Handle: 'Msg -> Async<unit>` |
 | Metadata fields | (none) | `InitialState: 'S` | `Shape: Shape` | substrate bindings |
 | Alex emits | func/memref/arith/scf | hw/comb/seq | aie.*/arith/memref/scf | jsir.* / jshir.* |
-| Backend tool | mlir-opt + llc + clang | circt-opt | aiecc.py (aie-opt + Peano) | `jsir_gen --passes=hir2ast,ast2source` |
+| Backend tool | mlir-opt + opt + ld.lld | circt-opt | aiecc.py (aie-opt + Peano) | `jsir_gen --passes=hir2ast,ast2source` |
 | Output artifact | NativeBinary (ELF) | Verilog (.sv) | Xclbin (.xclbin + .bin) | JavaScriptModule (.js) |
 
 ### 3.3 BackEndArtifact Extension

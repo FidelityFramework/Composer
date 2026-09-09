@@ -92,12 +92,16 @@
       <Compile Include="MiddleEnd/Alex/Patterns/LiteralPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/StringPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ApplicationPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/BorrowedViewPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/MappedViewPatterns.fs" />
 
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="MiddleEnd/Alex/Witnesses/LiteralWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/TypeAnnotationWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/IntrinsicWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/FunctionPointerWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/LazyWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/SeqWitness.fs" />
       <!-- PRD-13a: Core Collections Witnesses -->
@@ -111,6 +115,8 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/DUWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/BorrowedViewWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/MappedViewWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/StructuralWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/HardwareModuleWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/KernelModuleWitness.fs" />
@@ -127,6 +133,7 @@
       <Compile Include="MiddleEnd/Alex/Traversal/WitnessRegistry.fs" />
 
       <!-- Alex Traversal - MLIR Transfer via Zipper + XParsec (pull model) -->
+      <Compile Include="MiddleEnd/Alex/Traversal/StaticStorageValidation.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/MLIRTransfer.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/XDCTransfer.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/SMTTransfer.fs" />

@@ -89,6 +89,10 @@ let pAlloc (ssa: SSA) (sizeSSA: SSA) (elemType: MLIRType) : PSGParser<MLIROp> =
         return MLIROp.MemRefOp (MemRefOp.Alloc (ssa, sizeSSA, elemType))
     }
 
+/// Release an owned heap allocation after all native uses and copy-back finish.
+let pDealloc (ssa: SSA) (memrefType: MLIRType) : PSGParser<MLIROp> =
+    preturn (MLIROp.MemRefOp (MemRefOp.Dealloc (ssa, memrefType)))
+
 /// Emit memref.alloc operation (heap allocation with compile-time size)
 /// Like pAlloca but heap-allocated — survives function return
 /// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation

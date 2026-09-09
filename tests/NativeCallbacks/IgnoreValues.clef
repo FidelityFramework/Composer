@@ -1,0 +1,26 @@
+module IgnoreValues
+
+let mutable private effects: int = 0
+let mutable private units: int = 0
+let private numeric () =
+    effects <- effects + 1
+    42
+let private optional (context: CHandle<unit>) =
+    effects <- effects + 1
+    Some context
+let private consumeUnit (_value: unit) = units <- units + 1
+
+[<EntryPoint>]
+let main _ =
+    match Fidelity.Pthread.Storage.mallocContext 1 with
+    | None -> 2
+    | Some context ->
+        let first = ignore (numeric ())
+        let second = ignore (optional context)
+        let empty: option<CHandle<unit>> = None
+        let third = ignore empty
+        consumeUnit first
+        consumeUnit second
+        consumeUnit third
+        Fidelity.Pthread.Storage.freeContext context
+        if effects = 2 && units = 3 then 0 else 1

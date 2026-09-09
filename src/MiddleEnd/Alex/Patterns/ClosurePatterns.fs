@@ -93,6 +93,9 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
         | _ ->
             // func.func with positional parameters
             let visibility = if name = "main" then FuncVisibility.Public else FuncVisibility.Private
+            // Preserve earlier witness diagnostics when a non-unit body failed
+            // to produce a value, instead of throwing over the accumulated errors.
+            do! ensure (returnSSA.IsSome || unitReturnSSA.IsSome) $"pFunctionDef: function '{name}' has no witnessed return value"
             // A unit function: returnSSA = None but retTy is concrete (e.g. i32), and
             // func.return needs an operand of that type. The zero constant it returns is the
             // value SSAAssignment derived for the Lambda (the first of its body's scope).
@@ -125,13 +128,13 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
 /// Each capture's slot type and byte offset, and its values (its work values then its result,
 /// `ClosureLayout.CaptureExtractionSSAs`), are read from the closure layout SSAAssignment
 /// derived; nothing is counted or summed here.
-let pExtractCaptures (captures: (MLIRType * int) list) (structType: MLIRType) (envSSA: SSA) (ssas: SSA list list) : PSGParser<MLIROp list> =
+let pExtractCaptures (captures: (MLIRType * int * MLIRType) list) (structType: MLIRType) (envSSA: SSA) (ssas: SSA list list) : PSGParser<MLIROp list> =
     parser {
         let envPtrSSA = envSSA  // Reconstructed memref<Nxi8> from caller
 
         let! extractOpLists =
             List.zip captures ssas
-            |> List.map (fun ((capTy, byteOffset), captureSSAs) ->
+            |> List.map (fun ((capTy, byteOffset, valueTy), captureSSAs) ->
                 parser {
                     match capTy, captureSSAs with
                     | TStruct ([("ptr", TIndex); ("len", TIndex)], bytes), [ ptrViewSSA; ptrZeroSSA; ptrSSA; lenViewSSA; lenZeroSSA; lenSSA; rawMemrefSSA; resultSSA ] ->
@@ -145,12 +148,30 @@ let pExtractCaptures (captures: (MLIRType * int) list) (structType: MLIRType) (e
                         let! ptrOps = pTypedExtract ptrSSA envPtrSSA ptrByteOffset ptrViewSSA ptrZeroSSA TIndex structType
                         // Load len (TIndex) at lenByteOffset
                         let! lenOps = pTypedExtract lenSSA envPtrSSA lenByteOffset lenViewSSA lenZeroSSA TIndex structType
-                        // Reconstruct: index → memref<?xi8>
-                        let dynMemrefTy = TMemRef(TInt (IntWidth 8))
+                        // Preserve the captured buffer's settled element type and actual extent.
+                        let dynMemrefTy = valueTy
                         let castOp = MLIROp.MemRefOp(MemRefOp.IndexToMemRef(rawMemrefSSA, ptrSSA, dynMemrefTy))
                         // Set size: reinterpret_cast with dynamic length
                         let sizeOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCastDynamic(resultSSA, rawMemrefSSA, 0, lenSSA, dynMemrefTy, dynMemrefTy))
                         return ptrOps @ lenOps @ [castOp; sizeOp]
+
+                    | TIndex, [ viewSSA; zeroSSA; ptrSSA; rawMemrefSSA; resultSSA ] ->
+                        match valueTy with
+                        | TMemRefStatic (count, element) ->
+                            let! ptrOps = pTypedExtract ptrSSA envPtrSSA byteOffset viewSSA zeroSSA TIndex structType
+                            let rawTy = TMemRef element
+                            let castOp = MLIROp.MemRefOp(MemRefOp.IndexToMemRef(rawMemrefSSA, ptrSSA, rawTy))
+                            let sizeOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCast(resultSSA, rawMemrefSSA, 0, count, rawTy, valueTy))
+                            return ptrOps @ [castOp; sizeOp]
+                        | TStruct (_, Some bytes) ->
+                            // Records retain their settled field layout for body accesses;
+                            // their physical carrier is the same bounded byte view used at construction.
+                            let! ptrOps = pTypedExtract ptrSSA envPtrSSA byteOffset viewSSA zeroSSA TIndex structType
+                            let rawTy = TMemRef (TInt (IntWidth 8))
+                            let castOp = MLIROp.MemRefOp(MemRefOp.IndexToMemRef(rawMemrefSSA, ptrSSA, rawTy))
+                            let sizeOp = MLIROp.MemRefOp(MemRefOp.ReinterpretCast(resultSSA, rawMemrefSSA, 0, bytes.Size, rawTy, valueTy))
+                            return ptrOps @ [castOp; sizeOp]
+                        | _ -> return! fail (Message $"pExtractCaptures: address slot has no settled static view: {valueTy}")
 
                     | _, [ viewSSA; zeroSSA; resultSSA ] ->
                         // Scalar capture: standard typed extraction at the slot's settled offset

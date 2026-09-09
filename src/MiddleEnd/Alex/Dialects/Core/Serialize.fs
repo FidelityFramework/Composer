@@ -55,6 +55,7 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
         sprintf "vector<%dx%s>" count (typeToString pointer elemTy)
     | TIndex -> "index"
     | TUnit -> "i32"  // Unit represented as i32 (value 0)
+    | TVoid -> "()"  // Empty MLIR result list at a foreign function boundary
     | TStruct (_, Some bytes) ->
         // TStruct serializes as !hw.struct for CIRCT (FPGA) or memref for CPU.
         // This default path is CPU; hwTypeToString pointer handles the FPGA case.
@@ -172,6 +173,10 @@ let arithOpToString (pointer: Result<int, string>) (op: ArithOp) : string =
         sprintf "%s = arith.extsi %s : %s to %s" (ssaToString result) (ssaToString value) (typeToString pointer srcTy) (typeToString pointer destTy)
     | ExtUI (result, value, srcTy, destTy) ->
         sprintf "%s = arith.extui %s : %s to %s" (ssaToString result) (ssaToString value) (typeToString pointer srcTy) (typeToString pointer destTy)
+    | ExtF (result, value, srcTy, destTy) ->
+        sprintf "%s = arith.extf %s : %s to %s" (ssaToString result) (ssaToString value) (typeToString pointer srcTy) (typeToString pointer destTy)
+    | TruncF (result, value, srcTy, destTy) ->
+        sprintf "%s = arith.truncf %s : %s to %s" (ssaToString result) (ssaToString value) (typeToString pointer srcTy) (typeToString pointer destTy)
     | TruncI (result, value, srcTy, destTy) ->
         sprintf "%s = arith.trunci %s : %s to %s" (ssaToString result) (ssaToString value) (typeToString pointer srcTy) (typeToString pointer destTy)
     | SIToFP (result, value, srcTy, destTy) ->
@@ -330,6 +335,10 @@ let smtOpToString (pointer: Result<int, string>) (inner: MLIROp -> string) (op: 
         sprintf "%s = smt.int.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
     | SMTIntSub (result, lhs, rhs) ->
         sprintf "%s = smt.int.sub %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
+    | SMTIntMod (result, lhs, rhs) ->
+        sprintf "%s = smt.int.mod %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
+    | SMTIntDiv (result, lhs, rhs) ->
+        sprintf "%s = smt.int.div %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
     | SMTIntMul (result, lhs, rhs) ->
         sprintf "%s = smt.int.mul %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
     | SMTIntCmp (result, pred, lhs, rhs) ->
@@ -353,6 +362,14 @@ let smtOpToString (pointer: Result<int, string>) (inner: MLIROp -> string) (op: 
 /// Serialize MemRefOp to MLIR text
 let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
     match op with
+    | MemRefOp.LoadAligned (result, memref, indices, _, memrefType, alignment) ->
+        let indicesStr = indices |> List.map ssaToString |> String.concat ", "
+        sprintf "%s = memref.load %s[%s] {alignment = %d : i64} : %s"
+            (ssaToString result) (ssaToString memref) indicesStr alignment (typeToString pointer memrefType)
+    | MemRefOp.StoreAligned (value, memref, indices, _, memrefType, alignment) ->
+        let indicesStr = indices |> List.map ssaToString |> String.concat ", "
+        sprintf "memref.store %s, %s[%s] {alignment = %d : i64} : %s"
+            (ssaToString value) (ssaToString memref) indicesStr alignment (typeToString pointer memrefType)
     | MemRefOp.Load (result, memref, indices, _elemType, memrefType) ->
         // Build indices string
         let indicesStr = if List.isEmpty indices then "" else sprintf "[%s]" (indices |> List.map ssaToString |> String.concat ", ")
@@ -377,6 +394,8 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
         let memrefType = TMemRef elemType
         sprintf "%s = memref.alloc(%s) : %s"
             (ssaToString result) (ssaToString sizeSSA) (typeToString pointer memrefType)
+    | MemRefOp.Dealloc (memref, memrefType) ->
+        sprintf "memref.dealloc %s : %s" (ssaToString memref) (typeToString pointer memrefType)
     | MemRefOp.AllocStatic (result, memrefType, alignmentOpt) ->
         // Heap allocation with compile-time size: memref.alloc() : memref<NxT>
         // Like Alloca but heap-allocated — survives function return
@@ -485,8 +504,10 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
             | TMemRef e | TMemRefStatic (_, e) | TMemRefScalar e -> Some e
             | _ -> None
         match getElemType srcType, getElemType destType with
-        | Some srcElem, Some destElem when srcElem <> destElem ->
-            // Different element types: emit memref.view (allows cross-element-type access)
+        | Some srcElem, Some destElem when srcElem <> destElem || (srcElem = TInt (IntWidth 8) && byteOffset <> 0) ->
+            // A byte-buffer field view shifts the base pointer and keeps offset0,
+            // including i8 fields. reinterpret_cast with a nonzero descriptor
+            // offset cannot have the plain destination type used by its loads.
             // Generate inline offset constant + view as two ops on separate lines
             let resultStr = ssaToString result
             let offsetName = sprintf "%s_off" resultStr
@@ -622,6 +643,8 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             sprintf "%s = index.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
         | _ ->
             sprintf "// TODO: Serialize IndexOp %A" iop
+    | MLIROp.Assert (condition, message) ->
+        sprintf "cf.assert %s, \"%s\"" (ssaToString condition) (message.Replace("\\", "\\\\").Replace("\"", "\\\""))
     | MLIROp.SCFOp scfOp ->
         match scfOp with
         | SCFOp.While (condOps, bodyOps) ->

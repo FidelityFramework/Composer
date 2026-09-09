@@ -110,7 +110,7 @@ let extractToolchainPaths() =
         |> Array.filter (fun p -> 
             not (String.IsNullOrWhiteSpace(p)) &&
             (p.Contains("mingw") || p.Contains("llvm") || p.Contains("gcc") || 
-             p.Contains("clang") || p.Contains("bin")))
+             p.Contains("bin")))
         |> Array.toList
 
 /// Gather complete environment information

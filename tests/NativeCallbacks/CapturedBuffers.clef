@@ -1,0 +1,27 @@
+module CapturedBuffers
+
+let apply (work: int -> int) (value: int) : int = work value
+
+let relay (work: int -> int) (value: int) : int =
+    let inner = fun argument -> work argument
+    apply inner value
+
+[<EntryPoint>]
+let main _ =
+    let cells: int array = Array.zeroCreate 3
+    let count = Array.length cells
+    let mutable offset: int = 3
+    let first = fun value ->
+        Array.set cells 0 (value + offset + count - 3)
+        offset <- offset + 1
+        Array.get cells 0
+    let second = fun value ->
+        Array.set cells 1 (first value)
+        Array.get cells 1
+    let a = apply first 7
+    let b = relay second 8
+    // These parent accesses must retain parent SSAs after both lambda bodies.
+    Array.set cells 2 offset
+    if a = 10 && b = 12 && Array.length cells = 3
+       && Array.get cells 0 = 12 && Array.get cells 1 = 12
+       && Array.get cells 2 = 5 then 0 else 91

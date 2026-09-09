@@ -20,6 +20,7 @@ open Alex.Elements.FuncElements
 open Alex.Elements.ArithElements
 open Alex.Elements.MemRefElements
 open Alex.Elements.IndexElements
+open Alex.Elements.SCFElements
 open Alex.Elements.MLIRAtomics
 open Alex.Patterns.LiteralPatterns  // deriveGlobalRef, deriveByteLength (for dynamic extern string constants)
 open Alex.Traversal.TransferTypes
@@ -39,23 +40,37 @@ let private marshalToCType (platformWordTy: MLIRType) (ty: MLIRType) : MLIRType 
     | TIndex -> platformWordTy
     | other -> other
 
+let private pForeignReturnType (funcId: NodeId) (ty: NativeType) : PSGParser<MLIRType> =
+    parser {
+        let! state = getUserState
+        let! mapped = pMapType ty
+        match mapped with
+        | _ when Clef.Compiler.NativeTypedTree.NativeTypes.Types.tryGetNTUKind ty = Some NTUKind.NTUunit -> return TVoid
+        | TInt (IntWidth 0) ->
+            match Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.returnOfCall state.Graph funcId with
+            | Some declared -> return TInt (IntWidth declared.Bits)
+            | None -> return narrowForCurrent state mapped
+        | _ -> return mapped
+    }
+
 /// Unwrap an option-typed argument at the FFI boundary.
-/// Options are inline DUs: memref<Nxi8> with tag at byte 0, payload at byte 1.
+/// Options retain their settled tagged DU storage; payload offsets come from CCS.
 ///   None (tag=0) → NULL (0 as PlatformWordType)
 ///   Some (tag≠0) → payload extracted as PlatformWordType
 ///
 /// Composes from MLIRAtomics (pTypedExtract, pTypedExtractView) and
 /// ArithElements (pCmpI, pSelect, pConstI) — proper layer composition.
 ///
-/// SSA layout (11 slots from coeffects, Pillar 1):
+/// SSA layout (13 slots from coeffects; opaque pointers use the first 11):
 ///   0-2: tag extraction (tagSSA, tagViewSSA, tagZeroSSA)
 ///   3-6: payload extraction (payloadSSA, payOffsetSSA, payViewSSA, payZeroSSA)
 ///   7:   zero i8 constant for tag comparison
 ///   8:   isSome comparison result (i1)
 ///   9:   null constant (0 as PlatformWordType)
 ///   10:  select result
-let private pUnwrapOptionArgForFFI
-    (optionSSA: SSA) (optionType: MLIRType) (platformWordTy: MLIRType)
+///   11-12: string payload descriptor to native pointer (when applicable)
+let pUnwrapOptionArgForFFI
+    (nativeOptionType: NativeType) (optionSSA: SSA) (optionType: MLIRType) (platformWordTy: MLIRType)
     (ssas: SSA list) (baseIdx: int)
     : PSGParser<MLIROp list * Val> =
     parser {
@@ -76,8 +91,29 @@ let private pUnwrapOptionArgForFFI
         // 1. Extract tag (i8) from byte offset 0 — pTypedExtract (MLIRAtomics)
         let! tagOps = pTypedExtract tagSSA optionSSA 0 tagViewSSA tagZeroSSA tagTy optionType
 
-        // 2. Extract payload from byte offset 1 as PlatformWordType — pTypedExtractView (MLIRAtomics)
-        let! payloadOps = pTypedExtractView payloadSSA optionSSA 1 payOffsetSSA payViewSSA payZeroSSA platformWordTy optionType
+        let! state = getUserState
+        let! inner =
+            match nativeOptionType with
+            | NativeType.TApp (tc, [inner]) when tc.Name = "option" || tc.Name = "voption" -> preturn inner
+            | _ -> fail (Message "Nullable foreign argument requires a settled option type")
+        let payloadOffset = unionPayloadOffset state.Graph nativeOptionType
+        let! payloadOps, nativePayload =
+            match Clef.Compiler.NativeTypedTree.NativeTypes.Types.tryGetNTUKind inner with
+            | Some NTUKind.NTUptr ->
+                parser {
+                    let! ops = pTypedExtractView payloadSSA optionSSA payloadOffset payOffsetSSA payViewSSA payZeroSSA platformWordTy optionType
+                    return ops, payloadSSA
+                }
+            | Some NTUKind.NTUstring ->
+                parser {
+                    let! innerType = pMapType inner
+                    let! ops = pTypedExtractView payloadSSA optionSSA payloadOffset payOffsetSSA payViewSSA payZeroSSA innerType optionType
+                    let pointer, word = ssas.[baseIdx + 11], ssas.[baseIdx + 12]
+                    let! extract = pExtractBasePtr pointer payloadSSA innerType
+                    let! cast = pIndexCastS word pointer TIndex platformWordTy
+                    return ops @ [extract; cast], word
+                }
+            | _ -> fail (Message "Nullable foreign arguments require an opaque handle or a string adapter")
 
         // 3. Compare tag ≠ 0 → isSome — pCmpI (ArithElements)
         let! zeroI8Op = pConstI zeroI8SSA 0L tagTy
@@ -87,7 +123,7 @@ let private pUnwrapOptionArgForFFI
         let! nullOp = pConstI nullSSA 0L platformWordTy
 
         // 5. Select: isSome ? payload : null — pSelect (ArithElements)
-        let! selectOp = pSelect selectSSA isSomeSSA payloadSSA nullSSA platformWordTy
+        let! selectOp = pSelect selectSSA isSomeSSA nativePayload nullSSA platformWordTy
 
         return (tagOps @ payloadOps @ [zeroI8Op; cmpOp; nullOp; selectOp],
                 { SSA = selectSSA; Type = platformWordTy })
@@ -372,18 +408,286 @@ let private recallArgs (callId: NodeId) (argIds: NodeId list) : PSGParser<MLIROp
         }
     loop argIds
 
-/// A record crossing the C boundary by value needs the ABI's struct-passing rule (SysV x86_64
-/// passes a struct wider than two words in memory, `byval`). The platform description declares
-/// no such rule yet, and the leg neither supplies a threshold of its own nor passes the struct
-/// silently: a stop naming the missing declaration (CCS8203-class; CS-12 declares it).
-let private byvalOf (platformId: string) (argWithIds: (NodeId * (SSA * MLIRType)) list) (isOptionArgument: NodeId -> bool) : ByvalParam list =
+/// Pack a bounded scalar array according to its declared foreign element ABI.
+/// Source storage remains unchanged until writable results are copied back;
+/// every narrowing input is checked, and the temporary ends with this call.
+let private projectScalarReference (graph: SemanticGraph) argId value ty
+    (declared: Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.DeclaredParameter)
+    readOnly (ssas: SSA list) cursor : PSGParser<MLIROp list * MLIROp list * (SSA * MLIRType)> =
+    parser {
+        do! ensure (cursor + 48 <= ssas.Length) "Foreign scalar projection exceeds the node's assigned SSA family"
+        let s i = ssas.[cursor + i]
+        let! sourceBits =
+            match ty with
+            | TMemRef (TInt (IntWidth bits)) | TMemRefStatic (_, TInt (IntWidth bits)) -> preturn bits
+            | _ -> fail (Message "Foreign scalar projection requires an integer array")
+        do! ensure (declared.Bits > 0 && declared.Bits < sourceBits && sourceBits <= 64)
+                "Foreign scalar projection requires a narrower native integer representation"
+        let sourceTy = TInt (IntWidth sourceBits)
+        let nativeTy = TInt (IntWidth declared.Bits)
+        let bufferTy = TMemRef nativeTy
+        let unsignedNative = ValueRange.isNonNegative declared.Range
+        let sourceRange =
+            match graph.Nodes.[argId].Type with
+            | NativeType.TApp (_, [elem]) ->
+                Map.tryFind (formatType (Clef.Compiler.NativeTypedTree.UnionFind.applySubst elem)) graph.ElementRanges.Value
+                |> Option.defaultValue ValueRange.Unbounded
+            | _ -> ValueRange.Unbounded
+        let unsignedSource = ValueRange.isNonNegative sourceRange
+        let! bounds =
+            match ValueRange.endpoints declared.Range with
+            | Some (ValueRange.Endpoint.Finite lo, ValueRange.Endpoint.Finite hi) -> preturn (int64 lo, int64 hi)
+            | _ -> fail (Message "Foreign scalar projection requires finite declared element bounds")
+        let! zero = pConstI (s 0) 0L TIndex
+        let! one = pConstI (s 1) 1L TIndex
+        let length = MLIROp.MemRefOp (MemRefOp.Dim (s 2, value, s 0, ty))
+        let! nonempty = pCmpI (s 3) ICmpPred.Uge (s 2) (s 1) TIndex
+        let! allocate = pAlloc (s 4) (s 2) nativeTy
+        let! lower = pConstI (s 5) (fst bounds) sourceTy
+        let! upper = pConstI (s 6) (snd bounds) sourceTy
+        let! counter = pAlloca (s 7) 1 TIndex None
+        let counterTy = TMemRefStatic (1, TIndex)
+        let! initialize = pStore (s 0) (s 7) [s 0] TIndex counterTy
+        let! condIndex = pLoad (s 8) (s 7) [s 0]
+        let! condition = pIndexCmp (s 9) IndexCmpPred.Ult (s 8) (s 2)
+        let! continuation = pSCFCondition (s 9) []
+        let! index = pLoad (s 10) (s 7) [s 0]
+        let! input = pLoad (s 11) value [s 10]
+        // Unsigned comparison rejects a negative input to an unsigned target.
+        // A nonnegative source also cannot reinterpret its high bit as a sign.
+        let! high = pCmpI (s 12) (if unsignedNative || unsignedSource then ICmpPred.Ule else ICmpPred.Sle) (s 11) (s 6) sourceTy
+        let! low = pCmpI (s 13) ICmpPred.Sge (s 11) (s 5) sourceTy
+        let! inBounds = pAndI (s 14) (s 12) (s 13) (TInt (IntWidth 1))
+        let valid = if unsignedNative || unsignedSource then s 12 else s 14
+        let! narrow = pTruncI (s 15) (s 11) sourceTy nativeTy
+        let! store = pStore (s 15) (s 4) [s 10] nativeTy bufferTy
+        let! increment = pIndexAdd (s 16) (s 10) (s 1)
+        let! next = pStore (s 16) (s 7) [s 0] TIndex counterTy
+        let! yieldOp = pSCFYield []
+        let! pack = pSCFWhile [condIndex; condition; continuation]
+                              [index; input; high; low; inBounds; MLIROp.Assert(valid, $"Foreign reference {declared.Name} element is outside its declared range"); narrow; store; increment; next; yieldOp]
+        let! copyback =
+            if readOnly then preturn []
+            else parser {
+                let! reset = pStore (s 0) (s 7) [s 0] TIndex counterTy
+                let! condIndex = pLoad (s 17) (s 7) [s 0]
+                let! condition = pIndexCmp (s 18) IndexCmpPred.Ult (s 17) (s 2)
+                let! continuation = pSCFCondition (s 18) []
+                let! index = pLoad (s 19) (s 7) [s 0]
+                let! output = pLoad (s 20) (s 4) [s 19]
+                let! widen = if unsignedNative then pExtUI (s 21) (s 20) nativeTy sourceTy else pExtSI (s 21) (s 20) nativeTy sourceTy
+                let! store = pStore (s 21) value [s 19] sourceTy ty
+                let! increment = pIndexAdd (s 22) (s 19) (s 1)
+                let! next = pStore (s 22) (s 7) [s 0] TIndex counterTy
+                let! copy = pSCFWhile [condIndex; condition; continuation] [index; output; widen; store; increment; next; yieldOp]
+                return [reset; copy]
+            }
+        let! release = pDealloc (s 4) bufferTy
+        return [zero; one; length; nonempty; MLIROp.Assert(s 3, $"Foreign reference {declared.Name} requires at least one element"); allocate; lower; upper; counter; initialize; pack],
+               copyback @ [release], (s 4, bufferTy)
+    }
+
+/// Project rich Clef values into call-scoped C storage. Source options retain
+/// their tags and payloads; only this adapter encodes a C null pointer. Writable
+/// pointer output cells are copied back as source options after the native call.
+let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPairs (ssas: SSA list) : PSGParser<MLIROp list * MLIROp list * (SSA * MLIRType) list> =
+    let scalarReferenceArguments = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.referenceArguments graph funcId argIds
+    let scalarReferences = scalarReferenceArguments |> Map.ofList
+    let readOnlyScalars = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.readOnlyScalarReferenceArguments graph funcId argIds
+    let pointerReferenceArguments = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.pointerReferenceArguments graph funcId argIds
+    let pointerReferences = pointerReferenceArguments |> Map.ofList
+    let readOnlyRecords = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.readOnlyRecordReferenceArguments graph funcId argIds
+    let recordReferences = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.recordReferenceArguments graph funcId argIds
+    let layouts = (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.readDescriptors graph).Layouts
+    let rec loop cursor items =
+        parser {
+            match items with
+            | [] -> return [], [], []
+            | (argId, (value, ty)) :: rest ->
+                match Map.tryFind argId scalarReferences, Map.tryFind argId pointerReferences with
+                | Some declared, _ when ty <> TMemRef (TInt (IntWidth declared.Bits)) && (match ty with TMemRefStatic (_, element) -> element <> TInt (IntWidth declared.Bits) | _ -> true) ->
+                    // Two scalar references can alias even through different source names.
+                    // Separate temporaries would change the native call's alias semantics.
+                    do! ensure (scalarReferenceArguments.Length <= 1) "Multiple scalar references require an alias-preserving native projection"
+                    let! before, after, pair = projectScalarReference graph argId value ty declared (Set.contains argId readOnlyScalars) ssas cursor
+                    let! beforeRest, afterRest, pairs = loop (cursor + 48) rest
+                    return before @ beforeRest, after @ afterRest, pair :: pairs
+                | _, Some declared ->
+                    do! ensure (cursor + 32 <= ssas.Length) "Foreign pointer projection exceeds the node's assigned SSA family"
+                    let s i = ssas.[cursor + i]
+                    let! state = getUserState
+                    let pointerBytes = PlatformContext.pointerSize state.Graph.Platform.Value |> Result.toOption
+                    do! ensure (pointerBytes = Some (declared.Bits / 8)) "Foreign pointer reference width disagrees with target Pointer dimension"
+                    let! optionTy = match ty with TMemRef elem | TMemRefStatic (_, elem) -> preturn elem | _ -> fail (Message "Pointer output reference requires an array")
+                    let! optionBytes = match optionTy with TMemRefStatic (n, TInt (IntWidth 8)) -> preturn n | _ -> fail (Message "Pointer output reference requires source option storage")
+                    let! zero = pConstI (s 0) 0L TIndex
+                    let! one = pConstI (s 1) 1L TIndex
+                    let dim = MLIROp.MemRefOp (MemRefOp.Dim(s 2, value, s 0, ty))
+                    let! valid = pCmpI (s 3) ICmpPred.Uge (s 2) (s 1) TIndex
+                    let! loaded = pLoad (s 4) value [s 0]
+                    let inner = match graph.Nodes.[argId].Type with NativeType.TApp (_, [inner]) -> inner | _ -> failwith "Expected option array"
+                    let! unpack, raw = pUnwrapOptionArgForFFI inner (s 4) optionTy TIndex ssas (cursor + 5)
+                    let! allocate = pAlloca (s 16) 1 TIndex None
+                    let nativeTy = TMemRefStatic (1, TIndex)
+                    let! initialize = pStore raw.SSA (s 16) [s 0] TIndex nativeTy
+                    let! returned = pLoad (s 17) (s 16) [s 0]
+                    let! changed = pCmpI (s 18) ICmpPred.Ne (s 17) raw.SSA TIndex
+                    let! present = pCmpI (s 19) ICmpPred.Ne (s 17) (s 0) TIndex
+                    let! tag = pExtUI (s 20) (s 19) (TInt (IntWidth 1)) (TInt (IntWidth 8))
+                    let! option = pAllocStatic (s 21) optionBytes (TInt (IntWidth 8)) None
+                    let! tagOps = pTypedInsert (s 21) (s 20) 0 (s 22) (s 23) (TInt (IntWidth 8)) optionTy
+                    let! payloadOps = pTypedInsertView (s 21) (s 17) (unionPayloadOffset graph inner) (s 24) (s 25) (s 26) TIndex optionTy
+                    let! store = pStore (s 21) value [s 0] optionTy ty
+                    let! yieldOp = pSCFYield []
+                    let! copyback = pSCFIf (s 18) ([present; tag; option] @ tagOps @ payloadOps @ [store; yieldOp]) None None
+                    let! beforeRest, afterRest, pairs = loop (cursor + 32) rest
+                    return [zero; one; dim; valid; MLIROp.Assert(s 3, $"Foreign reference {declared.Name} requires at least one element"); loaded]
+                           @ unpack @ [allocate; initialize] @ beforeRest,
+                           [returned; changed; copyback] @ afterRest, ((s 16, nativeTy) :: pairs)
+                | _, None ->
+                    match ty with
+                    | TStruct (fields, Some bytes) ->
+                        let name = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some tc.Name | _ -> None
+                        let descriptor = layouts |> List.tryFind (fun d -> d.RecordType = name && name.IsSome)
+                        match descriptor with
+                        | Some d when d.Size.IsSome && d.Alignment.IsSome && d.PhysicalFields.Length = fields.Length ->
+                            let nativeField (field: Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.DeclaredPhysicalField) =
+                                match field.Repr with
+                                | "pointer" -> TIndex
+                                | "f32" -> TFloat F32 | "f64" -> TFloat F64
+                                | "u8" | "i8" -> TInt (IntWidth 8)
+                                | "u16" | "i16" -> TInt (IntWidth 16)
+                                | "u32" | "i32" -> TInt (IntWidth 32)
+                                | "u64" | "i64" -> TInt (IntWidth 64)
+                                | other -> failwithf "Unsupported foreign record field representation '%s'" other
+                            let nativeFields = d.PhysicalFields |> List.map (fun f -> f.Name, nativeField f)
+                            let nativeBytes = { Size = d.Size.Value; Align = d.Alignment.Value; Offsets = d.PhysicalFields |> List.map (fun f -> f.Offset) }
+                            let nativeTy = TStruct (nativeFields, Some nativeBytes)
+                            if ty = nativeTy then
+                                let! before, after, pairs = loop cursor rest
+                                return before, after, ((value, ty) :: pairs)
+                            else
+                                do! ensure (not (Set.contains argId recordReferences) || Set.contains argId readOnlyRecords)
+                                        "A writable foreign record requires identical source/native storage or an explicit copy-back adapter"
+                                let sourceFields = name |> Option.bind (fun name -> Clef.Compiler.PSGSaturation.SemanticGraph.Core.SemanticGraph.tryGetRecordFields name graph) |> Option.defaultValue []
+                                do! ensure (sourceFields.Length = fields.Length) "Foreign record projection requires source field types"
+                                do! ensure (cursor + 1 + 20 * fields.Length <= ssas.Length) "Foreign record projection exceeds the node's assigned SSA family"
+                                do! ensure (d.PhysicalFields |> List.forall (fun f -> f.Count = 1)) "Foreign record array fields require an explicit bounded projection"
+                                let buffer = ssas.[cursor]
+                                let! alloc = pAlloca buffer nativeBytes.Size (TInt (IntWidth 8)) (Some nativeBytes.Align)
+                                let rec copy index (remaining: ((string * MLIRType) * Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.DeclaredPhysicalField) list) : PSGParser<MLIROp list> =
+                                    parser {
+                                        match remaining with
+                                        | [] -> return []
+                                        | ((fieldName, sourceTy), native) :: tail ->
+                                            do! ensure (fieldName = native.Name) "Foreign record field order disagrees with its descriptor"
+                                            let start = cursor + 1 + 20*index
+                                            let s n = ssas.[start + n]
+                                            let! extract = pTypedExtractView (s 0) value bytes.Offsets.[index] (s 1) (s 2) (s 3) sourceTy ty
+                                            let expected = nativeField native
+                                            let! conversion, stored =
+                                                match sourceTy, expected with
+                                                | TMemRefStatic (_, TInt (IntWidth 8)), TIndex ->
+                                                    pUnwrapOptionArgForFFI (snd sourceFields.[index]) (s 0) sourceTy TIndex ssas (start + 4)
+                                                | _ when sourceTy = expected -> preturn ([], { SSA = s 0; Type = expected })
+                                                | _ -> fail (Message $"Foreign field {fieldName}: cannot project {sourceTy} into {expected}")
+                                            let! insert = pTypedInsertView buffer stored.SSA native.Offset (s 15) (s 16) (s 17) expected nativeTy
+                                            let! remainder = copy (index + 1) tail
+                                            return extract @ conversion @ insert @ remainder
+                                    }
+                                let! copies = copy 0 (List.zip fields d.PhysicalFields)
+                                let! before, after, pairs = loop (cursor + 1 + 20*fields.Length) rest
+                                return [alloc] @ copies @ before, after, ((buffer, nativeTy) :: pairs)
+                        | _ ->
+                            let! before, after, pairs = loop cursor rest
+                            return before, after, ((value, ty) :: pairs)
+                    | _ ->
+                        let! before, after, pairs = loop cursor rest
+                        return before, after, ((value, ty) :: pairs)
+        }
+    parser {
+        do! ensure (pointerReferenceArguments.Length <= 1) "Multiple native pointer output references require an alias-preserving adapter"
+        do! ensure (22 + 13 * argIds.Length <= 128) "Foreign argument marshaling exceeds its assigned SSA partition"
+        return! loop 128 (List.zip argIds argPairs)
+    }
+
+/// A foreign record must match its measured BAREWire layout. Passing by
+/// reference lends that storage; passing by value additionally requires the
+/// target's declared calling convention and the supported aggregate class.
+let private byvalOf (graph: SemanticGraph) (references: Set<NodeId>) (platformId: string) (argWithIds: (NodeId * (SSA * MLIRType)) list) (isOptionArgument: NodeId -> bool) : ByvalParam list =
+    let layouts = (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.readDescriptors graph).Layouts
+    let declaredAbi = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.cAbiOfGraph graph
     argWithIds
     |> List.mapi (fun i (argId, (_ssa, ty)) ->
         match ty with
-        | TStruct _ when not (isOptionArgument argId) ->
-            failwithf "CCS8203: the platform description of '%s' declares no C ABI struct-passing rule, and the record argument %d of this binding crosses the C boundary by value; declare the ABI's byval rule for the description (CS-12) or pass a handle" platformId i
+        | TStruct (fields, Some bytes) when not (isOptionArgument argId) ->
+            let nativeName = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some tc.Name | _ -> None
+            let layout = layouts |> List.tryFind (fun d -> d.RecordType = nativeName && nativeName.IsSome)
+            match layout with
+            | Some d when d.Size = Some bytes.Size && d.Alignment = Some bytes.Align && d.PhysicalFields.Length = fields.Length ->
+                let compatible =
+                    List.zip3 fields bytes.Offsets d.PhysicalFields |> List.forall (fun ((name, fieldType), offset, declared) ->
+                        let reprMatches =
+                            match declared.Repr, fieldType with
+                            | "pointer", TIndex -> true
+                            | "f32", TFloat F32 | "f64", TFloat F64 -> true
+                            | ("u8" | "i8"), TInt (IntWidth 8)
+                            | ("u16" | "i16"), TInt (IntWidth 16)
+                            | ("u32" | "i32"), TInt (IntWidth 32)
+                            | ("u64" | "i64"), TInt (IntWidth 64) -> true
+                            | _ -> false
+                        name = declared.Name && offset = declared.Offset && declared.Count = 1 && reprMatches)
+                if not compatible then failwithf "CCS8207: foreign record '%s' storage disagrees with its measured fields" d.Name
+                if Set.contains argId references then None
+                else
+                    match declaredAbi, graph.Platform |> Option.bind (fun p -> PlatformContext.pointerSize p |> Result.toOption) with
+                    | [ ("sysv-amd64", 64, 16) ], Some 8 when bytes.Size > 16 ->
+                        Some { ParamIndex = i; SizeBytes = bytes.Size; AlignBytes = bytes.Align }
+                    | _ -> failwithf "CCS8203: '%s' has no supported C ABI aggregate passing rule for '%s' (%d bytes)" platformId d.Name bytes.Size
+            | _ -> failwithf "CCS8207: foreign record argument %d has no matching measured BAREWire layout (%d bytes, alignment %d)" i bytes.Size bytes.Align
+        | TStruct _ -> failwithf "CCS8203: foreign record argument %d has no settled layout" i
         | _ -> None)
     |> List.choose id
+
+/// Source `f ()` supplies unit; a C `f(void)` call has no argument.
+let private foreignValues (graph: SemanticGraph) argIds marshaled =
+    List.zip argIds marshaled
+    |> List.choose (fun (arg, (_, value)) ->
+        match Map.tryFind arg graph.Nodes with
+        | Some node when Types.tryGetNTUKind node.Type = Some NTUKind.NTUunit -> None
+        | _ -> Some value)
+
+/// A declared scalar reference lends the first element of a typed array to C.
+/// Its element width must agree with the descriptor, and even an empty array
+/// must fail before C can write to it. The slots belong to the extern's existing
+/// per-argument allocation; this guard allocates no ad-hoc SSA identifiers.
+let private referenceGuards graph funcId argIds argPairs (ssas: SSA list) start : PSGParser<MLIROp list> =
+    let scalar = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.referenceArguments graph funcId argIds |> List.map (fun (id, d) -> id, (d.Name, TInt (IntWidth d.Bits)))
+    let pointers = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.pointerReferenceArguments graph funcId argIds |> List.map (fun (id, d) -> id, (d.Name, TIndex))
+    let declared = scalar @ pointers |> Map.ofList
+    let rec loop items =
+        parser {
+            match items with
+            | [] -> return []
+            | (i, (argId, (ssa, ty))) :: rest ->
+                match Map.tryFind argId declared with
+                | None -> return! loop rest
+                | Some (name, expected) ->
+                    let element = match ty with TMemRef elem | TMemRefStatic (_, elem) -> Some elem | _ -> None
+                    do! ensure (element = Some expected) $"The foreign reference '{name}' requires an array with {expected} elements; the settled storage is {ty}."
+                    let zero, one, length, valid = ssas.[start + 13*i + 2], ssas.[start + 13*i + 3], ssas.[start + 13*i + 4], ssas.[start + 13*i + 5]
+                    let! zeroOp = pConstI zero 0L TIndex
+                    let! oneOp = pConstI one 1L TIndex
+                    let! validOp = pCmpI valid ICmpPred.Uge length one TIndex
+                    let! restOps = loop rest
+                    return [ zeroOp; oneOp; MLIROp.MemRefOp (MemRefOp.Dim(length, ssa, zero, ty)); validOp
+                             MLIROp.Assert(valid, $"Foreign reference {name} requires at least one element") ] @ restOps
+        }
+    loop (List.indexed (List.zip argIds argPairs))
+
+/// Explicit project/dependency link declarations choose direct symbol calls;
+/// absent declarations retain dynamic lookup. Library identity is unchanged.
+let isLinkedExtern (platform: PlatformReads) library = library = "c" || Set.contains library platform.LinkedLibraries
 
 /// ExternCall resolved pattern — emits func.call for STATIC [<FidelityExtern>] bindings.
 /// Matches Application nodes with ExternCall(library="c") in pre-computed coeffects.
@@ -414,13 +718,13 @@ let private byvalOf (platformId: string) (argWithIds: (NodeId * (SSA * MLIRType)
 let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
     parser {
         // Match Application node
-        let! (_funcId, argIds) = pApplication
+        let! (funcId, argIds) = pApplication
         let! node = getCurrentNode
         let! state = getUserState
 
         // Guard: check if this node has a STATIC ExternCall binding (library = "c")
         match Map.tryFind node.Id state.Platform.Bindings.Bindings with
-        | Some { Resolved = ResolvedBinding.ExternCall (library, symbol) } when library = "c" ->
+        | Some { Resolved = ResolvedBinding.ExternCall (library, symbol) } when isLinkedExtern state.Platform library ->
             // FFI namespace prefix: all extern symbols get "ffi." prefix in MLIR
             // to avoid collisions with MLIR infrastructure symbols (e.g., @malloc
             // from finalize-memref-to-llvm). The reconcile-ffi-externs plugin
@@ -436,6 +740,8 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
             // as the residual of observing memref at the C boundary (Pillar 4).
             // Cast SSAs are pre-allocated in coeffects (Pillar 1).
             let! (argMeetOps, argPairs) = recallArgs node.Id argIds
+            let! boundaryBefore, boundaryAfter, argPairs = projectForeignArguments state.Graph funcId argIds argPairs ssas
+            let argMeetOps = argMeetOps @ boundaryBefore
 
             // Helper: check if an argument's original NativeType is option/voption.
             // Record types (e.g., resvg_transform) also lower to TMemRefStatic(N, i8)
@@ -449,7 +755,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 | None -> false
             let argWithIds = List.zip argIds argPairs
 
-            let byvalParams = byvalOf state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
+            let byvalParams = byvalOf state.Graph (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.recordReferenceArguments state.Graph funcId argIds) state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
 
             // Detect option<T> return type — requires FFI marshaling at the boundary.
             // C returns a nullable pointer; we must null-check and construct the option.
@@ -492,22 +798,22 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                             | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
                                 // Option/DU at FFI boundary: unwrap via composed pattern
                                 // pTypedExtract (tag) → pTypedExtractView (payload) → pCmpI → pSelect
-                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (11 + 11*i)
+                                let! (ops, v) = pUnwrapOptionArgForFFI state.Graph.Nodes.[argId].Type ssa ty platformWordTy ssas (11 + 13*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
                             | TMemRef _ | TMemRefStatic _ | TStruct _ ->
                                 // Memref/struct → extract pointer (index) → cast to PlatformWordType.
                                 // TStruct (record types) recalled from accumulator also need pointer
                                 // extraction at FFI boundaries, same as memrefs.
-                                let extractSlot = ssas.[11 + 11*i]
-                                let castSlot = ssas.[11 + 11*i + 1]
+                                let extractSlot = ssas.[11 + 13*i]
+                                let castSlot = ssas.[11 + 13*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
                                 let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | TIndex ->
                                 // Index value → cast to PlatformWordType at boundary
-                                let castSlot = ssas.[11 + 11*i + 1]
+                                let castSlot = ssas.[11 + 13*i + 1]
                                 let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
@@ -518,7 +824,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                     }
                     fold 0 argWithIds
                 let marshalOps = marshaledArgs |> List.collect fst
-                let vals = marshaledArgs |> List.map snd
+                let vals = foreignValues state.Graph argIds marshaledArgs
                 let cArgTypes = vals |> List.map (fun v -> v.Type)
 
                 // Map inner type to MLIR, then marshal to C ABI type at the boundary
@@ -536,7 +842,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 // Must be heap-allocated: this memref is returned from the wrapper function.
                 // Stack alloca would produce a dangling pointer after the callee's frame is destroyed.
                 let optionElemTy = TInt (IntWidth 8)
-                let optionSize = match optionType with TMemRefStatic (n, _) -> n | _ -> 9
+                let! optionSize = match optionType with TMemRefStatic (n, TInt (IntWidth 8)) -> preturn n | _ -> fail (Message "Foreign option result lacks settled byte storage")
                 let! allocaOp = pAllocStatic allocaSSA optionSize optionElemTy None
 
                 // 4. Null-check: compare raw result to 0 (null)
@@ -552,9 +858,10 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
 
                 // 7. Store payload at offset 1 (always — value is meaningless for None,
                 //    CaseElimination checks tag before reading payload)
-                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
+                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA (unionPayloadOffset state.Graph node.Type) payOffsetSSA payViewSSA payZeroSSA cRetType optionType
 
-                let allOps = argMeetOps @ marshalOps @ [declOp; callOp; allocaOp; nullOp; cmpOp; extOp]
+                let! guards = referenceGuards state.Graph funcId argIds argPairs ssas 11
+                let allOps = argMeetOps @ guards @ marshalOps @ [declOp; callOp] @ boundaryAfter @ [allocaOp; nullOp; cmpOp; extOp]
                              @ tagInsertOps @ payInsertOps
 
                 return (allOps, TRValue { SSA = allocaSSA; Type = optionType })
@@ -578,7 +885,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                             match ty with
                             | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
                                 // Option/DU at FFI boundary: unwrap via composed pattern
-                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (2 + 11*i)
+                                let! (ops, v) = pUnwrapOptionArgForFFI state.Graph.Nodes.[argId].Type ssa ty platformWordTy ssas (2 + 13*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
                             | TMemRef _ | TMemRefStatic _ | TStruct _ ->
@@ -586,16 +893,16 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                                 // TStruct (record types) serialize as memref<Nxi8> in MLIR but are
                                 // recalled as TStruct in the accumulator. At FFI boundaries, we extract
                                 // the base pointer — on SysV x86_64, structs >16 bytes are passed by
-                                // invisible reference (pointer in register), so this is ABI-correct.
-                                let extractSlot = ssas.[2 + 11*i]
-                                let castSlot = ssas.[2 + 11*i + 1]
+                                // a pointer names the source of the copy described by LLVM byval.
+                                let extractSlot = ssas.[2 + 13*i]
+                                let castSlot = ssas.[2 + 13*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
                                 let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | TIndex ->
                                 // Index value → cast to PlatformWordType at boundary
-                                let castSlot = ssas.[2 + 11*i + 1]
+                                let castSlot = ssas.[2 + 13*i + 1]
                                 let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
@@ -606,26 +913,32 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                     }
                     fold 0 argWithIds
                 let marshalOps = marshaledArgs |> List.collect fst
-                let vals = marshaledArgs |> List.map snd
+                let vals = foreignValues state.Graph argIds marshaledArgs
                 let cArgTypes = vals |> List.map (fun v -> v.Type)
 
                 // Map return type from Clef NativeType to MLIR, then marshal at boundary
-                let! internalRetType = pMapType node.Type
+                let! internalRetType = pForeignReturnType funcId node.Type
                 let cRetType = marshalToCType platformWordTy internalRetType
 
                 // Emit external function declaration + call with C-boundary types
                 let! declOp = pFuncDeclByval ffiSymbol cArgTypes cRetType FuncVisibility.Private byvalParams
-                let! callOp = pFuncCall (Some resultSSA) ffiSymbol vals cRetType
+                let! callOp = pFuncCall (if cRetType = TVoid then None else Some resultSSA) ffiSymbol vals cRetType
+
+                let! guards = referenceGuards state.Graph funcId argIds argPairs ssas 2
 
                 // Return-side demarshal: if the internal type is TIndex (nativeint),
                 // the call returned platformWordTy (i64). Cast back to index so
                 // the rest of the middle-end stays width-abstract until LLVM lowering.
                 match internalRetType with
+                | TVoid ->
+                    let! unitTy = pMapType node.Type
+                    let! unitOp = pConstI resultSSA 0L unitTy
+                    return (argMeetOps @ guards @ marshalOps @ [declOp; callOp] @ boundaryAfter @ [unitOp], TRValue { SSA = resultSSA; Type = unitTy })
                 | TIndex ->
                     let! returnCastOp = pIndexCastS returnCastSSA resultSSA platformWordTy TIndex
-                    return (argMeetOps @ marshalOps @ [declOp; callOp; returnCastOp], TRValue { SSA = returnCastSSA; Type = TIndex })
+                    return (argMeetOps @ guards @ marshalOps @ [declOp; callOp] @ boundaryAfter @ [returnCastOp], TRValue { SSA = returnCastSSA; Type = TIndex })
                 | _ ->
-                    return (argMeetOps @ marshalOps @ [declOp; callOp], TRValue { SSA = resultSSA; Type = cRetType })
+                    return (argMeetOps @ guards @ marshalOps @ [declOp; callOp] @ boundaryAfter, TRValue { SSA = resultSSA; Type = cRetType })
         | _ -> return! fail (Message "Not a static ExternCall")
     }
 
@@ -669,7 +982,7 @@ let private soName (library: string) : string =
 ///   [10] = func_ptr     (IndexToFunc: index → typed function pointer)
 ///   [11] = result       (func.call_indirect result)
 ///   [12] = return_cast  (potential return-side demarshal)
-///   [13 + 11*i ..] = per-arg FFI marshaling
+///   [13 + 13*i ..] = per-arg FFI marshaling
 ///
 /// SSA layout (option return):
 ///   [0..10] = dlopen/dlsym preamble (same as direct return)
@@ -681,18 +994,20 @@ let private soName (library: string) : string =
 ///   [16..17] = tag insert views
 ///   [18..20] = payload insert views + offset
 ///   [21] = alloca         (option heap alloc)
-///   [22 + 11*i ..] = per-arg FFI marshaling
+///   [22 + 13*i ..] = per-arg FFI marshaling
 let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int) list * TransferResult> =
     parser {
-        let! (_funcId, argIds) = pApplication
+        let! (funcId, argIds) = pApplication
         let! node = getCurrentNode
         let! state = getUserState
 
         match Map.tryFind node.Id state.Platform.Bindings.Bindings with
-        | Some { Resolved = ResolvedBinding.ExternCall (library, symbol) } when library <> "c" ->
+        | Some { Resolved = ResolvedBinding.ExternCall (library, symbol) } when not (isLinkedExtern state.Platform library) ->
             let platformWordTy = state.Platform.PlatformWordType
             let! ssas = getNodeSSAs node.Id
             let! (argMeetOps, argPairs) = recallArgs node.Id argIds
+            let! boundaryBefore, boundaryAfter, argPairs = projectForeignArguments state.Graph funcId argIds argPairs ssas
+            let argMeetOps = argMeetOps @ boundaryBefore
 
             let isOptionArgument (argId: NodeId) =
                 match Map.tryFind argId state.Graph.Nodes with
@@ -703,7 +1018,9 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                 | None -> false
             let argWithIds = List.zip argIds argPairs
 
-            let byvalParams = byvalOf state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
+            let byvalParams = byvalOf state.Graph (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.recordReferenceArguments state.Graph funcId argIds) state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
+
+            do! ensure (List.isEmpty byvalParams) "Dynamic aggregate-by-value calls require explicit linked-library dispatch"
 
             // ── dlopen/dlsym preamble (SSAs [0..10]) ──
 
@@ -803,18 +1120,18 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                         | (argId, (ssa, ty)) :: rest ->
                             match ty with
                             | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
-                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (22 + 11*i)
+                                let! (ops, v) = pUnwrapOptionArgForFFI state.Graph.Nodes.[argId].Type ssa ty platformWordTy ssas (22 + 13*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
                             | TMemRef _ | TMemRefStatic _ | TStruct _ ->
-                                let extractSlot = ssas.[22 + 11*i]
-                                let castSlot = ssas.[22 + 11*i + 1]
+                                let extractSlot = ssas.[22 + 13*i]
+                                let castSlot = ssas.[22 + 13*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
                                 let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | TIndex ->
-                                let castSlot = ssas.[22 + 11*i + 1]
+                                let castSlot = ssas.[22 + 13*i + 1]
                                 let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
@@ -824,7 +1141,7 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                     }
                     fold 0 argWithIds
                 let marshalOps = marshaledArgs |> List.collect fst
-                let vals = marshaledArgs |> List.map snd
+                let vals = foreignValues state.Graph argIds marshaledArgs
                 let cArgTypes = vals |> List.map (fun v -> v.Type)
 
                 let! internalRetType = pMapType innerTy
@@ -840,15 +1157,16 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
 
                 // Option construction (same as static path)
                 let optionElemTy = TInt (IntWidth 8)
-                let optionSize = match optionType with TMemRefStatic (n, _) -> n | _ -> 9
+                let! optionSize = match optionType with TMemRefStatic (n, TInt (IntWidth 8)) -> preturn n | _ -> fail (Message "Foreign option result lacks settled byte storage")
                 let! allocaOp = pAllocStatic allocaSSA optionSize optionElemTy None
                 let! nullOp = pConstI nullConstSSA 0L cRetType
                 let! cmpOp = pCmpI cmpSSA ICmpPred.Ne rawRetSSA nullConstSSA cRetType
                 let! extOp = pExtUI tagExtSSA cmpSSA (TInt (IntWidth 1)) (TInt (IntWidth 8))
                 let! tagInsertOps = pTypedInsert allocaSSA tagExtSSA 0 tagViewSSA tagZeroSSA (TInt (IntWidth 8)) optionType
-                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA 1 payOffsetSSA payViewSSA payZeroSSA cRetType optionType
+                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA (unionPayloadOffset state.Graph node.Type) payOffsetSSA payViewSSA payZeroSSA cRetType optionType
 
-                let allOps = argMeetOps @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; allocaOp; nullOp; cmpOp; extOp]
+                let! guards = referenceGuards state.Graph funcId argIds argPairs ssas 22
+                let allOps = argMeetOps @ guards @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp] @ boundaryAfter @ [allocaOp; nullOp; cmpOp; extOp]
                              @ tagInsertOps @ payInsertOps
 
                 return (allOps, pendingGlobals, TRValue { SSA = allocaSSA; Type = optionType })
@@ -867,18 +1185,18 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                         | (argId, (ssa, ty)) :: rest ->
                             match ty with
                             | TMemRefStatic (_, TInt(IntWidth 8)) when isOptionArgument argId ->
-                                let! (ops, v) = pUnwrapOptionArgForFFI ssa ty platformWordTy ssas (13 + 11*i)
+                                let! (ops, v) = pUnwrapOptionArgForFFI state.Graph.Nodes.[argId].Type ssa ty platformWordTy ssas (13 + 13*i)
                                 let! restResult = fold (i + 1) rest
                                 return (ops, v) :: restResult
                             | TMemRef _ | TMemRefStatic _ | TStruct _ ->
-                                let extractSlot = ssas.[13 + 11*i]
-                                let castSlot = ssas.[13 + 11*i + 1]
+                                let extractSlot = ssas.[13 + 13*i]
+                                let castSlot = ssas.[13 + 13*i + 1]
                                 let! extractOp = pExtractBasePtr extractSlot ssa ty
                                 let! castOp = pIndexCastS castSlot extractSlot TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([extractOp; castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
                             | TIndex ->
-                                let castSlot = ssas.[13 + 11*i + 1]
+                                let castSlot = ssas.[13 + 13*i + 1]
                                 let! castOp = pIndexCastS castSlot ssa TIndex platformWordTy
                                 let! restResult = fold (i + 1) rest
                                 return ([castOp], { SSA = castSlot; Type = platformWordTy }) :: restResult
@@ -888,10 +1206,10 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                     }
                     fold 0 argWithIds
                 let marshalOps = marshaledArgs |> List.collect fst
-                let vals = marshaledArgs |> List.map snd
+                let vals = foreignValues state.Graph argIds marshaledArgs
                 let cArgTypes = vals |> List.map (fun v -> v.Type)
 
-                let! internalRetType = pMapType node.Type
+                let! internalRetType = pForeignReturnType funcId node.Type
                 let cRetType = marshalToCType platformWordTy internalRetType
 
                 // IndexToFunc: cast index → typed function pointer for call_indirect
@@ -899,15 +1217,21 @@ let pDynamicExternCallResolved : PSGParser<MLIROp list * (string * string * int)
                 let indexToFuncOp = MLIROp.FuncOp (FuncOp.IndexToFunc (funcPtrSSA, rawPtrIdxSSA, funcTyArgs, cRetType))
 
                 // call_indirect through resolved function pointer
-                let! callOp = pFuncCallIndirect (Some resultSSA) funcPtrSSA vals cRetType
+                let! callOp = pFuncCallIndirect (if cRetType = TVoid then None else Some resultSSA) funcPtrSSA vals cRetType
+
+                let! guards = referenceGuards state.Graph funcId argIds argPairs ssas 13
 
                 // Return-side demarshal (same as static path)
                 match internalRetType with
+                | TVoid ->
+                    let! unitTy = pMapType node.Type
+                    let! unitOp = pConstI resultSSA 0L unitTy
+                    return (argMeetOps @ guards @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp] @ boundaryAfter @ [unitOp], pendingGlobals, TRValue { SSA = resultSSA; Type = unitTy })
                 | TIndex ->
                     let! returnCastOp = pIndexCastS returnCastSSA resultSSA platformWordTy TIndex
-                    return (argMeetOps @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp; returnCastOp], pendingGlobals, TRValue { SSA = returnCastSSA; Type = TIndex })
+                    return (argMeetOps @ guards @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp] @ boundaryAfter @ [returnCastOp], pendingGlobals, TRValue { SSA = returnCastSSA; Type = TIndex })
                 | _ ->
-                    return (argMeetOps @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp], pendingGlobals, TRValue { SSA = resultSSA; Type = cRetType })
+                    return (argMeetOps @ guards @ preambleOps @ [indexToFuncOp] @ marshalOps @ [callOp] @ boundaryAfter, pendingGlobals, TRValue { SSA = resultSSA; Type = cRetType })
 
         | _ -> return! fail (Message "Not a dynamic ExternCall")
     }

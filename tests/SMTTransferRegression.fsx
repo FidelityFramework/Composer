@@ -119,3 +119,25 @@ for index, (comparisons, expected) in List.indexed applicationCases do
     if source <> expected || native <> expected then
         failwithf "Application %d: expected %s, source=%s native=%s" index expected source native
 printfn "PASS %d application dimension source/native parity cases" applicationCases.Length
+let staticLayoutCases = [
+    ObligationBody.StaticStorageLayout ([(0,3,1);(4,5,4)],9,16,8,16L,8,8), "unsat"
+    ObligationBody.StaticStorageLayout ([(0,3,1);(2,5,1)],7,16,8,16L,8,8), "sat" // Overlap.
+    ObligationBody.StaticStorageLayout ([(0,3,1);(4,5,4)],9,16,8,8L,8,8), "sat" // Capacity.
+    ObligationBody.StaticStorageLayout ([(0,3,1);(4,5,4)],9,16,4,16L,8,8), "sat" // Pool alignment.
+    ObligationBody.StaticStorageLayout ([(0,3,1);(3,5,4)],8,16,8,16L,8,8), "sat" // Slot alignment.
+    ObligationBody.StaticStorageLayout ([(0,3,1)],3,15,8,16L,8,8), "sat" // Granularity.
+    ObligationBody.StaticStorageLayout ([(0,3,1)],3,16,8,16L,0,8), "sat" // Invalid declaration.
+    ObligationBody.StaticStorageLayout ([(0,3,0)],3,16,8,16L,8,8), "sat" // Invalid slot.
+    ObligationBody.StaticStorageLayout ([(0,3,16)],3,16,8,16L,8,8), "sat" // Slot needs stronger base alignment.
+    ObligationBody.StaticStorageLayout ([(0,3,1)],4,16,8,16L,8,8), "sat" // Incorrect used size.
+    ObligationBody.StaticStorageLayout ([(2147483647,2147483647,1)],0,16,8,16L,8,8), "sat" // No host int wrap.
+    ObligationBody.StaticStorageLayout ([],0,0,8,16L,8,8), "unsat"
+]
+for index, (body, expected) in List.indexed staticLayoutCases do
+    let ob = { Id = sprintf "static_layout_%d" index; Kind = "static-layout-regression"; Logic = "QF_LIA"
+               Statement = "settled layout"; Source = "test"; Refs = []; Body = body }
+    let source = run "cvc5" "--lang=smt2" (Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob])
+    let smt = run "mlir-translate" "--export-smtlib" (Alex.Traversal.SMTTransfer.transfer [ob])
+    let native = run "cvc5" "--lang=smt2" smt
+    if source <> expected || native <> expected then failwithf "Layout expected %s, source=%s native=%s for %A" expected source native body
+printfn "PASS %d concrete-layout source/native parity cases" staticLayoutCases.Length

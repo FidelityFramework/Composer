@@ -15,7 +15,7 @@ open XParsec.Combinators  // <|>
 
 let private witnessArithIntrinsic (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     let combined =
-        pBinaryArithIntrinsic <|> pUnaryArithIntrinsic <|> pTypeConversionIntrinsic <|> pTruncateIntrinsic
+        pBinaryArithIntrinsic <|> pUnaryArithIntrinsic <|> pIgnoreIntrinsic <|> pTypeConversionIntrinsic <|> pTruncateIntrinsic
     match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
     | None -> WitnessOutput.skip

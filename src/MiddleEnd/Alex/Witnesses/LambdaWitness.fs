@@ -88,6 +88,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // SSA values (V n, Arg n) are per-function — different functions reuse the same SSA names.
             // SSATypes is a global map, so we save/restore to isolate each function's type registrations.
             let savedSSATypes = ctx.Accumulator.SSATypes
+            let savedNodeAssoc = ctx.Accumulator.NodeAssoc
             ctx.Accumulator.SSATypes <- Map.empty
 
             // Register parameter SSA types for this function scope
@@ -139,6 +140,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Traverse Sequential structure to find actual value-producing node
             let actualValueNode = findLastValueNode bodyId ctx.Graph
             let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
+            // A capture's prologue SSA belongs to this function. Restore parent
+            // associations before constructing this closure or its siblings.
+            ctx.Accumulator.NodeAssoc <- savedNodeAssoc
 
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun. The entry point's
@@ -237,12 +241,19 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     | SettledSlot.Real _ -> TFloat F64
                     | SettledSlot.Pointer _ -> TIndex
                     | SettledSlot.Opaque what -> failwithf "LambdaWitness: closure %d holds %s, which has no MLIR type" nodeIdValue what
-            let closureStructType (cl: ClosurePlacement) = TMemRefStatic (cl.WithCodePointerBytes, TInt (IntWidth 8))
+            let closureStructType (cl: ClosurePlacement) =
+                match cl.Prefix with
+                | ClosurePrefix.RegularClosure -> TMemRefStatic (cl.WithPrefixBytes, TInt (IntWidth 8))
+                | prefix -> failwithf "LambdaWitness: %A requires its dedicated environment witness" prefix
             let absoluteOffset (cl: ClosurePlacement) (slot: CaptureSlot) = cl.PrefixBytes + slot.ByteOffset
             let prologue (cl: ClosurePlacement) : SSA list list * (SSA * SSA) =
                 let perCapture =
                     cl.Captures |> List.map (fun slot ->
-                        let work = if slot.Holds = CaptureSlotKind.Decomposed then 7 else 2
+                        let work =
+                            match slot.Holds with
+                            | CaptureSlotKind.Decomposed -> 7
+                            | CaptureSlotKind.Address -> 4
+                            | _ -> 2
                         List.init work (fun k -> Values.prologueValue node.Id (100 + 10 * slot.Index + k)) @ [ Values.prologueValue node.Id slot.Index ])
                 perCapture, (Values.prologueValue node.Id 900, Values.prologueValue node.Id 901)
             let own = Values.values node.Id
@@ -257,7 +268,14 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Extract QUALIFIED function name from parent Binding + ModuleDef (if present)
             // Same logic as ApplicationWitness for qualified name resolution
             let funcName =
-                // Lambda's parent should be Binding node - extract name directly from PSG
+                // Anonymous closure code is addressed through its pair. A local binding
+                // name is not a module symbol: two scopes may both bind `work`.
+                if closureLayoutOpt.IsSome
+                   && ([ClosureMetadata.LambdaExpression; ClosureMetadata.RequiresClosurePair]
+                       |> List.exists (fun key -> Map.tryFind key node.Metadata = Some (MetadataValue.Bool true))) then
+                    sprintf "lambda_%d" nodeIdValue
+                else
+                // Named declarations retain the symbol used by direct calls.
                 match node.Parent with
                 | Some bindingId ->
                     match SemanticGraph.tryGetNode bindingId ctx.Graph with
@@ -327,6 +345,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // SSA values (V n, Arg n) are per-function — different functions reuse the same SSA names.
             // SSATypes is a global map, so we save/restore to isolate each function's type registrations.
             let savedSSATypes = ctx.Accumulator.SSATypes
+            let savedNodeAssoc = ctx.Accumulator.NodeAssoc
             ctx.Accumulator.SSATypes <- Map.empty
 
             // Register parameter SSA types for this function scope
@@ -346,7 +365,22 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     layout.Captures
                     |> List.map (fun cap ->
                         match cap.SourceNode with
-                        | Some sourceId -> MLIRAccumulator.recallNode sourceId ctx.Accumulator
+                        | Some sourceId ->
+                            let source =
+                                MLIRAccumulator.recallNode sourceId ctx.Accumulator
+                                |> Option.orElseWith (fun () ->
+                                    // Parameters need not have been read in the parent
+                                    // body yet. Their argument SSA and physical view are
+                                    // already assigned and registered by that function.
+                                    let assigned = Values.resultOf ctx.Coeffects.TargetPlatform ctx.Graph sourceId
+                                    match assigned with
+                                    | SSA.Arg _ -> Map.tryFind assigned savedSSATypes |> Option.map (fun ty -> assigned, ty)
+                                    | _ -> None)
+                            source
+                            |> Option.map (fun (ssa, ty) ->
+                                // Mutable cells carry a dynamic semantic view, but their
+                                // actual allocation retains the single-cell extent.
+                                ssa, (Map.tryFind ssa savedSSATypes |> Option.defaultValue ty))
                         | None -> None)
                 | None -> []
 
@@ -358,16 +392,23 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some layout when not layout.Captures.IsEmpty ->
                     // Each slot's type and settled byte offset, read from the layout SSAAssignment
                     // derived (the header before the first capture is the layout's)
-                    let captureSlots = layout.Captures |> List.map (fun cap -> (slotType cap, absoluteOffset layout cap))
+                    let captureSlots =
+                        layout.Captures |> List.mapi (fun i cap ->
+                            let valueTy =
+                                match cap.Holds, savedCaptureSSAs.[i] |> Option.map snd with
+                                | CaptureSlotKind.Decomposed, Some (TMemRef element | TMemRefStatic (_, element)) -> TMemRef element
+                                | CaptureSlotKind.Address, Some (TMemRefStatic _ as ty) -> ty
+                                | CaptureSlotKind.Address, Some (TStruct (_, Some _) as ty) -> ty
+                                | (CaptureSlotKind.Decomposed | CaptureSlotKind.Address), other ->
+                                    failwithf "LambdaWitness: capture '%s' has no retained bounded view: %A" cap.Capture other
+                                | _ -> slotType cap
+                            (slotType cap, absoluteOffset layout cap, valueTy))
                     // The callee prologue's values are the closure layout's, derived by SSAAssignment
                     // in the order pExtractCaptures consumes them (per capture: its work values, its
                     // result), then the env reconstruction pair. Nothing is numbered here.
                     let extractionSSAs, (rawEnvSSA, envMemrefSSA) = prologue layout
                     let captureResultTypes =  // per capture: the type body code sees
-                        captureSlots |> List.map (fun (capTy, _) ->
-                            match capTy with
-                            | TStruct ([("ptr", TIndex); ("len", TIndex)], _) -> TMemRef(TInt (IntWidth 8))
-                            | _ -> capTy)
+                        captureSlots |> List.map (fun (_, _, valueTy) -> valueTy)
 
                     // ═══ ENV RECONSTRUCTION PROLOGUE ═══
                     // Arg 0 arrives as index (raw pointer from uniform pair).
@@ -434,6 +475,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Get body result for return value
             let actualValueNode = findLastValueNode bodyId ctx.Graph
             let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
+            ctx.Accumulator.NodeAssoc <- savedNodeAssoc
 
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun. The result is held at
@@ -445,6 +487,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
                     funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
             let rawReturnType = mapType innerReturnNativeType2 ctx
+            let nativeVoid =
+                Clef.Compiler.PSGSaturation.SemanticGraph.CallbackDeclarations.forLambda ctx.Graph node.Id
+                |> Option.exists (fun callback -> callback.ReturnsVoid)
             let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
             let returnType =
                 match returnMeet, bodyResult with
@@ -495,6 +540,15 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
+
+                if nativeVoid then
+                    let entry = Clef.Compiler.PSGSaturation.SemanticGraph.FunctionPointers.nativeEntrySymbol node.Id
+                    let arguments = funcParams |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+                    let call = MLIROp.FuncOp (FuncOp.FuncCall (Some own.[0], funcName, arguments, returnType))
+                    let body = [call; MLIROp.FuncOp (FuncOp.Return (None, None))]
+                    match tryMatchWithDiagnostics (pFuncDef entry funcParams TVoid body FuncVisibility.Private) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok (thunk, _) -> ctx.RootScopeContext := ScopeContext.addOp thunk !ctx.RootScopeContext
+                    | Result.Error message -> MLIRAccumulator.addError (Diagnostic.error (Some node.Id) (Some "Lambda") (Some "Native callback thunk") message) ctx.Accumulator
 
                 // ═══ CLOSURE CONSTRUCTION (parent scope) ═══
                 // If this Lambda has captures, build closure struct + uniform pair in parent scope
@@ -560,7 +614,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     // decomposed memref, two for a base-pointer slot, one for a scalar)
                     for i in 0 .. layout.Captures.Length - 1 do
                         let cap = layout.Captures.[i]
-                        let captureByteOffset = cap.ByteOffset
+                        let captureByteOffset = absoluteOffset layout cap
                         let captureSSAs = constructionValues cap
                         // Resolve capture source SSA from the SAVED parent-scope snapshot.
                         // We snapshot NodeAssoc BEFORE body emission because body emission
@@ -579,7 +633,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                                 // Decomposed memref: extract ptr + len from source memref, store separately
 
                                 // Extract base pointer from source memref
-                                let srcMemrefTy = TMemRef(TInt (IntWidth 8))
+                                let srcMemrefTy =
+                                    match savedCaptureSSAs.[i] |> Option.map snd with
+                                    | Some (TMemRef _ | TMemRefStatic _ as ty) -> ty
+                                    | other -> failwithf "LambdaWitness: decomposed capture '%s' has no buffer: %A" cap.Capture other
                                 let extractPtrOp = MLIROp.MemRefOp(MemRefOp.ExtractBasePtr(ptrSSA, capSSA, srcMemrefTy))
                                 ctx.ScopeContext := ScopeContext.addOp extractPtrOp !ctx.ScopeContext
 
@@ -625,7 +682,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                                     if i < savedCaptureSSAs.Length then savedCaptureSSAs.[i] |> Option.map snd else None
                                 let sourceIsMemRef =
                                     match sourceType with
-                                    | Some (TMemRefStatic _ | TMemRef _) -> true
+                                    | Some (TMemRefStatic _ | TMemRef _ | TStruct (_, Some _)) -> true
                                     | _ -> false
                                 let actualCapSSA =
                                     match extractSSAOpt, sourceIsMemRef with
@@ -705,4 +762,3 @@ let createNanopass (getCombinator: unit -> (WitnessContext -> SemanticNode -> Wi
     Name = "Lambda"
     Witness = witnessLambdaWith getCombinator
 }
-

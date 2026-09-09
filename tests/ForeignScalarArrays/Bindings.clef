@@ -1,0 +1,64 @@
+module ScalarReferenceBindings
+
+open BAREWire.Descriptors
+
+// Native declarations follow /usr/include/unistd.h, /usr/include/arpa/inet.h,
+// and /usr/include/wchar.h on the selected Linux LP64 target. The void buffer
+// policies below declare octets and one IPv4 word; no source address is exposed.
+[<FidelityExtern("c", "pipe")>]
+let pipe (descriptors: int array) : int = NativeDefault.zeroed ()
+let pipeDescriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "pipe"
+    Parameters = [| { Name = "descriptors"; Type = Integer (Signed, 32); PassBy = Reference } |]
+    ReturnType = Integer (Signed, 32); CallingConvention = CDecl; OwnershipTransfer = CallerOwns
+} @>
+
+[<FidelityExtern("c", "write")>]
+let write (descriptor: int) (bytes: int array) (count: int) : int = NativeDefault.zeroed ()
+let writeDescriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "write"
+    Parameters = [| { Name = "descriptor"; Type = Integer (Signed, 32); PassBy = Value }
+                    { Name = "bytes"; Type = Integer (Unsigned, 8); PassBy = ReadOnlyReference }
+                    { Name = "count"; Type = Integer (Unsigned, 64); PassBy = Value } |]
+    ReturnType = Integer (Signed, 64); CallingConvention = CDecl; OwnershipTransfer = Borrowed
+} @>
+
+[<FidelityExtern("c", "read")>]
+let read (descriptor: int) (bytes: int array) (count: int) : int = NativeDefault.zeroed ()
+let readDescriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "read"
+    Parameters = [| { Name = "descriptor"; Type = Integer (Signed, 32); PassBy = Value }
+                    { Name = "bytes"; Type = Integer (Unsigned, 8); PassBy = Reference }
+                    { Name = "count"; Type = Integer (Unsigned, 64); PassBy = Value } |]
+    ReturnType = Integer (Signed, 64); CallingConvention = CDecl; OwnershipTransfer = Borrowed
+} @>
+
+[<FidelityExtern("c", "close")>]
+let close (descriptor: int) : int = NativeDefault.zeroed ()
+let closeDescriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "close"
+    Parameters = [| { Name = "descriptor"; Type = Integer (Signed, 32); PassBy = Value } |]
+    ReturnType = Integer (Signed, 32); CallingConvention = CDecl; OwnershipTransfer = CalleeOwns
+} @>
+
+// AF_INET writes exactly one in_addr (uint32_t) into this declared destination.
+[<FidelityExtern("c", "inet_pton")>]
+let parseIPv4 (family: int) (text: string) (address: int array) : int = NativeDefault.zeroed ()
+let parseIPv4Descriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "inet_pton"
+    Parameters = [| { Name = "family"; Type = Integer (Signed, 32); PassBy = Value }
+                    { Name = "text"; Type = Pointer 64; PassBy = Value }
+                    { Name = "address"; Type = Integer (Unsigned, 32); PassBy = Reference } |]
+    ReturnType = Integer (Signed, 32); CallingConvention = CDecl; OwnershipTransfer = Borrowed
+} @>
+
+// wchar_t is signed32 on the selected platform; the returned alias is opaque.
+[<FidelityExtern("c", "wmemset")>]
+let fillSigned (destination: int array) (value: int) (count: int) : CHandle<unit> = NativeDefault.zeroed ()
+let fillSignedDescriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "wmemset"
+    Parameters = [| { Name = "destination"; Type = Integer (Signed, 32); PassBy = Reference }
+                    { Name = "value"; Type = Integer (Signed, 32); PassBy = Value }
+                    { Name = "count"; Type = Integer (Unsigned, 64); PassBy = Value } |]
+    ReturnType = Pointer 64; CallingConvention = CDecl; OwnershipTransfer = Borrowed
+} @>

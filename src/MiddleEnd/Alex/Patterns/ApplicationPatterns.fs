@@ -358,6 +358,11 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
 
         let! state = getUserState
         match targetPlatform, lhsType with
+        | _, TIndex when rhsType = TIndex && targetPlatform <> FPGA &&
+                          (argIds |> List.take 2 |> List.forall (fun id -> Types.tryGetNTUKind state.Graph.Nodes.[id].Type = Some NTUKind.NTUptr)) ->
+            do! ensure (predName = "eq" || predName = "ne") "Opaque handles support identity equality, not numeric ordering"
+            let! op = pCmpI ssas.[0] (if predName = "eq" then ICmpPred.Eq else ICmpPred.Ne) lhsSSA rhsSSA TIndex
+            return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = ssas.[0]; Type = TInt (IntWidth 1) })
         | _, TFloat _ when targetPlatform <> FPGA ->
             // CPU: a real
             let resultSSA = ssas.[0]
@@ -750,6 +755,20 @@ let pUnaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
         | UnaryArith "neg"        -> return! pUnaryNegate node.Id
         | UnaryArith "plus"       -> return! pUnaryPlus
         | _ -> return! fail (Message $"Not unary arith: {info.Operation}")
+    }
+
+/// Evaluation has already witnessed the argument and its effects. Discarding
+/// its value produces the ordinary Clef unit value without inspecting storage.
+let pIgnoreIntrinsic : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Operators
+        do! ensure (info.Operation = "ignore" && argIds.Length = 1) "Not unary Operators.ignore"
+        let! node = getCurrentNode
+        let! ssas = getNodeSSAs node.Id
+        do! ensure (ssas.Length >= 1) "Operators.ignore has no assigned result value"
+        let! unitTy = pMapType Types.unitType
+        let! unitValue = Alex.Elements.MLIRAtomics.pConstI ssas.[0] 0L unitTy
+        return [unitValue], TRValue { SSA = ssas.[0]; Type = unitTy }
     }
 
 /// `truncate` intrinsic (Math.truncate) — the one Math operation Alex witnesses atomically.

@@ -1,0 +1,32 @@
+module IndexAndZero
+
+[<EntryPoint>]
+let main _ =
+    let values: int array = Array.zeroCreate 512
+    let flags: bool array = Array.zeroCreate 23
+    let floats: float array = Array.zeroCreate 23
+    let empty: int array = Array.zeroCreate 0
+    let mutable index: int = 0
+    let mutable valid: bool = Array.length empty = 0
+    while index < 512 do
+        if Array.get values index <> 0 then valid <- false else ()
+        index <- index + 1
+    index <- 0
+    while index < 23 do
+        if Array.get flags index || Array.get floats index <> 0.0 then valid <- false else ()
+        index <- index + 1
+    if not valid then 90
+    else
+        Array.set values 128 71
+        Array.set values 200 73
+        Array.set values 255 79
+        // This independent wide-index sweep catches writes before the array,
+        // even if a matching narrow get would repeat the same wrong address.
+        index <- 0
+        while index < 512 do
+            let expected = if index = 128 then 71 elif index = 200 then 73 elif index = 255 then 79 else 0
+            if Array.get values index <> expected then valid <- false else ()
+            index <- index + 1
+        if not valid then 91
+        elif Array.get values 128 <> 71 || Array.get values 200 <> 73 || Array.get values 255 <> 79 then 92
+        else 0

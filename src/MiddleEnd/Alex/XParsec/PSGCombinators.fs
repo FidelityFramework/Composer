@@ -213,11 +213,18 @@ let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (grap
 /// The value a derived meet produces: the extension by the operand's sign or the truncation of a
 /// refined read that SSAAssignment derived for this consumer and operand (Coeffects.Meet). The
 /// witness transcribes it; nothing is decided here.
+let private floatType = function
+    | 32 -> TFloat F32
+    | 64 -> TFloat F64
+    | bits -> failwithf "Unsupported floating boundary width %d" bits
+
 let meetOp (meet: Meet) (result: SSA) (value: SSA) : MLIROp =
     match meet.Adapt with
     | MeetKind.ExtendUnsigned -> MLIROp.ArithOp (ArithOp.ExtUI (result, value, TInt (IntWidth meet.From), TInt (IntWidth meet.To)))
     | MeetKind.ExtendSigned -> MLIROp.ArithOp (ArithOp.ExtSI (result, value, TInt (IntWidth meet.From), TInt (IntWidth meet.To)))
     | MeetKind.Truncate -> MLIROp.ArithOp (ArithOp.TruncI (result, value, TInt (IntWidth meet.From), TInt (IntWidth meet.To)))
+    | MeetKind.ExtendFloat -> MLIROp.ArithOp (ArithOp.ExtF (result, value, floatType meet.From, floatType meet.To))
+    | MeetKind.TruncateFloat -> MLIROp.ArithOp (ArithOp.TruncF (result, value, floatType meet.From, floatType meet.To))
 
 /// The last value a node evaluates to: through a block's last child and an annotation (the node
 /// a value operand is derived and recalled at).
@@ -243,6 +250,7 @@ let adaptOperand (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (gr
     | Some (meet, result) ->
         match ty with
         | TInt (IntWidth from) when from = meet.From -> ([ meetOp meet result value ], result, TInt (IntWidth meet.To))
+        | TFloat _ when ty = floatType meet.From -> ([meetOp meet result value], result, floatType meet.To)
         | _ ->
             failwithf "adaptOperand: the meet derived for node %d's operand %d adapts i%d, but the operand arrives as %A; the derivation and the emission disagree"
                 (NodeId.value consumer) (NodeId.value operand) meet.From ty

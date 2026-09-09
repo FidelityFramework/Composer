@@ -47,6 +47,7 @@ type MLIRType =
     | TVector of int * MLIRType             // Vector type (SIMD)
     | TIndex                                // Index type
     | TUnit                                 // Unit type (represented as i32 0)
+    | TVoid                                 // Foreign ABI: no returned value
     | TStruct of (string * MLIRType) list * StructBytes option   // Named struct type (record fields) and, on a core, its settled bytes
     | TSeqClock                             // CIRCT !seq.clock type (clock signal for registers)
     | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
@@ -124,7 +125,7 @@ let rec mlirTypeSizeWith (pointer: Result<int, string>) (ty: MLIRType) : int =
             (fields |> List.map fst |> String.concat ", ")
     | TSeqClock -> 1
     | TTag _ -> 1  // Tag is at least 1 byte; platform elision determines actual width
-    | TUnit -> 0 | TError _ -> 0
+    | TUnit | TVoid -> 0 | TError _ -> 0
 
 /// The settled byte offset of a struct's field, read from the layout CCS settled; a struct with
 /// no settled layout, or a field outside it, is a stop.
@@ -221,8 +222,11 @@ type SubViewParam =
 type MemRefOp =
     | Load of SSA * SSA * SSA list * MLIRType * MLIRType               // result, memref, indices, elemType, memrefType
     | Store of SSA * SSA * SSA list * MLIRType * MLIRType              // value, memref, indices, elemType, memrefType
+    | LoadAligned of SSA * SSA * SSA list * MLIRType * MLIRType * int // explicit byte alignment, including packed fields
+    | StoreAligned of SSA * SSA * SSA list * MLIRType * MLIRType * int
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment (stack, compile-time size)
     | Alloc of SSA * SSA * MLIRType                                    // result, sizeSSA, elementType (heap, runtime size)
+    | Dealloc of SSA * MLIRType                                        // owned heap memref, released after its last use
     | AllocStatic of SSA * MLIRType * int option                        // result, memrefType, alignment (heap, compile-time size)
     | SubView of SSA * SSA * SSA list * MLIRType                       // result, source, offsets, resultType (legacy element access)
     | SubViewSlice of SSA * SSA * SSA list * SubViewParam list * SubViewParam list * MLIRType  // result, source, offsets, sizes, strides, sourceType (proper MLIR 3-group, strided result)
@@ -261,6 +265,8 @@ type ArithOp =
     // Type conversions
     | ExtSI of SSA * SSA * MLIRType * MLIRType              // result, value, srcType, destType
     | ExtUI of SSA * SSA * MLIRType * MLIRType              // result, value, srcType, destType
+    | ExtF of SSA * SSA * MLIRType * MLIRType
+    | TruncF of SSA * SSA * MLIRType * MLIRType
     | TruncI of SSA * SSA * MLIRType * MLIRType             // result, value, srcType, destType
     | SIToFP of SSA * SSA * MLIRType * MLIRType             // result, value, srcType, destType
     | FPToSI of SSA * SSA * MLIRType * MLIRType             // result, value, srcType, destType
@@ -348,6 +354,8 @@ type MLIROp =
     | MemRefOp of MemRefOp
     | ArithOp of ArithOp
     | SCFOp of SCFOp
+    /// A required runtime boundary check; failure terminates before the foreign access.
+    | Assert of condition: SSA * message: string
     | FuncOp of FuncOp
     | IndexOp of IndexOp
     | Block of string * MLIROp list                                 // label, ops
@@ -426,6 +434,8 @@ and SMTOp =
     | SMTBVConstant of SSA * int64 * int            // result, value, width
     | SMTIntAdd of SSA * SSA * SSA                  // result, lhs, rhs
     | SMTIntSub of SSA * SSA * SSA                  // result, lhs, rhs
+    | SMTIntMod of SSA * SSA * SSA                  // result, lhs, rhs
+    | SMTIntDiv of SSA * SSA * SSA                  // result, lhs, rhs (integer quotient)
     | SMTIntMul of SSA * SSA * SSA                  // result, lhs, rhs
     | SMTIntCmp of SSA * SMTCmpPred * SSA * SSA     // result, predicate, lhs, rhs
     | SMTEq of SSA * SSA * SSA * SMTType            // result, lhs, rhs, operand type

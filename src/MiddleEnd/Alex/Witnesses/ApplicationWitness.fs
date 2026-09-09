@@ -97,6 +97,13 @@ let private calleeReturnType (ctx: WitnessContext) (node: SemanticNode) (bodyId:
 
 /// Witness application nodes - emits function calls (non-intrinsic only)
 let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    // A settled foreign call belongs to PlatformWitness, including saturated
+    // calls. Emitting the generated placeholder body would bypass the ABI.
+    if Map.containsKey node.Id ctx.Coeffects.Platform.Bindings.Bindings
+       || (match node.Kind with
+           | SemanticKind.Application (callee, _) -> (Clef.Compiler.PSGSaturation.SemanticGraph.MappedBindings.tryFindCall ctx.Graph callee).IsSome
+           | _ -> false) then WitnessOutput.skip
+    else
     match tryMatch pApplication ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((funcId, argIds), _) ->
         // ═══════════════════════════════════════════════════════════

@@ -49,6 +49,7 @@ let private generateCore
     (platformCtx: PlatformContext)
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
+    (linkedLibraries: Set<string>)
     : Result<string * Set<string>, string> =
 
     let arch = architectureOf platformCtx
@@ -63,7 +64,7 @@ let private generateCore
     let proofObligations = Clef.Compiler.Nanopass.ObligationDischarge.ofGraph graph
 
     let coeffects : TransferCoeffects = {
-        Platform = { TargetArch = arch; Bindings = codata.Bindings }
+        Platform = { TargetArch = arch; Bindings = codata.Bindings; LinkedLibraries = linkedLibraries }
         TargetPlatform = targetPlatform
     }
 
@@ -88,45 +89,48 @@ let private generateCore
             // Apply MLIR nanopasses (MLIR→MLIR transformations)
             let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses platformOps coeffects.Platform intermediatesDir
 
-            // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
-            // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
-            let mlirText =
-                match targetPlatform with
-                | Core.Types.Dialects.TargetPlatform.NPU ->
-                    let opsText = opsToString arch.Pointer transformedOps "  "
-                    sprintf "module {\n%s\n}" opsText
-                | _ -> moduleToString arch.Pointer "main" transformedOps
+            match Alex.Traversal.StaticStorageValidation.validate graph transformedOps with
+            | Result.Error message -> Result.Error message
+            | Result.Ok () ->
+                // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
+                // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
+                let mlirText =
+                    match targetPlatform with
+                    | Core.Types.Dialects.TargetPlatform.NPU ->
+                        let opsText = opsToString arch.Pointer transformedOps "  "
+                        sprintf "module {\n%s\n}" opsText
+                    | _ -> moduleToString arch.Pointer "main" transformedOps
 
-            // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
-            match intermediatesDir with
-            | Some dir ->
-                let finalPath = Path.Combine(dir, "10_output.mlir")
-                File.WriteAllText(finalPath, mlirText)
-                if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                    printfn "[Alex] Wrote final MLIR: 10_output.mlir"
-                // SMT verification module — parallel residual from the proof
-                // obligations the graph carries (same shape as XDC from the pins)
-                if not (List.isEmpty proofObligations) then
-                    let smtPath = Path.Combine(dir, "09_obligations.mlir")
-                    File.WriteAllText(smtPath, Alex.Traversal.SMTTransfer.transfer proofObligations + "\n")
-                    if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                        printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Length
-            | None -> ()
-
-            // XDC transfer — parallel residual from the pin facts the graph carries (FPGA only)
-            match targetPlatform, codata.Pins with
-            | Core.Types.Dialects.TargetPlatform.FPGA, Some mapping ->
-                let xdcText = Alex.Traversal.XDCTransfer.transfer mapping
+                // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
                 match intermediatesDir with
                 | Some dir ->
-                    let xdcPath = Path.Combine(dir, "constraints.xdc")
-                    File.WriteAllText(xdcPath, xdcText)
+                    let finalPath = Path.Combine(dir, "10_output.mlir")
+                    File.WriteAllText(finalPath, mlirText)
                     if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                        printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                        printfn "[Alex] Wrote final MLIR: 10_output.mlir"
+                    // SMT verification module — parallel residual from the proof
+                    // obligations the graph carries (same shape as XDC from the pins)
+                    if not (List.isEmpty proofObligations) then
+                        let smtPath = Path.Combine(dir, "09_obligations.mlir")
+                        File.WriteAllText(smtPath, Alex.Traversal.SMTTransfer.transfer proofObligations + "\n")
+                        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                            printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Length
                 | None -> ()
-            | _ -> ()
 
-            Result.Ok (mlirText, codata.Bindings.ExternLibraries)
+                // XDC transfer — parallel residual from the pin facts the graph carries (FPGA only)
+                match targetPlatform, codata.Pins with
+                | Core.Types.Dialects.TargetPlatform.FPGA, Some mapping ->
+                    let xdcText = Alex.Traversal.XDCTransfer.transfer mapping
+                    match intermediatesDir with
+                    | Some dir ->
+                        let xdcPath = Path.Combine(dir, "constraints.xdc")
+                        File.WriteAllText(xdcPath, xdcText)
+                        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                            printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                    | None -> ()
+                | _ -> ()
+
+                Result.Ok (mlirText, Set.union codata.Bindings.ExternLibraries linkedLibraries)
         | Result.Error msg -> Result.Error msg
 
 /// Generate MLIR for the graph. A core's leg reads the declared Register and Pointer widths at
@@ -135,12 +139,13 @@ let private generateCore
 /// the code PlatformDeclaration reports for a missing declaration (CCS8203). The fabric leg reads
 /// neither, so a description declaring none compiles for it. The deployment mode is the
 /// project's; the runtime it selects is read from the graph's platform bindings (CCS).
-let generate
+let generateWithLinkedLibraries
     (graph: SemanticGraph)
     (platformCtx: PlatformContext)
     (_deploymentMode: Core.Types.Dialects.DeploymentMode)
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
+    (linkedLibraries: Set<string>)
     : Result<string * Set<string>, string> =
     let arch = architectureOf platformCtx
     let undeclared =
@@ -153,4 +158,8 @@ let generate
     match undeclared with
     | Some message ->
         Result.Error (sprintf "CCS8203: %s; a core's leg reads the Register and Pointer width dimensions at its boundaries and layouts and cannot start without them" message)
-    | None -> generateCore graph platformCtx targetPlatform intermediatesDir
+    | None -> generateCore graph platformCtx targetPlatform intermediatesDir linkedLibraries
+
+/// Callers without project link declarations retain the existing binding policy.
+let generate graph platformCtx deploymentMode targetPlatform intermediatesDir =
+    generateWithLinkedLibraries graph platformCtx deploymentMode targetPlatform intermediatesDir Set.empty

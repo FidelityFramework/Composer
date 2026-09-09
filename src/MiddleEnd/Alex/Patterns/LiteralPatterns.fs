@@ -92,68 +92,20 @@ let deriveGlobalRef (content: string) : string =
 let deriveByteLength (content: string) : int =
     System.Text.Encoding.UTF8.GetByteCount(content)
 
-/// Build string literal: get reference to global memref (portable MLIR)
-/// TypeLayout.Opaque: Single SSA for memref.get_global
-/// SSA layout: [0] = memref.get_global result
-/// Returns: ((ops, globalName, content, byteLength), result)
-/// NOTE: Witness must emit memref.global to TopLevelOps separately
-let pBuildStringLiteral (content: string) (ssas: SSA list) (arch: Architecture)
-                         : PSGParser<(MLIROp list * string * string * int) * TransferResult> =
-    parser {
-        do! emitTrace "pBuildStringLiteral.entry" (sprintf "content='%s', ssas=%A, arch=%A" content ssas arch)
-
-        // Need 3 SSAs: memref.get_global (storage) + memref.reinterpret_cast (content view) + memref.cast (dynamic)
-        do! ensure (ssas.Length >= 3) $"pBuildStringLiteral: Expected 3 SSAs, got {ssas.Length}"
-
-        do! emitTrace "pBuildStringLiteral.ssa_validated" (sprintf "SSA count OK: %d" ssas.Length)
-
-        // Use StringCollection pure derivation (coeffect model)
-        let globalName = deriveGlobalRef content
-        let byteLength = deriveByteLength content
-        // Storage includes a null sentinel byte for C interop safety.
-        // Clef strings are (ptr, length) — the sentinel is invisible to the type system
-        // but ensures .Pointer yields a C-compatible null-terminated pointer.
-        let storageLength = byteLength + 1
-
-        do! emitTrace "pBuildStringLiteral.derived" (sprintf "globalName=%s, byteLength=%d, storageLength=%d" globalName byteLength storageLength)
-
-        // Static type from global: memref<Nxi8> where N is storage length (includes null sentinel)
-        let storageTy = TMemRefStatic (storageLength, TInt (IntWidth 8))
-        // Content view type: memref<Mxi8> where M is byte length (semantic content, no sentinel)
-        let contentTy = TMemRefStatic (byteLength, TInt (IntWidth 8))
-        // Dynamic type (string): memref<?xi8>
-        let dynamicTy = TMemRef (TInt (IntWidth 8))
-
-        do! emitTrace "pBuildStringLiteral.types" (sprintf "storageTy=%A, contentTy=%A, dynamicTy=%A" storageTy contentTy dynamicTy)
-
-        let getGlobalSSA = ssas.[0]    // SSA for memref.get_global (storage dim)
-        let reinterpretSSA = ssas.[1]  // SSA for memref.reinterpret_cast (content dim)
-        let castSSA = ssas.[2]         // SSA for memref.cast (content → dynamic)
-
-        do! emitTrace "pBuildStringLiteral.ssas_extracted" (sprintf "getGlobal=%A, reinterpret=%A, cast=%A" getGlobalSSA reinterpretSSA castSSA)
-
-        // memref.get_global @globalName : memref<Nxi8> (storage dimension, includes null sentinel)
-        let! getGlobalOp = pMemRefGetGlobal getGlobalSSA globalName storageTy
-
-        // memref.reinterpret_cast: memref<Nxi8> → memref<Mxi8> (narrow to content dimension)
-        // This separates storage length (for C interop) from semantic length (for I/O operations).
-        // Downstream memref.dim will return byteLength, not storageLength.
-        let reinterpretOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (reinterpretSSA, getGlobalSSA, 0, byteLength, storageTy, contentTy))
-
-        // memref.cast: memref<Mxi8> → memref<?xi8>
-        // String literals ARE strings (dynamic memref) — cast at point of creation
-        let! castOp = pMemRefCast castSSA reinterpretSSA contentTy dynamicTy
-
-        do! emitTrace "pBuildStringLiteral.elements_complete" "memref.get_global + memref.reinterpret_cast + memref.cast succeeded"
-
-        let inlineOps = [getGlobalOp; reinterpretOp; castOp]
-        let result = TRValue { SSA = castSSA; Type = dynamicTy }
-
-        do! emitTrace "pBuildStringLiteral.returning" (sprintf "Returning %d ops" (List.length inlineOps))
-
-        // Return ops + (globalName, content, storageLength) for witness to emit memref.global
-        return ((inlineOps, globalName, content, storageLength), result)
-    }
+/// Read the settled pool and entry directly; no string encoding or placement occurs here.
+let stringPoolView (pool: Clef.Compiler.PSGSaturation.SemanticGraph.Types.StaticStringPool)
+                   (entry: Clef.Compiler.PSGSaturation.SemanticGraph.Types.StaticStringEntry)
+                   (ssas: SSA list) : MLIROp list * TransferResult =
+    if ssas.Length < 4 then invalidArg "ssas" "String pool view needs four SSAs."
+    let storageTy = TMemRefStatic (pool.Size, TInt (IntWidth 8))
+    let contentTy = TMemRefStatic (entry.Length, TInt (IntWidth 8))
+    let dynamicTy = TMemRef (TInt (IntWidth 8))
+    [ MLIROp.MemRefOp (MemRefOp.GetGlobal (ssas[0], pool.Symbol, storageTy))
+      MLIROp.IndexOp (IndexOp.IndexConst (ssas[3], int64 entry.Offset))
+      // View moves the data pointer, preserving an identity layout for memref.cast.
+      MLIROp.MemRefOp (MemRefOp.View (ssas[1], ssas[0], ssas[3], storageTy, contentTy))
+      MLIROp.MemRefOp (MemRefOp.Cast (ssas[2], ssas[1], contentTy, dynamicTy)) ],
+    TRValue { SSA = ssas[2]; Type = dynamicTy }
 
 // DEAD CODE DELETED: pStringGetPtr and pStringGetLength were unused
 // Pointer extraction happens inline in PlatformPatterns.pSysWrite

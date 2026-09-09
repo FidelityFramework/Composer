@@ -134,7 +134,7 @@ module CommandDetection =
     /// Specialized LLVM tool detection
     let checkLLVMTools() : (string * ComponentStatus) list =
         let llvmTools = [
-            ("llc", "LLVM static compiler")
+            ("ld.lld", "LLVM ELF linker and LTO code generation")
             ("opt", "LLVM optimizer")
             ("llvm-config", "LLVM configuration tool")
         ]
@@ -143,125 +143,24 @@ module CommandDetection =
             let status = checkCommandAvailability tool "--version"
             (sprintf "%s (%s)" tool description, status))
     
-    /// Specialized compiler detection with fallback options
-    let checkCompilers() : (string * ComponentStatus) list =
-        let compilers = [
-            ("gcc", "GNU Compiler Collection")
-            ("clang", "Clang C/C++ Compiler")
-            ("g++", "GNU C++ Compiler")
-        ]
-        
-        compilers |> List.map (fun (compiler, description) ->
-            let status = checkCommandAvailability compiler "--version"
-            (sprintf "%s (%s)" compiler description, status))
-
 /// Platform-specific toolchain requirements with enhanced detection
 module PlatformRequirements =
     
-    /// Enhanced Windows toolchain requirements with MSYS2 integration
-    let getWindowsToolchainRequirements() : ToolchainComponent list =
-        let msysInfo = MSYS2Detection.getMSYS2EnvironmentInfo()
-        let mingwRoot = 
-            match msysInfo with
-            | Some (_, rootPath, _) -> rootPath
-            | None -> "/mingw64"
-        
+    /// These are the executable tools used by the ELF backend on any host.
+    /// Hosted runtime files are resolved separately from the selected target.
+    let private elfTools () : ToolchainComponent list =
         [
-            {
-                Name = "MSYS2 Environment"
-                Description = "MSYS2 MINGW64 environment for native Windows compilation"
-                CheckCommand = None
-                CheckFiles = []
-                InstallHint = "Install MSYS2 from https://www.msys2.org/ and use MINGW64 terminal"
-                Required = true
-            }
-            {
-                Name = "GCC Compiler"
-                Description = "GNU Compiler Collection for compiling object files"
-                CheckCommand = Some "gcc --version"
-                CheckFiles = []
-                InstallHint = "pacman -S mingw-w64-x86_64-gcc"
-                Required = true
-            }
-            {
-                Name = "MinGW-w64 CRT"
-                Description = "C Runtime startup files (critical for linking)"
-                CheckCommand = None
-                CheckFiles = [
-                    Path.Combine(mingwRoot, "lib", "crt1.o")
-                    Path.Combine(mingwRoot, "lib", "crt2.o")
-                    Path.Combine(mingwRoot, "lib", "libmsvcrt.a")
-                ]
-                InstallHint = "pacman -S mingw-w64-x86_64-crt-git"
-                Required = true
-            }
-            {
-                Name = "LLVM Tools"
-                Description = "LLVM compiler infrastructure (llc, opt)"
-                CheckCommand = Some "llc --version"
-                CheckFiles = []
-                InstallHint = "pacman -S mingw-w64-x86_64-llvm"
-                Required = true
-            }
-            {
-                Name = "GNU Binutils"
-                Description = "Binary utilities including linker"
-                CheckCommand = Some "ld --version"
-                CheckFiles = []
-                InstallHint = "pacman -S mingw-w64-x86_64-binutils"
-                Required = true
-            }
-            {
-                Name = "LLD Linker"
-                Description = "LLVM's native linker (alternative to GNU ld)"
-                CheckCommand = Some "lld --version"
-                CheckFiles = []
-                InstallHint = "pacman -S mingw-w64-x86_64-lld"
-                Required = false
-            }
+            { Name = "LLVM bitcode preparation"; Description = "Target-aware LLVM IR verification and bitcode emission"
+              CheckCommand = Some "opt --version"; CheckFiles = []
+              InstallHint = "Install LLVM tools (llvm package)"; Required = true }
+            { Name = "LLD ELF linker"; Description = "LLVM code generation, linking and ELF layout"
+              CheckCommand = Some "ld.lld --version"; CheckFiles = []
+              InstallHint = "Install LLD (lld package) matching the LLVM tool version"; Required = true }
         ]
-    
-    /// Linux toolchain requirements
-    let getLinuxToolchainRequirements() : ToolchainComponent list =
-        [
-            {
-                Name = "GCC Compiler"
-                Description = "GNU Compiler Collection"
-                CheckCommand = Some "gcc --version"
-                CheckFiles = []
-                InstallHint = "apt-get install gcc (Ubuntu/Debian) or yum install gcc (RHEL/CentOS)"
-                Required = true
-            }
-            {
-                Name = "LLVM Tools"
-                Description = "LLVM compiler infrastructure"
-                CheckCommand = Some "llc --version"
-                CheckFiles = []
-                InstallHint = "apt-get install llvm (Ubuntu/Debian) or yum install llvm (RHEL/CentOS)"
-                Required = true
-            }
-        ]
-    
-    /// macOS toolchain requirements
-    let getMacOSToolchainRequirements() : ToolchainComponent list =
-        [
-            {
-                Name = "Clang Compiler"
-                Description = "Apple Clang compiler"
-                CheckCommand = Some "clang --version"
-                CheckFiles = []
-                InstallHint = "Install Xcode Command Line Tools: xcode-select --install"
-                Required = true
-            }
-            {
-                Name = "LLVM Tools"
-                Description = "LLVM compiler infrastructure"
-                CheckCommand = Some "llc --version"
-                CheckFiles = []
-                InstallHint = "Install via Homebrew: brew install llvm"
-                Required = true
-            }
-        ]
+
+    let getWindowsToolchainRequirements() = elfTools ()
+    let getLinuxToolchainRequirements() = elfTools ()
+    let getMacOSToolchainRequirements() = elfTools ()
 
 /// element checking with enhanced error reporting
 module ComponentChecking =
@@ -396,13 +295,6 @@ let verifyToolchain (verbose: bool) : DiagnosticResult<unit> =
             | Missing hint -> printfn "✗ %s: %s" name hint
             | Error msg -> printfn "! %s: %s" name msg)
         
-        printfn ""
-        let compilers = CommandDetection.checkCompilers()
-        compilers |> List.iter (fun (name, status) ->
-            match status with
-            | Found version -> printfn "✓ %s: %s" name version
-            | Missing hint -> printfn "✗ %s: %s" name hint
-            | Error msg -> printfn "! %s: %s" name msg)
     
     printfn ""
     printfn "=========================================="
@@ -426,57 +318,17 @@ let verifyToolchain (verbose: bool) : DiagnosticResult<unit> =
         printfn "All components found!"
         Success ()
 
-/// Quick check for critical components (used during compilation)
+/// Check the tools Composer actually executes; target runtime inputs are checked at linking.
 let quickVerifyToolchain() : bool =
-    if RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then
-        // Quick check for the most common issues in MSYS2
-        let msysCheck = MSYS2Detection.validateMSYS2Environment()
-        let gccCheck = CommandDetection.checkCommandAvailability "gcc" "--version"
-        let llcCheck = CommandDetection.checkCommandAvailability "llc" "--version"
-        
-        match msysCheck, gccCheck, llcCheck with
-        | Found _, Found _, Found _ -> true
-        | Missing _, _, _ ->
-            printfn "WARNING: MSYS2 environment issue detected!"
-            false
-        | _, Missing _, _ ->
-            printfn "WARNING: GCC compiler not found!"
-            printfn "Install with: pacman -S mingw-w64-x86_64-gcc"
-            false
-        | _, _, Missing _ ->
-            printfn "WARNING: LLVM tools not found!"
-            printfn "Install with: pacman -S mingw-w64-x86_64-llvm"
-            false
-        | _ -> false
-    else
-        true // Assume OK on other platforms for now
+    ["opt"; "ld.lld"] |> List.forall (fun tool ->
+        match CommandDetection.checkCommandAvailability tool "--version" with
+        | Found _ -> true
+        | _ -> false)
 
-/// Provides specific suggestions for common toolchain issues
 let suggestToolchainFixes (error: string) : unit =
-    if error.Contains("WinMain") || error.Contains("entry point") then
-        printfn ""
-        printfn "This error typically indicates missing MinGW-w64 runtime files."
-        printfn "Try running: pacman -S mingw-w64-x86_64-crt-git"
-        printfn ""
-        printfn "If you're not in MINGW64 environment, switch to it:"
-        printfn "Close this terminal and open 'MSYS2 MINGW64' from Start Menu"
-    elif error.Contains("gcc: command not found") then
-        printfn ""
-        printfn "GCC compiler not found. Install with:"
-        printfn "pacman -S mingw-w64-x86_64-gcc"
-    elif error.Contains("llc: command not found") then
-        printfn ""
-        printfn "LLVM tools not found. Install with:"
-        printfn "pacman -S mingw-w64-x86_64-llvm"
-    elif error.Contains("ld: cannot find") then
-        printfn ""
-        printfn "Linker cannot find required libraries. This usually means:"
-        printfn "1. Missing MinGW-w64 libraries: pacman -S mingw-w64-x86_64-crt-git"
-        printfn "2. Incorrect environment: ensure you're in MINGW64 terminal"
+    if error.Contains("runtime") || error.Contains("library") || error.Contains("crt") then
+        printfn "Check target startup objects, --sysroot, --link-library-path and --dynamic-linker."
+    elif error.Contains("entry") then
+        printfn "Check that the deployment's startup object defines _start and that its linker script is supplied."
     else
-        printfn ""
-        printfn "For general toolchain issues:"
-        printfn "1. Verify you're in MSYS2 MINGW64 terminal"
-        printfn "2. Update package database: pacman -Sy"
-        printfn "3. Install core tools: pacman -S mingw-w64-x86_64-toolchain"
-        printfn "4. Run: composer doctor --verbose"
+        printfn "Check matching LLVM opt and ld.lld installations; run composer doctor --verbose."

@@ -103,8 +103,11 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         // ─── Target-gated (CPU/MCU only — FPGA has no mutable state, heap, or syscalls) ───
         |> conditionalRegister isCPULike MutableAssignmentWitness.nanopass
         |> conditionalRegister isCPULike MemoryIntrinsicWitness.nanopass
+        |> conditionalRegister isCPULike Alex.Witnesses.FunctionPointerWitness.nanopass
         |> conditionalRegister isCPULike StringIntrinsicWitness.nanopass
         |> conditionalRegister isCPULike PlatformWitness.nanopass
+        |> conditionalRegister isCPULike Alex.Witnesses.BorrowedViewWitness.nanopass
+        |> conditionalRegister isCPULike Alex.Witnesses.MappedViewWitness.nanopass
         |> conditionalRegister isCPULike MemoryWitness.nanopass
 
         // ─── DU operations (all platforms — codata-dependent dispatch inside patterns) ───

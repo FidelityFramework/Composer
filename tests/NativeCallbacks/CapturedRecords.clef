@@ -1,0 +1,21 @@
+module CapturedRecords
+
+type State = { Values: int array; Expected: int }
+
+let apply (work: int -> int) (value: int) = work value
+let read (state: State) index = Array.get state.Values index + state.Expected
+
+let throughParameter (state: State) =
+    let work = fun index -> read state index
+    apply work 1
+
+[<EntryPoint>]
+let main _ =
+    let values: int array = Array.zeroCreate 2
+    Array.set values 0 7
+    Array.set values 1 9
+    let state: State = { Values = values; Expected = 3 }
+    let work = fun index -> read state index
+    let first = apply work 0
+    let second = throughParameter state
+    if first = 10 && second = 12 && Array.get state.Values 0 = 7 then 0 else 91

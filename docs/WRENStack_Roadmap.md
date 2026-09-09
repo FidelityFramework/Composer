@@ -2,7 +2,7 @@
 
 ## Overview
 
-WRENStack is the paved path for building native desktop applications with Clef. The goal: a user installs MLIR/clang tooling, .NET 10 SDK, and the Composer dotnet tool, then uses a WRENStack template to build native desktop applications with WebView frontends and bidirectional IPC.
+WRENStack is the paved path for building native desktop applications with Clef. The goal: a user installs MLIR/LLVM/LLD tooling, .NET 10 SDK, and the Composer dotnet tool, then uses a WRENStack template to build native desktop applications with WebView frontends and bidirectional IPC.
 
 **WREN** = **W**ebview + **R**eactive + **E**mbedded + **N**ative
 

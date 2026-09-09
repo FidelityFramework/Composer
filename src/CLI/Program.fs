@@ -31,20 +31,32 @@ type CompileArgs =
     | Emit_LLVM
     | [<AltCommandLine("--warnaserror")>] Warn_As_Error
     | No_Color
+    | Sysroot of path: string
+    | Link_Library_Path of path: string
+    | Link_Start_File of path: string
+    | Link_End_File of path: string
+    | Dynamic_Linker of path: string
+    | Linker_Script of path: string
 
     interface IArgParserTemplate with
         member this.Usage =
             match this with
-            | Project _ -> ".fidproj file or F# source file to compile"
+            | Project _ -> ".fidproj file or Clef source file to compile"
             | Output _ -> "Output executable path"
             | Target _ -> "Target triple (default: host platform)"
-            | Keep_Intermediates -> "Keep intermediate files (.mlir, .ll) for debugging"
+            | Keep_Intermediates -> "Keep intermediate files (.mlir, .ll, .bc) for debugging"
             | Verbose -> "Enable verbose output"
             | Timing -> "Show timing for each compilation phase"
             | Emit_MLIR -> "Emit MLIR and stop (don't generate executable)"
             | Emit_LLVM -> "Emit LLVM IR and stop (don't generate executable)"
             | Warn_As_Error -> "Treat warnings as errors"
             | No_Color -> "Disable colored output"
+            | Sysroot _ -> "Target runtime root for direct ELF linking"
+            | Link_Library_Path _ -> "Target library directory (repeatable)"
+            | Link_Start_File _ -> "Object before program bitcode (repeatable; replaces discovered startup files)"
+            | Link_End_File _ -> "Object after program libraries (repeatable; replaces discovered end files)"
+            | Dynamic_Linker _ -> "Runtime loader path recorded in the ELF (target path, not sysroot path)"
+            | Linker_Script _ -> "LLD script controlling target section/segment layout"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compile Command Handler
@@ -75,6 +87,14 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
         ProjectPath = projectPath
         OutputPath = args.TryGetResult(Output)
         TargetTriple = args.TryGetResult(Target)
+        NativeLink = {
+            Sysroot = args.TryGetResult(Sysroot)
+            LibraryPaths = args.GetResults(Link_Library_Path)
+            StartFiles = args.GetResults(Link_Start_File)
+            EndFiles = args.GetResults(Link_End_File)
+            DynamicLinker = args.TryGetResult(Dynamic_Linker)
+            LinkerScript = args.TryGetResult(Linker_Script)
+        }
         KeepIntermediates = args.Contains(Keep_Intermediates)
         EmitMLIROnly = args.Contains(Emit_MLIR)
         EmitLLVMOnly = args.Contains(Emit_LLVM)
@@ -154,4 +174,6 @@ let main argv =
         1
     | ex ->
         printfn "Error: %s" ex.Message
+        if argv |> Array.exists (fun arg -> arg = "-v" || arg = "--verbose") then
+            eprintfn "%s" (ex.ToString())
         1

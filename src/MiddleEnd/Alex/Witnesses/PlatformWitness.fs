@@ -20,6 +20,13 @@ open Alex.XParsec.PSGCombinators
 open Alex.Patterns.PlatformPatterns
 open XParsec.Combinators  // <|>
 
+let private foreignResult (ctx: WitnessContext) (node: SemanticNode) ops topLevel result =
+    match result with
+    | TRValue value ->
+        let meets, ssa, ty = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id value.SSA value.Type
+        { InlineOps = ops @ meets; TopLevelOps = topLevel; Result = TRValue { SSA = ssa; Type = ty } }
+    | _ -> { InlineOps = ops; TopLevelOps = topLevel; Result = result }
+
 let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     // Try dynamic extern first — returns pending globals that need TopLevelOps emission.
     // Dynamic externs (library != "c") use dlopen/dlsym/call_indirect.
@@ -35,8 +42,14 @@ let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : Witness
             pendingGlobals
             |> List.choose (fun (name, content, storageLen) ->
                 MLIRAccumulator.tryEmitGlobal name content storageLen [] ctx.Accumulator)
-        { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
+        foreignResult ctx node inlineOps topLevelOps result
     | None ->
+        match Map.tryFind node.Id ctx.Coeffects.Platform.Bindings.Bindings with
+        | Some { Resolved = ResolvedBinding.ExternCall (library, _) } when isLinkedExtern ctx.Coeffects.Platform library ->
+            match tryMatchWithDiagnostics pExternCallResolved ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Ok ((ops, result), _) -> foreignResult ctx node ops [] result
+            | Result.Error message -> WitnessOutput.error message
+        | _ ->
         // Fall back to static patterns (syscalls + static extern calls)
         let combined = pSysWriteIntrinsic <|> pSysReadIntrinsic <|> pSysReadlineIntrinsic <|> pExternCallResolved
         match tryMatch combined ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

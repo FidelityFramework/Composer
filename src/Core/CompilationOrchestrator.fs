@@ -25,6 +25,7 @@ type CompilationOptions = {
     ProjectPath: string
     OutputPath: string option
     TargetTriple: string option
+    NativeLink: Core.Types.Pipeline.NativeLinkOptions
     KeepIntermediates: bool
     EmitMLIROnly: bool
     EmitLLVMOnly: bool
@@ -86,12 +87,13 @@ let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext)
         | None -> Error "No platform context available from CCS"
         | Some platformCtx ->
             // Delegate to MiddleEnd - it orchestrates PSGElaboration + Alex
-            MiddleEnd.MLIRGeneration.generate
+            MiddleEnd.MLIRGeneration.generateWithLinkedLibraries
                 project.CheckResult.Graph
                 platformCtx
                 ctx.DeploymentMode
                 ctx.TargetPlatform
-                ctx.IntermediatesDir)
+                ctx.IntermediatesDir
+                (Set.ofList project.Options.LinkedLibraries))
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Context Setup
@@ -201,6 +203,7 @@ let compileProject (options: CompilationOptions) : int =
                         DeploymentMode = ctx.DeploymentMode
                         EmitIntermediateOnly = options.EmitLLVMOnly
                         ExternLibraries = externLibraries
+                        NativeLink = options.NativeLink
                     }
                     backEnd.Compile mlirText backEndCtx
                     |> Result.bind (fun artifact ->

@@ -13,6 +13,19 @@ type BackEndArtifact =
     | GpuCodeObject of path: string
     | IntermediateOnly of format: string
 
+/// Explicit ELF link inputs. Paths name target files; cross links never search host libraries.
+type NativeLinkOptions = {
+    Sysroot: string option
+    LibraryPaths: string list
+    StartFiles: string list
+    EndFiles: string list
+    DynamicLinker: string option
+    LinkerScript: string option
+} with
+    static member Empty =
+        { Sysroot = None; LibraryPaths = []; StartFiles = []; EndFiles = []
+          DynamicLinker = None; LinkerScript = None }
+
 /// Context passed to a backend for compilation.
 /// Contains backend-internal configuration — the orchestrator assembles
 /// this but doesn't interpret it.
@@ -28,6 +41,7 @@ type BackEndContext = {
     /// External library dependencies accumulated during binding resolution.
     /// Used to generate data-driven linker flags (e.g., {"c"; "wayland-client"} → -lc -lwayland-client)
     ExternLibraries: Set<string>
+    NativeLink: NativeLinkOptions
 }
 
 /// A backend is a function value that compiles MLIR text to a target artifact.

@@ -1,0 +1,23 @@
+module FunctionFields
+
+type Holder = { mutable Work: int -> int -> int; Guard: int array }
+
+[<EntryPoint>]
+let main _ =
+    let output: int array = Array.zeroCreate 32
+    let guard: int array = Array.zeroCreate 1
+    Array.set guard 0 91
+    let write = fun (lo: int) (hi: int) ->
+        Array.set output lo hi
+        hi - lo
+    let subtract = fun (lo: int) (hi: int) -> lo - hi
+    let holder = { Work = write; Guard = guard }
+    let saved = holder.Work
+    holder.Work <- subtract
+    // An allocation after construction exposes writes beyond the record end.
+    let later: int array = Array.zeroCreate 1024
+    let before = saved 0 23
+    let after = holder.Work 7 3
+    if before = 23 && after = 4 && Array.get output 0 = 23
+       && Array.get holder.Guard 0 = 91 && Array.get later 1023 = 0 then 0
+    else 1

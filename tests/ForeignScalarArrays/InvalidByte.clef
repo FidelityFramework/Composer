@@ -1,0 +1,8 @@
+module InvalidByte
+
+[<EntryPoint>]
+let main _ =
+    let carriers = [| 4294967296 |]
+    let bytes = [| 65; 66; 256 |]
+    if Array.get carriers 0 = 0 then 1
+    else ScalarReferenceBindings.write 1 bytes 3

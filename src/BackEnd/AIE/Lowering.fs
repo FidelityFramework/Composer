@@ -10,7 +10,7 @@
 ///   7. xclbinutil    — package PDI + metadata → xclbin
 ///
 /// Tool paths resolved from AIE_TOOLCHAIN env or ~/aie-toolchain.
-/// Peano (llvm-aie) provides clang++/opt/llc for AIE2 targets.
+/// Peano (llvm-aie) provides the target-specific opt/llc tools used here.
 /// xclbinutil is expected on PATH (installed with XRT).
 module BackEnd.AIE.Lowering
 

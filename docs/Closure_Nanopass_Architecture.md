@@ -155,14 +155,43 @@ mlir-opt → mlir-translate → llc → linker → Native Binary
 
 ## 7. FFI Boundary
 
-Closures are Clef-internal. At the C boundary:
-- **memref → raw pointer**: `pExtractBasePtr` (memref.extract_aligned_pointer_as_index)
-- **ExternCall marshaling**: Automatic in `pExternCallResolved` for memref-typed args
-- **`nativeint &struct`**: AddressOf → pBuildAddressOf → pExtractBasePtr at type conversion
+Closures are Clef-internal. A native callback uses an explicit `FnPtr` entry and
+an opaque `CHandle` context where the foreign signature supplies one. Generated
+descriptors govern argument and result representations. Scalar-array reference
+parameters are checked for sufficient storage before Composer extracts their
+address; the source does not cast a numeric value into a pointer.
 
-See C-01 PRD Section 6 for full boundary marshaling specification.
+See the [foreign boundary specification](../../clef-lang-spec/spec/ffi-boundary.md).
 
-## 8. References
+## 8. Function values and the remaining declaration-promotion gap
+
+Anonymous function expressions, including those without captures, have explicit closure-pair
+planning. An alias of an existing function value preserves the value read at the binding:
+`let saved = selected` snapshots `selected`, including when `selected` is mutable. It does not
+create a forwarding function that reads `selected` later. A named capture-free declaration
+used as a value receives a compiler-generated pair whose forwarding body saturates the
+original declaration's direct-call arity.
+
+Captured arrays retain their element representation and actual extent. Mutable
+cells, function pairs and records carry an address with a compiler-settled view;
+record extraction retains the field layout used by construction. Closure code
+symbols are unique to anonymous lambda nodes, so equally named local bindings
+in different scopes cannot collide. Parent SSA associations are restored after
+each lambda body is emitted. These paths are exercised by fresh native programs
+in `tests/NativeCallbacks`.
+
+The closure environment allocator does not yet reclaim arbitrary escaping
+closures. A region releasing its borrowed callback values establishes the end
+of their use by carriers; it does not itself reclaim the compiler's allocations.
+
+Promotion of a **capturing named local declaration** into a first-class value is still missing.
+For example, a local `let render lo hi = ...` that captures its enclosing frame does not yet
+receive the pair needed when passed to a higher-order function. The current supported source
+form is `let render = fun lo hi -> ...`, which follows anonymous-expression planning. Supporting
+the named form requires a compiler promotion plan that preserves its direct-call ABI and
+capture lifetime; a downstream missing-SSA or missing-return error is a symptom of this gap.
+
+## 9. References
 
 - Shao & Appel (1994), "Space-Efficient Closure Representations"
 - MLKit Programming with Regions (Tofte, Elsman)

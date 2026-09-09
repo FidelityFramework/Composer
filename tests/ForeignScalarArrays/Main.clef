@@ -1,0 +1,43 @@
+module ForeignScalarArrays
+
+open ScalarReferenceBindings
+
+[<EntryPoint>]
+let main _ =
+    // A value above the UInt32 range requires a wider interior array view.
+    // Signed32 native outputs remain representable in that same view.
+    let carriers = [| 4294967296 |]
+    let descriptors = [| 0; 0 |]
+    if Array.get carriers 0 = 0 then 1
+    elif pipe descriptors <> 0 then 2
+    else
+        let inputDescriptor = Array.get descriptors 0
+        let outputDescriptor = Array.get descriptors 1
+        if inputDescriptor >= 0 && inputDescriptor <= 2147483647 && outputDescriptor >= 0 && outputDescriptor <= 2147483647 then
+            let sent = [| 0; 1; 127; 128; 254; 255; 42; 99 |]
+            let sentAlias = sent
+            let expected = [| 0; 1; 127; 128; 254; 255; 42; 99 |]
+            let received = [| 77; 77; 77; 77; 77; 77; 77; 77; 77; 77 |]
+            let receivedAlias = received
+            let written = write outputDescriptor sent 8
+            let readCount = read inputDescriptor received 8
+            ignore (close inputDescriptor)
+            ignore (close outputDescriptor)
+            let mutable equal = written = 8 && readCount = 8
+            let mutable index = 0
+            while index < 8 do
+                equal <- equal && Array.get receivedAlias index = Array.get expected index
+                equal <- equal && Array.get sentAlias index = Array.get expected index
+                index <- index + 1
+            equal <- equal && Array.get received 8 = 77 && Array.get received 9 = 77
+            let address = [| 0; 1234567 |]
+            let addressAlias = address
+            let ipv4 = parseIPv4 2 "255.255.255.255" address
+            let signed = [| 0; 12345 |]
+            let signedAlias = signed
+            ignore (fillSigned signed -2147483648 1)
+            if not equal then 3
+            elif ipv4 <> 1 || Array.get addressAlias 0 <> 4294967295 || Array.get address 1 <> 1234567 then 4
+            elif Array.get signedAlias 0 <> -2147483648 || Array.get signed 1 <> 12345 then 5
+            else 0
+        else 6

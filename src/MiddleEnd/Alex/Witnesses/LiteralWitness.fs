@@ -27,44 +27,38 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
     | Some (lit, _) ->
         let arch = ctx.Coeffects.Platform.TargetArch
 
-        // String literals: 2 SSAs — memref.get_global (static) + memref.cast (static → dynamic)
         match lit with
         | NativeLiteral.String content ->
-            // Extract SSAs monadically
-            let stringPattern =
-                parser {
-                    // Extract result SSAs for string literal (monadic)
-                    let! ssas = getNodeSSAs node.Id
-
-                    if ssas.Length < 3 then
-                        return! fail (Message $"String literal: Expected 3 SSAs, got {ssas.Length}")
-                    else
-                        return! pBuildStringLiteral content ssas arch
-                }
-
-            // Use trace-enabled variant to capture full execution path
-            match tryMatchWithTrace stringPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Result.Ok (((inlineOps, globalName, strContent, storageLength), result), _, _trace) ->
-                // The obligations constraining this literal, projected onto the node
-                // at saturation (Obligation.Anchors, PHG 2.4a); reified on the global
-                // the witness emits (2.4b). Read, not computed.
-                let anchors =
-                    match Map.tryFind ObligationMetadata.Anchors node.Metadata with
-                    | Some (MetadataValue.StringList names) -> names
-                    | _ -> []
-                // Success - emit GlobalString via coordination (dependent transparency)
-                let topLevelOps =
-                    match MLIRAccumulator.tryEmitGlobal globalName strContent storageLength anchors ctx.Accumulator with
-                    | Some globalOp -> [globalOp]
-                    | None -> []  // Already emitted by another witness
-                { InlineOps = inlineOps; TopLevelOps = topLevelOps; Result = result }
-            | Result.Error (err, trace) ->
-                // Failure - serialize trace for debugging
-                // TODO: Serialize trace to intermediates/07_literal_witness_nodeXXX_trace.json
-                let traceMsg = trace |> List.map ExecutionTrace.format |> String.concat "\n"
-                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildStringLiteral")
-                                (sprintf "String literal pattern emission failed:\nXParsec Error: %A\nExecution Trace:\n%s" err traceMsg)
-                WitnessOutput.errorDiag diag
+            match ctx.Graph.StaticStringPool with
+            | None ->
+                WitnessOutput.errorDiag (Diagnostic.error (Some node.Id) (Some "Literal") (Some "StaticStringPool")
+                    "Source string storage has no settled BAREWire pool; refusing independent allocation.")
+            | Some pool ->
+                match pool.Entries |> List.tryFind (fun entry -> List.contains node.Id entry.NodeIds && entry.Content = content) with
+                | None ->
+                    WitnessOutput.errorDiag (Diagnostic.error (Some node.Id) (Some "Literal") (Some "StaticStringPool")
+                        "Source string is absent from the settled BAREWire pool.")
+                | Some entry ->
+                    let ops, result = stringPoolView pool entry (Alex.Traversal.Values.values node.Id)
+                    // All pool obligations travel on the single allocation, including those
+                    // for duplicate literals; no witness ordering can drop an anchor.
+                    let anchors =
+                        pool.Entries
+                        |> List.collect (fun entry -> entry.NodeIds)
+                        |> List.collect (fun id ->
+                            match ctx.Graph.Nodes.TryFind id with
+                            | Some literal ->
+                                match literal.Metadata.TryFind ObligationMetadata.Anchors with
+                                | Some (MetadataValue.StringList names) -> names
+                                | _ -> []
+                            | None -> [])
+                        |> List.distinct
+                    let globals =
+                        if Set.contains pool.Symbol ctx.Accumulator.EmittedGlobals then []
+                        else
+                            ctx.Accumulator.EmittedGlobals <- Set.add pool.Symbol ctx.Accumulator.EmittedGlobals
+                            [Alex.Dialects.Core.Types.MLIROp.GlobalBytePool (pool.Symbol, pool.Bytes, pool.Alignment, anchors)]
+                    { InlineOps = ops; TopLevelOps = globals; Result = result }
 
         | _ ->
             // Other literals (int, bool, float, char, etc.) use single SSA

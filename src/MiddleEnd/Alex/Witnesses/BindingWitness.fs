@@ -61,14 +61,15 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         // the last value node of the block, not the block node itself.
                         let initValueId = findLastValueNode valueId ctx.Graph
                         match MLIRAccumulator.recallNode initValueId ctx.Accumulator with
-                        | Some (valueSSA, _) ->
+                        | Some (initialSSA, initialTy) ->
+                            let meetOps, valueSSA, _ = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId initialSSA initialTy
                             // the slot's element type at the binding's range width on fabric
                             let valueTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                             let globalName = ModuleValues.globalName name node.Id
                             match tryMatchWithDiagnostics (pGlobalSlotInit node.Id globalName valueSSA valueTy)
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                             | Result.Ok ((ops, result), _) ->
-                                { InlineOps = ops; TopLevelOps = []; Result = result }
+                                { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                             | Result.Error diagnostic ->
                                 WitnessOutput.error $"Module value '{name}': {diagnostic}"
                         | None ->

@@ -50,6 +50,7 @@ let pInsertValue (resultSSA: SSA) (structMemref: SSA) (value: SSA) (fieldIndex: 
 // Zero data conversion — metadata-only cast creates typed view at byte offset
 // ═══════════════════════════════════════════════════════════
 
+/// Byte storage guarantees only byte alignment; typed views must preserve it.
 /// Typed field extraction from byte-level memref via memref.reinterpret_cast
 /// Uses 3 SSAs (pulled from coeffects): viewSSA, zeroSSA, resultSSA
 let pTypedExtract (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (viewSSA: SSA) (zeroSSA: SSA) (fieldType: MLIRType) (srcType: MLIRType) : PSGParser<MLIROp list> =
@@ -58,7 +59,7 @@ let pTypedExtract (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (viewSS
         let destType = TMemRefStatic (1, fieldType)
         let castOp = MemRefOp.ReinterpretCast (viewSSA, structMemref, byteOffset, 1, srcType, destType) |> MLIROp.MemRefOp
         let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
-        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
+        let loadOp = MemRefOp.LoadAligned (resultSSA, viewSSA, [zeroSSA], fieldType, destType, 1) |> MLIROp.MemRefOp
         return [castOp; zeroOp; loadOp]
     }
 
@@ -70,7 +71,7 @@ let pTypedInsert (structMemref: SSA) (value: SSA) (byteOffset: int) (viewSSA: SS
         let destType = TMemRefStatic (1, fieldType)
         let castOp = MemRefOp.ReinterpretCast (viewSSA, structMemref, byteOffset, 1, srcType, destType) |> MLIROp.MemRefOp
         let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
-        let storeOp = MemRefOp.Store (value, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
+        let storeOp = MemRefOp.StoreAligned (value, viewSSA, [zeroSSA], fieldType, destType, 1) |> MLIROp.MemRefOp
         return [castOp; zeroOp; storeOp]
     }
 
@@ -83,7 +84,7 @@ let pTypedExtractView (resultSSA: SSA) (structMemref: SSA) (byteOffset: int) (of
         let offsetOp = ArithOp.ConstI (offsetSSA, int64 byteOffset, TIndex) |> MLIROp.ArithOp
         let viewOp = MemRefOp.View (viewSSA, structMemref, offsetSSA, srcType, destType) |> MLIROp.MemRefOp
         let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
-        let loadOp = MemRefOp.Load (resultSSA, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
+        let loadOp = MemRefOp.LoadAligned (resultSSA, viewSSA, [zeroSSA], fieldType, destType, 1) |> MLIROp.MemRefOp
         return [offsetOp; viewOp; zeroOp; loadOp]
     }
 
@@ -96,7 +97,7 @@ let pTypedInsertView (structMemref: SSA) (value: SSA) (byteOffset: int) (offsetS
         let offsetOp = ArithOp.ConstI (offsetSSA, int64 byteOffset, TIndex) |> MLIROp.ArithOp
         let viewOp = MemRefOp.View (viewSSA, structMemref, offsetSSA, srcType, destType) |> MLIROp.MemRefOp
         let zeroOp = ArithOp.ConstI (zeroSSA, 0L, TIndex) |> MLIROp.ArithOp
-        let storeOp = MemRefOp.Store (value, viewSSA, [zeroSSA], fieldType, destType) |> MLIROp.MemRefOp
+        let storeOp = MemRefOp.StoreAligned (value, viewSSA, [zeroSSA], fieldType, destType, 1) |> MLIROp.MemRefOp
         return [offsetOp; viewOp; zeroOp; storeOp]
     }
 
