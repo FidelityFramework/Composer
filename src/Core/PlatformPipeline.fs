@@ -13,6 +13,7 @@ open Core.Types.Pipeline
 let resolveBackEnd (targetPlatform: TargetPlatform) : BackEnd =
     match targetPlatform with
     | FPGA -> BackEnd.CIRCT.Pipeline.backend
-    | CPU | MCU | TargetPlatform.Library -> BackEnd.LLVM.Pipeline.backend
+    | MCU -> BackEnd.MCU.Pipeline.backend
+    | CPU | TargetPlatform.Library -> BackEnd.LLVM.Pipeline.backend
     | GPU -> BackEnd.GPU.Pipeline.backend
     | NPU -> BackEnd.AIE.Pipeline.backend

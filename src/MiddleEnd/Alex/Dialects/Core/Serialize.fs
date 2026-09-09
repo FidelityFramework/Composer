@@ -541,8 +541,24 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
 /// Serialize top-level MLIROp to MLIR text
 let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
     match op with
+    | MLIROp.MmioLoad (result, address, integerAddress, ptr, bits) ->
+        let width = pointer |> Result.defaultWith failwith
+        sprintf "%s = arith.index_castui %s : index to i%d\n    %s = llvm.inttoptr %s : i%d to !llvm.ptr\n    %s = llvm.load volatile %s {alignment = %d : i64} : !llvm.ptr -> i%d"
+            (ssaToString integerAddress) (ssaToString address) width (ssaToString ptr) (ssaToString integerAddress) width
+            (ssaToString result) (ssaToString ptr) (bits / 8) bits
+    | MLIROp.MmioStore (value, address, integerAddress, ptr, bits) ->
+        let width = pointer |> Result.defaultWith failwith
+        sprintf "%s = arith.index_castui %s : index to i%d\n    %s = llvm.inttoptr %s : i%d to !llvm.ptr\n    llvm.store volatile %s, %s {alignment = %d : i64} : i%d, !llvm.ptr"
+            (ssaToString integerAddress) (ssaToString address) width (ssaToString ptr) (ssaToString integerAddress) width
+            (ssaToString value) (ssaToString ptr) (bits / 8) bits
     | MLIROp.ArithOp aop -> arithOpToString pointer aop
     | MLIROp.MemRefOp mop -> memrefOpToString pointer mop
+    | MLIROp.NoUnwindFunction (FuncDef (name, args, retTy, body, _)) ->
+        let argsStr = args |> List.map (fun (ssa, ty) -> sprintf "%s: %s" (ssaToString ssa) (typeToString pointer ty)) |> String.concat ", "
+        let bodyStr = body |> List.map (opToString pointer) |> String.concat "\n    "
+        sprintf "func.func @%s(%s) -> %s attributes {passthrough = [\"nounwind\"]} {\n    %s\n}"
+            (symbolName name) argsStr (typeToString pointer retTy) bodyStr
+    | MLIROp.NoUnwindFunction _ -> failwith "NoUnwindFunction requires a function definition"
     | MLIROp.FuncOp fop ->
         match fop with
         | FuncDef (name, args, retTy, body, _visibility) ->

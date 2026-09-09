@@ -28,9 +28,13 @@ open Alex.Traversal.MLIRTransfer
 /// The instruction set and the declared Register and Pointer widths, read from the CCS context.
 /// The widths are the description's (plan D8, L-10) and carry as `Result`s: a site that needs one
 /// on a description declaring none fails with CCS8203's text, never with a number of its own.
-let private architectureOf (ctx: PlatformContext) : Architecture =
+let private architectureOf (graph: SemanticGraph) (ctx: PlatformContext) : Architecture =
+    let declaredArch =
+        Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve graph
+        |> Option.bind (fun p -> p.Core) |> Option.map (fun c -> c.Arch)
+        |> Option.filter (fun name -> name <> "") |> Option.defaultValue ctx.PlatformId
     let isa =
-        match ctx.PlatformId with
+        match declaredArch with
         | id when id.Contains("x86_64") || id.Contains("x86-64") -> X86_64
         | id when id.Contains("arm_cortex_m7") || id.Contains("arm_cortex_m33") || id.Contains("arm32") -> ARM32_Thumb
         | id when id.Contains("ARM64") || id.Contains("aarch64") -> ARM64
@@ -52,7 +56,7 @@ let private generateCore
     (linkedLibraries: Set<string>)
     : Result<string * Set<string>, string> =
 
-    let arch = architectureOf platformCtx
+    let arch = architectureOf graph platformCtx
     let codata = graph.Codata.Value
 
     // Representation decisions inside type mapping that depend on the target (enum DU tags)
@@ -87,7 +91,12 @@ let private generateCore
                 | _ -> topLevelOps
 
             // Apply MLIR nanopasses (MLIR→MLIR transformations)
-            let transformedOps = Alex.Pipeline.MLIRNanopass.applyPasses platformOps coeffects.Platform intermediatesDir
+            let transformedOps =
+                Alex.Pipeline.MLIRNanopass.applyPasses platformOps coeffects.Platform intermediatesDir
+                |> List.map (fun op ->
+                    match targetPlatform, op with
+                    | Core.Types.Dialects.TargetPlatform.MCU, MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
+                    | _ -> op)
 
             match Alex.Traversal.StaticStorageValidation.validate graph transformedOps with
             | Result.Error message -> Result.Error message
@@ -147,7 +156,7 @@ let generateWithLinkedLibraries
     (intermediatesDir: string option)
     (linkedLibraries: Set<string>)
     : Result<string * Set<string>, string> =
-    let arch = architectureOf platformCtx
+    let arch = architectureOf graph platformCtx
     let undeclared =
         match targetPlatform with
         | Core.Types.Dialects.TargetPlatform.FPGA -> None

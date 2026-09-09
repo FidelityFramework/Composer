@@ -28,8 +28,24 @@ let internal closurePluginPath = resolvePluginPath "flat-closure-lowering"
 let internal ffiPluginPath = resolvePluginPath "reconcile-ffi-externs"
 
 /// Lower MLIR to LLVM IR using mlir-opt and mlir-translate
-let lowerToLLVM (mlirPath: string) (llvmPath: string) : Result<unit, string> =
+let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerBits: int option) : Result<unit, string> =
     try
+        // Set index width BEFORE converting memrefs/functions. A late LLVM
+        // target triple cannot repair already materialized i64 descriptors.
+        let width = pointerBits |> Option.defaultValue 64
+        let isM33 = triple.StartsWith("thumbv8m.main-")
+        if isM33 && width <> 32 then failwith "Cortex-M33 requires a declared 32-bit Pointer dimension."
+        let source = File.ReadAllText mlirPath
+        let attributes =
+            if isM33 then
+                sprintf " attributes {llvm.target_triple = \"%s\", llvm.data_layout = \"e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64\"} " triple
+            else " "
+        let targetedPath = Path.ChangeExtension(mlirPath, ".target.mlir")
+        let brace = source.IndexOf('{')
+        if brace < 0 then failwith "Expected an MLIR module."
+        File.WriteAllText(targetedPath, source.Substring(0, brace).TrimEnd() + attributes + source.Substring(brace))
+        let mlirPath = targetedPath
+        let indexPass name = sprintf "%s{index-bitwidth=%d}" name width
         // Step 1: mlir-opt to convert to LLVM dialect
         // Uses --pass-pipeline syntax (required for dynamically loaded pass plugins).
         //
@@ -56,13 +72,16 @@ let lowerToLLVM (mlirPath: string) (llvmPath: string) : Result<unit, string> =
             |> List.map (sprintf "--load-pass-plugin=\"%s\"")
             |> String.concat " "
         let hasPlugins = pluginArgs.Length > 0
-        let pipeline = "builtin.module(expand-strided-metadata,memref-expand,finalize-memref-to-llvm,convert-vector-to-llvm,convert-scf-to-cf,convert-cf-to-llvm,convert-index-to-llvm,convert-func-to-llvm,convert-arith-to-llvm,reconcile-ffi-externs,resolve-closure-casts,reconcile-unrealized-casts,canonicalize)"
-        let mlirOptArgs =
-            if hasPlugins then
-                sprintf "%s --pass-pipeline=\"%s\" %s" pluginArgs pipeline mlirPath
-            else
-                // Fallback: no plugins available, use individual flags (will fail on closure/FFI code)
-                sprintf "%s --expand-strided-metadata --memref-expand --finalize-memref-to-llvm --convert-vector-to-llvm --convert-scf-to-cf --convert-cf-to-llvm --convert-index-to-llvm --convert-func-to-llvm --convert-arith-to-llvm --reconcile-unrealized-casts --canonicalize" mlirPath
+        let passes =
+            [ "expand-strided-metadata"; "memref-expand"; indexPass "finalize-memref-to-llvm"
+              "convert-vector-to-llvm"; "convert-scf-to-cf"; "convert-cf-to-llvm"
+              indexPass "convert-index-to-llvm"; indexPass "convert-func-to-llvm"
+              indexPass "convert-arith-to-llvm" ]
+            @ (if File.Exists ffiPluginPath then ["reconcile-ffi-externs"] else [])
+            @ (if File.Exists closurePluginPath then ["resolve-closure-casts"] else [])
+            @ ["reconcile-unrealized-casts"; "canonicalize"]
+        let pipeline = "builtin.module(" + String.concat "," passes + ")"
+        let mlirOptArgs = sprintf "%s --pass-pipeline=\"%s\" \"%s\"" pluginArgs pipeline mlirPath
         let mlirOptProcess = new System.Diagnostics.Process()
         mlirOptProcess.StartInfo.FileName <- "mlir-opt"
         mlirOptProcess.StartInfo.Arguments <- mlirOptArgs

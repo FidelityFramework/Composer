@@ -106,6 +106,7 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         |> conditionalRegister isCPULike Alex.Witnesses.FunctionPointerWitness.nanopass
         |> conditionalRegister isCPULike StringIntrinsicWitness.nanopass
         |> conditionalRegister isCPULike PlatformWitness.nanopass
+        |> conditionalRegister isCPULike Alex.Witnesses.MmioWitness.nanopass
         |> conditionalRegister isCPULike Alex.Witnesses.BorrowedViewWitness.nanopass
         |> conditionalRegister isCPULike Alex.Witnesses.MappedViewWitness.nanopass
         |> conditionalRegister isCPULike MemoryWitness.nanopass

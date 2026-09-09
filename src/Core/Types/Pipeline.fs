@@ -13,6 +13,23 @@ type BackEndArtifact =
     | GpuCodeObject of path: string
     | IntermediateOnly of format: string
 
+/// Resolved declarations, not executable build hooks. MCU hardware facts come
+/// from Fidelity.Platform's BAREWire records in the checked semantic graph.
+type EmbeddedTarget = {
+    PlatformId: string
+    Image: BAREWire.Hardware.CortexMImageDescriptor
+    Vectors: BAREWire.Hardware.StructDescriptor
+    Flash: BAREWire.Platform.MemorySpace
+    Ram: BAREWire.Platform.MemorySpace
+    StartupSource: string
+    ProvidedLibraries: Set<string>
+    VectorHandlers: Map<int, string>
+    RecoveryDirectory: string
+    ToolDirectory: string option
+    ProbeLibrary: string option
+    WatchSymbols: Map<string, int>
+}
+
 /// Explicit ELF link inputs. Paths name target files; cross links never search host libraries.
 type NativeLinkOptions = {
     Sysroot: string option
@@ -35,6 +52,8 @@ type BackEndContext = {
     /// CLI target override (e.g., --target x86_64-pc-windows-gnu for cross-compilation).
     /// Backend-specific: LLVM uses it, CIRCT ignores it.
     TargetTripleOverride: string option
+    TargetPointerBits: int option
+    TargetCpu: string option
     DeploymentMode: Dialects.DeploymentMode
     /// Stop after intermediate generation (e.g., --emit-llvm for LLVM, Verilog-only for CIRCT)
     EmitIntermediateOnly: bool
@@ -42,6 +61,8 @@ type BackEndContext = {
     /// Used to generate data-driven linker flags (e.g., {"c"; "wayland-client"} → -lc -lwayland-client)
     ExternLibraries: Set<string>
     NativeLink: NativeLinkOptions
+    EmbeddedTarget: EmbeddedTarget option
+    Deploy: bool
 }
 
 /// A backend is a function value that compiles MLIR text to a target artifact.

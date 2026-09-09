@@ -18,6 +18,7 @@ let backend : BackEnd = {
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, artifactFilename ArtifactId.Mlir)
             | None -> Core.Utilities.IntermediateWriter.scratchPath "output.mlir"
+        let targetTriple = ctx.TargetTripleOverride |> Option.defaultValue (Codegen.getDefaultTarget())
         File.WriteAllText(mlirPath, mlirText)
 
         // Phase 1: Lower MLIR → LLVM IR (mlir-opt + mlir-translate)
@@ -27,7 +28,7 @@ let backend : BackEnd = {
             | None -> Core.Utilities.IntermediateWriter.scratchPath "output.ll"
 
         timePhase "BackEnd.MLIRLower" "Lowering MLIR to LLVM IR" (fun () ->
-            Lowering.lowerToLLVM mlirPath llPath)
+            Lowering.lowerToLLVM mlirPath llPath targetTriple ctx.TargetPointerBits)
         |> Result.bind (fun () ->
             if ctx.EmitIntermediateOnly then
                 printfn "Stopped after LLVM IR generation (--emit-llvm)"
@@ -35,7 +36,6 @@ let backend : BackEnd = {
             else
                 // Phase 2: LLVM IR → native binary (target bitcode + LLD)
                 timePhase "BackEnd.Link" "Linking to native binary" (fun () ->
-                    let targetTriple = ctx.TargetTripleOverride |> Option.defaultValue (Codegen.getDefaultTarget())
-                    Codegen.compileToNative llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink)
+                    Codegen.compileToNative llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink ctx.TargetCpu)
                 |> Result.map (fun () -> NativeBinary ctx.OutputPath))
 }

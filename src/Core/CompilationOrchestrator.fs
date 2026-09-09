@@ -32,6 +32,7 @@ type CompilationOptions = {
     Verbose: bool
     ShowTiming: bool
     TreatWarningsAsErrors: bool
+    Deploy: bool
 }
 
 type CompilationContext = {
@@ -143,6 +144,8 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
 // ═══════════════════════════════════════════════════════════════════════════
 
 let compileProject (options: CompilationOptions) : int =
+    if options.Deploy && (options.EmitMLIROnly || options.EmitLLVMOnly) then
+        invalidArg "Deploy" "Deployment requires a complete build; remove intermediate-only flags"
     // Setup
     setEnabled options.ShowTiming
     if options.Verbose then
@@ -173,6 +176,8 @@ let compileProject (options: CompilationOptions) : int =
         |> Result.bind (requireCleanDiagnostics options.TreatWarningsAsErrors)
         |> Result.bind (fun project ->
             let ctx = setupContext options project
+            if options.Deploy && ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.MCU then
+                failwith "Composer-managed deployment is currently implemented for MCU images only"
 
             // Resolve backend from target platform (assembly time — once, not dispatch)
             let backEnd = PlatformPipeline.resolveBackEnd ctx.TargetPlatform
@@ -196,14 +201,24 @@ let compileProject (options: CompilationOptions) : int =
                     Ok ()
                 else
                     // Phase 3+: BackEnd — the backend function runs its own pipeline
+                    let declaredCore =
+                        Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve project.CheckResult.Graph
+                        |> Option.bind (fun p -> p.Core)
                     let backEndCtx = {
                         OutputPath = ctx.OutputPath
                         IntermediatesDir = ctx.IntermediatesDir
-                        TargetTripleOverride = options.TargetTriple
+                        TargetTripleOverride = options.TargetTriple |> Option.orElseWith (fun () -> declaredCore |> Option.map (fun c -> c.Triple) |> Option.filter (fun t -> t <> ""))
+                        TargetPointerBits = declaredCore |> Option.bind (fun c -> c.Widths |> List.tryFind (fun w -> w.Name = "Pointer") |> Option.map (fun w -> w.Bits))
+                        TargetCpu = declaredCore |> Option.map (fun c -> c.CpuModel) |> Option.filter (fun t -> t <> "")
                         DeploymentMode = ctx.DeploymentMode
                         EmitIntermediateOnly = options.EmitLLVMOnly
                         ExternLibraries = externLibraries
                         NativeLink = options.NativeLink
+                        EmbeddedTarget =
+                            if ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.MCU && not options.EmitLLVMOnly then
+                                Some (BackEnd.MCU.Target.resolve project.Options.ProjectPath project.CheckResult.Graph)
+                            else None
+                        Deploy = options.Deploy
                     }
                     backEnd.Compile mlirText backEndCtx
                     |> Result.bind (fun artifact ->
@@ -249,3 +264,15 @@ let compileProject (options: CompilationOptions) : int =
     | Error msg ->
         printfn "Error: %s" msg
         1
+
+/// Read the same checked project/platform declarations for device operations.
+/// Deployment itself always goes through compileProject --deploy and a fresh build.
+let deviceProject projectPath action seconds =
+    match runFrontEnd (Path.GetFullPath projectPath) |> Result.bind (requireCleanDiagnostics false) with
+    | Error e -> eprintfn "%s" e; 1
+    | Ok project ->
+        if project.Options.TargetPlatform <> TargetPlatform.MCU then failwith "Device commands require an MCU project"
+        let target = BackEnd.MCU.Target.resolve project.Options.ProjectPath project.CheckResult.Graph
+        let output = Path.Combine(project.Options.ProjectDirectory, "targets", project.Options.OutputName |> Option.defaultValue project.Options.Name)
+        BackEnd.MCU.Probe.device action seconds target output
+        0

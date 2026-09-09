@@ -123,7 +123,8 @@ let compileToNative
     (targetTriple: string)
     (deploymentMode: DeploymentMode)
     (externLibraries: Set<string>)
-    (linkOptions: NativeLinkOptions) : Result<unit, string> =
+    (linkOptions: NativeLinkOptions)
+    (cpu: string option) : Result<unit, string> =
     try
         if not (elfTarget targetTriple) then
             Error (sprintf "The direct LLVM backend currently emits ELF. Target %s requires a separate LLD PE/COFF, Mach-O or Wasm link profile." targetTriple)
@@ -140,7 +141,7 @@ let compileToNative
                 failwithf "LLVM IR declares target %s, but the backend selected %s. Regenerate the IR for the selected target." target targetTriple
             | _ -> ()
             let bitcodePath = Path.ChangeExtension(llvmPath, ".bc")
-            let arguments = linkArguments targetTriple deploymentMode externLibraries linkOptions bitcodePath outputPath
+            let arguments = linkArguments targetTriple deploymentMode externLibraries linkOptions bitcodePath outputPath @ (cpu |> Option.map (fun c -> ["--plugin-opt=mcpu=" + c]) |> Option.defaultValue [])
             // TargetMachine supplies missing DataLayout from the selected triple.
             // This verifies and serializes IR without running an optimization pipeline.
             // Keep the bitcode beside retained LLVM IR for inspecting the exact LLD input.

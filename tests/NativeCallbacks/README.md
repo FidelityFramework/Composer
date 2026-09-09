@@ -1,6 +1,6 @@
 # Native callback and capture gates
 
-Run `python3 tests/NativeCallbacks/run.py src/bin/Debug/net10.0/Composer` from
+Run `dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj` from
 the Composer checkout. Each case compiles a fresh LLVM/LLD executable and runs
 it with a timeout. The gates cover named entries, bounded array descriptors,
 mutable cells, records, captured function values, alias snapshots and function

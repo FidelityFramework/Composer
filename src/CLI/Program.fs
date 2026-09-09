@@ -37,6 +37,7 @@ type CompileArgs =
     | Link_End_File of path: string
     | Dynamic_Linker of path: string
     | Linker_Script of path: string
+    | Deploy
 
     interface IArgParserTemplate with
         member this.Usage =
@@ -57,6 +58,18 @@ type CompileArgs =
             | Link_End_File _ -> "Object after program libraries (repeatable; replaces discovered end files)"
             | Dynamic_Linker _ -> "Runtime loader path recorded in the ELF (target path, not sysroot path)"
             | Linker_Script _ -> "LLD script controlling target section/segment layout"
+            | Deploy -> "Build and verify an MCU image, then deploy through the vendor probe SDK"
+
+type DeviceArgs =
+    | [<MainCommand; Unique>] Device_Project of path: string
+    | Action of action: string
+    | Seconds of seconds: int
+    interface IArgParserTemplate with
+        member this.Usage =
+            match this with
+            | Device_Project _ -> "MCU .fidproj providing the platform and recovery settings"
+            | Action _ -> "inspect (default), watch, capture, reset, or restore"
+            | Seconds _ -> "Watch duration, 1..60 seconds (default 5)"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Compile Command Handler
@@ -101,6 +114,7 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
         Verbose = args.Contains(Verbose)
         ShowTiming = args.Contains(Timing)
         TreatWarningsAsErrors = args.Contains(Warn_As_Error)
+        Deploy = args.Contains(Deploy)
     }
 
     // THE single entry point for compilation
@@ -131,6 +145,7 @@ let private showUsage() =
     printfn "  composer compile [options]    Compile Clef to native code"
     printfn "  composer verify [options]     Verify binary meets constraints"
     printfn "  composer doctor [options]     Diagnose toolchain issues"
+    printfn "  composer device [options]     Inspect, watch, back up or restore an MCU"
     printfn "  composer --version            Display version information"
     printfn ""
     printfn "Use 'composer <subcommand> --help' for more information about a subcommand."
@@ -150,6 +165,10 @@ let main argv =
             let compileArgs = Array.skip 1 argv
             let compileResults = compileParser.ParseCommandLine(compileArgs)
             executeCompile compileResults
+        elif argv.[0] = "device" then
+            let parser = ArgumentParser.Create<DeviceArgs>(programName = "composer device", errorHandler = errorHandler)
+            let args = parser.ParseCommandLine(Array.skip 1 argv)
+            deviceProject (args.GetResult Device_Project) (args.GetResult(Action, defaultValue = "inspect")) (args.GetResult(Seconds, defaultValue = 5))
         elif argv.[0] = "verify" then
             let verifyParser = ArgumentParser.Create<VerifyArgs>(programName = "composer verify", errorHandler = errorHandler)
             let verifyArgs = Array.skip 1 argv

@@ -94,6 +94,7 @@
       <Compile Include="MiddleEnd/Alex/Patterns/ApplicationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/MmioPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/BorrowedViewPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MappedViewPatterns.fs" />
 
@@ -115,6 +116,7 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/DUWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MemoryWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/PlatformWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/MmioWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/BorrowedViewWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MappedViewWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/StructuralWitness.fs" />
@@ -151,6 +153,13 @@
       <Compile Include="BackEnd/LLVM/Lowering.fs" />
       <Compile Include="BackEnd/LLVM/Codegen.fs" />
       <Compile Include="BackEnd/LLVM/Pipeline.fs" />
+      <!-- MCU: in-process BAREWire layout, owned assembly, vendor tools and probe SDK -->
+      <Compile Include="BackEnd/MCU/Target.fs" />
+      <Compile Include="BackEnd/MCU/Tools.fs" />
+      <Compile Include="BackEnd/MCU/Layout.fs" />
+      <Compile Include="BackEnd/MCU/Image.fs" />
+      <Compile Include="BackEnd/MCU/Probe.fs" />
+      <Compile Include="BackEnd/MCU/Pipeline.fs" />
 
       <!-- BackEnd - CIRCT -->
       <Compile Include="BackEnd/CIRCT/Lowering.fs" />
@@ -188,7 +197,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FSharp.Core" Version="10.1.400" />
+    <PackageReference Include="FSharp.Core" Version="10.1.401" />
     <!-- CCS: F# Native Compiler Services (native type universe) -->
     <ProjectReference Include="$(ClefCompilerServiceProject)" />
     <!-- TUI foundation (Color/Style types now, full TUI later) -->

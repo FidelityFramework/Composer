@@ -351,11 +351,18 @@ type SMTCmpPred =
 /// Top-level MLIR operation (all dialects)
 /// Single-phase execution with nested accumulators - no scope markers needed
 type MLIROp =
+    /// Typed MMIO only becomes LLVM pointers at serialization. The address is
+    /// an opaque handle (index); no generic source dereference is introduced.
+    | MmioLoad of result: SSA * address: SSA * integerAddress: SSA * pointer: SSA * bits: int
+    | MmioStore of value: SSA * address: SSA * integerAddress: SSA * pointer: SSA * bits: int
     | MemRefOp of MemRefOp
     | ArithOp of ArithOp
     | SCFOp of SCFOp
     /// A required runtime boundary check; failure terminates before the foreign access.
     | Assert of condition: SSA * message: string
+    /// MCU functions terminate on failure; unwinding across the exception
+    /// adapter is unsupported. Applied only to definitions, never foreign declarations.
+    | NoUnwindFunction of FuncOp
     | FuncOp of FuncOp
     | IndexOp of IndexOp
     | Block of string * MLIROp list                                 // label, ops
