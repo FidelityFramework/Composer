@@ -17,6 +17,13 @@ compiler's proof machinery support the numerical experiment; they are not its
 primary purpose. BAREWire is the glue between these substrates. The same glue
 also serves Conclave, a platform for intelligent distributed systems on Cloudflare.
 
+The physical reference is **AMD Strix Halo plus Digilent Arty A7**. The
+[platform handoff declarations](../../../Fidelity.Platform/Profiles/StrixHalo_ArtyLab/Handoffs.clef)
+now separate Strix CPU/GPU shared backing, host/NIC ownership and the FPGA
+request/reply boundary. The [admission design](../../../Fidelity.Platform/docs/ADMISSION_AND_SIDECARS.md)
+records the remaining mapping, coherence, wire-layout and timing obligations.
+These are reference checks, not a demonstrated ThreeBody hardware path.
+
 > **Status honesty.** ThreeBody is documentation-only today — empty `src/`;
 > the placements and supervisor described here are proposals, not an executed
 > CPU→kernel→FPGA round trip. The current [numeric-selection specification](../../../clef-lang-spec/spec/numeric-selection.md)

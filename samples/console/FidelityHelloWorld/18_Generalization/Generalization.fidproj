@@ -10,7 +10,7 @@ target = "cpu"
 
 [dependencies]
 # Types and operations are CCS intrinsics - no external library needed
-platform = { path = "/home/hhh/repos/Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+platform = { path = "/home/hhh/repos/Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
 
 [build]
 sources = ["Generalization.fs"]

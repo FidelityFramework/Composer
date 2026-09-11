@@ -42,10 +42,16 @@ The claim has two halves, and both are required:
    payload preservation, application policy and numerical accuracy have separate
    contracts. The verifier, JIT and helpers remain part of the trusted boundary.
 
+The [platform admission and handoff reference](../../../Fidelity.Platform/docs/ADMISSION_AND_SIDECARS.md)
+now supplies checked `.clef` source packages and an F# test runner. Linux,
+Windows and macOS classic BPF have separate host contracts; Strix Halo/Arty is
+the ThreeBody physical reference, with Metal as another UMA realization. These
+checks do not yet derive compiler proof obligations or emit/load BPF artifacts.
+
 ## Why this target is worth the trouble
 
 eBPF is not one more ISA. It is the second member (after WASM) of a class the
-platform taxonomy does not yet name: **hosted, verified ISAs** — targets where
+platform taxonomy now separates under `AbstractMachines/`: **hosted, verified ISAs** — targets where
 admission is gated by a checker rather than by physics (FPGA) or an ABI (CPU).
 Designing for the class rather than the member pays twice.
 
@@ -67,7 +73,7 @@ Three properties make it strategically valuable *now*:
 
 | Relationship | Item |
 |---|---|
-| **Forces** | SMT-LIB2 proof dispatch (Tier 2 / QF_LIA) in its first bounded deployment; capability-keyed witness gating (retiring the binary `isCPULike` predicate); a versioned capability matrix in `Fidelity.Platform/Contracts`; BTF emission from Clef types |
+| **Requires implementation** | Source obligation extraction and proof dispatch; capability-driven witness selection; exact host fact resolution over BAREWire availability metadata; final-artifact inspection and BTF emission |
 | **Waits on** | A composed path connecting supported obligations, diagnostics, preservation through lowering and pinned-host artifact checks |
 | **Validates** | Admission agreement for the tested subset and hosts; use of shared platform declarations for hooks, helpers and limits |
 
@@ -76,7 +82,7 @@ Three properties make it strategically valuable *now*:
 Two contemporary kernel developments redraw the same boundary in opposite
 directions: eBPF pushes verified compute *down* into the kernel; io_uring pulls
 the syscall *out* of the I/O hot path via shared-memory rings. io_uring is not a
-compilation target — it is a userspace runtime concern, the natural Linux
+compilation target — it is a userspace I/O concern, a candidate Linux
 substrate for Clef's runtime-free coroutine async, and its SQ/CQ rings are
 BAREWire's zero-copy philosophy meeting the kernel's. It is treated here only
 where the two meet (AF_XDP's shared UMEM rings in the ThreeBody data plane,

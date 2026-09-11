@@ -107,9 +107,9 @@ description = "Clef Language + Fidelity Framework — WebKitGTK WebView"
 target = "cpu"
 
 [dependencies]
-platform = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
-gtk = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Gtk.fidproj" }
-webkit = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.WebKit.fidproj" }
+platform = { path = "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.fidproj" }
+gtk = { path = "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Gtk.fidproj" }
+webkit = { path = "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.WebKit.fidproj" }
 
 [build]
 sources = ["src/WebApp.clef", "src/Program.clef"]

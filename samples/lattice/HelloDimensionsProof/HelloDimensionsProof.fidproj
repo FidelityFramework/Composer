@@ -7,7 +7,7 @@ description = "Measured hover and compiler-generated string/buffer obligations f
 target = "cpu"
 
 [dependencies]
-platform = { path = "../../../../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
+platform = { path = "../../../../Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
 
 [build]
 sources = ["Units.clef", "Main.clef"]

@@ -105,6 +105,7 @@ evidence of functional board behavior.
 
 ```sh
 dotnet run --project tests/Mmio/Mmio.Tests.fsproj
+dotnet run --project tests/DeviceAccess/DeviceAccess.Tests.fsproj
 dotnet run --project tests/MCU/MCU.Tests.fsproj -- /path/to/HelloBlinky.fidproj
 dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj
 ```
@@ -121,9 +122,17 @@ and check that a failed build cannot retain deployment evidence. They do not ope
 the probe. Physical acceptance used Composer's `--deploy` and `device --action
 watch`; the binary matches the earlier accepted 10% PWM image byte for byte.
 
-The platform's separate `tests/IOMap.Tests.fsproj` checks its declared package
-pins and complete board connectivity against the pinned vendor netlist. See the
+Composer's `tests/IOMap/IOMap.Tests.fsproj` reads CCS-checked `.clef` declarations
+and checks package pins and complete connectivity against the pinned vendor netlist. See the
 EK-RA6M5 platform's `docs/IO_MAP.md` for its command and source requirements.
+
+HelloBlinky selects a `DeviceAccessPlan` from Fidelity.Platform.Contracts. CCS
+checks each used register's region, mapping, width, permissions, write range and
+additional typed predicates. Composer lowers the settled codata. With `-k`,
+`targets/intermediates/device-access.json` records those checks and their external
+premises. A raw MMIO constructor is rejected when a plan is selected. The
+device-access suite also exercises a synthetic 64-bit guest with deliberately
+narrow grants; it does not boot a VM or execute MMIO on the host.
 
 The SDK's running-memory reads and post-reset snapshot do not establish calibrated
 timing, physical attack resistance, credential security or peripheral driver

@@ -54,11 +54,7 @@ let resolve (projectPath: string) (graph: SemanticGraph) : EmbeddedTarget =
         PreservedOptionBytes = int (field "PreservedOptionBytes" int64Of)
     }
     let spaces: MemorySpace array =
-        platform.Spaces |> List.map (fun s -> {
-            Name = s.Name; Kind = s.Kind; Base = s.Base; Capacity = s.Capacity
-            Alignment = s.Alignment; Granularity = s.Granularity; Growth = s.Growth; Access = s.Access
-            Notes = ""; MapKind = ""; Since = ""; Until = ""
-        }) |> List.toArray
+        platform.Spaces |> List.map memorySpace |> List.toArray
     // CCS checks the entire declaration. This observer checks its physical
     // address-space projection in-process, with BAREWire's overlap/alignment rules.
     let memoryProjection: PlatformDescription = {

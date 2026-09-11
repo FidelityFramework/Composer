@@ -15,7 +15,7 @@ repos = source.parents[2]
 composer = Path(sys.argv[1]).resolve()
 work = Path(tempfile.mkdtemp(prefix="clef-pointer-cells-"))
 project = (source / "PointerCells.fidproj").read_text()
-for relative in ["Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj",
+for relative in ["Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj",
                  "BAREWire/src/BAREWire.BindingMetadata.fidproj"]:
     project = project.replace(json.dumps("../../../" + relative), json.dumps(str(repos / relative)))
 (work / "PointerCells.clef").write_text((source / "PointerCells.clef").read_text())

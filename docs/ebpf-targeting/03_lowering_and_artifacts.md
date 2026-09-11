@@ -3,6 +3,14 @@
 **SpeakEZ Technologies | Fidelity Framework**
 **July 2026 — exploratory design note**
 
+**2026-09-10 status:** the pipeline touchpoints below are historical proposals,
+not implemented BPF support. Current platform ownership and artifact distinctions
+are maintained in [02](02_platform_shape.md) and the
+[platform reference](../../../Fidelity.Platform/docs/ADMISSION_AND_SIDECARS.md).
+The ELF tail described here is Linux-oriented; Windows native conversion and
+macOS classic BPF require different artifact and admission paths. Re-audit the
+compiler touchpoints before implementing them.
+
 This document walks the pipeline from Clef source to a relocatable BPF ELF object
 the kernel loader accepts: the program-root model (already built, minus one DU
 case), the witness-gating refactor eBPF forces, the LLVM lowering path and its

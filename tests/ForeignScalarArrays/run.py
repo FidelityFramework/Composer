@@ -17,7 +17,7 @@ work = Path(tempfile.mkdtemp(prefix="clef-scalar-arrays-"))
 print(work, flush=True)
 project = (source / "ForeignScalarArrays.fidproj").read_text()
 for dependency in ("Fidelity.Platform.CompilerSurface", "Fidelity.Pthread"):
-    relative = f"Fidelity.Platform/CPU/Linux/x86_64/{dependency}.fidproj"
+    relative = f"Fidelity.Platform/Environments/Linux/x86_64/{dependency}.fidproj"
     project = project.replace(json.dumps("../../../" + relative), json.dumps(str(repos / relative)))
 
 def compile_case(name, source_file):

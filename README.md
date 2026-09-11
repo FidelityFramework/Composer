@@ -20,6 +20,8 @@ Ahead-of-time Clef compiler producing native executables without managed runtime
 
 The sample counts and recent-change lists below retain their February 2026 dates; they are historical measurements, not results from the current tooling integration gates.
 
+[Proof composition and the Rocq toolchain](docs/Proof_Composition_Architecture.md) records the design for automatically composing local, concurrent, distributed and device-level evidence. It identifies reusable Iris/Verdi-family foundations, their semantic integration requirements, the managed toolchain and the gates separating proposed coverage from demonstrated verification.
+
 ## Historical validation snapshot (February 2026)
 
 **Working Samples**: 3 of 16 console samples compile and execute correctly:

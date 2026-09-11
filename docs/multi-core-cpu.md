@@ -9,7 +9,7 @@ compiler suite passes 169 tests, and native mapped-carrier and animated-window
 acceptance were repeated after reconciliation. See the
 [repository and recovery record](Ariel_Integration_Changes.md).
 HelloWayland's CPU window uses persistent Ariel carriers. The current scheduling
-layer implementation is `Fidelity.Platform/CPU/Linux/x86_64/Ariel/Region.clef`;
+layer implementation is `Fidelity.Platform/Environments/Linux/x86_64/Ariel/Region.clef`;
 its typed renderer gate is `HelloWayland/tests/ariel-typed`. The older raw-pointer
 experiment remains archived outside the production source lists.
 

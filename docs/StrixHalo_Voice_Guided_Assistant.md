@@ -505,8 +505,8 @@ Expert pool management and learned routing.
 - [Platform_Binding_Model.md](./Platform_Binding_Model.md): How NPU and GPU bindings would be structured
 
 ### Fidelity Ecosystem
-- `Fidelity.Platform/GPU/AMD/RDNA3_5/StrixHalo_iGPU/`: HIP/ROCm bindings (~13K lines, Farscape-generated)
-- `Fidelity.Platform/NPU/AMD/XDNA2/StrixHalo_NPU/`: NPU platform descriptor (scaffolding only)
+- `Fidelity.Platform/Hardware/Silicon/GPU/AMD/RDNA3_5/StrixHalo_iGPU/`: HIP/ROCm bindings (~13K lines, Farscape-generated)
+- `Fidelity.Platform/Hardware/Silicon/NPU/AMD/XDNA2/StrixHalo_NPU/`: NPU platform descriptor (scaffolding only)
 - `Farscape/docs/roadmap/02_farscape-phase4-npu-xrt-binding.md`: **DRM UAPI + XRT binding, spatial partitioning vision** (Section 11: Supervised Spatial Scheduling)
 - `Farscape/docs/roadmap/05_farscape-phase4c-pipewire-audio.md`: PipeWire audio capture/playback binding
 - `Farscape/docs/roadmap/06_farscape-phase4d-onnxruntime.md`: ONNX Runtime C API binding (CPU/GPU/NPU as equal-opportunity targets)

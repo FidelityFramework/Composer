@@ -4,7 +4,7 @@ version = "0.1.0"
 [compilation]
 target = "cpu"
 [dependencies]
-platform = { path = "../../../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+platform = { path = "../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
 metadata = { path = "../../../BAREWire/src/BAREWire.BindingMetadata.fidproj" }
 [build]
 sources = ["PointerCells.clef"]

@@ -9,11 +9,11 @@ import tempfile
 
 source = Path(__file__).resolve().parent
 composer = Path(sys.argv[1]).resolve()
-platform = source.parents[2] / "Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj"
+platform = source.parents[2] / "Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj"
 work = Path(tempfile.mkdtemp(prefix="clef-memory-arrays-"))
 (work / "IndexAndZero.clef").write_text((source / "IndexAndZero.clef").read_text())
 project = (source / "IndexAndZero.fidproj").read_text().replace(
-    '"../../../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj"', json.dumps(str(platform)))
+    '"../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj"', json.dumps(str(platform)))
 (work / "IndexAndZero.fidproj").write_text(project)
 with (work / "compile.log").open("w") as output:
     result = subprocess.run([str(composer), "compile", str(work / "IndexAndZero.fidproj"), "-k", "--no-color"],

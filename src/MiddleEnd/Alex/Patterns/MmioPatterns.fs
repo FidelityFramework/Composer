@@ -17,21 +17,18 @@ let pMmioIntrinsic : PSGParser<MLIROp list * TransferResult> = parser {
     let! state = getUserState
     let! ssas = getNodeSSAs node.Id
     let s i = ssas.[i]
-    let isReg = info.Operation.StartsWith("reg")
+    let isReg = info.Operation.StartsWith("reg") || info.Operation.StartsWith("bind")
     let isRead = info.Operation.StartsWith("read")
-    let bits = int (info.Operation.Substring(if isReg then 3 elif isRead then 4 else 5))
-    let! pointerBits = match state.Platform.TargetArch.Pointer with Ok b -> preturn b | Result.Error e -> fail (Message e)
+    let! evidence =
+        match Map.tryFind node.Id state.Graph.Codata.Value.Mmio with
+        | Some evidence -> preturn evidence
+        | None -> fail (Message "MMIO operation has no established CCS access evidence")
+    let bits = evidence.Bits
     do! ensure (bits = 8 || bits = 16 || bits = 32) "Unsupported MMIO access width"
     if isReg then
-        let! address =
-            match args with
-            | [id] ->
-                match int64Of state.Graph id with
-                | Some a -> preturn a
-                | _ -> fail (Message "MMIO address must be a statically declared integer")
-            | _ -> fail (Message "MMIO constructor requires one address")
-        do! ensure (address > 0L && bigint address + bigint (bits / 8) <= (1I <<< pointerBits) && address % int64 (bits / 8) = 0L)
-                   "MMIO address is null, outside the platform address space, or misaligned"
+        // ConstI carries signed bits; a high 64-bit CPU address is the same
+        // pointer bit pattern after index-to-pointer conversion.
+        let address = int64 (if evidence.Address > bigint System.Int64.MaxValue then evidence.Address - (1I <<< 64) else evidence.Address)
         return [MLIROp.ArithOp (ArithOp.ConstI (s 0, address, TIndex))], TRValue { SSA = s 0; Type = TIndex }
     else
         do! ensure (args.Length = (if isRead then 1 else 2)) "Invalid MMIO accessor arity"
@@ -44,12 +41,8 @@ let pMmioIntrinsic : PSGParser<MLIROp list * TransferResult> = parser {
         if isRead then
             return [MLIROp.MmioLoad (s 0, address, s 1, s 2, bits)], TRValue { SSA = s 0; Type = elementTy }
         else
-            // No implicit narrowing at this boundary. Require the complete
-            // source range to fit; users can mask explicitly for bit fields.
-            let range = nodeRange state.Graph args.[1] |> Option.defaultValue ValueRange.Unbounded
-            do! ensure (match ValueRange.endpoints range with
-                        | Some (ValueRange.Endpoint.Finite lo, ValueRange.Endpoint.Finite hi) -> lo >= 0I && hi < (1I <<< bits)
-                        | _ -> false) "MMIO write value is not proven within the unsigned register width"
+            // CCS established the complete source range before selecting this
+            // transaction. These conversions implement that established meet.
             let! value, ty = pRecallNode args.[1]
             let! width = match ty with TInt (IntWidth w) -> preturn w | _ -> fail (Message "MMIO write requires an integer")
             let conversion =

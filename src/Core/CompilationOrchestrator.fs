@@ -45,11 +45,11 @@ type CompilationContext = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Phase 1: FrontEnd - Compile F# → PSG
+// Phase 1: FrontEnd - Compile Clef → PSG
 // ═══════════════════════════════════════════════════════════════════════════
 
 let private runFrontEnd (projectPath: string) : Result<ProjectCheckResult, string> =
-    timePhase "FrontEnd" "F# → PSG (Type Checking & Semantic Graph)" (fun () ->
+    timePhase "FrontEnd" "Clef → PSG (Type Checking & Semantic Graph)" (fun () ->
         FrontEnd.ProjectLoader.load projectPath)
 
 /// Diagnostic gate — emits all diagnostics with colored formatting, short-circuits on errors.
@@ -80,6 +80,37 @@ let private requireCleanDiagnostics (warnaserror: bool) (project: ProjectCheckRe
 // ═══════════════════════════════════════════════════════════════════════════
 // Phase 2: MiddleEnd (Alex + PSGElaboration)
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Explicit CPU/MCU profiles fix the backend contract before any lowering.
+/// An absent triple must not turn a selected target into the build host.
+let private requireCompatibleTarget (options: CompilationOptions) (project: ProjectCheckResult) =
+    let graph = project.CheckResult.Graph
+    let selected = graph.Platform |> Option.bind (fun p -> p.PlatformDescription)
+    let requiresCore = project.Options.TargetPlatform = TargetPlatform.CPU || project.Options.TargetPlatform = TargetPlatform.MCU
+    let compatibleBackend =
+        match selected, project.Options.PlatformPath with
+        | Some _, Some path ->
+            FidprojLoader.load path
+            |> Result.bind (fun platform ->
+                if platform.TargetPlatform = TargetPlatform.Library || platform.TargetPlatform = project.Options.TargetPlatform then Ok ()
+                else Error (sprintf "Workload backend %A disagrees with selected platform backend %A" project.Options.TargetPlatform platform.TargetPlatform))
+        | _ -> Ok ()
+    compatibleBackend |> Result.bind (fun () ->
+    match selected, requiresCore with
+    | Some export, true ->
+        let core =
+            Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve graph
+            |> Option.bind (fun p -> p.Core)
+        match core with
+        | None -> Error (sprintf "Selected platform '%s' requires a declared TargetCore" export)
+        | Some core when System.String.IsNullOrWhiteSpace core.Triple ->
+            Error (sprintf "Selected platform '%s' requires a target triple; build-host fallback is unavailable" export)
+        | Some core ->
+            match options.TargetTriple with
+            | Some requested when requested <> core.Triple ->
+                Error (sprintf "CLI target triple '%s' disagrees with selected platform triple '%s'" requested core.Triple)
+            | _ -> Ok project
+    | _ -> Ok project)
 
 let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<string * Set<string>, string> =
     timePhase "MiddleEnd" "MLIR Generation" (fun () ->
@@ -162,6 +193,8 @@ let compileProject (options: CompilationOptions) : int =
     printfn ""
 
     // Setup intermediates directory BEFORE loading project (enables CCS phase emission)
+    let accessEvidence = Path.Combine(Path.GetDirectoryName(options.ProjectPath), "targets", "intermediates", "device-access.json")
+    if File.Exists accessEvidence then File.Delete accessEvidence
     let needsIntermediates = options.KeepIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly
     if needsIntermediates then
         let projectDir = Path.GetDirectoryName(options.ProjectPath)
@@ -171,11 +204,14 @@ let compileProject (options: CompilationOptions) : int =
 
     // Run pipeline: FrontEnd → MiddleEnd → BackEnd
     let result =
-        // Phase 1: FrontEnd - Compile F# to PSG
+        // Phase 1: FrontEnd - Compile Clef to PSG
         runFrontEnd options.ProjectPath
         |> Result.bind (requireCleanDiagnostics options.TreatWarningsAsErrors)
+        |> Result.bind (requireCompatibleTarget options)
         |> Result.bind (fun project ->
             let ctx = setupContext options project
+            ctx.IntermediatesDir |> Option.iter (fun directory ->
+                Core.DeviceAccessEvidence.write (Path.Combine(directory, "device-access.json")) project.CheckResult.Graph)
             if options.Deploy && ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.MCU then
                 failwith "Composer-managed deployment is currently implemented for MCU images only"
 

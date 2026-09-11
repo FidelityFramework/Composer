@@ -106,7 +106,7 @@ The local VSCode proof sidebar groups evidence by visible Clef file, source line
 
 Unused source functions and named immutable local values in executable projects receive compiler warning `CCS8500`. Lattice carries the standard LSP `Unnecessary` tag so editors can fade the identifier while retaining the warning and navigation. The check uses resolved references and project ownership; library exports and dependency declarations are excluded, and an underscore prefix marks intentional non-use. Proof premises do not count as source references. A known range such as `[12, 12]` means the value is exactly 12; that fact remains valid even when the binding is unused. The diagnostic is independent of proof status and emission reachability and does not remove an initializer or its effects.
 
-Proposed artifact browsing would expose a read-only virtual **Proof Intermediates** folder linked to source obligations. HelloProof already supplies the model: source `.smt2` queries, `targets/exported_compiler.smt2` after SMT-dialect lowering, separate `targets/artifact_checks.smt2` checks derived from emitted artifacts, and per-obligation `.alethe` solver output. Group these by checked snapshot, stage and obligation, preserving query hashes and source links so an older result remains distinguishable from current evidence. The editor already retains exact source queries; certificate capture and virtual-file browsing remain to be implemented. Opening an artifact should reuse retained output without starting a build or redispatching a proof. Alethe syntax highlighting, step/premise navigation and independent certificate checking are distinct capabilities; the current HelloProof script retains solver output without replaying its proof steps. Generated `.v` files, where available, can join this view. This offers an inspection surface without inserting generated notation into authored Clef files; the notation sketch below remains optional design exploration.
+Proposed artifact browsing would expose a read-only virtual **Proof Intermediates** folder linked to source obligations. HelloProof already supplies the model: source `.smt2` queries, `targets/exported_compiler.smt2` after SMT-dialect lowering, separate `targets/artifact_checks.smt2` checks derived from emitted artifacts, and per-obligation `.alethe` solver output. Group these by checked snapshot, stage and obligation, preserving query hashes and source links so an older result remains distinguishable from current evidence. The editor already retains exact source queries; certificate capture and virtual-file browsing remain to be implemented. Opening an artifact should reuse retained output without starting a build or redispatching a proof. Alethe syntax highlighting, step/premise navigation and independent certificate checking are distinct capabilities; the current HelloProof script retains solver output without replaying its proof steps. Generated `.v` files, where available, can join this view. This offers an inspection surface without inserting generated notation into authored Clef files; the library binding below remains design work.
 
 Within an obligation, the reading order is **query → certificate → check result**. File extensions describe artifact roles rather than a mandatory three-step conversion: [Carcara](https://github.com/ufmg-smite/carcara) can check an Alethe certificate against its SMT-LIB query directly; a compatible proof-assistant integration is another route. [SMTCoq](https://github.com/smtcoq/smtcoq/blob/master/USE.md) supports checking witnesses and importing theorems for its supported solver formats; compatibility must be established for the producer, rules and theories in use. A `.v` file is Rocq source and needs an actual successful check, with its assumptions recorded, before the view can report that result.
 
@@ -114,61 +114,27 @@ HelloProof's `targets/rocq/MemoryMap.v` is generated directly from extracted MLI
 
 ### Proposed: a concat lemma supplied by a dependency
 
-A proof library could arrive with an ordinary package dependency and contribute reusable, named laws. The chosen division is a developer-authored `[<…>]` attachment naming a library quotation, with a generated `(*…*)` expansion showing the proof assistant's result. This is an **authoring proposal, not an implemented proof-library API**: the exact attachment spelling, record fields and compiler reader remain proposed. The library law follows [the language's typed quotations](https://clef-lang.com/spec/draft/expressions/#strongly-typed-quoted-expressions). [Numeric Selection §4](https://clef-lang.com/spec/draft/numeric-selection/#4-the-fidelityphysics-mechanism-design-sketch) describes the related admission boundary: a quotation states a proposition; its presence does not establish its truth.
+A proof library can contribute reusable named laws through an ordinary package dependency. The intended common path is automatic registration and use-site instantiation from compiler-owned operation identities, with evidence displayed through Clef Proofs. Application developers need not attach a proof attribute to each binding. The [proof-composition architecture](Proof_Composition_Architecture.md) owns this division, the managed Rocq toolchain and the integration gates.
 
-For example, a package could declare a parameterized law for concatenation:
+The current compiler already generates `ConcatCopyBound` automatically. A reusable law could justify the same arithmetic: for nonnegative logical lengths `leftLength` and `rightLength`, the windows `[0, leftLength)` and `[leftLength, leftLength + rightLength)` fit within capacity `leftLength + rightLength`. A checked law over mathematical integers does not itself establish target representability, actual allocation, lifetime or terminator storage; those require connected facts and obligations.
 
-```fsharp
-module ConcatLaws
+A framework or domain-library author could supply this law using a typed quotation with an accepted justification, or a registered theorem with a checked semantic binding. [Numeric Selection §4](https://clef-lang.com/spec/draft/numeric-selection/#4-the-fidelityphysics-mechanism-design-sketch) describes the quotation admission boundary. A quotation makes a proposition available; its presence does not establish its truth. The package binding format remains design work.
 
-// Illustrative descriptor, interpreted only inside the quotation.
-type CopyWindowClaim = { Requires: bool; Ensures: bool }
-
-let concatCopyWindows =
-    <@ fun (leftLength: int) (rightLength: int) ->
-        let capacity = leftLength + rightLength
-        { Requires = leftLength >= 0 && rightLength >= 0
-          Ensures = leftLength <= capacity
-                    && leftLength + rightLength <= capacity } @>
-```
-
-The parameters denote logical content lengths in the same unit. With the stated nonnegativity premises, the first copy occupies `[0, leftLength)` and the second `[leftLength, leftLength + rightLength)`; both fit within capacity `leftLength + rightLength`. This is the arithmetic already encoded by CCS's [current `ConcatCopyBound` obligation](https://github.com/FidelityFramework/clef/blob/main/src/Compiler/Nanopass/ObligationDischarge.fs). The proposed reader would interpret this law over mathematical integers. Target integer representability, actual allocation and any separate terminator storage still need their own facts and obligations.
-
-A developer could attach that law to a consuming binding without changing its ordinary `string -> string -> string` type:
+The application remains ordinary Clef:
 
 ```fsharp
-// Speculative notation, not a supported attribute or argument grammar.
-[<Proof(ConcatLaws.concatCopyWindows)>]
 let append (left: string) (right: string) = left + right
 ```
 
-The illustrative `Proof` spelling does not assert that existing F# or Clef attribute arguments can contain quotation references. Its intended meaning is a compiler-resolved application of the library's typed quotation, with all its premises still to be established.
+The compiler resolves the actual concat operation and binds the law to those operands' logical lengths. Matching a function name or its type alone cannot establish that correspondence. The proof application is a compile-time structure, with no runtime proof argument passed alongside the strings.
 
-The attachment would identify both the annotated binding and the dependency's quotation declaration through their compiler identities. The compiler would associate it with the actual concat operation in that binding and bind the law's parameters to its operands' logical lengths. A name match, or an attachment to a function with the same type, would not establish that correspondence. The quotation is a compile-time declaration: there is no runtime check call or proof value passed alongside the strings. The current compiler already generates the concat obligation automatically; this example proposes how its law could become reusable package content, rather than requiring an annotation at every concat.
+The admission and use path has three parts:
 
-The proof assistant would compute an expanded drawer from the compiler's current instantiation, premise evidence and dispatch result. The following **proposed virtual, read-only presentation** illustrates a successful discharge above the authored attachment. Ordinary comments acquire no proof semantics; the active typed quotation remains in the dependency. The `proved` row is illustrative and requires an actual current result from the service.
+1. **Package admission.** Check the law, its semantic binding and transitive assumptions against the permitted foundation. Record the resolved version and content identity. Installing a package cannot admit an axiom.
+2. **Automatic use-site discharge.** Instantiate the law from the actual graph participants, establish its premises and retain the operation and evidence references. Missing premises remain obligations; allocation and representation checks remain active.
+3. **Fresh, source-linked display.** Show the law, instantiated claim, premises and current evidence through the existing proof view. Source and semantic dependency changes invalidate affected results. A source verdict does not certify an unchecked lowering.
 
-```fsharp
-(*
-  Lemma: ConcatLaws.concatCopyWindows
-  Dependency: <resolved package, version and content identity>
-  Instance: leftLength = logical length of left; rightLength = logical length of right
-  Capacity: leftLength + rightLength
-  Premises: leftLength >= 0; rightLength >= 0 — established at this source site
-  Ensures: leftLength <= capacity && leftLength + rightLength <= capacity
-  Source copy-window result: proved — current snapshot <revision>
-*)
-[<Proof(ConcatLaws.concatCopyWindows)>]
-let append (left: string) (right: string) = left + right
-```
-
-The admission and use path would have three visible parts:
-
-1. **Package admission.** Record the resolved dependency version and content identity, the law's declaration, its justification and any proof dependencies. Establish or validate the law by an admitted method; installing a package alone cannot admit an axiom. This elementary law is suitable for the existing linear-integer reasoning fragment.
-2. **Use-site discharge.** Instantiate the law with the actual graph operands, establish the nonnegativity premises and retain the operation and premise references. An unavailable premise remains pending; a failed premise cannot be hidden by citing the library. Other required capacity or representation checks remain active.
-3. **Fresh display.** Show the package/law identity, instantiated claim, premises and current discharge result in the existing proof view. Source, dependency, justification, encoding, compiler or target changes invalidate affected evidence. A verdict belongs to its checked snapshot and does not certify a later lowering merely because that lowering carries the same formula.
-
-This would let proof libraries grow through package management while keeping authoring optional where the compiler already derives the required facts. The package admission, attachment reader and proof-library UI described here remain implementation work.
+The initial authoring community may be the framework's author alone. Each admitted law should therefore deliver reusable coverage without imposing theorem authoring on application consumers. Optional suggestions can introduce new domain requirements or repairs, but existing supported checks run automatically. General package admission, theorem binding, checked cross-mode certificate import and the expanded proof-library display remain implementation work.
 
 ## Analysis and analyzer slots
 

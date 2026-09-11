@@ -182,6 +182,7 @@
       <!-- CLI Output (colored diagnostics — before orchestrator so it can emit) -->
       <Compile Include="CLI/Output.fs" />
       <!-- Core - Top-level Compilation Orchestration (AFTER all components) -->
+      <Compile Include="Core/DeviceAccessEvidence.fs" />
       <Compile Include="Core/CompilationOrchestrator.fs" />
 
 

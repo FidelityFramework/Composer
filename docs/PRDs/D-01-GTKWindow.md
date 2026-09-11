@@ -212,9 +212,9 @@ description = "Clef Language + Fidelity Framework — Native GTK4 Window"
 target = "cpu"
 
 [dependencies]
-platform = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Platform.fidproj" }
-gtk = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.Gtk.fidproj" }
-gobject = { path = "../Fidelity.Platform/CPU/Linux/x86_64/Fidelity.GObject.fidproj" }
+platform = { path = "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.fidproj" }
+gtk = { path = "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Gtk.fidproj" }
+gobject = { path = "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.GObject.fidproj" }
 
 [build]
 sources = ["src/GtkApp.clef", "src/Program.clef"]

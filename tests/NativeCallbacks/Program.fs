@@ -19,7 +19,7 @@ let main args =
     let source = __SOURCE_DIRECTORY__
     let root = Path.GetFullPath(Path.Combine(source,"../.."))
     let compiler = if args.Length > 0 then Path.GetFullPath args.[0] else Path.Combine(root,"src/bin/Debug/net10.0/Composer")
-    let platform = Path.GetFullPath(Path.Combine(root,"../Fidelity.Platform/CPU/Linux/x86_64"))
+    let platform = Path.GetFullPath(Path.Combine(root,"../Fidelity.Platform/Environments/Linux/x86_64"))
     let work = Path.Combine(Path.GetTempPath(),"composer-callbacks-fsharp-" + Guid.NewGuid().ToString("N"))
     for name, file, executable, operations in cases do
         let directory = Path.Combine(work,name)
@@ -27,7 +27,7 @@ let main args =
         File.Copy(Path.Combine(source,file), Path.Combine(directory,file))
         let mutable project = File.ReadAllText(Path.Combine(source,name + ".fidproj"))
         for binding in ["Fidelity.Platform.CompilerSurface.fidproj";"Fidelity.Pthread.fidproj"] do
-            project <- project.Replace("\"../../../Fidelity.Platform/CPU/Linux/x86_64/" + binding + "\"", JsonSerializer.Serialize(Path.Combine(platform,binding)))
+            project <- project.Replace("\"../../../Fidelity.Platform/Environments/Linux/x86_64/" + binding + "\"", JsonSerializer.Serialize(Path.Combine(platform,binding)))
         let fidproj = Path.Combine(directory,name + ".fidproj")
         File.WriteAllText(fidproj,project)
         Tests.Process.requireSuccess compiler ["compile";fidproj;"-k";"--no-color"] 600000 (Some (Path.Combine(directory,"compile.log"))) |> ignore
