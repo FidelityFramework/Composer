@@ -95,7 +95,8 @@ let resolve (projectPath: string) (graph: SemanticGraph) : XtensaTarget =
     let image: XtensaImageDescriptor = {
         Sram0Space = field "Sram0Space" stringOf
         Sram1Space = field "Sram1Space" stringOf
-        Sram1DataSpace = field "Sram1DataSpace" stringOf
+        Sram1DataBase = field "Sram1DataBase" int64Of
+        DataLimit = field "DataLimit" int64Of
         Sram2Space = field "Sram2Space" stringOf
         FlashStoreSpace = field "FlashStoreSpace" stringOf
         Sram1InstructionBytes = int (field "Sram1InstructionBytes" int64Of)
@@ -110,7 +111,7 @@ let resolve (projectPath: string) (graph: SemanticGraph) : XtensaTarget =
         SpiMode = int (field "SpiMode" int64Of)
         SpiSpeed = int (field "SpiSpeed" int64Of)
         SpiSize = int (field "SpiSize" int64Of)
-        HashAppended = field "HashAppended" int64Of <> 0L
+        HashAppended = int (field "HashAppended" int64Of)
     }
 
     let spaces: MemorySpace array = platform.Spaces |> List.map memorySpace |> List.toArray
@@ -125,7 +126,7 @@ let resolve (projectPath: string) (graph: SemanticGraph) : XtensaTarget =
     if findings.Length <> 0 then failwithf "BAREWire memory declaration: %A" findings
 
     let space name = spaces |> Array.tryFind (fun s -> s.Name = name) |> required ("memory space " + name)
-    let sram0, sram1, sram1Data, sram2 = space image.Sram0Space, space image.Sram1Space, space image.Sram1DataSpace, space image.Sram2Space
+    let sram0, sram1, sram2 = space image.Sram0Space, space image.Sram1Space, space image.Sram2Space
     let flashStore = space image.FlashStoreSpace
 
     // Bus views carry different access because the buses differ: code is
@@ -134,12 +135,19 @@ let resolve (projectPath: string) (graph: SemanticGraph) : XtensaTarget =
         failwith "The Xtensa image requires three declared SRAM banks"
     if sram0.Access <> Access.ReadExecute || sram1.Access <> Access.ReadExecute then
         failwith "Instruction-bus SRAM windows must declare read/execute access"
-    if sram1Data.Access <> Access.ReadWrite || sram2.Access <> Access.ReadWrite then
-        failwith "Data-bus SRAM windows must declare read/write access"
+    if sram2.Access <> Access.ReadWrite then failwith "Data-bus-only SRAM must declare read/write access"
+    if image.Sram1DataBase <= 0L || image.Sram1DataBase + sram1.Capacity > 0x100000000L then
+        failwith "The shared bank's data-bus base must place the whole bank inside the 32-bit address extent"
+    // Everything at or above the limit is the ROM's or the cache's at handover,
+    // so the limit must fall inside the data-bus SRAM and keep the ABI's
+    // 16-byte stack alignment, since the stack top lands exactly on it.
+    let sram2End = (sram2.Base |> required ("base of " + sram2.Name)) + sram2.Capacity
+    if image.DataLimit <= image.Sram1DataBase || image.DataLimit > sram2End || image.DataLimit % 16L <> 0L then
+        failwith "DataLimit must lie inside the data-bus SRAM extent, above the shared bank's data base, on a 16-byte boundary"
     // The ROM loader reads the image at offset 0 of a store, not a mapped space.
     if flashStore.Base <> Some 0L then
         failwith "The flash store is addressed by offset; its declared base must be 0"
-    for s in [ sram0; sram1; sram1Data; sram2 ] do
+    for s in [ sram0; sram1; sram2 ] do
         let origin = s.Base |> required ("base of " + s.Name)
         if origin < 0L || origin + s.Capacity > 0x100000000L then
             failwithf "%s exceeds the 32-bit address extent" s.Name
@@ -186,7 +194,8 @@ let resolve (projectPath: string) (graph: SemanticGraph) : XtensaTarget =
         failwith "The entry symbol is reached by the ROM loader's jump, not through a vector entry"
 
     { PlatformId = platform.Id; Image = image; Vectors = vectors
-      Sram0 = sram0; Sram1 = sram1; Sram1Data = sram1Data; Sram2 = sram2; FlashStore = flashStore
+      Sram0 = sram0; Sram1 = sram1; Sram1DataBase = image.Sram1DataBase; DataLimit = image.DataLimit
+      Sram2 = sram2; FlashStore = flashStore
       StartupSource = startup
       ProvidedLibraries = strings "embedded.provided_libraries" |> Set.ofList
       VectorEntries = entries

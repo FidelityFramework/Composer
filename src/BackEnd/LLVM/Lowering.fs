@@ -34,11 +34,17 @@ let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerB
         // target triple cannot repair already materialized i64 descriptors.
         let width = pointerBits |> Option.defaultValue 64
         let isM33 = triple.StartsWith("thumbv8m.main-")
-        if isM33 && width <> 32 then failwith "Cortex-M33 requires a declared 32-bit Pointer dimension."
+        let isXtensa = triple.StartsWith("xtensa")
+        if (isM33 || isXtensa) && width <> 32 then failwith "This MCU target requires a declared 32-bit Pointer dimension."
         let source = File.ReadAllText mlirPath
+        // The data layout strings are the target's own, obtained from
+        // `opt -mtriple=<triple> -passes=no-op-module` on an empty module rather
+        // than hand-written; the Xtensa one was read from the 22.1.8 build.
         let attributes =
             if isM33 then
                 sprintf " attributes {llvm.target_triple = \"%s\", llvm.data_layout = \"e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64\"} " triple
+            elif isXtensa then
+                sprintf " attributes {llvm.target_triple = \"%s\", llvm.data_layout = \"e-m:e-p:32:32-i8:8:32-i16:16:32-i64:64-n32\"} " triple
             else " "
         let targetedPath = Path.ChangeExtension(mlirPath, ".target.mlir")
         let brace = source.IndexOf('{')

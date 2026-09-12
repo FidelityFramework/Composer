@@ -23,8 +23,8 @@ open BackEnd.MCU
 open Core.Types.Pipeline
 
 /// The real ESP32-S3 banks, from TRM v1.8 Table 4.3-2 and the aliasing in
-/// Table 15.3-1. SRAM1 is declared once with capacity; its data-bus view is
-/// declared as an alias carrying none.
+/// Table 15.3-1. SRAM1 is declared once, with capacity; its data-bus address
+/// is a second base on the image descriptor, not a second space.
 let private space name kind access baseAddress capacity : BAREWire.Platform.MemorySpace =
     { Name = name; Kind = kind; Base = Some baseAddress; Capacity = capacity
       Alignment = 16; Granularity = 1; Growth = BAREWire.Platform.Growth.Fixed
@@ -36,8 +36,12 @@ let private rw = BAREWire.Platform.Access.ReadWrite
 
 let private sram0 = space "sram0" sram rx 0x40370000L 32768L
 let private sram1 = space "sram1" sram rx 0x40378000L 425984L
-let private sram1Data = space "sram1-data" sram rw 0x3FC88000L 0L
+let private sram1DataBase = 0x3FC88000L
 let private sram2 = space "sram2" sram rw 0x3FCF0000L 65536L
+/// Where the ROM's own memory begins at handover: 0x3FCD7E00 on this part.
+let private dataLimit = 0x3FCD7E00L
+/// Data-bus SRAM above the limit, spoken for by the ROM and the data cache.
+let private reservedAboveLimit = (0x3FCF0000L + 65536L) - dataLimit
 let private flashStore =
     { space "flash-store" BAREWire.Platform.MemoryKind.PersistentStore rw 0L 8388608L with
         Alignment = 4096; Granularity = 4096 }
@@ -53,7 +57,8 @@ let private vectors: BAREWire.Hardware.StructDescriptor = {
 }
 
 let private image instructionBytes : BAREWire.Hardware.XtensaImageDescriptor = {
-    Sram0Space = "sram0"; Sram1Space = "sram1"; Sram1DataSpace = "sram1-data"; Sram2Space = "sram2"
+    Sram0Space = "sram0"; Sram1Space = "sram1"; Sram1DataBase = sram1DataBase; Sram2Space = "sram2"
+    DataLimit = dataLimit
     FlashStoreSpace = "flash-store"
     Sram1InstructionBytes = instructionBytes
     VectorLayout = "XtensaLX7Vectors"; VectorAlignment = 1024
@@ -63,14 +68,15 @@ let private image instructionBytes : BAREWire.Hardware.XtensaImageDescriptor = {
     ChipId = EspImage.ChipIdEsp32S3
     MinChipRevFull = 0; MaxChipRevFull = 9999
     SpiMode = EspImage.SpiMode.Qio; SpiSpeed = 0xF; SpiSize = EspImage.FlashSize.Size8MB
-    HashAppended = true
+    HashAppended = 1
 }
 
 let private target instructionBytes : XtensaTarget = {
     PlatformId = "CCC2026Badge"
     Image = image instructionBytes
     Vectors = vectors
-    Sram0 = sram0; Sram1 = sram1; Sram1Data = sram1Data; Sram2 = sram2; FlashStore = flashStore
+    Sram0 = sram0; Sram1 = sram1; Sram1DataBase = sram1DataBase; DataLimit = dataLimit; Sram2 = sram2
+    FlashStore = flashStore
     StartupSource = "boot/startup.S"
     ProvidedLibraries = Set.empty
     VectorEntries = Map.ofList [ "window", "WindowVectors"; "user", "UserExceptionVector" ]
@@ -115,29 +121,36 @@ let main _ =
     succeeds "instruction window is SRAM0 plus its share of the shared bank" (fun () ->
         if w.IramOrigin <> 0x40370000L then failwithf "IRAM origin 0x%X" w.IramOrigin
         if w.IramBytes <> 0x8000L + 0x30000L then failwithf "IRAM bytes 0x%X" w.IramBytes)
-    succeeds "data window starts after the instruction share, in the data view" (fun () ->
+    succeeds "data window starts after the instruction share, in the data view, and ends at the ROM's limit" (fun () ->
         if w.DramOrigin <> 0x3FC88000L + 0x30000L then failwithf "DRAM origin 0x%X" w.DramOrigin
-        if w.DramBytes <> (0x68000L - 0x30000L) + 0x10000L then failwithf "DRAM bytes 0x%X" w.DramBytes)
-    succeeds "the two windows sum to exactly the part's 512 KB of SRAM" (fun () ->
-        let total = w.IramBytes + w.DramBytes
+        if w.DramBytes <> dataLimit - (0x3FC88000L + 0x30000L) then failwithf "DRAM bytes 0x%X" w.DramBytes)
+    succeeds "the two windows plus the ROM's reserve sum to exactly the part's 512 KB of SRAM" (fun () ->
+        let total = w.IramBytes + w.DramBytes + reservedAboveLimit
         if total <> totalSram then
             failwithf "Windows total %d bytes; the part has %d. The shared bank is being counted twice or lost." total totalSram)
 
     // The invariant must hold for every legal split, not just the chosen one.
     succeeds "the sum is 512 KB at every legal split of the shared bank" (fun () ->
-        for share in 0 .. 1024 .. int sram1.Capacity do
+        for share in 0 .. 1024 .. int (dataLimit - sram1DataBase) - 1024 do
             let v = XtensaLayout.windows (target share)
-            if v.IramBytes + v.DramBytes <> totalSram then
+            if v.IramBytes + v.DramBytes + reservedAboveLimit <> totalSram then
                 failwithf "Split 0x%X totals %d, not %d" share (v.IramBytes + v.DramBytes) totalSram
             // The data window must never begin inside the instruction share.
             let dataOffsetInBank = v.DramOrigin - 0x3FC88000L
             if dataOffsetInBank <> int64 share then
                 failwithf "Split 0x%X puts the data window at bank offset 0x%X" share dataOffsetInBank)
 
-    succeeds "giving the whole shared bank to instructions leaves only SRAM2 for data" (fun () ->
-        let v = XtensaLayout.windows (target (int sram1.Capacity))
+    succeeds "giving the whole shared bank to instructions leaves only SRAM2 for data, if the limit allows it" (fun () ->
+        let v = XtensaLayout.windows { target (int sram1.Capacity) with DataLimit = 0x3FD00000L }
         if v.DramBytes <> sram2.Capacity then failwithf "DRAM bytes 0x%X" v.DramBytes
         if v.IramBytes <> sram0.Capacity + sram1.Capacity then failwithf "IRAM bytes 0x%X" v.IramBytes)
+    // Learned on the badge: the ROM hands over with its own stacks and data at
+    // the top of the shared bank and the data cache holding half of SRAM2. A
+    // stack placed up there ran until its first spill and then parked.
+    rejects "an instruction share that reaches the ROM's data limit" "leaves no data window" (fun () ->
+        XtensaLayout.windows (target 0x50000))
+    rejects "a data limit beyond the data-bus SRAM" "beyond the data-bus SRAM" (fun () ->
+        XtensaLayout.windows { target 0x30000 with DataLimit = 0x3FD00010L })
     succeeds "giving none of it to instructions leaves only SRAM0 for code" (fun () ->
         let v = XtensaLayout.windows (target 0)
         if v.IramBytes <> sram0.Capacity then failwithf "IRAM bytes 0x%X" v.IramBytes
@@ -150,8 +163,8 @@ let main _ =
         XtensaLayout.windows (target -1024))
     rejects "a split that leaves the data side misaligned" "multiple of the" (fun () ->
         XtensaLayout.windows (target 0x30004))
-    rejects "a data-bus alias that claims capacity of its own" "must declare Capacity = 0" (fun () ->
-        XtensaLayout.windows { target 0x30000 with Sram1Data = { sram1Data with Capacity = 425984L } })
+    rejects "a data-bus base that does not abut the data-only bank" "does not abut" (fun () ->
+        XtensaLayout.windows { target 0x30000 with Sram1DataBase = 0x3FC80000L })
     rejects "an instruction bank that does not abut the shared bank" "does not abut" (fun () ->
         XtensaLayout.windows { target 0x30000 with Sram0 = { sram0 with Capacity = 16384L } })
     rejects "a data-only bank that does not abut the shared bank" "does not abut" (fun () ->
@@ -166,7 +179,15 @@ let main _ =
 
         succeeds "script declares the computed windows" (fun () ->
             if not (script.Contains "IRAM (rx) : ORIGIN = 0x40370000, LENGTH = 0x38000") then failwith "IRAM region wrong"
-            if not (script.Contains "DRAM (rw) : ORIGIN = 0x3FCB8000, LENGTH = 0x48000") then failwith "DRAM region wrong")
+            if not (script.Contains "DRAM (rw) : ORIGIN = 0x3FCB8000, LENGTH = 0x1FE00") then failwith "DRAM region wrong")
+        succeeds "the stack tops out exactly at the ROM's data limit, never in SRAM2" (fun () ->
+            if not (script.Contains "__stack_top = 0x3FCD7E00;") then failwith "Stack top is not the data limit"
+            if not (script.Contains "__stack_bottom = 0x3FCD5E00;") then failwith "Stack bottom wrong for 8192 bytes")
+        succeeds "read-only data is placed on the data bus, not with the code" (fun () ->
+            let text = script.Substring(script.IndexOf ".text :", script.IndexOf "__iram_end" - script.IndexOf ".text :")
+            let data = script.Substring(script.IndexOf ".data ORIGIN(DRAM)", script.IndexOf "__data_end" - script.IndexOf ".data ORIGIN(DRAM)")
+            if text.Contains ".rodata" then failwith "rodata in the instruction window: halfword tables fault there"
+            if not (data.Contains "*(.rodata .rodata.*)") then failwith "rodata not placed in DRAM")
         succeeds "script asserts instruction use cannot cross into the data side" (fun () ->
             if not (script.Contains "__shared_bank_data_split") then failwith "No split symbol"
             if not (script.Contains "crosses into the data side") then failwith "No crossing assertion")
@@ -174,7 +195,18 @@ let main _ =
             if script.Contains "AT>" || script.Contains "LOADADDR" then
                 failwith "An all-SRAM ROM-loaded image needs no .data copy")
         succeeds "script keeps Xtensa literal pools" (fun () ->
-            if not (script.Contains "*(.literal*)") then failwith "L32R literal pools would be dropped")
+            if not (script.Contains "*(.literal .literal.*)") then failwith "L32R literal pools would be dropped")
+        // Learned from a real link, not from reading the manual: ld.lld rejected
+        // every movi in the startup code with "relocation R_XTENSA_SLOT0_OP out
+        // of range" because the literal pool was emitted after the text that
+        // referenced it. L32R reaches BACKWARDS only. Presence is not enough --
+        // order is the property that matters.
+        succeeds "literal pools are placed before the text that references them" (fun () ->
+            let literalAt = script.IndexOf "*(.literal .literal.*)"
+            let textAt = script.IndexOf "*(.text .text.*)"
+            if literalAt < 0 || textAt < 0 then failwith "Missing literal or text placement"
+            if literalAt > textAt then
+                failwith "Literal pool follows .text; every L32R in startup will fail to link")
         succeeds "layout.inc exports the vector facts to startup assembly" (fun () ->
             let inc = File.ReadAllText(Path.Combine(boot, "layout.inc"))
             if not (inc.Contains ".set VECTOR_BYTES, 1024") then failwith "No VECTOR_BYTES"

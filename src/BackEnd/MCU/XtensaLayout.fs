@@ -43,7 +43,8 @@ type Windows = {
 
 /// Partition the shared bank and check every premise the split relies on.
 let windows (target: XtensaTarget) : Windows =
-    let sram0, sram1, sram1Data, sram2 = target.Sram0, target.Sram1, target.Sram1Data, target.Sram2
+    let sram0, sram1, sram2 = target.Sram0, target.Sram1, target.Sram2
+    let dataBase = target.Sram1DataBase
     let instructionShare = int64 target.Image.Sram1InstructionBytes
 
     if instructionShare < 0L || instructionShare > sram1.Capacity then
@@ -53,21 +54,26 @@ let windows (target: XtensaTarget) : Windows =
     if instructionShare % int64 target.Image.VectorAlignment <> 0L then
         failwithf "Sram1InstructionBytes %d must be a multiple of the %d-byte vector alignment so the data side starts aligned"
             instructionShare target.Image.VectorAlignment
-    // The alias must be declared as an alias, or capacity is counted twice.
-    if sram1Data.Capacity <> 0L then
-        failwithf "%s is the data-bus alias of %s and must declare Capacity = 0; it declares %d"
-            sram1Data.Name sram1.Name sram1Data.Capacity
     // SRAM0 must abut SRAM1 on the instruction bus for one region to cover both.
     if origin sram0 + sram0.Capacity <> origin sram1 then
         failwithf "%s does not abut %s on the instruction bus" sram0.Name sram1.Name
     // The data share must abut SRAM2 on the data bus for the same reason.
-    if origin sram1Data + sram1.Capacity <> origin sram2 then
-        failwithf "%s does not abut %s on the data bus" sram1Data.Name sram2.Name
+    if dataBase + sram1.Capacity <> origin sram2 then
+        failwithf "%s's data-bus window does not abut %s" sram1.Name sram2.Name
+    // The data window ends where the ROM loader's own memory and the cache's
+    // begin, not where the silicon does. What lies above the limit is not
+    // the image's to use, however much of it the part has.
+    let dramOrigin = dataBase + instructionShare
+    if target.DataLimit <= dramOrigin then
+        failwithf "DataLimit 0x%X leaves no data window: the data side of the shared bank starts at 0x%X"
+            target.DataLimit dramOrigin
+    if target.DataLimit > origin sram2 + sram2.Capacity then
+        failwithf "DataLimit 0x%X lies beyond the data-bus SRAM" target.DataLimit
 
     { IramOrigin = origin sram0
       IramBytes = sram0.Capacity + instructionShare
-      DramOrigin = origin sram1Data + instructionShare
-      DramBytes = (sram1.Capacity - instructionShare) + sram2.Capacity }
+      DramOrigin = dramOrigin
+      DramBytes = target.DataLimit - dramOrigin }
 
 let generate (target: XtensaTarget) destination =
     Directory.CreateDirectory destination |> ignore
@@ -109,15 +115,23 @@ SECTIONS {
    * %d-byte boundary. It is code, not a table of addresses. */
   .vectors ORIGIN(IRAM) : ALIGN(%d) { KEEP(*(.vectors)) KEEP(*(.vectors.*)) } > IRAM
   .text : ALIGN(4) {
-    *(.text*)
-    *(.literal*)     /* Xtensa literal pools: L32R operands, not instructions */
-    *(.rodata*)
+    /* Literal pools MUST precede the code that references them. Xtensa's L32R
+     * loads a constant at a NEGATIVE offset from the instruction -- it can only
+     * reach backwards, up to 256 KB. Emit .text first and every movi in the
+     * startup code fails to link with "relocation R_XTENSA_SLOT0_OP out of
+     * range", because the literal ended up ahead of its use. */
+    *(.literal .literal.*)
+    *(.text .text.*)
   } > IRAM
   __iram_end = .;
 
-  /* Initialized data is placed, not copied: the ROM loader delivers it. */
+  /* Initialized data is placed, not copied: the ROM loader delivers it.
+   * Read-only data lives here, on the DATA bus, and not with the code: the
+   * instruction bus serves only aligned 32-bit loads, and the compiler
+   * freely turns a match into a byte or halfword table read with l8ui/l16ui,
+   * which through the instruction window is a LoadStoreError. */
   .data ORIGIN(DRAM) : ALIGN(16) {
-    __data_start = .; *(.data*) . = ALIGN(4); __data_end = .;
+    __data_start = .; *(.data*) *(.rodata .rodata.*) . = ALIGN(4); __data_end = .;
   } > DRAM
   .bss (NOLOAD) : ALIGN(16) {
     __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(4); __bss_end = .;

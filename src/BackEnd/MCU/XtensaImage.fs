@@ -194,14 +194,25 @@ let build llPath (ctx: BackEndContext) (target: XtensaTarget) =
     // Select the part by CPU model when the toolchain has one, and by feature
     // flags when it does not: upstream LLVM carries 26 of the esp32s3 bundle's
     // 29 features but no esp32s3 CPU.
+    // Declared features win over a CPU model: the environment may name the part
+    // ("esp32s3") as a fact while the toolchain in use has no such model and
+    // needs the feature bundle spelled out.
     let selection =
-        match target.Cpu, target.Features with
-        | Some cpu, _ -> [ "-mcpu=" + cpu ]
-        | None, [] -> failwith "Declare either a CPU model or the -mattr features for this Xtensa part"
-        | None, features -> [ "-mattr=" + String.Join(",", features |> List.map (fun f -> "+" + f)) ]
+        match target.Features, target.Cpu with
+        | features, _ when not (List.isEmpty features) -> [ "-mattr=" + String.Join(",", features |> List.map (fun f -> "+" + f)) ]
+        | [], Some cpu -> [ "-mcpu=" + cpu ]
+        | [], None -> failwith "Declare either a CPU model or the -mattr features for this Xtensa part"
 
+    // Two steps rather than llc -filetype=obj. In LLVM 22.1.8 direct object
+    // emission for this target fails with "fixup value must be 4-byte aligned"
+    // on L32R literals, while the identical assembly assembles cleanly through
+    // llvm-mc: the defect is in the object streamer's literal placement, not in
+    // code generation. Going through text also leaves the assembly as a build
+    // artifact next to the disassembly, which a reviewer can read.
+    let assembly = artifact "s"
+    run "llc" ([ "-mtriple=" + triple ] @ selection @ [ "-O=2"; "-filetype=asm"; optimized; "-o"; assembly ])
     let obj = artifact "o"
-    run "llc" ([ "-mtriple=" + triple ] @ selection @ [ "-O=2"; "-filetype=obj"; optimized; "-o"; obj ])
+    run "llvm-mc" ([ "-triple=" + triple ] @ selection @ [ "-filetype=obj"; assembly; "-o"; obj ])
 
     // llvm-mc assembles the owned startup and vector block. No clang, and no
     // GNU binutils: this target has no `as` of its own in the sovereign path.
@@ -232,7 +243,7 @@ let build llPath (ctx: BackEndContext) (target: XtensaTarget) =
         SpiMode = core.SpiMode
         SpiSpeed = core.SpiSpeed
         SpiSize = core.SpiSize
-        HashAppended = core.HashAppended
+        HashAppended = core.HashAppended <> 0
     }
     let image =
         loadSegments

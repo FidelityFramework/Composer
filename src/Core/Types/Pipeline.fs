@@ -42,8 +42,10 @@ type XtensaTarget = {
     Sram0: BAREWire.Platform.MemorySpace
     /// Dual-mapped bank, instruction-bus view; owns the bank's capacity.
     Sram1: BAREWire.Platform.MemorySpace
-    /// The same bank's data-bus view; Capacity is 0 because it is an alias.
-    Sram1Data: BAREWire.Platform.MemorySpace
+    /// The dual-mapped bank's base on the data bus.
+    Sram1DataBase: int64
+    /// End of the data window: the ROM's and the cache's memory begins here.
+    DataLimit: int64
     /// Data-bus-only bank.
     Sram2: BAREWire.Platform.MemorySpace
     /// The download target, addressed by offset rather than mapped.
