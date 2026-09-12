@@ -65,7 +65,7 @@ let main args =
             TargetTripleOverride = Some "thumbv8m.main-none-eabi"; TargetPointerBits = Some 32; TargetCpu = Some "cortex-m33"
             DeploymentMode = Core.Types.Dialects.DeploymentMode.Embedded; EmitIntermediateOnly = false
             ExternLibraries = Set.empty; NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
-            EmbeddedTarget = Some target; Deploy = false
+            EmbeddedTarget = Some target; XtensaTarget = None; Deploy = false
         }
         let evidence = Path.ChangeExtension(output,"build-evidence.json")
         File.WriteAllText(evidence,"old build must be invalidated")

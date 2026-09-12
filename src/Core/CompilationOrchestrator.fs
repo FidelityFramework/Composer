@@ -250,9 +250,22 @@ let compileProject (options: CompilationOptions) : int =
                         EmitIntermediateOnly = options.EmitLLVMOnly
                         ExternLibraries = externLibraries
                         NativeLink = options.NativeLink
+                        // Exactly one embedded target is resolved, chosen by the
+                        // declared architecture. The two MCU image paths are
+                        // siblings: Cortex-M executes from flash at zero with an
+                        // address-table vector, Xtensa is ROM-loaded into SRAM
+                        // with a vector block of code.
                         EmbeddedTarget =
-                            if ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.MCU && not options.EmitLLVMOnly then
+                            if ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.MCU
+                               && not options.EmitLLVMOnly
+                               && not (BackEnd.MCU.XtensaTarget.isXtensa declaredCore) then
                                 Some (BackEnd.MCU.Target.resolve project.Options.ProjectPath project.CheckResult.Graph)
+                            else None
+                        XtensaTarget =
+                            if ctx.TargetPlatform = Core.Types.Dialects.TargetPlatform.MCU
+                               && not options.EmitLLVMOnly
+                               && BackEnd.MCU.XtensaTarget.isXtensa declaredCore then
+                                Some (BackEnd.MCU.XtensaTarget.resolve project.Options.ProjectPath project.CheckResult.Graph)
                             else None
                         Deploy = options.Deploy
                     }

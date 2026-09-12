@@ -4,8 +4,12 @@ open System.IO
 open Core.Types.Pipeline
 open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 
+/// Two sibling MCU image paths. Which one runs is decided by the target the
+/// orchestrator resolved from the declared architecture, not by a flag: a
+/// Cortex-M image executes from flash at zero behind an address-table vector,
+/// an Xtensa image is ROM-loaded into SRAM behind a vector block of code.
 let backend: BackEnd = {
-    Name = "LLVM / Cortex-M image"
+    Name = "LLVM / MCU image (Cortex-M or Xtensa)"
     Compile = fun mlirText ctx ->
         try
             let directory = ctx.IntermediatesDir |> Option.defaultWith (fun () ->
@@ -15,14 +19,31 @@ let backend: BackEnd = {
             let mlir = Path.Combine(directory, artifactFilename ArtifactId.Mlir)
             let llvm = Path.Combine(directory, artifactFilename ArtifactId.Llvm)
             File.WriteAllText(mlir, mlirText)
-            BackEnd.LLVM.Lowering.lowerToLLVM mlir llvm "thumbv8m.main-none-eabi" ctx.TargetPointerBits
+            // The triple comes from the selected platform. An absent triple
+            // must not silently become the Cortex-M profile.
+            let triple =
+                match ctx.EmbeddedTarget, ctx.XtensaTarget, ctx.TargetTripleOverride with
+                | Some _, Some _, _ -> failwith "Exactly one MCU image target may be resolved"
+                | _, Some _, Some declared -> declared
+                | _, Some _, None -> failwith "The Xtensa image target requires a declared triple"
+                | _, None, _ -> "thumbv8m.main-none-eabi"
+            BackEnd.LLVM.Lowering.lowerToLLVM mlir llvm triple ctx.TargetPointerBits
             |> Result.map (fun () ->
                 if ctx.EmitIntermediateOnly then IntermediateOnly "LLVM IR"
                 else
-                    let target = ctx.EmbeddedTarget |> Option.defaultWith (fun () -> failwith "Missing resolved MCU image declaration")
                     if ctx.DeploymentMode <> Core.Types.Dialects.DeploymentMode.Embedded then failwith "MCU image requires output_kind = embedded"
-                    let elf = Image.build llvm ctx target
-                    if ctx.Deploy then Probe.deploy target elf
-                    NativeBinary elf)
+                    match ctx.EmbeddedTarget, ctx.XtensaTarget with
+                    | Some target, None ->
+                        let elf = Image.build llvm ctx target
+                        if ctx.Deploy then Probe.deploy target elf
+                        NativeBinary elf
+                    | None, Some target ->
+                        let elf = XtensaImage.build llvm ctx target
+                        // No probe path exists for this target yet; download is
+                        // an explicit follow-on rather than a silent no-op.
+                        if ctx.Deploy then failwith "Xtensa image download is not implemented; flash the .bin with an external loader"
+                        NativeBinary elf
+                    | None, None -> failwith "Missing resolved MCU image declaration"
+                    | Some _, Some _ -> failwith "Exactly one MCU image target may be resolved")
         with ex -> Error ex.Message
 }

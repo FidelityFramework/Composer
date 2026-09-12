@@ -30,6 +30,40 @@ type EmbeddedTarget = {
     WatchSymbols: Map<string, int>
 }
 
+/// Resolved declarations for the ROM-loaded Xtensa image path. A sibling of
+/// EmbeddedTarget, not a widening of it: this target has no flash at address
+/// zero to execute from, three SRAM banks of which one is dual-mapped, and a
+/// vector block that is code rather than an address table.
+type XtensaTarget = {
+    PlatformId: string
+    Image: BAREWire.Hardware.XtensaImageDescriptor
+    Vectors: BAREWire.Hardware.StructDescriptor
+    /// Instruction-bus-only bank.
+    Sram0: BAREWire.Platform.MemorySpace
+    /// Dual-mapped bank, instruction-bus view; owns the bank's capacity.
+    Sram1: BAREWire.Platform.MemorySpace
+    /// The same bank's data-bus view; Capacity is 0 because it is an alias.
+    Sram1Data: BAREWire.Platform.MemorySpace
+    /// Data-bus-only bank.
+    Sram2: BAREWire.Platform.MemorySpace
+    /// The download target, addressed by offset rather than mapped.
+    FlashStore: BAREWire.Platform.MemorySpace
+    StartupSource: string
+    ProvidedLibraries: Set<string>
+    /// Named vector entry -> handler symbol. Names, not slot indices: the
+    /// Xtensa block has ten named entries at fixed offsets, and "slot 15"
+    /// means nothing here.
+    VectorEntries: Map<string, string>
+    RecoveryDirectory: string
+    /// Directory holding the LLVM tools for this target, when not on PATH.
+    ToolDirectory: string option
+    /// -mcpu, when the toolchain has a model for this part.
+    Cpu: string option
+    /// -mattr features, used when no CPU model exists. Upstream LLVM has 26 of
+    /// the esp32s3 bundle's 29 features but no esp32s3 CPU.
+    Features: string list
+}
+
 /// Explicit ELF link inputs. Paths name target files; cross links never search host libraries.
 type NativeLinkOptions = {
     Sysroot: string option
@@ -62,6 +96,9 @@ type BackEndContext = {
     ExternLibraries: Set<string>
     NativeLink: NativeLinkOptions
     EmbeddedTarget: EmbeddedTarget option
+    /// Set instead of EmbeddedTarget when the selected platform is Xtensa.
+    /// Exactly one of the two is populated; the MCU backend dispatches on it.
+    XtensaTarget: XtensaTarget option
     Deploy: bool
 }
 

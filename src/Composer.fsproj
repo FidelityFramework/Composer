@@ -154,10 +154,14 @@
       <Compile Include="BackEnd/LLVM/Codegen.fs" />
       <Compile Include="BackEnd/LLVM/Pipeline.fs" />
       <!-- MCU: in-process BAREWire layout, owned assembly, vendor tools and probe SDK -->
+      <Compile Include="BackEnd/MCU/EspImage.fs" />
       <Compile Include="BackEnd/MCU/Target.fs" />
       <Compile Include="BackEnd/MCU/Tools.fs" />
       <Compile Include="BackEnd/MCU/Layout.fs" />
+      <Compile Include="BackEnd/MCU/XtensaTarget.fs" />
+      <Compile Include="BackEnd/MCU/XtensaLayout.fs" />
       <Compile Include="BackEnd/MCU/Image.fs" />
+      <Compile Include="BackEnd/MCU/XtensaImage.fs" />
       <Compile Include="BackEnd/MCU/Probe.fs" />
       <Compile Include="BackEnd/MCU/Pipeline.fs" />
 
