@@ -26,7 +26,9 @@ type private DownloadCall = delegate of nativeint * uint32 -> int
 let private export<'T when 'T :> Delegate> library name = Marshal.GetDelegateForFunctionPointer<'T>(NativeLibrary.GetExport(library, name))
 
 type private Connection(target: EmbeddedTarget, programming: bool) =
-    let library = NativeLibrary.Load(Tools.probeLibrary target.ProbeLibrary)
+    let library =
+        Target.requireProbeSupport target.Profile
+        NativeLibrary.Load(Tools.probeLibrary target.ProbeLibrary)
     let mutable opened = false
     let mutable disposed = false
     let call0 name = (export<Call0> library name).Invoke()
@@ -115,6 +117,7 @@ let private currentImage (target: EmbeddedTarget) elfPath =
     binary, table
 
 let deploy (target: EmbeddedTarget) elfPath =
+    Target.requireProbeSupport target.Profile
     validateRecovery target
     let binary, _ = currentImage target elfPath
     use probe = new Connection(target, true)
@@ -128,6 +131,7 @@ let deploy (target: EmbeddedTarget) elfPath =
     printfn "Composer deployed and readback-verified %d code bytes; reset and running" binary.Length
 
 let device action seconds (target: EmbeddedTarget) elfPath =
+    Target.requireProbeSupport target.Profile
     if not (List.contains action ["inspect";"watch";"capture";"reset";"restore"]) then failwith "Device action must be inspect, watch, capture, reset or restore"
     if action = "restore" then validateRecovery target
     let current = if action = "watch" then Some (currentImage target elfPath) else None

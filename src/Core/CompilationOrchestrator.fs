@@ -252,7 +252,7 @@ let compileProject (options: CompilationOptions) : int =
                         NativeLink = options.NativeLink
                         // Exactly one embedded target is resolved, chosen by the
                         // declared architecture. The two MCU image paths are
-                        // siblings: Cortex-M executes from flash at zero with an
+                        // siblings: Cortex-M executes from selected flash with an
                         // address-table vector, Xtensa is ROM-loaded into SRAM
                         // with a vector block of code.
                         EmbeddedTarget =

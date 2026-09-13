@@ -13,10 +13,18 @@ type BackEndArtifact =
     | GpuCodeObject of path: string
     | IntermediateOnly of format: string
 
+/// The two accepted address-table Cortex-M image contracts. These are explicit
+/// backend capabilities, not a claim that every Cortex-M part shares one map.
+[<RequireQualifiedAccess>]
+type CortexMProfile =
+    | CortexM33SoftFloat
+    | Stm32H747HardFloat
+
 /// Resolved declarations, not executable build hooks. MCU hardware facts come
 /// from Fidelity.Platform's BAREWire records in the checked semantic graph.
 type EmbeddedTarget = {
     PlatformId: string
+    Profile: CortexMProfile
     Image: BAREWire.Hardware.CortexMImageDescriptor
     Vectors: BAREWire.Hardware.StructDescriptor
     Flash: BAREWire.Platform.MemorySpace

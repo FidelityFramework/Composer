@@ -17,6 +17,28 @@ let private symbol (s: string) =
     if not (Regex.IsMatch(s, "^[A-Za-z_][A-Za-z0-9_]*$")) then failwith ("Invalid native symbol: " + s)
     s
 
+let triple = function
+    | CortexMProfile.CortexM33SoftFloat -> "thumbv8m.main-none-eabi"
+    | CortexMProfile.Stm32H747HardFloat -> "thumbv7em-none-eabihf"
+
+let cpu = function
+    | CortexMProfile.CortexM33SoftFloat -> "cortex-m33"
+    | CortexMProfile.Stm32H747HardFloat -> "cortex-m7"
+
+let floatAbi = function
+    | CortexMProfile.CortexM33SoftFloat -> "soft"
+    | CortexMProfile.Stm32H747HardFloat -> "hard"
+
+let reservedVectorSlots = function
+    | CortexMProfile.CortexM33SoftFloat -> [8;9;10;13]
+    | CortexMProfile.Stm32H747HardFloat -> [7;8;9;10;13]
+
+/// The existing probe owns an RA6 J-Link transaction, never an STM32 one.
+let requireProbeSupport = function
+    | CortexMProfile.CortexM33SoftFloat -> ()
+    | CortexMProfile.Stm32H747HardFloat ->
+        failwith "STM32H747 supports image builds only; Composer has no STM32 ST-LINK deployment or device transaction"
+
 let resolve (projectPath: string) (graph: SemanticGraph) : EmbeddedTarget =
     let projectPath = Path.GetFullPath projectPath
     let projectDir = Path.GetDirectoryName projectPath
@@ -30,8 +52,13 @@ let resolve (projectPath: string) (graph: SemanticGraph) : EmbeddedTarget =
     let onProject p = Path.GetFullPath(p, projectDir)
     let platform = resolve graph |> required "BAREWire PlatformDescription"
     let core = platform.Core |> required "platform core"
-    if core.Arch <> "arm_cortex_m33" || core.Triple <> "thumbv8m.main-none-eabi" || core.CpuModel <> "cortex-m33" then
-        failwith "The MCU image backend currently supports the declared Cortex-M33 Thumb soft-float profile only"
+    let profile =
+        match core.Arch, core.Triple, core.CpuModel with
+        | "arm_cortex_m33", "thumbv8m.main-none-eabi", "cortex-m33" -> CortexMProfile.CortexM33SoftFloat
+        | "arm_cortex_m7", "thumbv7em-none-eabihf", "cortex-m7" -> CortexMProfile.Stm32H747HardFloat
+        | _ -> failwith "The MCU image backend requires the declared Cortex-M33 soft-float or STM32H747 Cortex-M7 FPv5-D16 hard-float target"
+    if core.Widths |> List.tryFind (fun width -> width.Name = "Pointer") |> Option.map (fun width -> width.Bits) <> Some 32 then
+        failwith "Cortex-M images require a declared 32-bit Pointer dimension"
     let declarations =
         graph.Nodes |> Map.toList |> List.choose (fun (_, node) ->
             match node.Kind with
@@ -71,8 +98,18 @@ let resolve (projectPath: string) (graph: SemanticGraph) : EmbeddedTarget =
     let origin (s: MemorySpace) = s.Base |> required ("base of " + s.Name)
     for s in [flash; ram] do
         if origin s < 0L || origin s + s.Capacity > 0x100000000L then failwith "Image space exceeds 32-bit address extent"
-    // Reset-vector placement and the supported RA6 J-Link identity reader are explicit.
-    if origin flash <> 0L then failwith "This reset profile requires code flash at zero"
+    // A selected part owns its reset placement. Do not generalize the RA6
+    // flash-at-zero rule into arbitrary nonzero flash support.
+    match profile with
+    | CortexMProfile.CortexM33SoftFloat ->
+        if origin flash <> 0L then failwith "This reset profile requires code flash at zero"
+    | CortexMProfile.Stm32H747HardFloat ->
+        if flash.Name <> "flash-bank1" || origin flash <> 0x08000000L || flash.Capacity <> 0x100000L then
+            failwith "STM32H747 first image requires the complete 1 MiB flash-bank1 at 0x08000000"
+        match ram.Name, origin ram, ram.Capacity with
+        | "dtcm", 0x20000000L, 0x20000L
+        | "axi-sram", 0x24000000L, 0x80000L -> ()
+        | _ -> failwith "STM32H747 requires the complete 128 KiB DTCM at 0x20000000 or 512 KiB AXI SRAM at 0x24000000"
     if image.StackBytes <= 0 || int64 image.StackBytes >= ram.Capacity || image.StackBytes % 8 <> 0 || (origin ram + ram.Capacity) % 8L <> 0L then
         failwith "Invalid Cortex-M stack reservation"
     let layouts = readDescriptors graph
@@ -92,8 +129,17 @@ let resolve (projectPath: string) (graph: SemanticGraph) : EmbeddedTarget =
     | _ -> failwith "Cortex-M vectors must be one contiguous U32 array"
     let alignment = image.VectorAlignment
     if alignment < 128 || alignment &&& (alignment - 1) <> 0 || alignment < vectors.Layout.Size then failwith "Invalid VTOR placement alignment"
-    if image.PartNumber.Length < 1 || image.PartNumber.Length > 16 || image.PartNumberAddress < 0L || image.PartNumberAddress % 4L <> 0L || image.PartNumberAddress + 16L > 0x100000000L then
-        failwith "Invalid RA6 part-number register extent"
+    match profile with
+    | CortexMProfile.CortexM33SoftFloat ->
+        if image.PartNumber.Length < 1 || image.PartNumber.Length > 16 || image.PartNumberAddress < 0L || image.PartNumberAddress % 4L <> 0L || image.PartNumberAddress + 16L > 0x100000000L then
+            failwith "Invalid RA6 part-number register extent"
+    | CortexMProfile.Stm32H747HardFloat ->
+        if image.VectorLayout <> "ArmV7MVectors" || vectors.Layout.Size <> 166 * 4 || alignment <> 1024 then
+            failwith "STM32H747 requires ArmV7MVectors with 166 words and 1024-byte placement alignment"
+        if image.DebugDevice <> "STM32H747XIH6" || image.PartNumber <> "STM32H747XIH6" || image.PartNumberAddress <> 0x5C001000L then
+            failwith "STM32H747 requires the STM32H747XIH6 identity declaration and DBGMCU_IDC at 0x5C001000"
+        if image.PreservedOptionAddress <> 0x5200201CL || image.PreservedOptionBytes <> 48 then
+            failwith "STM32H747 requires the declared 48-byte bank-1 option-register observation window at 0x5200201C"
     if image.PreservedOptionBytes <= 0 || image.PreservedOptionBytes > 4096 || image.PreservedOptionBytes % 4 <> 0 || image.PreservedOptionAddress < 0L || image.PreservedOptionAddress % 4L <> 0L || image.PreservedOptionAddress + int64 image.PreservedOptionBytes > 0x100000000L then
         failwith "Invalid preserved-option extent"
     let startup = str "embedded.startup" |> onProject
@@ -103,10 +149,10 @@ let resolve (projectPath: string) (graph: SemanticGraph) : EmbeddedTarget =
         Toml.getTable "embedded.vector_handlers" doc |> required "embedded.vector_handlers"
         |> Map.toList |> List.map (fun (slot, value) ->
             let index = match Int32.TryParse slot with true, n -> n | _ -> failwith "Vector slot must be an integer"
-            if index < 1 || index >= vectors.Layout.Size / 4 || List.contains index [8;9;10;13] then failwith "Invalid/reserved vector slot"
+            if index < 1 || index >= vectors.Layout.Size / 4 || List.contains index (reservedVectorSlots profile) then failwith "Invalid/reserved vector slot"
             index, (match value with TomlValue.String name -> symbol name | _ -> failwith "Vector handler must be a symbol")) |> Map.ofList
     if Map.tryFind 1 handlers <> Some image.EntrySymbol then failwith "Reset vector must match the platform entry symbol"
-    { PlatformId = platform.Id; Image = image; Vectors = vectors; Flash = flash; Ram = ram
+    { PlatformId = platform.Id; Profile = profile; Image = image; Vectors = vectors; Flash = flash; Ram = ram
       StartupSource = startup; ProvidedLibraries = strings "embedded.provided_libraries" |> Set.ofList
       VectorHandlers = handlers; RecoveryDirectory = str "embedded.recovery" |> onProject
       ToolDirectory = Toml.getString "embedded.tool_directory" doc |> Option.map onProject

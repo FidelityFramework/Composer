@@ -1,9 +1,17 @@
-# Composer-owned Cortex-M build and deployment
+# Composer-owned Cortex-M images
 
-`composer compile project.fidproj --deploy -k` performs the complete checked
-source-to-board path. The first supported image profile is the EK-RA6M5's secure
-Cortex-M33, Thumb, soft-float, 32-bit reset image. Additional devices need their
-own reviewed platform/probe contracts; this is not generic support for all MCUs.
+Composer builds two explicit 32-bit Cortex-M image profiles:
+
+| Profile | Target and ABI | Selected image memory | Composer probe support |
+|---------|----------------|-----------------------|------------------------|
+| EK-RA6M5 secure Cortex-M33 | `thumbv8m.main-none-eabi`, `cortex-m33`, soft-float | Declared code flash at zero and SRAM | Reviewed RA6 J-Link deployment and device operations |
+| STM32H747XIH6 Cortex-M7 | `thumbv7em-none-eabihf`, `cortex-m7`, FPv5-D16 hard-float | Complete 1 MiB flash bank 1 at `0x08000000`, with either 128 KiB DTCM at `0x20000000` or 512 KiB AXI SRAM at `0x24000000` | Build only; deployment and device operations reject before probe access |
+
+For the EK-RA6M5, `composer compile project.fidproj --deploy -k` performs the
+checked source-to-board path. Build the STM32H747 image without `--deploy`;
+Composer has no STM32 ST-LINK transaction. Additional devices need their own
+reviewed platform and probe contracts. The M7 selection does not enable an M4
+image, multiple RAM regions or arbitrary Cortex-M7 parts.
 
 ## Ownership
 
@@ -23,8 +31,9 @@ project startup input with ARM GNU `as`, links with LLD, and verifies the result
 ELF/binary/vector table. Tool processes receive .NET `ArgumentList` arguments;
 there is no application shell hook or script interpreter. No C source is compiled.
 
-`Probe.fs` loads the installed SEGGER SDK with .NET native interop. The vendor
-supplies SWD and flash algorithms. Composer checks the physical part, original
+For the supported RA6 profile, `Probe.fs` loads the installed SEGGER SDK with
+.NET native interop. The vendor supplies SWD and flash algorithms. Composer
+checks the physical part, original
 recovery hashes, image hashes and exact flash readback, preserves option bytes,
 and resets only after successful verification. Firmware auto-update and GUI
 dialogs are disabled. Inspect/watch are non-programming operations.
@@ -34,6 +43,19 @@ It owns reset/interrupt semantics and the checked five-word empty-string-array
 entry adapter. It remains reviewable application code. `provided_libraries`
 accounts for that input's native binding identity; it does not supply host
 libraries or bypass the linker's unresolved-symbol rejection.
+
+The STM32H747 profile requires the part's 166-word `ArmV7MVectors` table at
+1024-byte alignment, including reserved slot 7. It checks the exact part and
+option-register declarations, the 32-bit pointer dimension and the selected
+flash/RAM identity. LLVM and the assembler receive the profile's CPU, FPU and
+float ABI; object attributes and the final ELF must agree. FP64 arithmetic uses
+the H747's hardware double-precision capability.
+
+Generated `layout.inc` exposes `RAM_ORIGIN` beside the vector constants so
+startup can initialize the selected memory. FPU enablement, memory clocks and
+initialization, cache policy and peripheral ownership remain application startup
+obligations. Linker placement and stack separation do not prove those conditions
+or provide a runtime stack-overflow guard.
 
 ## Project configuration
 
@@ -76,6 +98,8 @@ vendor/toolchain dependencies are not bundled into the application repository.
 
 ## Commands and artifacts
 
+The following deployment and device commands apply to the RA6 profile:
+
 ```sh
 composer compile HelloBlinky.fidproj -k
 composer device HelloBlinky.fidproj --action capture
@@ -107,6 +131,7 @@ evidence of functional board behavior.
 dotnet run --project tests/Mmio/Mmio.Tests.fsproj
 dotnet run --project tests/DeviceAccess/DeviceAccess.Tests.fsproj
 dotnet run --project tests/MCU/MCU.Tests.fsproj -- /path/to/HelloBlinky.fidproj
+dotnet run --project tests/CortexMTargets/CortexMTargets.Tests.fsproj
 dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj
 ```
 
@@ -121,6 +146,13 @@ the linker's data/stack collision assertion, reject a surviving allocator import
 and check that a failed build cannot retain deployment evidence. They do not open
 the probe. Physical acceptance used Composer's `--deploy` and `device --action
 watch`; the binary matches the earlier accepted 10% PWM image byte for byte.
+
+The [Cortex-M target suite](../tests/CortexMTargets/README.md) checks the resolver
+and builds M33, M7 DTCM and M7 AXI SRAM fixtures. It covers hardware FP64 code,
+ABI/vector identity, generated RAM origins, a packed framebuffer below the stack,
+rejection of invalid memory/target declarations and a real linker collision.
+It also checks rejection of M7 probe operations and stale image evidence. These
+fixture images are never executed, and no probe is opened.
 
 Composer's `tests/IOMap/IOMap.Tests.fsproj` reads CCS-checked `.clef` declarations
 and checks package pins and complete connectivity against the pinned vendor netlist. See the

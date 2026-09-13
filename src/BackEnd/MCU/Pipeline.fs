@@ -6,7 +6,7 @@ open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 
 /// Two sibling MCU image paths. Which one runs is decided by the target the
 /// orchestrator resolved from the declared architecture, not by a flag: a
-/// Cortex-M image executes from flash at zero behind an address-table vector,
+/// Cortex-M image executes from its declared flash behind an address-table vector,
 /// an Xtensa image is ROM-loaded into SRAM behind a vector block of code.
 let backend: BackEnd = {
     Name = "LLVM / MCU image (Cortex-M or Xtensa)"
@@ -24,9 +24,8 @@ let backend: BackEnd = {
             let triple =
                 match ctx.EmbeddedTarget, ctx.XtensaTarget, ctx.TargetTripleOverride with
                 | Some _, Some _, _ -> failwith "Exactly one MCU image target may be resolved"
-                | _, Some _, Some declared -> declared
-                | _, Some _, None -> failwith "The Xtensa image target requires a declared triple"
-                | _, None, _ -> "thumbv8m.main-none-eabi"
+                | _, _, Some declared -> declared
+                | _, _, None -> failwith "The MCU image target requires a declared triple"
             BackEnd.LLVM.Lowering.lowerToLLVM mlir llvm triple ctx.TargetPointerBits
             |> Result.map (fun () ->
                 if ctx.EmitIntermediateOnly then IntermediateOnly "LLVM IR"

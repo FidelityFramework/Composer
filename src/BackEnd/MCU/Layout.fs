@@ -40,7 +40,7 @@ ASSERT(LOADADDR(.data) + SIZEOF(.data) <= ORIGIN(FLASH) + LENGTH(FLASH), "Flash 
 """ target.Image.EntrySymbol (origin flash) flash.Capacity (origin ram) ram.Capacity stackTop stackBottom
             target.Image.VectorAlignment target.Image.StackBytes target.Vectors.Layout.Size target.Image.VectorAlignment)
     File.WriteAllText(Path.Combine(destination, "memory.ld"), script)
-    File.WriteAllText(Path.Combine(destination, "layout.inc"), sprintf ".equ VECTOR_COUNT, %d\n.equ VECTOR_ALIGNMENT, %d\n" (target.Vectors.Layout.Size / 4) target.Image.VectorAlignment)
+    File.WriteAllText(Path.Combine(destination, "layout.inc"), sprintf ".equ VECTOR_COUNT, %d\n.equ VECTOR_ALIGNMENT, %d\n.equ RAM_ORIGIN, 0x%X\n" (target.Vectors.Layout.Size / 4) target.Image.VectorAlignment (origin ram))
     Tools.writeJson (Path.Combine(destination, "layout.json"))
         {| platform = target.PlatformId; flashOrigin = origin flash; flashBytes = flash.Capacity
            ramOrigin = origin ram; ramBytes = ram.Capacity; stackBottom = stackBottom; stackTop = stackTop
