@@ -26,6 +26,8 @@ Useful evidence can include a callback's actual argument convention, fields cons
 
 [The Gift of Deferred Inference](../../../clef-lang-site/hugo/content/blog/deferred-inference.md) supplies the discipline: retain established facts and their dependencies while other choices remain open. Do not prematurely commit a widened value to a concrete record or permanently discard the evidence around it. A consistent partial binding may remain under analysis in the editor; concrete compilation needs the premises required by its selected realization.
 
+The foreign frontend contributes that partial structure to ordinary CCS/PSG elaboration. A call relationship, branch condition or capture can be known while its type arguments, effect requirements or representation remain open. The tables below describe supported semantic dispositions as they become justified; they are not an admission checklist requiring all choices to be completed before the graph can be built.
+
 ## Clef-native dispositions
 
 The [JavaScript boundary specification](../../../clef-lang-spec/spec/javascript-boundary.md) governs the admitted surface:
@@ -35,7 +37,8 @@ The [JavaScript boundary specification](../../../clef-lang-spec/spec/javascript-
 | Required value of an established shape | Declared Clef type, with the required inbound narrowing. |
 | Optional or nullable position | Option by default; preserve contractually distinct states with a generated union. |
 | Options bag | Generated nominal record with explicitly optional fields. |
-| `any`/`unknown` or unresolved foreign value | `JsValue`, with explicit foreign contact and narrowing when typed access is required. |
+| Position whose established contract admits an undetermined foreign value | `JsValue`, with explicit foreign contact and narrowing only for uses requiring it. |
+| Unresolved inference or mapping choice | Retain inference variables, candidate constraints and provenance in elaboration; do not default to `JsValue`. |
 | Known opaque host reference | `JsRef<'T>` where the declaration establishes that identity. |
 | Concrete foreign union | Binding-owned introduction/elimination under the specification's erased-union rules; no universal NTU type. |
 | Callback | Declared calling convention, parameter/result conversions and applicable lifetime/effect contract. |
@@ -49,7 +52,7 @@ Removing CLR-specific top bounds does not remove meaningful generic constraints.
 
 Atelier's [Transcribe design](../../../Atelier/docs/10_transcribe.md) makes the result a Clef binding declaration with binding-strategy annotations. These describe how a supported declaration participates in the foreign boundary. They are not an embedded JavaScript body or a license for unchecked lowering.
 
-The Library of Alexandria supplies witnessing rules for supported declaration shapes. Ingestion checks rule coverage; a missing rule is a located Composer/Alex support requirement. Transcribe does not invent a witness or generate an alternative lowering mechanism. A supported rule does not settle every remaining type, effect or representation constraint by itself.
+The Library of Alexandria supplies witnessing rules for supported declaration shapes. Ingestion reports rule coverage as the shape becomes known: an established shape without a rule is a located Composer/Alex support requirement; an unresolved shape has a pending coverage question. Partially elaborated candidates remain available to the editor and compiler analysis. A declaration cannot be claimed executable under a selected realization without the required coverage. Transcribe does not invent a witness, and rule availability does not settle unrelated type, effect or representation constraints.
 
 CCS and Baker establish the typed conversion structure and its obligations. Fan-out composes Ingredients into recipes; generic fold-in incorporates them. Alex observes the settled structure through patterns and elements and emits the portable vocabulary. The JSIR backend realizes it in JavaScript and may read the retained graph facts it needs.
 
@@ -68,3 +71,5 @@ Atelier displays compiler and substrate findings, proposed bindings and outstand
 A supplied assumption remains identifiable as an assumption. A checked guard establishes only its predicate under its validity conditions. Regeneration must reconsider evidence affected by changed declarations, bodies or dependencies; it must not silently carry an old decision into a new contract.
 
 See [dependency recovery](05_supply_chain_and_transcribe.md) for the interactive sequence and [identity and acceptance](07_dependency_identity_and_validation.md) for the evidence retained with the result.
+
+The [worked frontend example](09_contract_directed_dependency_recovery.md) shows how TypeScript demand and JSHIR implementation evidence constrain a Clef-owned dependency through partial elaboration. It makes the structural facts, deferred decisions, declaration/body correspondence and owned SDK call edge concrete.

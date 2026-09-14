@@ -2,7 +2,7 @@
 
 **Design review: September 2026**
 
-F#/Fable and Clef/Composer can produce JavaScript for the same host while retaining different source languages, intermediate representations and implementation choices. The Clef pathway is intended to support Clef-native bindings and recovered library implementations. It is not constrained to reproduce Fable output or the JavaScript emitted from a vendor's TypeScript source.
+F#/Fable and Clef/Composer can produce JavaScript for the same host while retaining different source languages, intermediate representations and implementation choices. The Clef pathway supports the design of Clef-native bindings and library implementations elaborated from JavaScript frontend facts and TypeScript/SDK constraints. Its output can differ from Fable output or the JavaScript emitted from a vendor's TypeScript source.
 
 ## The working F# path
 
@@ -23,6 +23,8 @@ Clef program + Clef-native libraries + declared foreign boundaries
 ```
 
 The [backend specification](../../../clef-lang-spec/spec/backend-lowering-architecture.md) fixes the boundary. Alex emits `func`, `scf`, `arith`, `memref` and `index`. JSIR belongs to the target pathway. Backend lowering may read structural identity from the PSG; it does not recover semantics by guessing from emitted instruction sequences or symbol spellings.
+
+The JavaScript frontend contributes implementation structure, established relationships and remaining inference variables to ordinary CCS/PSG elaboration. Consistent partial graphs remain available for further inference; a fully resolved implementation is not required before ingestion. Build or REPL commitment requires the premises of the computation being realized. Frontend JSHIR provides foreign-program analysis input, while the forward JSIR backend consumes the witnessed portable computation.
 
 Representation and analysis remain distinct. Source dimensions identify quantities. Range and relational evidence constrain numeric selection. Captures, sharing and lifetime constrain closure realization. Platform capabilities constrain which forms are available. These facts can remain pending during elaboration, but a concrete commitment must have its required premises.
 

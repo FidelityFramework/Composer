@@ -4,7 +4,11 @@
 
 Composer's JavaScript target compiles Clef-native programs and libraries into JavaScript that satisfies the selected host contract. The output may differ substantially from the JavaScript produced by a vendor's TypeScript SDK. Correctness concerns the supported observable behavior, including failure and lifecycle behavior, rather than reproduction of the vendor's source or internal representations.
 
-Clef does not acquire `obj` or `null` to reach this target. Foreign declarations and implementations supply evidence for binding generation. Analysis recovers what it can, retains unresolved constraints, and presents the remaining decisions through the design-time tooling. The selected structures enter the ordinary CCS/PSG/Baker/Alex pathway. JSHIR/JSIR realizes the settled computation below the witness boundary.
+Clef does not acquire `obj` or `null` to reach this target. A single coordinated foreign-language frontend combines JavaScript structure with TypeScript declarations and SDK uses. It can accept several contributing tools and representations. JSHIR is the worked ingestion candidate; the [substrate comparison](02_jsir_tooling.md#ingestion-substrate-choice) keeps interfaces and useful combinations open. The frontend contributes candidate Clef and available structural and semantic evidence to ordinary CCS/PSG elaboration. Consistent unresolved types, ranges, effects and representation choices remain pending as application and target context arrives. The frontend need not resolve them all before ingestion.
+
+Build or REPL evaluation commits the required portion of the computation. The obligations needed for that commitment must then be established; unrelated open work need not be settled. A foreign value used only through an admitted opaque contract can remain opaque throughout execution. An unresolved inference variable is not automatically `JsValue`. In forward compilation, Baker and Alex retain their existing roles, and JSHIR/JSIR realizes the witnessed portable computation in the backend.
+
+The [tooling contribution map](02_jsir_tooling.md#contributions-to-a-fused-pipeline) gives Bun high weight for JavaScript structure, binding/dependency relationships and transformations; Dafny high weight for semantic contracts, functional/numeric realization and preservation testing; and JSIR high weight for structured analysis and target realization. These are overlapping strengths across a fused pipeline, not exclusive stage assignments. Their contributions meet through shared identities and obligations in ordinary elaboration, with borrowed ideas, candidate integrations and established results distinguished.
 
 ## Governing architecture
 
@@ -13,10 +17,24 @@ The [Thin Middle End doctrine](../Thin_Middle_End_Design.md) and [Backend Loweri
 - CCS owns semantic facts in the PSG. Dimensions, ranges, identities, effects, capture relationships and obligations remain available while they are useful.
 - Baker fan-out composes recipes from Ingredients; generic fold-in incorporates their structure. Target realization does not bypass this separation.
 - Alex's Library of Alexandria witnesses supported declaration and graph shapes through patterns and elements. Its witnessed vocabulary is `func`, `scf`, `arith`, `memref` and `index`.
-- JSHIR/JSIR is a backend realization. No JavaScript-specific or Clef semantic dialect crosses the portable witness boundary.
+- In the worked frontend route, JSHIR is foreign-program analysis input. In forward lowering, JSHIR/JSIR belongs to the backend; no JavaScript-specific or Clef semantic dialect enters Alex's portable witnessed vocabulary.
 - A lowering preserves each affected property or re-establishes it. A missing premise remains visible until it is resolved, explicitly assumed under a boundary contract, or diagnosed where commitment requires it.
 
 The [JavaScript Boundary Semantics](../../../clef-lang-spec/spec/javascript-boundary.md) defines foreign values, narrowing, absence and failure. [Option Operations Representation](../../../clef-lang-spec/spec/option-operations-representation.md) separately defines interior Option realization.
+
+## The Clef library ecosystem being built
+
+The intended destination is a set of Clef-native SDKs and supporting Clef libraries whose reachable implementations participate in the same semantic graph as application code. Xantham supplies the declaration and ownership analysis; the JavaScript frontend extends the ingestion to the dependency behavior those SDKs actually call. Original package payloads remain pinned inputs for provenance, comparison and regeneration.
+
+| Input or facility | Place in the Clef ecosystem |
+|---|---|
+| TypeScript SDK declarations and executable entry points | Clef SDK declarations and implementations, with the required host boundaries. |
+| Called dependency behavior and its necessary initialization/effects | Owned supporting Clef libraries, linked by resolved declaration and implementation identity. |
+| A dependency shared by several SDKs | Shared ownership where identity and compatible contracts establish it; preserve per-use instantiations and runtime-linkage provenance. |
+| Platform-supplied operations | Declared host capabilities and boundary bindings. |
+| Application entry points | Demand for ordinary reachability, elaboration, refinement and final compilation across these libraries. |
+
+This creates room to refine dependency implementations into functional Clef structures while preserving boundary data contracts and required behavior. As context accumulates, shared graph analysis can expose simplifications across library boundaries. A deployed artifact can then contain compiled Clef implementations and declared host calls without carrying the replaced vendor runtime code. The [worked frontend guide](09_contract_directed_dependency_recovery.md) connects this destination to partial inference, source generation and executable acceptance.
 
 ## Current ground and intended work
 
@@ -32,13 +50,14 @@ The [JavaScript Boundary Semantics](../../../clef-lang-spec/spec/javascript-boun
 ## Reading order
 
 1. [Two source paths, one host contract](01_two_models.md): the compilation boundary and the meaning of different but valid output.
-2. [JSHIR/JSIR tooling and lowering](02_jsir_tooling.md): the pinned analysis substrate, backend role and required correspondence.
+2. [JavaScript tooling, analysis and lowering](02_jsir_tooling.md): Bun, Dafny and JSIR contributions, their relative weighting and combined use, pinned source reviews and preservation requirements.
 3. [Deployment contexts and BAREWire](03_four_wings.md): Cloudflare, browsers, WebViews and the shared memory/IPC/wire contract.
 4. [From foreign declarations to Clef-native bindings](04_sdk_describes_runtime.md): contract recovery, annotations, rule coverage and compiler ownership.
 5. [Dependency replacement through deferred inference](05_supply_chain_and_transcribe.md): the interactive recovery loop and an artifact without third-party JavaScript dependencies.
 6. [Opaque values and absence](06_obj_and_null_at_the_boundary.md): what can stay unknown, what must be checked, and what the backend can emit.
 7. [Identity, preservation and acceptance](07_dependency_identity_and_validation.md): dependency provenance, proof scope and executable acceptance.
 8. [Numeric selection and precision across strata](08_numeric_selection_and_precision.md): representation, arithmetic construction, transfer fidelity and design-time diagnostics through the JavaScript pathway.
+9. [JavaScript frontend and deferred dependency translation](09_contract_directed_dependency_recovery.md): a worked TypeScript/JSHIR-to-Clef example, partial elaboration, offline and application reachability, and the owned SDK dependency edge.
 
 ## Design rationale
 

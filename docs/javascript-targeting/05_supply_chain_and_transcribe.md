@@ -24,16 +24,19 @@ This is the Transcribe/Transpose work discussed in [Atelier](../../../Atelier/do
 
 ```text
 Pinned declarations + executable entry points + dependency resolution
-    -> Xantham structural analysis and JSHIR implementation analysis
-    -> candidate contracts and Clef-native structures
-    -> constraints joined with application use and target capabilities
-    -> Atelier/LSP displays evidence, pending requirements and supported choices
-    -> developer supplies residual intent or documented contract
-    -> candidate Clef checked through ordinary CCS/PSG elaboration
-    -> Baker, Alex and JavaScript backend realize the accepted computation
+    -> one frontend combines Xantham and JavaScript structural evidence
+    -> candidate Clef and partial facts enter ordinary CCS/PSG elaboration
+    <-> application/target context and further analysis refine constraints
+    <-> Atelier/LSP presents findings; developer supplies residual intent if needed
+    -> build or REPL commitment of the required computation
+    -> Baker, Alex and JavaScript backend realize that computation
 ```
 
-The lift provides an analysis surface. It does not restore information that the JavaScript never represented, and it does not automatically construct a verified Clef program. Pattern recognition nominates a translation; source semantics and accepted contracts justify it. A candidate implementation must enter the normal compiler path with the same obligations as authored Clef.
+The lift supplies the implementation's structured operations and relationships. The frontend can translate available structure and contribute constraints before every type, range, effect or representation has an answer. It does not restore information the JavaScript never represented, and candidate type-checking does not alone prove behavioral correspondence. Those obligations accompany ordinary elaboration under the same deferred-inference discipline as authored Clef.
+
+JSHIR supplies the worked analysis route; [parser and API composition](02_jsir_tooling.md#ingestion-substrate-choice) remains open. Each contributing substrate or adapter must preserve the required structure, source identity and pending relationships. One frontend coordinates those contributions into ordinary CCS/PSG elaboration. Bun, Dafny and JSIR can each inform recovery, refinement, realization and validation according to their [documented strengths](02_jsir_tooling.md#contributions-to-a-fused-pipeline); the synthesis retains the forward witness boundary.
+
+[The worked frontend example](09_contract_directed_dependency_recovery.md) combines SDK demand and reachable JSHIR structure in one translation path. Its Option/closure example shows partial elaboration, correspondence obligations and the SDK call redirected to an owned supporting library. Offline reachability bounds the SDK behavior requiring translation; application reachability later selects from the resulting Clef graph. Witnessing retains its existing forward role.
 
 ### Infer as much as the evidence supports
 
@@ -49,7 +52,7 @@ A design-time finding should locate the missing premise and explain the conseque
 
 Developers supply intent, domain facts or a documented foreign contract. Those inputs re-enter analysis with provenance. An override is not proof of the vendor implementation. Where an inbound runtime value must satisfy a predicate, the compiler can generate the corresponding total check and typed failure exit. That is different from asking a developer to assert that all future inputs satisfy it.
 
-Pending obligations are allowed while editing a consistent partial program. At a concrete commitment, the required property must be established, checked at the relevant runtime boundary, or supported by an explicit permitted external assumption. Otherwise the compiler reports the unresolved requirement. Unsupported witnessing shapes are likewise design-time support findings.
+Pending obligations remain resident during elaboration of a consistent partial program, including imported library work. Build or REPL evaluation requires the obligations for the computation being committed, not a fully resolved description of every imported value or unused operation. A required property must then be established, checked at a runtime boundary where the contract permits it, or supported by an explicit permitted external assumption. Otherwise the compiler reports the located requirement. Known contradictions and established unsupported shapes can be reported earlier; an open choice is not such a failure.
 
 ## Preserve behavior while changing structure
 

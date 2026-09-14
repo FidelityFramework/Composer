@@ -12,6 +12,8 @@ An `obj` in generated F# bindings may mean a genuinely dynamic TypeScript positi
 
 There is no requirement to recover every object's complete shape. Analysis may establish a useful projection, or settle on an opaque foreign crossing. It may also keep the decision pending until application context supplies more constraints. Do not manufacture a record or nominal handle identity to conceal an unsupported mapping.
 
+An unresolved inference variable is also distinct from `JsValue`. The former is an open compiler decision with constraints still accumulating; the latter is a deliberate contract for a foreign value. The frontend must not turn missing inference into `JsValue`, `obj` or a guessed concrete type merely to finish generation. Structural facts and unresolved type relationships can enter ordinary CCS/PSG elaboration together.
+
 ## The foreign pair
 
 | Type | Contract |
@@ -27,9 +29,9 @@ The boundary grade tracks modeled foreign contact transitively. Opaque passage p
 
 ## Narrow only what a use requires
 
-When a Clef operation relies on a declared structure, narrowing must establish the required predicate before the use. The binding can declare a supported projection rather than promise complete knowledge of the original object. Other manipulation can remain within a declared foreign operation.
+Deferred inference and runtime boundary narrowing occur at different points. Inference can leave the required predicate, type or realization pending while the program is elaborated. When build or REPL evaluation commits a use, the compiler must establish its required static facts and any permitted generated check. An actual incoming value must pass that check before the typed operation uses it. The binding can declare a supported projection rather than promise complete knowledge of the original object; other manipulation can remain within a declared foreign operation.
 
-Narrowing is total: it yields a converted value or a Result error identifying the failed path and expected shape. It does not admit a partially converted record. Callback parameters entering from JavaScript receive the same treatment. The concrete narrowing-error representation remains a specification item; this folder does not invent one.
+Runtime narrowing is total: it yields a converted value or a Result error identifying the failed path and expected shape. It does not admit a partially converted runtime record. This says nothing against a partially inferred program during elaboration. Callback parameters entering from JavaScript receive the same boundary treatment. The concrete narrowing-error representation remains a specification item; this folder does not invent one.
 
 Property names and `typeof` tests are evidence a generated check can use. Getters, proxies, thrown values, mutation and buffer detachment can affect the check or invalidate a premise before use. An immutable binding to a mutable object does not freeze its contents. The graph must preserve the relevant identity, effects and validity interval rather than treat one successful observation as permanent.
 

@@ -8,7 +8,7 @@ Cloudflare, browsers and WebViews are JavaScript deployment contexts. BAREWire i
 
 The intended artifact is JavaScript with the exports, entry adapters and host calls required by its selected Cloudflare profile. An application using Durable Objects needs per-instance state and the applicable constructor, method and lifecycle behavior. A workflow realization needs an explicit relation between source continuation state and the host's persistence, retry and resumption facilities.
 
-Cloudflare supplies execution, dispatch, object identity and service facilities under their declared contracts. Compiler-generated code must use those facilities correctly. It does not establish a new Cloudflare scheduler or prove the platform implementation. A source orchestration policy must have a supported host realization; an unsupported policy remains a diagnosed capability requirement.
+Cloudflare supplies execution, dispatch, object identity and service facilities under their declared contracts. Compiler-generated code must use those facilities correctly. It does not establish a new Cloudflare scheduler or prove the platform implementation. A source orchestration policy needs a supported host realization when the corresponding computation is committed. Known incompatibilities can be diagnosed during elaboration; missing context remains pending.
 
 Three dependency categories matter:
 
@@ -18,7 +18,7 @@ Three dependency categories matter:
 | Executable SDK wrappers and subsidiary libraries | Their behavior remains a dependency until the required functionality has an accepted replacement. |
 | Clef-owned implementations | Compile with the application through the same semantic and lowering pathway. |
 
-An artifact without third-party JavaScript dependencies is possible when all required executable library behavior is supplied by compiled Clef or the declared host facilities. Bundling vendor code into one file does not remove that dependency. [Source recovery](05_supply_chain_and_transcribe.md) explains the replacement process.
+An artifact without third-party JavaScript dependencies is possible when all required executable library behavior is supplied by compiled Clef or the declared host facilities. Bundling vendor code into one file does not remove that dependency. [JavaScript frontend elaboration](05_supply_chain_and_transcribe.md) explains the replacement process.
 
 FSharp.CloudEdge's working F#/Fable route and its September [selected delivery](../../../FSharp.CloudEdge/docs/SDK-DELIVERY-ACCEPTANCE-20260913.md) provide concrete binding and runtime cases. They do not establish completion of the Clef/JSIR route. Provisioning and uploading the resulting artifact belong to deployment tooling using the management API, independently of the compiler that produced it.
 

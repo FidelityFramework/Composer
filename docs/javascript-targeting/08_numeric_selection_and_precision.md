@@ -40,10 +40,10 @@ For JavaScript, [Width Inference §8](../../../clef-lang-spec/spec/width-inferen
 The logical preservation chain is:
 
 ```text
-Source meaning and justified input facts
-    -> range evidence and representation selection
-    -> permitted construction, decomposition and placement
-    -> settled PSG with numerical obligations and their evidence
+Source/frontend structure + TypeScript/SDK constraints + input provenance
+    -> partial PSG with established facts and deferred obligations
+    -> ordinary elaboration: range, representation and construction constraints
+    -> required numerical structure settled for the chosen commitment
     -> Alex's portable witnessed operations + retained codata
     -> JSIR realization and emitted JavaScript
     -> boundary encoding, peer computation or durable reconstruction
@@ -53,18 +53,26 @@ This is a dependency order. It does not force every fact to settle in a single e
 
 | Transition | Required preservation and ownership |
 |---|---|
-| Source and foreign inputs into PSG | CCS retains dimensions, range provenance and operation meaning. Generated boundary checks establish only their successful-path predicates. A foreign declaration alone does not prove the input values. |
+| Source and foreign inputs into PSG | CCS retains structural relationships, operation meaning, established or pending dimensions/ranges, provenance and unresolved inference variables. Generated boundary checks establish only their successful-path predicates. A foreign declaration alone does not prove the input values. |
 | Elaboration into saturation | Establish coverage, selected representation and construction premises against the applicable platform facts. Real interval analysis needs sound outward enclosure and terminating procedures; integer transfer functions are not a real-arithmetic analysis. |
 | Baker decomposition and fold-in | Fan-out composes recipes from Ingredients; generic fold-in incorporates them. Preserve term identities, operand evaluation, rounding points, capture relationships and the justification for each permitted merge. |
 | PSG into portable MLIR | Alex observes settled structure through Library of Alexandria patterns and elements. The Huet-style zipper observes the joint constraints; witnessing does not infer missing ranges or choose a numerical policy. |
 | Portable operations into JSIR and source | Realize the selected operations and modes, reading useful codata. Preserve or re-establish properties affected by coercion, precision, ordering or storage changes. Emission does not rerun the representation selector. |
 | JavaScript into a foreign or BAREWire boundary | Check directional representation fidelity, encoding, extent and the required failure behavior. Retain the relation to the sending computation and receiving use. |
 
-Alex's vocabulary remains `func`, `scf`, `arith`, `memref` and `index`. JSHIR/JSIR stays below that witness boundary. Numerical constructions must elaborate into supported portable structure; a missing realization is a support requirement, not a reason to introduce a semantic dialect or hide a numerical implementation in emission.
+Alex's vocabulary remains `func`, `scf`, `arith`, `memref` and `index`. In forward lowering, JSHIR/JSIR realization remains below that witness boundary. Frontend JSHIR analysis contributes structural and semantic facts to ordinary CCS/PSG elaboration. Numerical constructions must elaborate into supported portable structure for commitment; a missing realization is a support requirement, not a reason to introduce a semantic dialect or hide a numerical implementation in emission.
 
 The selected representation is carried, not guessed again from an MLIR width or JavaScript expression. A lowering that can disturb an established property needs preservation evidence or a re-check at that edge. Neither an optimization flag nor a successfully generated solver query supplies that evidence.
 
 ## 4. Concrete JavaScript construction obligations
+
+### Lessons from the combined tooling review
+
+The [Dafny source review](02_jsir_tooling.md#dafnys-semantic-and-implementation-contribution) supplies concrete preservation cases: constructing large integer literals through strings before entering a wide carrier, realizing arithmetic according to its established representation, and accounting for source-specific division, modulo and shift semantics. These cases can expose missing premises during dependency recovery as well as guide final JavaScript realization.
+
+Bun's operation structure and transformation provenance help identify the foreign computation to preserve. JSHIR analysis can relate those operations to candidate refinements and eventual target operations. Their evidence joins ordinary dimensional/range/construction inference; none of these sources supplies a numeric policy merely by being the selected tool.
+
+Distinguish an intended exact Clef integer from the actual meaning of an existing JavaScript literal. If JavaScript has already rounded a literal into a Number, changing it into the decimal spelling's exact wide integer changes the computation. Preserve the foreign behavior under the admitted correspondence; diagnose any conflict with the SDK's intended exact-value contract. When Clef's selected value must be exact, its emitted construction must preserve it before subsequent arithmetic begins. A wider destination cannot repair earlier loss.
 
 ### Integers carried by Number
 
@@ -126,6 +134,8 @@ Recovery must retain accepted identities and numeric state consistently, or reco
 ## 6. Diagnostics at the point of commitment
 
 [Deferred inference](../../../clef-lang-site/hugo/content/blog/deferred-inference.md) permits consistent partial programs while constraints accumulate. Applicable numeric obligations are generated during ordinary compilation, independently of optimization level or debug assertions. Developers supply missing intent or justified domain facts; they should not need per-operation wrappers to activate the analysis.
+
+Build or REPL evaluation commits the required computation, including its numeric dependencies. The frontend can recover its operation graph before its dimensions, ranges or representations have fully resolved. Pending obligations remain attached to that graph until the relevant commitment; this does not demand concrete representations for unrelated unused work.
 
 Atelier/LSP presents CCS findings with source range, related nodes, reachability, target context and evidence provenance. It does not run a separate numeric selector. A useful readout explains the quantity and range, selected representation, construction and rounding points, permitted decompositions, boundary effects and unresolved premises.
 
