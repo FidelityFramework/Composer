@@ -10,6 +10,14 @@ Fable compiles F# through its own intermediate representation and target transfo
 
 Fable is neither a CLR-IL translator nor a string-template wrapper. Its use does not inherently require every application operation to import an npm library: host APIs, compiler support code and third-party libraries are separate dependency categories. The actual emitted dependency closure determines what an application carries.
 
+### An executable oracle for the Clef pathway
+
+The working F#/Fable pathway has high value as an oracle throughout this development. Existing binding and application cases characterize actual JavaScript/host interactions. Corresponding F# implementations of functional fixtures can also provide executable reference behavior for Option, closures and callback composition while Composer's JavaScript realization is being built. BAREWire fixtures contribute concrete encoding, decoding and rejection observations.
+
+Compare implementations under an explicit shared contract: related inputs, results, failures, state changes and invocation traces. F# and Clef can express that contract differently, and their emitted JavaScript can have different representations. The oracle supplies observations against which recovery, refinement and lowering can be checked. Its source and generated JavaScript can also help localize a disagreement between those stages.
+
+Record which behavior the reference actually exercises. A Fable binding calling the original vendor dependency characterizes that boundary; an F# implementation of the dependency's algorithm exercises a separate realization. Both are useful. Their assumptions, runtime dependencies and shared components remain visible in the [oracle comparison procedure](07_dependency_identity_and_validation.md#ffable-as-an-executable-oracle).
+
 ## The Clef path
 
 ```text

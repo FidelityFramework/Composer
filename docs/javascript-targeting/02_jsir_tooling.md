@@ -2,7 +2,7 @@
 
 **Design review: September 2026**
 
-Composer's JavaScript pathway combines declaration analysis, foreign implementation analysis, functional refinement, proof obligations and target realization. Bun, Dafny and JSIR offer overlapping contributions to that work. JSHIR is a candidate analysis representation and part of the designed JavaScript backend; frontend interfaces and useful combinations remain open. CCS retains authority for Clef semantics throughout.
+Composer's JavaScript pathway combines declaration analysis, foreign implementation analysis, functional refinement, proof obligations and target realization. Bun, Dafny, JSIR and the working F#/Fable pathway offer overlapping contributions to that work. JSHIR is a candidate analysis representation and part of the designed JavaScript backend; frontend interfaces and useful combinations remain open. CCS retains authority for Clef semantics throughout.
 
 ## Contributions to a fused pipeline
 
@@ -13,6 +13,7 @@ The relative weighting below describes the strongest contributions established b
 | Bun | High weight for concrete JavaScript structure, binding identity, module/dependency relationships and transformation behavior. | Its representations can feed ingestion; its linking and rewrite decisions also supply cases for reachability, functional refinement, effect preservation, diagnostics and final dependency-closure checks. The internal adapter is a candidate to build and validate. |
 | Dafny | High weight for semantic translation, specifications, representation choices and preservation testing. | Contracts and executable/proof distinctions can inform recovered Clef abstractions and their obligations; the JavaScript compiler supplies functional and numeric realization cases; external-contract and compiler checks inform acceptance. Design and code are precedents. Direct reuse or use as a scoped reference/checking tool requires a separate validated integration. |
 | JSIR/JSHIR and MLIR analysis | High weight for structured operation/region analysis and the designed forward JavaScript realization path. | The source lift can contribute ingestion evidence; structured comparisons can inspect candidate refinements and expose preservation obligations; target conversion and printing realize the witnessed computation. Coverage and verification must be established for each used route. |
+| F#/Fable pathway | High immediate weight as an executable oracle, grounded in the working bindings and bounded behavior tests. | Existing SDK/host interactions and BAREWire cases characterize contracts; corresponding functional F# implementations can supply reference results and traces for recovery, refinement and lowering. Source and emitted JavaScript can help localize discrepancies. Follow the [oracle procedure](07_dependency_identity_and_validation.md#ffable-as-an-executable-oracle) and record the shared semantic domain. |
 
 Xantham's declaration/ownership analysis and SDK uses provide the contextual contracts that these contributions meet. The TypeScript Compiler API remains a possible source of additional syntax, symbol and resolution evidence. None of the resource weightings changes the authority of the Clef specifications or Composer's architecture.
 

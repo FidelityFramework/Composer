@@ -250,7 +250,7 @@ Before: application -> JavaScript SDK body -> npm dependency create
 After:  application -> ClefStatusSdk -> Recovered.OptionalCore
 ```
 
-Generating the supporting module while leaving the SDK import unchanged would fail the replacement claim. It is the SDK's resolved call edge, as well as the dependency body, that must change. Specialization also limits the supporting library's accepted API: another SDK use with different types or observations triggers further recovery, rather than silently reusing an incompatible result.
+Generating the supporting module while leaving the SDK import unchanged would fail the replacement claim. It is the SDK's resolved call edge, as well as the dependency body, that must change. Specialization also limits the supporting library's accepted API. A new SDK use first elaborates against the retained source and constraints; a previously unaccepted instantiation may need further representation or behavior obligations. Translation extends only when the use requires foreign behavior not yet represented. The [incremental lifecycle](05_supply_chain_and_transcribe.md#incremental-library-lifecycle) preserves the completed conversion work.
 
 An unresolved payload retains its inference relationships; it is not automatically emitted as `JsValue`. If the established contract instead admits an opaque foreign payload, it may remain `JsValue` through declared crossings without recovering its fields. That does not supply the implementation of an unknown foreign operation or remove a retained runtime dependency by itself.
 
@@ -288,9 +288,12 @@ The [tooling contribution map](02_jsir_tooling.md#contributions-to-a-fused-pipel
 | Bun's syntax, symbol, scope and import/part relationships | Trace the lexical `choose`, returned function, captured bindings, read call and strict comparisons. Retain initialization dependencies and distinguish source structure from parser rewrites. | J1–J7 correspondence anchors, capture/value identities and the behavioral slice. These facts still need the relevant analysis; symbol-use estimates do not prove callback multiplicity. |
 | JSHIR operations and regions | Represent the required calls and branches for further analysis, whether lifted through the reviewed Babel route or supplied by a separately validated adapter. Relate them to the same source and candidate identities. | The same J1–J7 observations and affected transformation obligations. A second view supplements existing evidence rather than creating duplicate semantic owners. |
 | Dafny's specification and compilation examples | Formulate the callback-state/result relation and construction/invocation traces; use function/application and datatype cases to scrutinize the Option/closure candidate and eventual JS realization. | Factory evaluation, absence equivalence, callback order and state-sharing obligations from section 6. A reference model or checker would be an additional explicit implementation, not assumed tooling. |
+| F#/Fable executable reference | Implement the same reader contract in F#, compile through Fable, and exercise related absent/present inputs and stateful callbacks. Compare its results and traces with the original JavaScript and, as available, the Clef-generated artifact. | Executable cases for construction without callback invocation, one read per invocation, conditional projection and repeated/shared callback state. This reference fixture is proposed, not an existing three-way test result. |
 | Combined elaboration and preservation checks | Join available relationships, refine `tau`/`rho` as SDK context arrives, retain open callback effects, and apply justified functional refinements. Check the final emitted behavior against the same relation. | One candidate PSG, its dependent obligations, the owned library edge and the artifact acceptance record. |
 
 For example, initially ingesting the returned function establishes useful structure while `tau` and `rho` remain open. The strict nullish branch supplies the proposed absence relation. The callback-state contract supplies the conditions under which the functional replacement preserves each invocation. Later SDK string constraints refine that existing candidate; Baker and Alex consume the structure settled for commitment, and JSIR realizes it below the witness boundary.
+
+The Fable reference uses its own Option/callback representation; comparison adapters relate it to the admitted original JavaScript and Clef inputs without collapsing additional absence distinctions. The [oracle procedure](07_dependency_identity_and_validation.md#ffable-as-an-executable-oracle) governs state initialization, provenance and trace comparison. These cases can exist before the Clef backend is ready, supporting incremental delivery against a stable behavioral reference.
 
 Changing the source to distinguish null from undefined must invalidate both the Option correspondence and tests derived from it, whichever adapter first observes the change. Adding a module-level log must update the behavioral slice even if a bundler reports an exported function unused. Rewriting callback invocation during emission must be checked against the same trace relation. These are shared obligations spanning ingestion, refinement and output; a project's strongest initial contribution does not confine its usefulness to one stage.
 
@@ -317,7 +320,7 @@ JSHIR/JSIR is the backend realization below Alex in this forward route. The fore
 
 ## 10. Inspectable artifacts and acceptance
 
-The toolchain needs the following information, whether transported in memory or persisted. These are proposed artifact roles; their serialization and command-line exposure are not claimed implemented.
+The toolchain must retain the following information across sessions and builds so later work continues incrementally. Analyses can transport it in memory and reconstruct derived indices from retained source and metadata; that does not require repeating foreign conversion. These are required artifact roles; their serialization and command-line exposure are not claimed implemented.
 
 | Artifact | Minimum inspectable content |
 |---|---|
@@ -365,7 +368,7 @@ Numeric operations added to a recovered body inherit [numeric selection and prec
 
 ## 11. Integration decisions still to make
 
-The next implementation design must settle the frontend evidence adapter, source/IR/candidate identity persistence, translation-pattern contracts and their correspondence checking, incremental constraint refinement, and the regeneration interface. The pinned JSHIR lift/emission coverage must be exercised for the chosen fixtures. Library packaging must preserve the owned SDK-to-dependency edge and the constraints needed by normal compilation.
+The next implementation design must settle the frontend evidence adapter, source/IR/candidate identity persistence, translation-pattern contracts and their correspondence checking, incremental constraint refinement, and the regeneration interface. That interface must reconcile changes with retained source and invalidate affected evidence according to the incremental lifecycle; ordinary application builds do not restart dependency conversion. The pinned JSHIR lift/emission coverage must be exercised for the chosen fixtures. Library packaging must preserve the owned SDK-to-dependency edge and the constraints needed by normal compilation.
 
 Evaluate TypeScript Compiler API, Bun and JSHIR contributions individually and in useful combinations against the same structural and partial-inference cases. Use Dafny's semantic and realization cases to strengthen the recovery obligations and acceptance checks; evaluate any direct tool reuse explicitly. The J1–J7 labels describe relationships needed by the example, not a requirement that every frontend use MLIR. Retaining JSIR for forward generation does not require using it to parse the foreign source.
 

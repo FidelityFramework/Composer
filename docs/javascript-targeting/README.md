@@ -8,7 +8,7 @@ Clef does not acquire `obj` or `null` to reach this target. A single coordinated
 
 Build or REPL evaluation commits the required portion of the computation. The obligations needed for that commitment must then be established; unrelated open work need not be settled. A foreign value used only through an admitted opaque contract can remain opaque throughout execution. An unresolved inference variable is not automatically `JsValue`. In forward compilation, Baker and Alex retain their existing roles, and JSHIR/JSIR realizes the witnessed portable computation in the backend.
 
-The [tooling contribution map](02_jsir_tooling.md#contributions-to-a-fused-pipeline) gives Bun high weight for JavaScript structure, binding/dependency relationships and transformations; Dafny high weight for semantic contracts, functional/numeric realization and preservation testing; and JSIR high weight for structured analysis and target realization. These are overlapping strengths across a fused pipeline, not exclusive stage assignments. Their contributions meet through shared identities and obligations in ordinary elaboration, with borrowed ideas, candidate integrations and established results distinguished.
+The [tooling contribution map](02_jsir_tooling.md#contributions-to-a-fused-pipeline) gives Bun high weight for JavaScript structure, binding/dependency relationships and transformations; Dafny high weight for semantic contracts, functional/numeric realization and preservation testing; JSIR high weight for structured analysis and target realization; and the working F#/Fable pathway high immediate weight as an executable oracle. These are overlapping strengths across a fused pipeline, not exclusive stage assignments. Their contributions meet through shared identities and obligations in ordinary elaboration, with borrowed ideas, candidate integrations and established results distinguished.
 
 ## Governing architecture
 
@@ -36,6 +36,8 @@ The intended destination is a set of Clef-native SDKs and supporting Clef librar
 
 This creates room to refine dependency implementations into functional Clef structures while preserving boundary data contracts and required behavior. As context accumulates, shared graph analysis can expose simplifications across library boundaries. A deployed artifact can then contain compiled Clef implementations and declared host calls without carrying the replaced vendor runtime code. The [worked frontend guide](09_contract_directed_dependency_recovery.md) connects this destination to partial inference, source generation and executable acceptance.
 
+The converted libraries and their accumulated correspondence, constraints and validation evidence are durable project assets. Later work follows an [incremental lifecycle](05_supply_chain_and_transcribe.md#incremental-library-lifecycle): new applications use the existing Clef libraries, new context refines their uses, and changed inputs invalidate affected relationships. Expanded demand adds newly required behavior. Ordinary builds do not restart foreign conversion, and functional refactoring continues from the owned Clef source.
+
 ## Current ground and intended work
 
 | Area | Status and scope |
@@ -49,8 +51,8 @@ This creates room to refine dependency implementations into functional Clef stru
 
 ## Reading order
 
-1. [Two source paths, one host contract](01_two_models.md): the compilation boundary and the meaning of different but valid output.
-2. [JavaScript tooling, analysis and lowering](02_jsir_tooling.md): Bun, Dafny and JSIR contributions, their relative weighting and combined use, pinned source reviews and preservation requirements.
+1. [Two source paths, one host contract](01_two_models.md): the compilation boundary, the F#/Fable oracle and the meaning of different but valid output.
+2. [JavaScript tooling, analysis and lowering](02_jsir_tooling.md): Bun, Dafny, JSIR and F#/Fable contributions, their relative weighting and combined use, pinned source reviews and preservation requirements.
 3. [Deployment contexts and BAREWire](03_four_wings.md): Cloudflare, browsers, WebViews and the shared memory/IPC/wire contract.
 4. [From foreign declarations to Clef-native bindings](04_sdk_describes_runtime.md): contract recovery, annotations, rule coverage and compiler ownership.
 5. [Dependency replacement through deferred inference](05_supply_chain_and_transcribe.md): the interactive recovery loop and an artifact without third-party JavaScript dependencies.

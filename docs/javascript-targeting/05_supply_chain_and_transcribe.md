@@ -54,6 +54,25 @@ Developers supply intent, domain facts or a documented foreign contract. Those i
 
 Pending obligations remain resident during elaboration of a consistent partial program, including imported library work. Build or REPL evaluation requires the obligations for the computation being committed, not a fully resolved description of every imported value or unused operation. A required property must then be established, checked at a runtime boundary where the contract permits it, or supported by an explicit permitted external assumption. Otherwise the compiler reports the located requirement. Known contradictions and established unsupported shapes can be reported earlier; an open choice is not such a failure.
 
+## Incremental library lifecycle
+
+Conversion establishes a maintained Clef library. Subsequent applications, refinements and builds operate on that owned source and its accumulated semantic relationships. They do not restart JavaScript-to-Clef conversion. The same continuity applies to consistent partial work: new context refines the existing candidate and its pending obligations.
+
+Retain the owned SDK/supporting source, declaration/body correspondence, established and unresolved constraint relationships, obligation premises and dependencies, and validation cases/evidence across sessions and builds. Persistent identity must survive regenerated parser indices and source edits. The exact storage and incremental interfaces remain implementation work; durable reuse is a requirement of that design.
+
+| Change or new demand | Incremental response |
+|---|---|
+| Another application uses the converted SDK surface | Resolve against the existing Clef libraries, refine use-specific constraints and run ordinary application reachability. Reuse applicable conversion evidence. |
+| A use supplies new type, range, effect or target context | Refine the affected instantiation and its dependent obligations. Reuse the retained generic/body structure; a new instantiation does not inherently require another source conversion. |
+| The supported SDK surface expands | Reuse represented behavior and translate newly required foreign behavior with its initialization and dependency closure. Extend the existing library and correspondence. |
+| Owned Clef code is functionally refactored | Maintain library ownership and update the affected correspondence and preservation argument. Continue from the curated source. |
+| Upstream declarations, bodies or resolution conditions change | Reconcile the changed inputs with the owned library. Reanalyze affected relationships and their dependent closure, preserving unaffected source and valid evidence. Regeneration must not overwrite curated Clef with a fresh whole-library translation. |
+| Compiler rules, target policy or boundary contracts change | Reconsider affected elaboration, realizations and evidence under their recorded premises. Preserve the owned source and any correspondence that remains valid. |
+
+Incremental validity follows dependencies. Reuse evidence only where its premises and identities still hold; a change to shared state or a common boundary can affect several consumers. If recorded dependencies cannot justify a narrow recheck, widen that recheck explicitly. Revalidation of affected behavior does not imply discarding the converted library or repeating all ingestion.
+
+The [F#/Fable oracle](07_dependency_identity_and_validation.md#ffable-as-an-executable-oracle) is part of this retained work. Keep its fixtures, input relations, traces and contract expectations; rerun affected cases as implementations or host conditions change. A new artifact needs applicable validation evidence, while the reference cases and accepted library work remain reusable.
+
 ## Preserve behavior while changing structure
 
 The contract determines which observations a replacement must preserve. Depending on the supported library surface, those can include:
@@ -74,7 +93,7 @@ Choose a useful supported fragment, establish its dependency closure and identif
 
 JSHIR comparisons help characterize transformations, but any normalization needs a justified relation. Matching normalized IR is not a general equivalence theorem. Different IR can be correct, and identical-looking calls can reach different runtime implementations if linkage was lost.
 
-Once accepted, the replacement is maintained as Clef source. Record its origin, license obligations, accepted contract and validation evidence. An upstream change triggers review of the relevant assumptions and behavior; pinning makes the comparison reproducible rather than making the old contract timeless. Grow coverage by accepting further fragments with their obligations, not by claiming whole-library absorption from one successful example.
+Once accepted, the replacement follows the incremental lifecycle above. Record its origin, license obligations, accepted contract and validation evidence. An upstream change triggers review of the relevant assumptions and behavior; pinning makes the comparison reproducible rather than making the old contract timeless. Grow coverage by accepting further fragments with their obligations, not by claiming whole-library absorption from one successful example.
 
 ## The deployed artifact
 
