@@ -1,0 +1,301 @@
+module OptionPartials
+
+[<Measure>]
+type distance
+
+type Config = { Enabled: bool; Offset: int; Limit: int }
+
+let mutable private mapFactories: int = 0
+let mutable private mapCalls: int = 0
+let mutable private bindFactories: int = 0
+let mutable private bindCalls: int = 0
+let mutable private filterFactories: int = 0
+let mutable private filterCalls: int = 0
+let mutable private existsFactories: int = 0
+let mutable private existsCalls: int = 0
+let mutable private forallFactories: int = 0
+let mutable private forallCalls: int = 0
+
+let private makeMapper (config: Config) : int -> bool =
+    mapFactories <- mapFactories + 1
+    fun value ->
+        mapCalls <- mapCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+
+let private makeBinder (config: Config) : int -> int<distance> option =
+    bindFactories <- bindFactories + 1
+    fun value ->
+        bindCalls <- bindCalls + 1
+        if config.Enabled && value >= config.Limit then
+            Some ((value + config.Offset) * 1<distance>)
+        else None
+
+let private makeFilter (config: Config) : int -> bool =
+    filterFactories <- filterFactories + 1
+    fun value ->
+        filterCalls <- filterCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+
+let private makeExists (config: Config) : int -> bool =
+    existsFactories <- existsFactories + 1
+    fun value ->
+        existsCalls <- existsCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+
+let private makeForall (config: Config) : int -> bool =
+    forallFactories <- forallFactories + 1
+    fun value ->
+        forallCalls <- forallCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+
+let invoke (work: 'a -> 'b) (value: 'a) : 'b = work value
+let invoke2 (work: 'a -> 'b -> 'c) (first: 'a) (second: 'b) : 'c = work first second
+
+// Returned partials cross a function boundary and keep their generic callback.
+let makeMap (mapper: 'a -> 'b) : 'a option -> 'b option = Option.map mapper
+let makeBind (binder: 'a -> 'b option) : 'a option -> 'b option = Option.bind binder
+let preserve (value: 'a) : 'a = value
+let optionalize (value: 'a) : 'a option = Some value
+
+[<EntryPoint>]
+let main _ =
+    let config: Config = { Enabled = true; Offset = 3; Limit = 5 }
+    let missing: int option = None
+
+    // Each callback expression runs once when its partial is constructed.
+    // Reusing the partial does not reconstruct the callback or invoke it on None.
+
+    let mapStored: int option -> bool option = Option.map (makeMapper config)
+    let mapCreated = mapFactories = 1 && mapCalls = 0
+    let mapAbsent = mapStored missing
+    let mapAfterNone = mapCalls
+    let mapFirst = mapStored (Some 7)
+    let mapAfterFirst = mapCalls
+    let mapRejected = mapStored (Some 0)
+    let mapAfterRejected = mapCalls
+    let mapTransported = invoke mapStored (Some 8)
+    let mapAfterTransport = mapCalls
+    let mapAbsentAgain = invoke mapStored missing
+    let mapOk =
+        mapCreated && mapFactories = 1
+        && Option.isNone mapAbsent && Option.isNone mapAbsentAgain
+        && (match mapFirst with Some value -> value | None -> false)
+        && (match mapRejected with Some value -> not value | None -> false)
+        && (match mapTransported with Some value -> value | None -> false)
+        && mapAfterNone = 0 && mapAfterFirst = 1
+        && mapAfterRejected = 2 && mapAfterTransport = 3 && mapCalls = 3
+
+    let bindStored: int option -> int<distance> option = Option.bind (makeBinder config)
+    let bindCreated = bindFactories = 1 && bindCalls = 0
+    let bindAbsent = bindStored missing
+    let bindAfterNone = bindCalls
+    let bindFirst = bindStored (Some 7)
+    let bindAfterFirst = bindCalls
+    let bindRejected = bindStored (Some 0)
+    let bindAfterRejected = bindCalls
+    let bindTransported = invoke bindStored (Some 8)
+    let bindAfterTransport = bindCalls
+    let bindAbsentAgain = invoke bindStored missing
+    let bindOk =
+        bindCreated && bindFactories = 1
+        && Option.isNone bindAbsent && Option.isNone bindAbsentAgain
+        && (match bindFirst with Some value -> value = 10<distance> | None -> false)
+        && Option.isNone bindRejected
+        && (match bindTransported with Some value -> value = 11<distance> | None -> false)
+        && bindAfterNone = 0 && bindAfterFirst = 1
+        && bindAfterRejected = 2 && bindAfterTransport = 3 && bindCalls = 3
+
+    let filterStored: int option -> int option = Option.filter (makeFilter config)
+    let filterCreated = filterFactories = 1 && filterCalls = 0
+    let filterAbsent = filterStored missing
+    let filterAfterNone = filterCalls
+    let filterFirst = filterStored (Some 7)
+    let filterAfterFirst = filterCalls
+    let filterRejected = filterStored (Some 0)
+    let filterAfterRejected = filterCalls
+    let filterTransported = invoke filterStored (Some 8)
+    let filterAfterTransport = filterCalls
+    let filterAbsentAgain = invoke filterStored missing
+    let filterOk =
+        filterCreated && filterFactories = 1
+        && Option.isNone filterAbsent && Option.isNone filterAbsentAgain
+        && (match filterFirst with Some value -> value = 7 | None -> false)
+        && Option.isNone filterRejected
+        && (match filterTransported with Some value -> value = 8 | None -> false)
+        && filterAfterNone = 0 && filterAfterFirst = 1
+        && filterAfterRejected = 2 && filterAfterTransport = 3 && filterCalls = 3
+
+    let existsStored: int option -> bool = Option.exists (makeExists config)
+    let existsCreated = existsFactories = 1 && existsCalls = 0
+    let existsAbsent = existsStored missing
+    let existsAfterNone = existsCalls
+    let existsFirst = existsStored (Some 7)
+    let existsAfterFirst = existsCalls
+    let existsRejected = existsStored (Some 0)
+    let existsAfterRejected = existsCalls
+    let existsTransported = invoke existsStored (Some 8)
+    let existsAfterTransport = existsCalls
+    let existsAbsentAgain = invoke existsStored missing
+    let existsOk =
+        existsCreated && existsFactories = 1
+        && not existsAbsent && not existsAbsentAgain
+        && existsFirst
+        && not existsRejected
+        && existsTransported
+        && existsAfterNone = 0 && existsAfterFirst = 1
+        && existsAfterRejected = 2 && existsAfterTransport = 3 && existsCalls = 3
+
+    let forallStored: int option -> bool = Option.forall (makeForall config)
+    let forallCreated = forallFactories = 1 && forallCalls = 0
+    let forallAbsent = forallStored missing
+    let forallAfterNone = forallCalls
+    let forallFirst = forallStored (Some 7)
+    let forallAfterFirst = forallCalls
+    let forallRejected = forallStored (Some 0)
+    let forallAfterRejected = forallCalls
+    let forallTransported = invoke forallStored (Some 8)
+    let forallAfterTransport = forallCalls
+    let forallAbsentAgain = invoke forallStored missing
+    let forallOk =
+        forallCreated && forallFactories = 1
+        && forallAbsent && forallAbsentAgain
+        && forallFirst
+        && not forallRejected
+        && forallTransported
+        && forallAfterNone = 0 && forallAfterFirst = 1
+        && forallAfterRejected = 2 && forallAfterTransport = 3 && forallCalls = 3
+
+    // Snapshot the selected function value, while preserving its own shared cell.
+    let mutable offset: int = 1
+    let mutable sharedCalls: int = 0
+    let mutable selected: int -> int = fun value ->
+        sharedCalls <- sharedCalls + 1
+        value + offset
+    let saved: int option -> int option = Option.map selected
+    selected <- fun value -> value + 100
+    let snapshotFirst = saved (Some 4)
+    offset <- 3
+    let snapshotSecond = invoke saved (Some 4)
+    let alias = saved
+    let snapshotThird = invoke alias (Some 5)
+    let snapshotAbsent = saved missing
+    let snapshotOk =
+        (match snapshotFirst with Some value -> value = 5 | None -> false)
+        && (match snapshotSecond with Some value -> value = 7 | None -> false)
+        && (match snapshotThird with Some value -> value = 8 | None -> false)
+        && Option.isNone snapshotAbsent && sharedCalls = 3 && selected 4 = 104
+
+    // Generic returned partials instantiate with changing and measured payloads.
+    let asDistance: int option -> int<distance> option =
+        makeMap (fun value -> value * 1<distance>)
+    let keepDistance: int<distance> option -> int<distance> option = makeMap preserve
+    let keepBool: bool option -> bool option = makeMap preserve
+    let bindDistance: int option -> int<distance> option =
+        makeBind (fun value -> Some (value * 1<distance>))
+    let bindIdentity: int<distance> option -> int<distance> option = makeBind optionalize
+    let absentDistance: int<distance> option = None
+    let converted = invoke asDistance (Some 8)
+    let preserved = keepDistance (Some 9<distance>)
+    let preservedFalse = keepBool (Some false)
+    let boundDistance = invoke bindDistance (Some 10)
+    let boundIdentity = bindIdentity (Some 11<distance>)
+    let genericOk =
+        (match converted with Some value -> value = 8<distance> | None -> false)
+        && (match preserved with Some value -> value = 9<distance> | None -> false)
+        && (match preservedFalse with Some value -> not value | None -> false)
+        && (match boundDistance with Some value -> value = 10<distance> | None -> false)
+        && (match boundIdentity with Some value -> value = 11<distance> | None -> false)
+        && Option.isNone (asDistance missing) && Option.isNone (keepDistance absentDistance)
+        && Option.isNone (bindDistance missing) && Option.isNone (bindIdentity absentDistance)
+
+    // Intrinsic declarations are ordinary function values, including unary primitives.
+    let bareMap: (int -> bool) -> int option -> bool option = Option.map
+    let bareBind: (int -> int<distance> option) -> int option -> int<distance> option = Option.bind
+    let bareFilter: (int -> bool) -> int option -> int option = Option.filter
+    let bareExists: (int -> bool) -> int option -> bool = Option.exists
+    let bareForall: (int -> bool) -> int option -> bool = Option.forall
+    let bareIsSome: int option -> bool = Option.isSome
+    let bareIsNone: int option -> bool = Option.isNone
+    let bareGet: int option -> int = Option.get
+
+    let bareMapped = bareMap (fun value -> value > 0) (Some 7)
+    let bareMapAbsent = invoke2 bareMap (fun value -> value > 0) missing
+    let bareMapPassed = invoke2 bareMap (fun value -> value > 0) (Some 0)
+    let bareMapOk =
+        (match bareMapped with Some value -> value | None -> false)
+        && Option.isNone bareMapAbsent
+        && (match bareMapPassed with Some value -> not value | None -> false)
+    let bareBound = bareBind (fun value -> Some (value * 1<distance>)) (Some 7)
+    let bareBindAbsent = invoke2 bareBind (fun value -> Some (value * 1<distance>)) missing
+    let bareBindPassed = invoke2 bareBind (fun value -> Some (value * 1<distance>)) (Some 8)
+    let bareBindOk =
+        (match bareBound with Some value -> value = 7<distance> | None -> false)
+        && Option.isNone bareBindAbsent
+        && (match bareBindPassed with Some value -> value = 8<distance> | None -> false)
+    let bareFiltered = bareFilter (fun value -> value > 0) (Some 7)
+    let bareFilterAbsent = invoke2 bareFilter (fun value -> value > 0) missing
+    let bareFilterPassed = invoke2 bareFilter (fun value -> value > 0) (Some 0)
+    let bareFilterOk =
+        (match bareFiltered with Some value -> value = 7 | None -> false)
+        && Option.isNone bareFilterAbsent && Option.isNone bareFilterPassed
+    let bareExistsOk =
+        bareExists (fun value -> value > 0) (Some 7)
+        && not (invoke2 bareExists (fun value -> value > 0) missing)
+        && not (invoke2 bareExists (fun value -> value > 0) (Some 0))
+    let bareForallOk =
+        bareForall (fun value -> value > 0) (Some 7)
+        && invoke2 bareForall (fun value -> value > 0) missing
+        && not (invoke2 bareForall (fun value -> value > 0) (Some 0))
+    let barePredicatesOk =
+        bareIsSome (Some 7) && not (bareIsSome missing)
+        && invoke bareIsSome (Some 8) && not (invoke bareIsSome missing)
+        && not (bareIsNone (Some 7)) && bareIsNone missing
+        && not (invoke bareIsNone (Some 8)) && invoke bareIsNone missing
+    // Option.get has no admitted None payload to extract.
+    let bareGetOk = bareGet (Some 7) = 7 && invoke bareGet (Some 8) = 8
+
+    // An unannotated alias keeps its scheme across distinct payload instantiations.
+    let map = Option.map
+    let aliasBool: bool option = map (fun value -> value > 0) (Some 7)
+    let aliasDistance: int<distance> option =
+        map (fun value -> value + 2<distance>) (Some 8<distance>)
+    let aliasBoolAbsent: bool option = invoke2 map (fun value -> value > 0) missing
+    let aliasDistanceAbsent: int<distance> option =
+        invoke2 map (fun value -> value + 2<distance>) absentDistance
+    let aliasOk =
+        (match aliasBool with Some value -> value | None -> false)
+        && (match aliasDistance with Some value -> value = 10<distance> | None -> false)
+        && Option.isNone aliasBoolAbsent && Option.isNone aliasDistanceAbsent
+
+    // Explicit type arguments settle bare values before their later application.
+    let typedMap = Option.map<int, int<distance>>
+    let typedMapped = typedMap (fun value -> value * 1<distance>) (Some 12)
+    let typedMapAbsent = invoke2 typedMap (fun value -> value * 1<distance>) missing
+    let typedMapOk =
+        (match typedMapped with Some value -> value = 12<distance> | None -> false)
+        && Option.isNone typedMapAbsent
+    let typedIsSome = Option.isSome<int<distance>>
+    let typedGet = Option.get<int<distance>>
+    let typedUnaryOk =
+        typedIsSome (Some 13<distance>) && not (invoke typedIsSome absentDistance)
+        && typedGet (Some 14<distance>) = 14<distance>
+        && invoke typedGet (Some 15<distance>) = 15<distance>
+
+    if not mapOk then 151
+    elif not bindOk then 152
+    elif not filterOk then 153
+    elif not existsOk then 154
+    elif not forallOk then 155
+    elif not snapshotOk then 156
+    elif not genericOk then 157
+    elif not bareMapOk then 158
+    elif not bareBindOk then 159
+    elif not bareFilterOk then 160
+    elif not bareExistsOk then 161
+    elif not bareForallOk then 162
+    elif not barePredicatesOk then 163
+    elif not bareGetOk then 164
+    elif not aliasOk then 165
+    elif not typedMapOk then 166
+    elif not typedUnaryOk then 167
+    else 0

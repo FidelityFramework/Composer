@@ -1,109 +1,65 @@
-# The Four JavaScript Wings
+# Deployment contexts and BAREWire
 
-**SpeakEZ Technologies | Fidelity Framework**
-**April 2026**
+**Design review: September 2026**
 
-JavaScript targeting at Composer is not a single deployment story. Four distinct contexts consume the JavaScript the framework emits, and each has its own runtime environment, SDK surface, and deployment model. Cloudflare Workers is the largest of the four by API surface area and current strategic weight, but the architecture does not privilege it. The same compilation mechanics (either model from [01_two_models.md](./01_two_models.md)) serve all four.
+Cloudflare, browsers and WebViews are JavaScript deployment contexts. BAREWire is a shared contract across those contexts and native targets, encompassing memory description, IPC and network encoding. Their common compilation architecture does not make their host capabilities or physical representations interchangeable.
 
-This document names the four wings, describes what's common and what differs, and positions Composer's responsibilities relative to each.
+## Cloudflare Workers and applications
 
-## Wing 1: Cloudflare Workers and Durable Objects
+The intended artifact is JavaScript with the exports, entry adapters and host calls required by its selected Cloudflare profile. An application using Durable Objects needs per-instance state and the applicable constructor, method and lifecycle behavior. A workflow realization needs an explicit relation between source continuation state and the host's persistence, retry and resumption facilities.
 
-**Runtime:** Cloudflare's Workers runtime (a V8-based isolate with a custom runtime API), Durable Objects, Containers, Facets.
+Cloudflare supplies execution, dispatch, object identity and service facilities under their declared contracts. Compiler-generated code must use those facilities correctly. It does not establish a new Cloudflare scheduler or prove the platform implementation. A source orchestration policy must have a supported host realization; an unsupported policy remains a diagnosed capability requirement.
 
-**SDK surface:** `@cloudflare/workers-types` (TypeScript definitions for the runtime API), plus the REST management APIs for provisioning D1 databases, KV namespaces, R2 buckets, Queues, and so on. Fidelity.CloudEdge generates F# bindings for both surfaces — runtime types in the Runtime tier, management clients in the Management and Tenancy tiers.
+Three dependency categories matter:
 
-**Deployment:** Worker scripts deployed via the Cloudflare API (not via Wrangler when Fidelity is driving it — Fidelity.CloudEdge's `cfs` CLI uploads Workers through the Management Layer's REST clients). Durable Objects are instantiated by the runtime on demand; Facets are instantiated from within a DO.
+| Category | Relationship to the artifact |
+|---|---|
+| Host facilities and declaration-only packages | Generated boundary calls use the host implementation. Type declarations do not become executable SDK dependencies. |
+| Executable SDK wrappers and subsidiary libraries | Their behavior remains a dependency until the required functionality has an accepted replacement. |
+| Clef-owned implementations | Compile with the application through the same semantic and lowering pathway. |
 
-**Composer's role:** Emit JavaScript that runs inside the Workers runtime and calls the Workers API. Emit Durable Object classes (Babel `ClassDeclaration` with `ClassMethod` members for `fetch`, `webSocketMessage`, `alarm`, etc.). Emit BAREWire codecs for actor message types. Emit `fetch` handler modules for the Worker entry point.
+An artifact without third-party JavaScript dependencies is possible when all required executable library behavior is supplied by compiled Clef or the declared host facilities. Bundling vendor code into one file does not remove that dependency. [Source recovery](05_supply_chain_and_transcribe.md) explains the replacement process.
 
-**Composer does not:** Rebuild the Workers runtime. Rebuild Durable Objects. Rebuild KV, R2, D1, Queues, Vectorize, or any other Cloudflare service. All of those are consumed as runtime dependencies from the JavaScript Composer emits.
+FSharp.CloudEdge's working F#/Fable route and its September [selected delivery](../../../FSharp.CloudEdge/docs/SDK-DELIVERY-ACCEPTANCE-20260913.md) provide concrete binding and runtime cases. They do not establish completion of the Clef/JSIR route. Provisioning and uploading the resulting artifact belong to deployment tooling using the management API, independently of the compiler that produced it.
 
-**Current mechanism:** F#/.NET model via Fable, with F# bindings from Fidelity.CloudEdge. The fully-decomposed-AST model via JSIR is in development under Horizon 2.
+## Browser applications
 
-## Wing 2: Browser UI (Reactive Frontends)
+A browser profile identifies its available host APIs and execution assumptions. Direct host bindings and owned Clef code can form an application without a third-party framework. If the application uses SolidJS or another executable library, that library remains in the dependency closure unless its required behavior is replaced.
 
-**Runtime:** The browser's JavaScript engine (V8 in Chrome/Edge, SpiderMonkey in Firefox, JavaScriptCore in Safari). Reactive UI frameworks layered on top: SolidJS, React, Svelte.
+Partas.Solid through Fable is the existing frontend path. A Clef reactive surface and its supported realizations require their own language and library design; this folder does not assume such a surface is implemented or equate reactive signals with actors by analogy. Browser capabilities such as shared buffers or particular transports must be declared for the selected environment rather than inferred from the word JavaScript.
 
-**SDK surface:** Framework runtime libraries (`solid-js`, `react`, `svelte`) from npm. DOM APIs exposed by the browser. Fetch API, WebSocket API, WebTransport API (where supported), IndexedDB, service workers.
+## WebView desktop applications
 
-**Deployment:** Static assets served via HTTP, typically bundled by Vite, esbuild, or equivalent. Composer produces the JavaScript modules; the bundler composes them with framework runtime libraries and app-level glue.
+The WREN stack combines a Composer-compiled native host with a WebView frontend. Existing exemplars use F#/Fable on the frontend. A future Clef JavaScript frontend would use the same backend contract as other JavaScript applications, with WebView-specific host and IPC boundaries.
 
-**Composer's role:** Emit JavaScript that calls into the framework of choice. In the F#/.NET model, Partas.Solid handles the JSX surface and Fable compiles to Solid runtime calls. In the fully-decomposed-AST model, Clef's reactive surface (first-class signals, effects, memos) lowers through Alex into JSIR ops that represent the post-JSX-transform JavaScript. Both models emit code that consumes `solid-js` (or the equivalent for another framework) from npm.
+The native host and frontend have distinct resource lifetimes and representations. A shared declaration can support both endpoints, but does not itself prove codec agreement or make a JavaScript object a native memory block. Embedding a frontend bundle in a native artifact also does not change its dependency ownership.
 
-**Composer does not:** Reimplement SolidJS's fine-grained reactivity, React's fiber scheduler, Svelte's compiler output, or any other framework's runtime. The framework is a runtime dependency, not a Composer-owned artifact.
+## BAREWire across the contexts
 
-**Signal-actor relationship:** The fully-decomposed-AST model has an interesting architectural property here. Signals are a specialized actor topology — a signal is a minimal actor that holds a value and broadcasts changes to subscribers. Clef's unified actor model can surface both ordinary actors (for Cloudflare DOs and native OS actors) and signal-actors (for reactive UI) from the same source-language construct, with target-profile-driven lowering deciding which runtime representation is emitted.
+[BAREWire's substrate formalism](../../../BAREWire/docs/Substrate_Formalism.md) separates source structure, carrier realization and the final payload. Types, dimensions, schemas, constraints and proof evidence remain in PSG/codata through the decisions and preservation checks that need them. They need not accompany each final payload.
 
-**Current mechanism:** F#/.NET model via Fable + Partas.Solid. The fully-decomposed-AST model via JSIR is under investigation; whether Composer pursues a Clef-native signals surface is a strategic decision still in flight.
+Untagged means the payload carries no self-describing compiler type, schema, dimension or proof metadata. A union case index, optional-value presence flag, length or protocol identifier can still be ordinary data required by the agreed contract. These fields do not identify the contract itself.
 
-## Wing 3: WebView Desktop (WrenHello)
+Ordinary JavaScript records and closures can use host objects and functions without a native address layout. Byte-backed regions use an explicit buffer/view contract. Native ABI padding and pointer layout are not automatically wire encoding; a zero-copy path needs additional ownership, validity and host-capability evidence.
 
-**Runtime:** A native desktop binary that embeds a WebView (WebKit on Linux via WebKitGTK, WebView2 on Windows, WKWebView on macOS). The WebView runs JavaScript as the frontend; the native binary provides the backend and IPC boundary.
+### Working JavaScript evidence
 
-**SDK surface:** Platform WebView APIs exposed through the native side (GTK, WebKit C headers on Linux). Standard browser APIs inside the WebView. Custom IPC bridge (typically BAREWire over a local channel) between the JavaScript frontend and the native backend.
+The current BAREWire JavaScript implementation compiles shared codec sources through Fable, selecting the appropriate text and floating-point substrate implementations. Its tests exercise byte vectors, round trips and selected rejection cases. The CloudEdge [ByteBridge fixture](../../../FSharp.CloudEdge/tests/ByteBridge/README.md) additionally exercises generated Workers body bindings, view offsets, detached buffers and typed failures in Node Fetch.
 
-**Deployment:** A single native binary (~17KB in WrenHello's current form) that embeds the JavaScript bundle as rodata and launches the WebView on startup. No separate installation of the JavaScript frontend; it ships inside the binary.
+These checks give future JSIR lowering a concrete contract to preserve. They do not establish arbitrary foreign-object admission, all host profiles or completed artifact-bound proofs. See the [BAREWire evidence inventory](../../../BAREWire/docs/12%20Intersection%20Subset.md).
 
-**Composer's role:** Emit both sides of the application from one Clef codebase. The native side compiles through the LLVM backend to ELF. The JavaScript side compiles through the JSIR backend (or Fable, for existing F# frontends). The shared protocol module, defined once in Clef, compiles both ways — LLVM produces the native BAREWire codec (via `memref` ops), JSIR produces the JavaScript BAREWire codec (via `DataView` ops). The byte layout is guaranteed identical because both derive from the same PSG discriminated union definition.
+### Obligations shared by both endpoints
 
-**Composer does not:** Reimplement WebKit, GTK, or any WebView. Those are consumed as runtime/system dependencies of the native binary. It also does not build a new desktop application framework; WrenHello's "framework" is the convention of "native binary + embedded WebView + BAREWire IPC," not a runtime library.
+The useful parallel with typed remoting is a shared contract exposed through typed interfaces on both sides of a transport. HTTP/JSON and BAREWire binary encoding can realize such an agreement with different representation obligations. The contract alone does not establish that either endpoint implements it correctly. For Clef, the constructive path is to connect the agreed meaning to each endpoint's graph obligations, marshaling and emitted operations, then to the protocol relationships maintained across communication.
 
-**Key distinction from Wing 2:** Wing 2's JavaScript runs in a browser that the user's OS installed. Wing 3's JavaScript runs in a WebView that the native binary spawns. Both ultimately use a browser engine; the deployment and lifecycle differ.
+The endpoints must agree on the declared meaning and encoding. Both lowerings must preserve numeric conversion, field order, byte order, extent checks and relevant failure behavior. Decoders still check bounds and encoding constraints; an agreed schema does not make malformed input impossible. Decoding a Hello frame is not enforcement of session agreement.
 
-**Current mechanism:** F#/Fable for the JavaScript side in WrenHello today. The fully-decomposed-AST model via JSIR is a natural fit for desktop applications because cross-substrate compilation (native + WebView from one source) is already how WrenHello's build works.
+[Numeric selection and precision](08_numeric_selection_and_precision.md#5-preserve-precision-across-transport-and-suspension) specifies the numerical part of that agreement. Transfer fidelity is directional; coverage alone does not establish exactness. An exact global reduction must retain its partial information until the permitted final rounding, including through checkpoints and recovery.
 
-## Wing 4: Shared BAREWire (Cross-Cutting Typed Messaging)
+[Carrying Proofs into JavaScript](../../../clef-lang-site/hugo/content/blog/carrying-proofs-into-javascript.md) adds the relationships that transport alone cannot establish: job identity, contribution multiplicity, continuation eligibility and consistent recovery state. Those are application and protocol obligations, preserved using the supported host facilities.
 
-**Runtime:** Whatever environment the sender and receiver happen to be running in. BAREWire is not a runtime itself — it is a wire format. The BAREWire codec code runs in every wing and in the native process too.
+“JavaScript you can prove correct” therefore means generated JavaScript with an argument for stated properties under explicit assumptions. It can realize those properties with different code and structures from the vendor SDK. The claim depends on the correspondence through lowering and the declared host contract, with runtime checks establishing premises that incoming values must satisfy.
 
-**SDK surface:** Not applicable in the same sense as the other wings. BAREWire's "surface" is the codec functions (encode/decode pairs) emitted for each discriminated union type. These are ordinary JavaScript functions in the JavaScript wings and ordinary native functions in LLVM targets.
+## One witness boundary
 
-**Deployment:** Emitted inline into whatever module uses the codec. A Worker that exchanges BAREWire-framed messages with a native cluster has the codec compiled into its JavaScript bundle. The native cluster has the same codec compiled into its ELF binary. The wire format on the WebSocket (or MoQ stream) between them is byte-identical.
-
-**Composer's role:** Derive codec implementations from discriminated union type definitions in the PSG. Emit them through both the LLVM pipeline (as `memref`-based byte manipulation) and the JSIR pipeline (as `DataView`/`ArrayBuffer`-based byte manipulation). Preserve the BAREWire invariant: any given DU's byte layout is determined by the PSG definition, not by the lowering target.
-
-**Composer does not:** Define the BAREWire format. BAREWire is documented independently (see `08b_actor_core.md` §3.4 in Fidelity.CloudEdge for the trust argument across the JavaScript erasure boundary). The BAREWire patent (USPTO Provisional 63/786,247) describes the format. Composer's role is to honor the specification during code generation, not to define it.
-
-**Trust argument:** In the F#/.NET model, BAREWire is what carries type safety across the boundary between statically typed F# and the dynamically typed JavaScript runtime. The sender's compiler verified the discriminated union structure; the codec encoded that structure into the byte layout; the wire format preserves the structure in transit; the receiver's codec reconstructs the structure on arrival. The JavaScript runtime never has to reason about the types — it just encodes and decodes bytes according to a schema both ends agreed on at compile time. The fully-decomposed-AST model has the same property by different mechanics: Composer's type-checker verified the DU, the JSIR-lowered codec encodes the same byte layout, and the receiving side reconstructs identically.
-
-## What's Common Across All Four
-
-**Emission substrate:** JavaScript, produced by whichever of the two models ([01_two_models.md](./01_two_models.md)) is in use. In the fully-decomposed-AST model, all four wings use the same `jsir_gen --passes=hir2ast,ast2source` pipeline; they differ in which witnesses Alex registers, which SDK types the code imports, and which deployment artifact format wraps the final `.js`.
-
-**Runtime library consumption:** All four consume JavaScript libraries from npm as runtime dependencies. Composer does not reimplement those libraries.
-
-**BAREWire-style typed messaging:** All four can use BAREWire when cross-boundary messaging is needed. Workers talking to native clusters use it. Browser UI talking to Workers uses it (indirectly, through Worker-mediated message forwarding). Desktop frontends talking to desktop backends use it. Native clusters talking to each other use it.
-
-**Alex's witness architecture:** Elements, Patterns, Witnesses. Parallel nanopass execution. Read-only coeffects. The architecture doesn't care which wing is the target; it processes the PSG and emits ops. The target-specific variation is in the witness registration.
-
-## What Differs
-
-**Runtime environment:** V8 isolate vs. browser V8 vs. embedded WebKit. API surfaces differ accordingly.
-
-**SDK surface that Clef bindings describe:** `@cloudflare/workers-types` for Wing 1, `solid-js` (and DOM) for Wing 2, `@webkit2gtk/*` and custom IPC protocols for Wing 3, BAREWire schema definitions for Wing 4.
-
-**Deployment model:** Upload via Cloudflare API; static asset hosting; embedded rodata in a native binary; inline codec emission. The compiler emits `.js`; what happens to the `.js` varies.
-
-**Baker saturation strategy:** Reactive UI preserves signal/effect calls; Cloudflare Worker code preserves async/await patterns and Response construction; BAREWire codec emission is fully saturated because it's a straightforward byte-manipulation problem. The per-target Baker recipe exclusion list varies.
-
-**Consumer role:** Who ultimately uses the output. Wing 1 serves traffic. Wing 2 renders UI. Wing 3 is part of an installed desktop application. Wing 4 is plumbing inside the other three.
-
-## Why Cloudflare Looks Like the Architecture
-
-Cloudflare is the largest of the four wings by several measures:
-
-- **API surface:** Fidelity.CloudEdge 0.2.0 ships F# bindings for 40 Management-tier services and 2 Tenancy-tier services, plus Runtime types for Workers, Durable Objects, Containers, and Facets. That's an order of magnitude more surface area than the other wings combined.
-- **Opinionation:** Cloudflare's runtime has strong opinions about how code is structured (modules with default exports, DO classes with specific method names, `fetch` handler conventions). The emission has to respect those conventions precisely.
-- **Current reach:** Fidelity.CloudEdge is the primary target audience for the framework's JavaScript emission story today. MoQ support landed in April 2026. Agents Week landed shortly after. Each announcement adds to the SDK surface.
-
-All of that is real, and it deservedly gets attention. But it is one wing of four, and the architectural decisions Composer makes about how JavaScript is emitted are not Cloudflare-specific. The same witness architecture, the same JSIR pipeline, the same Baker selective saturation, serves all four wings. Cloudflare is a large consumer of Composer's JavaScript output. It is not the designer of Composer's JavaScript emission architecture.
-
-## Cross-References
-
-- [01_two_models.md](./01_two_models.md) — the F#/.NET vs. fully-decomposed-AST distinction across all four wings
-- [02_jsir_tooling.md](./02_jsir_tooling.md) — the `jsir_gen` invocation that services the fully-decomposed-AST path
-- [04_sdk_describes_runtime.md](./04_sdk_describes_runtime.md) — the SDK-as-description convention that applies to every wing
-- [Fidelity.CloudEdge/docs/08b_actor_core.md](../../../Fidelity.CloudEdge/docs/08b_actor_core.md) §3.4 — BAREWire trust argument (Wing 4 context)
-- [WebView_Desktop_Architecture.md](../WebView_Desktop_Architecture.md) — Wing 3 specifics
-- [Actor_Substrate_Independence.md](../Actor_Substrate_Independence.md) — cross-wing actor compilation (Wings 1, 3, and 4)
+All these contexts use the same architectural ownership: semantic facts in the PSG, Baker decomposition, Alex's portable witnessing, then target realization. Host differences enter through declared capabilities and contracts, not a parallel middle end that dispatches on library names or skips semantic elaboration.

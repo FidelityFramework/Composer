@@ -171,8 +171,8 @@ let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<string, Map<st
             TStruct (fields |> List.map (fun (name, fty) ->
                 if name = "value" then name, narrowBy graph fieldRanges (sprintf "the payload of %s" describe) None None (Some inner) fty
                 else name, fty), bytes)
-        | Some (NativeType.TApp (tycon, _)) when (SemanticGraph.tryGetRecordFields tycon.Name graph).IsSome ->
-            let declared = SemanticGraph.tryGetRecordFields tycon.Name graph |> Option.defaultValue []
+        | Some (NativeType.TApp (tycon, _) as instance) when (Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields instance graph).IsSome ->
+            let declared = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields instance graph |> Option.defaultValue []
             let ranges = Map.tryFind tycon.Name fieldRanges |> Option.defaultValue Map.empty
             TStruct (fields |> List.map (fun (name, fty) ->
                 let declaredTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd

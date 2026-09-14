@@ -5,6 +5,11 @@ open System.IO
 open System.Text.Json
 
 let cases = [
+    "OptionPartials", "OptionPartials.clef", "option-partials", ["scf.if";"func.call_indirect"]
+    "OptionFunctionPayloads", "OptionFunctionPayloads.clef", "option-function-payloads", ["scf.if";"func.call_indirect"]
+    "OptionCallbacks", "OptionCallbacks.clef", "option-callbacks", ["scf.if";"func.call_indirect"]
+    "OptionEvaluation", "OptionEvaluation.clef", "option-evaluation", ["scf.if";"func.call_indirect"]
+    "GenericRecords", "GenericRecords.clef", "generic-records", ["func.call_indirect"]
     "NativeCallbacks", "Main.clef", "native-callbacks", ["func.constant @NativeCallbacks.add";"func.constant @NativeCallbacks.subtract";"func.call_indirect"]
     "CapturedBuffers", "CapturedBuffers.clef", "captured-buffers", ["func.call_indirect";"memref.dim"]
     "CapturedRecords", "CapturedRecords.clef", "captured-records", ["func.call_indirect";"memref.extract_aligned_pointer_as_index"]

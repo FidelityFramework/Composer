@@ -110,10 +110,20 @@ __stack_top = 0x%X;
 __stack_bottom = 0x%X;
 __shared_bank_instruction_base = 0x%X;
 __shared_bank_data_split = 0x%X;
+/* One program header per kind, declared rather than inferred. Left to itself
+ * the linker folds a writable .data and the NOBITS .bss behind it into one
+ * PT_LOAD whose memsz exceeds its filesz, and the image writer refuses that:
+ * the ROM loader copies file bytes and zero-fills nothing, so .bss must stay
+ * a segment of its own with no file bytes, cleared by startup. */
+PHDRS {
+  text PT_LOAD;
+  data PT_LOAD;
+  bss  PT_LOAD;
+}
 SECTIONS {
   /* VECBASE ignores its low bits, so the vector block leads the image at a
    * %d-byte boundary. It is code, not a table of addresses. */
-  .vectors ORIGIN(IRAM) : ALIGN(%d) { KEEP(*(.vectors)) KEEP(*(.vectors.*)) } > IRAM
+  .vectors ORIGIN(IRAM) : ALIGN(%d) { KEEP(*(.vectors)) KEEP(*(.vectors.*)) } > IRAM :text
   .text : ALIGN(4) {
     /* Literal pools MUST precede the code that references them. Xtensa's L32R
      * loads a constant at a NEGATIVE offset from the instruction -- it can only
@@ -122,7 +132,7 @@ SECTIONS {
      * range", because the literal ended up ahead of its use. */
     *(.literal .literal.*)
     *(.text .text.*)
-  } > IRAM
+  } > IRAM :text
   __iram_end = .;
 
   /* Initialized data is placed, not copied: the ROM loader delivers it.
@@ -132,13 +142,13 @@ SECTIONS {
    * which through the instruction window is a LoadStoreError. */
   .data ORIGIN(DRAM) : ALIGN(16) {
     __data_start = .; *(.data*) *(.rodata .rodata.*) . = ALIGN(4); __data_end = .;
-  } > DRAM
+  } > DRAM :data
   .bss (NOLOAD) : ALIGN(16) {
     __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(4); __bss_end = .;
-  } > DRAM
-  .noinit (NOLOAD) : ALIGN(16) { *(.noinit*) } > DRAM
+  } > DRAM :bss
+  .noinit (NOLOAD) : ALIGN(16) { *(.noinit*) } > DRAM :bss
   __dram_end = .;
-  .stack __stack_bottom (NOLOAD) : { . += %d; } > DRAM
+  .stack __stack_bottom (NOLOAD) : { . += %d; } > DRAM :bss
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.xt.prop*) *(.xt.lit*) }
 }
 ASSERT(SIZEOF(.vectors) == %d, "Wrong vector block size")

@@ -1,0 +1,194 @@
+module OptionFunctionPayloads
+
+type Config = { Enabled: bool; Offset: int }
+
+let invoke (work: 'a -> 'b) (value: 'a) : 'b = work value
+
+[<EntryPoint>]
+let main _ =
+    let config: Config = { Enabled = true; Offset = 3 }
+    let missing: int option = None
+    let noFunction: (int -> int) option = None
+
+    // Map returns distinct closures whose captures survive the callback return.
+    let mutable outputMapCalls: int = 0
+    let mutable outputCalls: int = 0
+    let mutable outputShift: int = 1
+    let mapper = fun value ->
+        outputMapCalls <- outputMapCalls + 1
+        fun argument ->
+            outputCalls <- outputCalls + 1
+            if config.Enabled then value + argument + config.Offset + outputShift
+            else argument
+    let mappedAbsent: (int -> int) option = Option.map mapper missing
+    let outputAfterNone = outputMapCalls
+    let mappedFirst: (int -> int) option = Option.map mapper (Some 7)
+    let outputAfterFirst = outputMapCalls
+    let mappedSecond: (int -> int) option = Option.map mapper (Some 8)
+    let outputAfterSecond = outputMapCalls
+    let outputBeforeInvoke = outputCalls
+    let firstWork = Option.get mappedFirst
+    let secondWork = Option.get mappedSecond
+    let firstBefore = firstWork 2
+    let secondBefore = invoke secondWork 2
+    outputShift <- 3
+    let firstAfter = invoke firstWork 2
+    let secondAfter = secondWork 2
+    let outputMapOk =
+        Option.isNone mappedAbsent && Option.isSome mappedFirst && Option.isSome mappedSecond
+        && outputAfterNone = 0 && outputAfterFirst = 1 && outputAfterSecond = 2
+        && outputMapCalls = 2 && outputBeforeInvoke = 0 && outputCalls = 4
+        && firstBefore = 13 && secondBefore = 14 && firstAfter = 15 && secondAfter = 16
+
+    // Map can consume a function payload and invoke its captured environment.
+    let mutable inputCalls: int = 0
+    let mutable inputShift: int = 1
+    let original = fun value ->
+        inputCalls <- inputCalls + 1
+        if config.Enabled then value + config.Offset + inputShift
+        else value
+    let functionValue: (int -> int) option = Some original
+    let mutable inputMapCalls: int = 0
+    let inputMapper = fun (work: int -> int) ->
+        inputMapCalls <- inputMapCalls + 1
+        work 4
+    let inputAbsent = Option.map inputMapper noFunction
+    let inputMapAfterNone = inputMapCalls
+    let inputAfterNone = inputCalls
+    let inputFirst = Option.map inputMapper functionValue
+    let inputMapAfterFirst = inputMapCalls
+    let inputAfterFirst = inputCalls
+    inputShift <- 3
+    let inputSecond = Option.map inputMapper functionValue
+    let inputMapOk =
+        Option.isNone inputAbsent && Option.isNone noFunction && not (Option.isSome noFunction)
+        && Option.isSome functionValue && not (Option.isNone functionValue)
+        && inputMapAfterNone = 0 && inputAfterNone = 0
+        && inputMapAfterFirst = 1 && inputAfterFirst = 1
+        && inputMapCalls = 2 && inputCalls = 2
+        && (match inputFirst with Some value -> value = 8 | None -> false)
+        && (match inputSecond with Some value -> value = 10 | None -> false)
+
+    // Bind returns an optional closure directly and can reject a Some input.
+    let mutable bindCalls: int = 0
+    let mutable boundCalls: int = 0
+    let mutable boundShift: int = 1
+    let binder = fun value ->
+        bindCalls <- bindCalls + 1
+        if value > 0 then
+            Some (fun argument ->
+                boundCalls <- boundCalls + 1
+                if config.Enabled then value + argument + config.Offset + boundShift
+                else argument)
+        else None
+    let boundAbsent: (int -> int) option = Option.bind binder missing
+    let bindAfterNone = bindCalls
+    let boundFirst: (int -> int) option = Option.bind binder (Some 7)
+    let bindAfterFirst = bindCalls
+    let boundRejected: (int -> int) option = Option.bind binder (Some 0)
+    let bindAfterRejected = bindCalls
+    let boundSecond: (int -> int) option = Option.bind binder (Some 8)
+    let boundBeforeInvoke = boundCalls
+    let boundFirstWork = Option.get boundFirst
+    let boundSecondWork = Option.get boundSecond
+    let boundFirstBefore = boundFirstWork 2
+    let boundSecondBefore = invoke boundSecondWork 2
+    boundShift <- 3
+    let boundFirstAfter = invoke boundFirstWork 2
+    let bindOk =
+        Option.isNone boundAbsent && Option.isNone boundRejected
+        && bindAfterNone = 0 && bindAfterFirst = 1 && bindAfterRejected = 2 && bindCalls = 3
+        && boundBeforeInvoke = 0 && boundCalls = 3
+        && boundFirstBefore = 13 && boundSecondBefore = 14 && boundFirstAfter = 15
+
+    // Filter retains the original callable and its shared mutable capture.
+    let mutable filterCalls: int = 0
+    let mutable rejectCalls: int = 0
+    let keep = fun (work: int -> int) ->
+        filterCalls <- filterCalls + 1
+        work 0 >= 6
+    let reject = fun (work: int -> int) ->
+        rejectCalls <- rejectCalls + 1
+        work 0 < 0
+    let filterBefore = inputCalls
+    let filteredAbsent = Option.filter keep noFunction
+    let filterAfterNone = filterCalls
+    let payloadAfterFilterNone = inputCalls
+    let retained = Option.filter keep functionValue
+    let payloadAfterKeep = inputCalls
+    let rejected = Option.filter reject functionValue
+    let payloadAfterReject = inputCalls
+    let retainedWork = Option.get retained
+    inputShift <- 5
+    let retainedResult = invoke retainedWork 4
+    let originalResult = original 4
+    let filterOk =
+        Option.isNone filteredAbsent && Option.isNone rejected && Option.isSome retained
+        && filterAfterNone = 0 && payloadAfterFilterNone = filterBefore
+        && filterCalls = 1 && rejectCalls = 1
+        && payloadAfterKeep = filterBefore + 1 && payloadAfterReject = filterBefore + 2
+        && inputCalls = filterBefore + 4 && retainedResult = 12 && originalResult = 12
+
+    // None skips both the predicate and any invocation of the payload function.
+    let mutable existsCalls: int = 0
+    let existsPredicate = fun (work: int -> int) ->
+        existsCalls <- existsCalls + 1
+        work 0 >= 8
+    let existsBefore = inputCalls
+    let existsAbsent = Option.exists existsPredicate noFunction
+    let existsAfterNone = existsCalls
+    let payloadAfterExistsNone = inputCalls
+    let existsPresent = Option.exists existsPredicate functionValue
+    let existsAfterFirst = existsCalls
+    let payloadAfterExistsFirst = inputCalls
+    inputShift <- -5
+    let existsRejected = Option.exists existsPredicate functionValue
+    let existsOk =
+        not existsAbsent && existsPresent && not existsRejected
+        && existsAfterNone = 0 && payloadAfterExistsNone = existsBefore
+        && existsAfterFirst = 1 && payloadAfterExistsFirst = existsBefore + 1
+        && existsCalls = 2 && inputCalls = existsBefore + 2
+
+    let mutable forallCalls: int = 0
+    let forallPredicate = fun (work: int -> int) ->
+        forallCalls <- forallCalls + 1
+        work 0 >= 8
+    let forallBefore = inputCalls
+    let forallAbsent = Option.forall forallPredicate noFunction
+    let forallAfterNone = forallCalls
+    let payloadAfterForallNone = inputCalls
+    let forallRejected = Option.forall forallPredicate functionValue
+    let forallAfterFirst = forallCalls
+    let payloadAfterForallFirst = inputCalls
+    inputShift <- 5
+    let forallPresent = Option.forall forallPredicate functionValue
+    let forallOk =
+        forallAbsent && not forallRejected && forallPresent
+        && forallAfterNone = 0 && payloadAfterForallNone = forallBefore
+        && forallAfterFirst = 1 && payloadAfterForallFirst = forallBefore + 1
+        && forallCalls = 2 && inputCalls = forallBefore + 2
+
+    // Direct get consumes the option before calling its function payload.
+    // Both supplied expressions run eagerly, before payload invocation.
+    let mutable directTrace: int = 0
+    let directOption () : (int -> int) option =
+        directTrace <- directTrace * 10 + 1
+        Some (fun value ->
+            directTrace <- directTrace * 10 + 3
+            value + config.Offset)
+    let directArgument () =
+        directTrace <- directTrace * 10 + 2
+        4
+    let directResult = Option.get (directOption ()) (directArgument ())
+    let directTyped = Option.get<(int -> int)> (Some (fun value -> value + config.Offset)) 5
+    let directStaged = Option.get (Some (fun first -> fun second -> first + second + config.Offset)) 2 3
+    let directGetOk = directResult = 7 && directTrace = 123 && directTyped = 8 && directStaged = 8
+
+    if not outputMapOk then 171
+    elif not inputMapOk then 172
+    elif not bindOk then 173
+    elif not filterOk then 174
+    elif not existsOk then 175
+    elif not forallOk then 176
+    elif not directGetOk then 177
+    else 0

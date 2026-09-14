@@ -28,6 +28,7 @@ open Alex.Dialects.Core.Types
 open Core.Types.Dialects
 
 module RangeAnalysis = Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis
+module RecordInstances = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE MAPPING DIAGNOSTIC COLLECTION
@@ -111,17 +112,19 @@ let requireNodeWidth (graph: SemanticGraph) (nodeId: NodeId) : IntWidth =
 /// The rendered key of a type in `Layouts` and `ElementRanges`: the same rendering CCS keys by.
 let layoutKey (ty: NativeType) : string = formatType (applySubst ty)
 
-/// The settled layout of an aggregate type, read from the graph: a record or union by the
-/// constructor's name, a tuple, an option or a Result by its rendered form.
+/// The settled layout of an aggregate type, read from the graph: a record by its CCS instance
+/// identity, a union by its constructor's name, a tuple, an option or a Result by its rendered form.
 let settledLayout (graph: SemanticGraph) (ty: NativeType) : SettledLayout option =
     match applySubst ty with
     | NativeType.TApp (tycon, _) as t when tycon.Name = "option" || tycon.Name = "voption" || tycon.Name = "Result" || tycon.Name = "result" ->
         Map.tryFind (layoutKey t) graph.Layouts.Value
     | NativeType.TApp (tycon, _) as t ->
-        // a record or a user union by its constructor's name (as FieldRanges), else by rendering
-        match Map.tryFind tycon.Name graph.Layouts.Value with
-        | Some layout -> Some layout
-        | None -> Map.tryFind (layoutKey t) graph.Layouts.Value
+        match RecordInstances.tryFields t graph with
+        | Some _ -> Map.tryFind (RecordInstances.layoutKey t) graph.Layouts.Value
+        | None ->
+            match Map.tryFind tycon.Name graph.Layouts.Value with
+            | Some layout -> Some layout
+            | None -> Map.tryFind (layoutKey t) graph.Layouts.Value
     | NativeType.TUnion (tycon, _) -> Map.tryFind tycon.Name graph.Layouts.Value
     | t -> Map.tryFind (layoutKey t) graph.Layouts.Value
 
@@ -296,62 +299,6 @@ let private tryGetUnionCases (typeName: string) (graph: SemanticGraph) : (string
         | None -> None
     | None -> None
 
-/// Collect unique unbound type variables from a NativeType, in order of first appearance.
-/// Follows Union-Find chains to find root TVars that are Unbound.
-let rec private collectUnboundTVars (seen: Set<int>) (ty: NativeType) : (TypeParam * Set<int>) list =
-    match ty with
-    | NativeType.TVar tvar ->
-        match find tvar with
-        | (root, None) when not (Set.contains root.Id seen) ->
-            [(root, Set.add root.Id seen)]
-        | _ -> []
-    | NativeType.TApp(_, args) ->
-        args |> List.fold (fun acc arg ->
-            let currentSeen = match acc with [] -> seen | _ -> snd (List.last acc)
-            let results = collectUnboundTVars currentSeen arg
-            acc @ results) []
-    | NativeType.TFun(a, b) ->
-        let aVars = collectUnboundTVars seen a
-        let bSeen = match aVars with [] -> seen | _ -> snd (List.last aVars)
-        aVars @ collectUnboundTVars bSeen b
-    | NativeType.TTuple(elements, _) ->
-        elements |> List.fold (fun acc elem ->
-            let currentSeen = match acc with [] -> seen | _ -> snd (List.last acc)
-            acc @ collectUnboundTVars currentSeen elem) []
-    | _ -> []
-
-/// When a TApp carries type arguments but the TypeDef's fields contain unbound TVars,
-/// bind them in the Union-Find so downstream type mapping resolves correctly.
-/// This compensates for clef not propagating type arguments to expression-level nodes.
-let private bindTypeArgsToFieldTVars (fields: (string * NativeType) list) (args: NativeType list) =
-    if args.IsEmpty then ()
-    else
-        let unboundTVars =
-            fields
-            |> List.collect (fun (_, fieldTy) -> collectUnboundTVars Set.empty fieldTy)
-            |> List.map fst
-        // Bind positionally: first unique unbound TVar → first type arg, etc.
-        for i in 0 .. min (unboundTVars.Length - 1) (args.Length - 1) do
-            unboundTVars.[i].Parent <- TypeParamState.Bound args.[i]
-
-/// Eagerly walk a NativeType to bind type parameters from TApp type arguments.
-/// Call this on function signatures BEFORE traversing body nodes, so inner expression
-/// types resolve correctly through the Union-Find.
-let rec resolveTypeParams (graph: SemanticGraph) (ty: NativeType) =
-    match ty with
-    | NativeType.TApp(tycon, args) ->
-        if not args.IsEmpty then
-            match SemanticGraph.tryGetRecordFields tycon.Name graph with
-            | Some fields -> bindTypeArgsToFieldTVars fields args
-            | None -> ()
-        args |> List.iter (resolveTypeParams graph)
-    | NativeType.TFun(a, b) ->
-        resolveTypeParams graph a
-        resolveTypeParams graph b
-    | NativeType.TTuple(elements, _) ->
-        elements |> List.iter (resolveTypeParams graph)
-    | _ -> ()
-
 /// The physical storage of a value held in a container (an array element, a slot): a record or
 /// tuple is a semantic `TStruct` whose storage is a byte memref of its settled size; every other
 /// type is stored as itself. A struct with no settled bytes is a stop (`mlirTypeSize`).
@@ -427,18 +374,15 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
         | _ -> mapNativeTypeForArch arch ty
     | NativeType.TApp(tycon, args) when tycon.FieldCount > 0 ->
         // Record type: look up field types from TypeDef → TStruct with named fields
-        match SemanticGraph.tryGetRecordFields tycon.Name graph with
+        match RecordInstances.tryFields ty graph with
         | Some fields ->
-            // Bind type arguments to unbound TVars in fields (compensates for clef gap)
-            bindTypeArgsToFieldTVars fields args
             settledStruct platform arch graph (sprintf "the record '%s'" tycon.Name) fields (layoutOf ty)
         | None ->
             failwithf "Record type '%s' not found in TypeDef nodes - CCS must create TypeDef for records" tycon.Name
     | NativeType.TApp(tycon, args) ->
         // Non-record TApp (FieldCount = 0) - check if it might be a record by name lookup
-        match SemanticGraph.tryGetRecordFields tycon.Name graph with
+        match RecordInstances.tryFields ty graph with
         | Some fields ->
-            bindTypeArgsToFieldTVars fields args
             settledStruct platform arch graph (sprintf "the record '%s'" tycon.Name) fields (layoutOf ty)
         | None ->
             match platform with

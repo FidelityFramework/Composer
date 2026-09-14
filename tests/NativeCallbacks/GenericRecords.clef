@@ -1,0 +1,77 @@
+module GenericRecords
+
+// Dimensional_Range_Design.md §3.3 / ruling 2: each concrete record instance
+// carries its own settled field representation. Reading one instance must not
+// bind the declaration's parameters or change another instance's field types.
+type Snapshot = { Count: int; Mode: int; Enabled: bool }
+type Cell<'a> = { Value: 'a; Previous: 'a option; Dirty: bool }
+
+// Field order deliberately differs from parameter order; one parameter is
+// phantom and one occurs repeatedly, including under an option constructor.
+type Reordered<'unused, 'a, 'b> = {
+    Second: 'b
+    First: 'a
+    Again: 'a
+    Previous: 'a option
+}
+
+[<Measure>] type m
+[<Measure>] type s
+type Quantity<[<Measure>] 'u> = { Value: int<'u>; Enabled: bool }
+
+let cell value previous : Cell<'a> = {
+    Value = value
+    Previous = previous
+    Dirty = false
+}
+
+let clear (state: Cell<'a>) : Cell<'a> =
+    { state with Previous = None; Dirty = true }
+
+// The returned ordinary closure retains its concrete generic record capture.
+// Code identity, capture storage and field placement are settled upstream.
+let reader (state: Cell<'a>) = fun () -> state
+
+let sameSnapshot (left: Snapshot) (right: Snapshot) =
+    left.Count = right.Count && left.Mode = right.Mode && left.Enabled = right.Enabled
+
+[<EntryPoint>]
+let main _ =
+    let number = cell 1000 (Some 999)
+    let desired: Snapshot = { Count = 1000; Mode = 3; Enabled = false }
+    let previous: Snapshot = { Count = 7; Mode = 1; Enabled = true }
+    let snapshot = cell desired (Some previous)
+    let absent = cell desired None
+    let cleared = clear snapshot
+    let orderA: Reordered<string, int, bool> = {
+        Second = false; First = 1000; Again = 2000; Previous = Some 3000
+    }
+    let orderB: Reordered<int, bool, int> = {
+        Second = 1000; First = false; Again = true; Previous = Some false
+    }
+    let distance: Quantity<m> = { Value = 1000<m>; Enabled = false }
+    let duration: Quantity<s> = { Value = 2<s>; Enabled = true }
+    let readNumber = reader number
+    let readSnapshot = reader snapshot
+    let capturedNumber = readNumber ()
+    let capturedSnapshot = readSnapshot ()
+
+    let numberPayload = match number.Previous with Some value -> value = 999 | None -> false
+    let snapshotPayload = match snapshot.Previous with Some value -> sameSnapshot value previous | None -> false
+    let absentPayload = match absent.Previous with None -> true | Some _ -> false
+    let clearedPayload = match cleared.Previous with None -> true | Some _ -> false
+    let orderAPayload = match orderA.Previous with Some value -> value = 3000 | None -> false
+    let orderBPayload = match orderB.Previous with Some value -> not value | None -> false
+    let capturedNumberPayload = match capturedNumber.Previous with Some value -> value = 999 | None -> false
+    let capturedSnapshotPayload = match capturedSnapshot.Previous with Some value -> sameSnapshot value previous | None -> false
+
+    if number.Value <> 1000 || number.Dirty || not numberPayload then 81
+    elif not (sameSnapshot snapshot.Value desired) || snapshot.Dirty || not snapshotPayload then 82
+    elif not (sameSnapshot absent.Value desired) || absent.Dirty || not absentPayload then 83
+    elif not (sameSnapshot cleared.Value desired) || not cleared.Dirty || not clearedPayload then 84
+    elif orderA.Second || orderA.First <> 1000 || orderA.Again <> 2000 || not orderAPayload then 85
+    elif orderB.Second <> 1000 || orderB.First || not orderB.Again || not orderBPayload then 86
+    elif distance.Value <> 1000<m> || distance.Enabled || duration.Value <> 2<s> || not duration.Enabled then 87
+    elif capturedNumber.Value <> 1000 || capturedNumber.Dirty || not capturedNumberPayload then 88
+    elif not (sameSnapshot capturedSnapshot.Value desired) || capturedSnapshot.Dirty || not capturedSnapshotPayload then 89
+    else 0

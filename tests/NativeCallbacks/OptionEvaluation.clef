@@ -1,0 +1,229 @@
+module OptionEvaluation
+
+let mutable private trace: int = 0
+
+let private record digit = trace <- trace * 10 + digit
+
+let private makeMapper () : int -> int =
+    record 1
+    fun value ->
+        record 3
+        value + 3
+
+let private makeBinder () : int -> int option =
+    record 1
+    fun value ->
+        record 3
+        Some (value + 5)
+
+let private makePredicate () : int -> bool =
+    record 1
+    fun value ->
+        record 3
+        value > 0
+
+let private optionArgument present : int option =
+    record 2
+    if present then Some 7 else None
+
+let private hasValue expected (value: int option) =
+    match value with
+    | Some actual -> actual = expected
+    | None -> false
+
+let private makeOuterPredicate () : int -> bool =
+    record 1
+    fun value ->
+        record 5
+        value = 6
+
+let private makeInnerMapper () : int -> int =
+    record 2
+    fun value ->
+        record 4
+        value + 2
+
+let private nestedArgument present : int option =
+    record 3
+    if present then Some 4 else None
+
+[<EntryPoint>]
+let main _ =
+    // Trace digits: factory=1, option argument=2, callback=3.
+    // Direct calls and <| evaluate the factory first; |> evaluates the input first.
+
+    // Option.map: direct, forward pipe, and backward pipe, on None and Some.
+    trace <- 0
+    let mapDirectNone = Option.map (makeMapper ()) (optionArgument false)
+    let mapDirectNoneOk = trace = 12 && Option.isNone mapDirectNone
+    trace <- 0
+    let mapDirectSome = Option.map (makeMapper ()) (optionArgument true)
+    let mapDirectSomeOk = trace = 123 && hasValue 10 mapDirectSome
+    trace <- 0
+    let mapForwardNone = optionArgument false |> Option.map (makeMapper ())
+    let mapForwardNoneOk = trace = 21 && Option.isNone mapForwardNone
+    trace <- 0
+    let mapForwardSome = optionArgument true |> Option.map (makeMapper ())
+    let mapForwardSomeOk = trace = 213 && hasValue 10 mapForwardSome
+    trace <- 0
+    let mapBackwardNone = Option.map (makeMapper ()) <| optionArgument false
+    let mapBackwardNoneOk = trace = 12 && Option.isNone mapBackwardNone
+    trace <- 0
+    let mapBackwardSome = Option.map (makeMapper ()) <| optionArgument true
+    let mapBackwardSomeOk = trace = 123 && hasValue 10 mapBackwardSome
+
+    // Option.bind: direct, forward pipe, and backward pipe, on None and Some.
+    trace <- 0
+    let bindDirectNone = Option.bind (makeBinder ()) (optionArgument false)
+    let bindDirectNoneOk = trace = 12 && Option.isNone bindDirectNone
+    trace <- 0
+    let bindDirectSome = Option.bind (makeBinder ()) (optionArgument true)
+    let bindDirectSomeOk = trace = 123 && hasValue 12 bindDirectSome
+    trace <- 0
+    let bindForwardNone = optionArgument false |> Option.bind (makeBinder ())
+    let bindForwardNoneOk = trace = 21 && Option.isNone bindForwardNone
+    trace <- 0
+    let bindForwardSome = optionArgument true |> Option.bind (makeBinder ())
+    let bindForwardSomeOk = trace = 213 && hasValue 12 bindForwardSome
+    trace <- 0
+    let bindBackwardNone = Option.bind (makeBinder ()) <| optionArgument false
+    let bindBackwardNoneOk = trace = 12 && Option.isNone bindBackwardNone
+    trace <- 0
+    let bindBackwardSome = Option.bind (makeBinder ()) <| optionArgument true
+    let bindBackwardSomeOk = trace = 123 && hasValue 12 bindBackwardSome
+
+    // Option.filter: direct, forward pipe, and backward pipe, on None and Some.
+    trace <- 0
+    let filterDirectNone = Option.filter (makePredicate ()) (optionArgument false)
+    let filterDirectNoneOk = trace = 12 && Option.isNone filterDirectNone
+    trace <- 0
+    let filterDirectSome = Option.filter (makePredicate ()) (optionArgument true)
+    let filterDirectSomeOk = trace = 123 && hasValue 7 filterDirectSome
+    trace <- 0
+    let filterForwardNone = optionArgument false |> Option.filter (makePredicate ())
+    let filterForwardNoneOk = trace = 21 && Option.isNone filterForwardNone
+    trace <- 0
+    let filterForwardSome = optionArgument true |> Option.filter (makePredicate ())
+    let filterForwardSomeOk = trace = 213 && hasValue 7 filterForwardSome
+    trace <- 0
+    let filterBackwardNone = Option.filter (makePredicate ()) <| optionArgument false
+    let filterBackwardNoneOk = trace = 12 && Option.isNone filterBackwardNone
+    trace <- 0
+    let filterBackwardSome = Option.filter (makePredicate ()) <| optionArgument true
+    let filterBackwardSomeOk = trace = 123 && hasValue 7 filterBackwardSome
+
+    // Option.exists: direct, forward pipe, and backward pipe, on None and Some.
+    trace <- 0
+    let existsDirectNone = Option.exists (makePredicate ()) (optionArgument false)
+    let existsDirectNoneOk = trace = 12 && not existsDirectNone
+    trace <- 0
+    let existsDirectSome = Option.exists (makePredicate ()) (optionArgument true)
+    let existsDirectSomeOk = trace = 123 && existsDirectSome
+    trace <- 0
+    let existsForwardNone = optionArgument false |> Option.exists (makePredicate ())
+    let existsForwardNoneOk = trace = 21 && not existsForwardNone
+    trace <- 0
+    let existsForwardSome = optionArgument true |> Option.exists (makePredicate ())
+    let existsForwardSomeOk = trace = 213 && existsForwardSome
+    trace <- 0
+    let existsBackwardNone = Option.exists (makePredicate ()) <| optionArgument false
+    let existsBackwardNoneOk = trace = 12 && not existsBackwardNone
+    trace <- 0
+    let existsBackwardSome = Option.exists (makePredicate ()) <| optionArgument true
+    let existsBackwardSomeOk = trace = 123 && existsBackwardSome
+
+    // Option.forall: direct, forward pipe, and backward pipe, on None and Some.
+    trace <- 0
+    let forallDirectNone = Option.forall (makePredicate ()) (optionArgument false)
+    let forallDirectNoneOk = trace = 12 && forallDirectNone
+    trace <- 0
+    let forallDirectSome = Option.forall (makePredicate ()) (optionArgument true)
+    let forallDirectSomeOk = trace = 123 && forallDirectSome
+    trace <- 0
+    let forallForwardNone = optionArgument false |> Option.forall (makePredicate ())
+    let forallForwardNoneOk = trace = 21 && forallForwardNone
+    trace <- 0
+    let forallForwardSome = optionArgument true |> Option.forall (makePredicate ())
+    let forallForwardSomeOk = trace = 213 && forallForwardSome
+    trace <- 0
+    let forallBackwardNone = Option.forall (makePredicate ()) <| optionArgument false
+    let forallBackwardNoneOk = trace = 12 && forallBackwardNone
+    trace <- 0
+    let forallBackwardSome = Option.forall (makePredicate ()) <| optionArgument true
+    let forallBackwardSomeOk = trace = 123 && forallBackwardSome
+
+    // Nested trace digits: outer factory=1, inner factory=2, input=3,
+    // inner callback=4, outer callback=5. None skips both callbacks.
+    trace <- 0
+    let nestedNone =
+        Option.filter (makeOuterPredicate ())
+            (Option.map (makeInnerMapper ()) (nestedArgument false))
+    let nestedNoneOk = trace = 123 && Option.isNone nestedNone
+    trace <- 0
+    let nestedSome =
+        Option.filter (makeOuterPredicate ())
+            (Option.map (makeInnerMapper ()) (nestedArgument true))
+    let nestedSomeOk = trace = 12345 && hasValue 6 nestedSome
+
+    trace <- 0
+    let forwardChainNone =
+        nestedArgument false
+        |> Option.map (makeInnerMapper ())
+        |> Option.filter (makeOuterPredicate ())
+    let forwardChainNoneOk = trace = 321 && Option.isNone forwardChainNone
+    trace <- 0
+    let forwardChainSome =
+        nestedArgument true
+        |> Option.map (makeInnerMapper ())
+        |> Option.filter (makeOuterPredicate ())
+    let forwardChainSomeOk = trace = 32415 && hasValue 6 forwardChainSome
+
+    trace <- 0
+    let backwardChainNone =
+        Option.filter (makeOuterPredicate ())
+        <| (Option.map (makeInnerMapper ()) <| nestedArgument false)
+    let backwardChainNoneOk = trace = 123 && Option.isNone backwardChainNone
+    trace <- 0
+    let backwardChainSome =
+        Option.filter (makeOuterPredicate ())
+        <| (Option.map (makeInnerMapper ()) <| nestedArgument true)
+    let backwardChainSomeOk = trace = 12345 && hasValue 6 backwardChainSome
+
+    if not mapDirectNoneOk then 111
+    elif not mapDirectSomeOk then 112
+    elif not mapForwardNoneOk then 113
+    elif not mapForwardSomeOk then 114
+    elif not mapBackwardNoneOk then 115
+    elif not mapBackwardSomeOk then 116
+    elif not bindDirectNoneOk then 117
+    elif not bindDirectSomeOk then 118
+    elif not bindForwardNoneOk then 119
+    elif not bindForwardSomeOk then 120
+    elif not bindBackwardNoneOk then 121
+    elif not bindBackwardSomeOk then 122
+    elif not filterDirectNoneOk then 123
+    elif not filterDirectSomeOk then 124
+    elif not filterForwardNoneOk then 125
+    elif not filterForwardSomeOk then 126
+    elif not filterBackwardNoneOk then 127
+    elif not filterBackwardSomeOk then 128
+    elif not existsDirectNoneOk then 129
+    elif not existsDirectSomeOk then 130
+    elif not existsForwardNoneOk then 131
+    elif not existsForwardSomeOk then 132
+    elif not existsBackwardNoneOk then 133
+    elif not existsBackwardSomeOk then 134
+    elif not forallDirectNoneOk then 135
+    elif not forallDirectSomeOk then 136
+    elif not forallForwardNoneOk then 137
+    elif not forallForwardSomeOk then 138
+    elif not forallBackwardNoneOk then 139
+    elif not forallBackwardSomeOk then 140
+    elif not nestedNoneOk then 141
+    elif not nestedSomeOk then 142
+    elif not forwardChainNoneOk then 143
+    elif not forwardChainSomeOk then 144
+    elif not backwardChainNoneOk then 145
+    elif not backwardChainSomeOk then 146
+    else 0
+

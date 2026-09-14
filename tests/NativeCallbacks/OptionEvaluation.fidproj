@@ -1,0 +1,15 @@
+[package]
+name = "OptionEvaluation"
+version = "0.1.0"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["OptionEvaluation.clef"]
+output = "option-evaluation"
+output_kind = "console"
+

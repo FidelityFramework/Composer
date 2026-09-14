@@ -22,7 +22,7 @@ open Alex.Traversal.ScopeContext
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ClosurePatterns
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
-open Alex.CodeGeneration.TypeMapping  // For resolveTypeParams
+open Alex.CodeGeneration.TypeMapping
 open Alex.Elements.MLIRAtomics  // For pUndef, pInsertValue, pExtractValue
 open Alex.Elements.FuncElements  // For pFuncConstant
 module Values = Alex.Traversal.Values
@@ -94,10 +94,6 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Register parameter SSA types for this function scope
             let argvType = TMemRef (TInt (IntWidth 8))
             MLIRAccumulator.registerSSAType (SSA.Arg 0) argvType ctx.Accumulator
-
-            // Eagerly resolve type parameters from the Lambda's type signature
-            // so inner expression types resolve correctly through Union-Find
-            resolveTypeParams ctx.Graph node.Type
 
             // Create child scope for function body (principled accumulation)
             let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
@@ -351,9 +347,6 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Register parameter SSA types for this function scope
             for (paramSSA, mlirType) in funcParams do
                 MLIRAccumulator.registerSSAType paramSSA mlirType ctx.Accumulator
-
-            // Eagerly resolve type parameters from the Lambda's type signature
-            resolveTypeParams ctx.Graph node.Type
 
             // ═══ SAVE CAPTURE SOURCE SSAs BEFORE EXTRACTION REGISTRATION ═══
             // Capture extraction (below) registers inner-function SSAs in NodeAssoc via bindNode,

@@ -1,0 +1,116 @@
+module OptionCallbacks
+
+[<Measure>]
+type distance
+
+type PredicateConfig = { Enabled: bool; Offset: int; Limit: int }
+
+let mutable private mapCalls: int = 0
+let mutable private bindCalls: int = 0
+let mutable private filterCalls: int = 0
+let mutable private existsCalls: int = 0
+let mutable private forallCalls: int = 0
+
+let mapThrough (mapper: 'a -> 'b) (value: 'a option) : 'b option =
+    Option.map mapper value
+
+[<EntryPoint>]
+let main _ =
+    let config: PredicateConfig = { Enabled = true; Offset = 3; Limit = 5 }
+    let missing: int option = None
+
+    // A false mapped payload must remain Some false, rather than becoming None.
+    let mapper = fun value ->
+        mapCalls <- mapCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+    let mappedNone = Option.map mapper missing
+    let mapAfterNone = mapCalls
+    let mappedTrue = Option.map mapper (Some 7)
+    let mapAfterTrue = mapCalls
+    let mappedFalse = Option.map mapper (Some 0)
+    let mapAfterFalse = mapCalls
+    let mapOk =
+        Option.isNone mappedNone
+        && (match mappedTrue with Some value -> value | None -> false)
+        && (match mappedFalse with Some value -> not value | None -> false)
+        && mapAfterNone = 0 && mapAfterTrue = 1 && mapAfterFalse = 2
+
+    // Bind changes int to measured int, and may return None from a Some input.
+    let binder = fun value ->
+        bindCalls <- bindCalls + 1
+        if config.Enabled && value >= config.Limit then
+            Some ((value + config.Offset) * 1<distance>)
+        else None
+    let boundNone: int<distance> option = Option.bind binder missing
+    let bindAfterNone = bindCalls
+    let boundSome: int<distance> option = Option.bind binder (Some 7)
+    let bindAfterSome = bindCalls
+    let boundRejected: int<distance> option = Option.bind binder (Some 0)
+    let bindAfterRejected = bindCalls
+    let bindOk =
+        Option.isNone boundNone && Option.isNone boundRejected
+        && (match boundSome with Some value -> value = 10<distance> | None -> false)
+        && bindAfterNone = 0 && bindAfterSome = 1 && bindAfterRejected = 2
+
+    let filterPredicate = fun value ->
+        filterCalls <- filterCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+    let filteredNone = Option.filter filterPredicate missing
+    let filterAfterNone = filterCalls
+    let filteredSome = Option.filter filterPredicate (Some 7)
+    let filterAfterSome = filterCalls
+    let filteredRejected = Option.filter filterPredicate (Some 0)
+    let filterAfterRejected = filterCalls
+    let filterOk =
+        Option.isNone filteredNone && Option.isNone filteredRejected
+        && (match filteredSome with Some value -> value = 7 | None -> false)
+        && filterAfterNone = 0 && filterAfterSome = 1 && filterAfterRejected = 2
+
+    let existsPredicate = fun value ->
+        existsCalls <- existsCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+    let existsNone = Option.exists existsPredicate missing
+    let existsAfterNone = existsCalls
+    let existsSome = Option.exists existsPredicate (Some 7)
+    let existsAfterSome = existsCalls
+    let existsRejected = Option.exists existsPredicate (Some 0)
+    let existsAfterRejected = existsCalls
+    let existsOk =
+        not existsNone && existsSome && not existsRejected
+        && existsAfterNone = 0 && existsAfterSome = 1 && existsAfterRejected = 2
+
+    let forallPredicate = fun value ->
+        forallCalls <- forallCalls + 1
+        config.Enabled && value + config.Offset >= config.Limit
+    let forallNone = Option.forall forallPredicate missing
+    let forallAfterNone = forallCalls
+    let forallSome = Option.forall forallPredicate (Some 7)
+    let forallAfterSome = forallCalls
+    let forallRejected = Option.forall forallPredicate (Some 0)
+    let forallAfterRejected = forallCalls
+    let forallOk =
+        forallNone && forallSome && not forallRejected
+        && forallAfterNone = 0 && forallAfterSome = 1 && forallAfterRejected = 2
+
+    // The same generic helper specializes to different input and output types.
+    let genericBool: bool option = mapThrough (fun value -> value > config.Limit) (Some 7)
+    let genericLength: int<distance> option =
+        mapThrough (fun value -> value * 1<distance>) (Some 8)
+    let measuredInput: int<distance> option = Some 8<distance>
+    let measuredMap: int<distance> option =
+        mapThrough (fun value -> value + config.Offset * 1<distance>) measuredInput
+    let measuredBind: int<distance> option =
+        Option.bind (fun value -> Some (value + 1<distance>)) measuredInput
+    let genericOk =
+        (match genericBool with Some value -> value | None -> false)
+        && (match genericLength with Some value -> value = 8<distance> | None -> false)
+        && (match measuredMap with Some value -> value = 11<distance> | None -> false)
+        && (match measuredBind with Some value -> value = 9<distance> | None -> false)
+
+    if not mapOk then 101
+    elif not bindOk then 102
+    elif not filterOk then 103
+    elif not existsOk then 104
+    elif not forallOk then 105
+    elif not genericOk then 106
+    else 0

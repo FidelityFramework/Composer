@@ -183,6 +183,11 @@ let main _ =
         succeeds "the stack tops out exactly at the ROM's data limit, never in SRAM2" (fun () ->
             if not (script.Contains "__stack_top = 0x3FCD7E00;") then failwith "Stack top is not the data limit"
             if not (script.Contains "__stack_bottom = 0x3FCD5E00;") then failwith "Stack bottom wrong for 8192 bytes")
+        succeeds "program headers keep .bss out of the .data segment the ROM loader copies" (fun () ->
+            if not (script.Contains "PHDRS {") then failwith "No PHDRS: a writable .data would merge with .bss into one PT_LOAD"
+            let dataAt = script.IndexOf "} > DRAM :data"
+            let bssAt = script.IndexOf "} > DRAM :bss"
+            if dataAt < 0 || bssAt < 0 || bssAt < dataAt then failwith ".data and .bss are not assigned distinct program headers")
         succeeds "read-only data is placed on the data bus, not with the code" (fun () ->
             let text = script.Substring(script.IndexOf ".text :", script.IndexOf "__iram_end" - script.IndexOf ".text :")
             let data = script.Substring(script.IndexOf ".data ORIGIN(DRAM)", script.IndexOf "__data_end" - script.IndexOf ".data ORIGIN(DRAM)")

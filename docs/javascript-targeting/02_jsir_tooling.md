@@ -1,141 +1,73 @@
-# JSIR Tooling: What Composer Actually Invokes
+# JSHIR/JSIR tooling and lowering
 
-**SpeakEZ Technologies | Fidelity Framework**
-**April 2026**
+**Design review: September 2026**
 
-This document fixes a set of misconceptions that accumulated in early drafts of Composer's backend design. The misconceptions traced to reading Google's JSIR RFC before the repository was cloned and examined. The corrected picture below is what Composer's backend actually targets.
+JSIR provides a JavaScript analysis and source-emission substrate within MLIR. Composer uses that substrate in two different roles: inspecting foreign implementations during recovery, and realizing compiled Clef computations in the JavaScript backend. Neither role makes JSIR the authority for Clef types or proof obligations.
 
-## The Single Binary
+## Pin the reviewed tool
 
-JSIR ships one executable: `jsir_gen`. It lives at `maldoca/js/ir/jsir_gen.cc` in the upstream repository. There is no separate `jsir-lift` tool. Early Composer drafts referenced `jsir-lift` as though it were distinct; it isn't. Everything JSIR does — parsing source, generating MLIR, lowering MLIR back to source — flows through `jsir_gen` with different pass arguments.
+The September [site review](../../../clef-lang-site/hugo/content/docs/design/javascript-targeting/jsir-javascript-as-mlir-backend.md) records upstream revision `1488d9bd408ec9163ac7051252dfe80e40a4e26a`. This document carries that review's tooling facts; it does not claim a newly built or integrated Composer toolchain.
 
-```
-jsir_gen --input=<file> --passes=<pass-list> --output=<file>
-```
+At that revision, `jsir_gen` exposes these conversion sequences:
 
-## The Four Named Conversions
+| Direction | Pass sequence | Role |
+|---|---|---|
+| JavaScript source to high-level IR | `source2ast,ast2jsir` | Parse through Babel AST and produce JSHIR for analysis. |
+| High-level IR to JavaScript source | `jsir2ast,ast2source` | Convert JSHIR through Babel AST and print JavaScript. |
 
-`jsir_gen`'s `--passes` argument accepts a comma-separated list of conversion names. Four named passes span the representations JSIR deals with:
+Commands, accepted inputs and output formats must come from the pinned tool revision. Integration must record the actual invocation and tool payload. A pass-name table is not a build receipt.
 
-| Pass | Input | Output | Purpose |
-|:-----|:------|:-------|:--------|
-| `source2ast` | JavaScript source | Babel AST JSON | Uses Babel to parse JavaScript |
-| `ast2hir` | Babel AST JSON | JSHIR (region-based MLIR) | Lifts Babel AST into the high-level MLIR dialect with regions |
-| `hir2ast` | JSHIR | Babel AST JSON | Lowers JSHIR back into Babel AST |
-| `ast2source` | Babel AST JSON | JavaScript source | Uses Babel's printer to produce JavaScript |
+Babel is the AST substrate. JSHIR supplies region-based high-level structure; the repository also defines JSIR operations. The existence of both dialects does not establish a separately supported low-level route to source generation. Supported operation and conversion coverage must be characterized for the selected revision. JSX handling, if required by a source frontend, is upstream of this JavaScript representation.
 
-The representations are:
+## The forward analysis route
 
-1. **JavaScript source** — `.js` text.
-2. **Babel AST** — JSON representation of a Babel AST (Google explicitly uses Babel, not ESTree; the C++ code uses `BabelAstString`, `BabelParseRequest`, and lives under `maldoca/js/babel/`).
-3. **JSHIR** — the high-level region-based JSIR dialect. Control flow uses MLIR regions. Ops like `jshir.if_statement`, `jshir.while_statement`, `jshir.switch_statement`.
-4. **JSIR** — a separate lower-level dialect that JSIR can lower JSHIR into. Most ops live in `jsir.*`; region-based structural ops live in `jshir.*`. Composer primarily emits and consumes the JSHIR level for backend purposes because it's the representation that round-trips cleanly to source.
-
-There is no third "low-level" dialect beyond these. The JSIR repository has exactly two MLIR dialects registered: `Jsir_Dialect` (namespace `jsir`) and `Jshir_Dialect` (namespace `jshir`).
-
-## Forward vs. Reverse Pipelines
-
-**Forward pipeline (source to MLIR):**
-
-```
-jsir_gen --passes=source2ast,ast2hir --input=file.js --output=file.mlir
+```text
+Pinned JavaScript package and selected executable entry points
+    -> Babel/JSHIR lift
+    -> language-specific semantic analysis
+    + Xantham declaration analysis and application context
+    -> candidate Clef bindings or implementations, with pending requirements
 ```
 
-This is what Google uses internally for analysis: decompiling Hermes bytecode, running dataflow analysis for deobfuscation, classifying malicious JavaScript. Composer does not need the forward pipeline for production compilation; it uses it only during development to validate that hand-emitted JSIR ops round-trip correctly.
+The analysis must relate bodies to declarations through authenticated module/export resolution. A shared name is insufficient. Dynamic dispatch, callbacks, unavailable imports and runtime-generated behavior retain unknowns until evidence closes them.
 
-**Reverse pipeline (MLIR to source):**
+JSHIR's JavaScript value types do not recover Clef dimensions, lifetime ownership or a lost TypeScript generic contract. Recovery combines evidence from the available sources and exposes its unresolved parts through the [deferred inference workflow](05_supply_chain_and_transcribe.md). A recovered source candidate enters ordinary CCS checking; a syntax lift does not directly certify a Clef graph.
 
+## The backend route
+
+```text
+Portable witnessed operations + retained PSG/codata
+    -> JavaScript carrier and boundary realization
+    -> supported JSHIR/JSIR operations
+    -> Babel AST
+    -> JavaScript module
 ```
-jsir_gen --passes=hir2ast,ast2source --input=module.mlir --output=module.js
-```
 
-This is what Composer invokes in its backend. Alex's witnesses emit JSHIR ops into an MLIR module. Composer writes that module to a temporary `.mlir` file, runs `jsir_gen` against it with the `hir2ast,ast2source` pass list, and receives JavaScript source.
+Alex does not emit JSHIR. It witnesses settled graph structure through the five portable dialects. The JavaScript backend realizes those operations under [Backend Lowering Architecture §4.5](../../../clef-lang-spec/spec/backend-lowering-architecture.md#45-carrier-realization-on-pathways-without-linear-memory).
 
-## Babel, Not ESTree
+The backend can read field names, case identities and capture structure from the graph where the JavaScript model needs them. Form selection and semantic judgments remain above the witness boundary. No Option-specific reconstruction or vendor-name dispatch belongs in emission.
 
-An early draft of `JSIR_Backend_Design.md` described JSIR as using "ESTree" as the AST substrate. This was wrong. Inspection of the upstream repository confirms:
+A host function realization must retain actual argument boundaries and capture semantics. A property access must correspond to the declared record access. A byte operation must retain its view origin, extent, encoding and conversion. A boundary operation must retain its absence and failure disposition. The target's richer syntax is not permission to omit these relationships.
 
-- `maldoca/js/babel/babel.h` — the Babel integration layer
-- `maldoca/js/babel/babel.pb.h` — protobuf definitions for Babel AST
-- `maldoca/js/ast/ast_util.h` — comment: "Parses the source using Babel and returns a string representing the AST"
-- `BabelAstString`, `BabelParseRequest`, `BabelGenerateOptions` — the types the C++ code uses throughout
-- `third_party/babel_standalone/` — the vendored Babel runtime
+[Numeric selection and precision](08_numeric_selection_and_precision.md) details the arithmetic correspondence: preserve selected representations, intermediate capacity, rounding points and admitted merge laws. A valid numeric JSHIR operation alone does not establish those properties, and emission does not repeat the selector or choose a cheaper precision policy.
 
-The distinction matters because Babel and ESTree differ in places that affect emission:
+## Verification scope
 
-| Construct | ESTree | Babel |
-|:----------|:-------|:------|
-| Class methods | `MethodDefinition` | `ClassMethod` (and `ClassPrivateMethod`, `ClassProperty`) |
-| Object methods | `Property` with `method: true` | `ObjectMethod` as a distinct node kind |
-| Numeric literal | `Literal` | `NumericLiteral` |
-| String literal | `Literal` | `StringLiteral` |
-| Boolean literal | `Literal` | `BooleanLiteral` |
-| Null literal | `Literal` | `NullLiteral` |
+The reviewed upstream revision invokes MLIR verification during AST-to-JSHIR conversion, while its transformation runner disables pass-manager verification pending an IR-design fix. Do not describe that as a universally verified pipeline. Integration must establish which structural checks actually ran on the selected route.
 
-JSIR's op set mirrors Babel. Ops like `jsir.class_method`, `jsir.object_method`, `jsir.numeric_literal`, `jsir.string_literal`, `jsir.boolean_literal`, `jsir.null_literal` exist; `MethodDefinition`-style ops do not. When writing witnesses, the reference is Babel's node kinds, not ESTree's.
+Structural validity is necessary but does not prove semantic preservation. A valid DataView operation can still use the wrong offset or endian order. An ordinary JavaScript callback can still receive the wrong arguments. For every admitted operation family, the lowering needs a stated correspondence and preservation evidence or a re-check at the affected edge.
 
-## What's in the Dialect
+Round trips and normalized JSHIR comparisons are regression instruments. Normalization must respect binding, capture and observable distinctions. Neither matching IR nor parseable JavaScript proves a foreign library's effects or Cloudflare behavior.
 
-The JSIR dialect contains roughly 85 operations across `jsir.*` and `jshir.*`. A representative partial list:
+## Integration evidence
 
-**Literals and identifiers:**
-- `jsir.numeric_literal`, `jsir.string_literal`, `jsir.boolean_literal`, `jsir.null_literal`, `jsir.big_int_literal`, `jsir.reg_exp_literal`
-- `jsir.identifier` (r-value), `jsir.identifier_ref` (l-value), `jsir.private_name`
+A backend acceptance record should identify:
 
-**Expressions:**
-- `jsir.binary_expression`, `jsir.unary_expression`, `jsir.update_expression`, `jsir.assignment_expression`
-- `jsir.call_expression`, `jsir.optional_call_expression`, `jsir.new_expression`
-- `jsir.member_expression`, `jsir.optional_member_expression`, `jsir.member_expression_ref`
-- `jsir.array_expression`, `jsir.object_expression`, `jsir.sequence_expression`
-- `jsir.template_literal`, `jsir.tagged_template_expression`
-- `jsir.arrow_function_expression`, `jsir.function_expression`, `jsir.class_expression`
-- `jsir.this_expression`, `jsir.super`, `jsir.import`, `jsir.yield_expression`, `jsir.await_expression`
-- `jsir.spread_element`, `jsir.meta_property`, `jsir.parenthesized_expression`
+- The exact JSIR, MLIR, parser/printer and compiler tool payloads and invocation.
+- Supported operations and explicit unsupported cases for both lift and emission.
+- Structural verification actually performed, alongside semantic correspondence checks.
+- Source locations and obligation provenance through transformations.
+- The emitted module, dependency closure and selected host configuration.
+- Executable success, failure and boundary cases under that configuration.
 
-**Statements:**
-- `jsir.expression_statement`, `jsir.empty_statement`, `jsir.debugger_statement`, `jsir.throw_statement`, `jsir.return_statement`
-- `jsir.variable_declaration`, `jsir.variable_declarator`
-- `jsir.function_declaration`, `jsir.class_declaration`, `jsir.class_body`, `jsir.class_method`, `jsir.class_private_method`, `jsir.class_property`, `jsir.class_private_property`
-- `jsir.import_declaration`, `jsir.export_named_declaration`, `jsir.export_all_declaration`, `jsir.export_default_declaration`
-
-**Control flow (JSHIR):**
-- `jshir.block_statement`, `jshir.with_statement`, `jshir.labeled_statement`
-- `jshir.if_statement`, `jshir.switch_statement`, `jshir.switch_case`
-- `jshir.while_statement`, `jshir.do_while_statement`, `jshir.for_statement`, `jshir.for_in_statement`, `jshir.for_of_statement`
-- `jshir.try_statement`, `jshir.catch_clause`
-- `jshir.break_statement`, `jshir.continue_statement`
-- `jshir.logical_expression`, `jshir.conditional_expression`
-
-**Object and pattern refs (for destructuring and l-value contexts):**
-- `jsir.object_property`, `jsir.object_property_ref`, `jsir.object_method`
-- `jsir.object_pattern_ref`, `jsir.array_pattern_ref`, `jsir.assignment_pattern_ref`, `jsir.rest_element_ref`
-
-**Region terminators:**
-- `jsir.expr_region_end`, `jsir.exprs_region_end`
-
-This set covers essentially all Babel-AST-representable JavaScript. It does not cover JSX: JSIR has no `jsx_element`, `jsx_attribute`, or similar operations. JSX is a source-level surface that every JSX-based framework lowers before the JavaScript reaches JSIR.
-
-## What Composer Invokes
-
-Composer's backend, at build time:
-
-1. Alex emits JSHIR ops via its JSIR witness set into an in-memory MLIR module.
-2. The module is written to `build/<project>/<unit>.mlir`.
-3. Composer shells out to `jsir_gen --passes=hir2ast,ast2source --input=<unit>.mlir --output=<unit>.js`.
-4. The resulting `.js` file is the compilation artifact, wrapped in a `JavaScriptModule` back-end artifact record.
-
-No other JSIR tooling is invoked. JSIR's analysis passes (constant propagation, dataflow analyses, deobfuscation transforms) are not part of Composer's backend. They exist in the JSIR repository for Google's internal use cases and could be invoked for JavaScript analysis tasks if Composer ever needed them (e.g., Transcribe lifting foreign JavaScript into Clef — Horizon 3), but they have no role in the emission path.
-
-## Build Integration
-
-JSIR builds with Bazel against `@llvm-project`. Composer's build currently uses `bazel` as well for the native MLIR pipeline, so integration is straightforward: the JSIR dialect's TableGen definitions (`maldoca/js/ir/jsir_dialect.td`, `jsir_ops.td`, `jsir_ops.generated.td`, `jshir_ops.*`, `jsir_attrs.td`, `jsir_types.td`, `interfaces.td`) compile against Composer's MLIR version, and the `jsir_gen` binary is produced by the same build system.
-
-The dialect will be upstreamed into MLIR core once Google's RFC (published April 6, 2026) completes review. Until then, Composer depends on JSIR as an external dialect. Post-upstream, JSIR becomes an MLIR core component like EmitC and the dependency shortens.
-
-## Cross-References
-
-- [JSIR_Backend_Design.md](../JSIR_Backend_Design.md) — the backend specification that invokes this tooling
-- [01_two_models.md](./01_two_models.md) — when Composer uses this pipeline vs. when Fable is in charge
-- [Fidelity.CloudEdge/docs/10_jsir_strategic_assessment.md](../../../Fidelity.CloudEdge/docs/10_jsir_strategic_assessment.md) — the ecosystem-level framing and RFC context
-- Upstream: https://github.com/google/jsir
-- RFC: https://discourse.llvm.org/t/rfc-jsir-a-high-level-ir-for-javascript/90456
+These are implementation requirements, not claims that Composer currently supplies those records. [Identity and acceptance](07_dependency_identity_and_validation.md) connects them to the binding and application contracts.

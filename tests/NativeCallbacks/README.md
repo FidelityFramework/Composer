@@ -8,6 +8,58 @@ fields followed by later allocations. `IgnoreValues` checks that discarding
 ordinary and optional opaque-handle values preserves evaluation effects and
 produces a usable Clef unit value.
 
+`OptionCallbacks` is a language acceptance gate for `Option.map`, `bind`,
+`filter`, `exists`, and `forall`. Each operation checks None without invoking
+its callback and Some with exactly one callback invocation, recording the count
+after each call. It covers true and false predicates, retained filter payloads,
+`Some false` from map, None returned by bind, and vacuous truth for `forall None`.
+Callbacks capture a record containing a boolean and numeric fields. A generic
+mapping helper specializes to different input/output types; measured values
+exercise type-changing map/bind and dimensional preservation. Exit codes
+101–106 identify map, bind, filter, exists, forall, and generic/dimensional
+failures respectively. The harness also requires portable conditional and
+indirect-call operations in the retained MLIR.
+
+`OptionEvaluation` separates eager argument evaluation from callback invocation.
+For each of the five HOFs, direct calls and backward pipes evaluate an effectful
+callback factory before an effectful option-producing expression; forward pipes
+evaluate the option expression first. Both expressions run exactly once. None
+skips the callback; Some invokes it once after both argument expressions. Ordered
+event traces detect omitted, duplicate, or reordered evaluation. Nested
+`Option.filter` over `Option.map`, plus chained forward and backward pipes,
+check both factories, the input, and conditional callbacks in one expression.
+Exit codes 111–116 identify map failures, 117–122 bind, 123–128 filter,
+129–134 exists, and 135–140 forall; within each group the order is direct
+None/Some, forward None/Some, backward None/Some. Codes 141–146 cover nested
+filter/map, forward chains, and backward chains, each None/Some. Native execution
+remains a required acceptance gate.
+
+`OptionPartials` checks stored partial applications of all five HOFs, callback
+construction once, reuse across Some/None, higher-order transport, immutable
+callback snapshots, and sharing of mutable captures. Returned generic partials
+preserve distinct and measured payload types. All eight admitted operations
+(`map`, `bind`, `filter`, `exists`, `forall`, `isSome`, `isNone`, `get`) are also
+used as bare function values. Unannotated polymorphic aliases and explicit type
+applications exercise specialization before Baker. Exit codes 151–167 identify
+the individual acceptance groups in source order.
+
+`OptionFunctionPayloads` checks functions inside options: map produces and
+consumes captured functions, bind returns Some/None functions, filter retains
+the original callable, and exists/forall invoke predicates over callable
+payloads. Captured values survive callback returns; shared mutable captures
+remain shared. None skips both the predicate and payload invocation. Direct and
+explicitly typed `Option.get` calls can immediately invoke their function payload,
+including a payload that returns another closure; ordered effects check eager
+argument evaluation. Exit codes 171–177 identify the seven groups. `Option.get`
+is tested on Some values, consistent with its specified unchecked extraction contract.
+
+`GenericRecords` exercises distinct concrete layouts of the same generic record,
+including numeric and record payloads, nested options, copy updates, and returned
+unit closures that retain each concrete record. It checks phantom parameters,
+field order differing from declaration parameter order, repeated parameters,
+and measured fields. Numeric values exceed an eight-bit range so premature
+narrowing is observable. Exit codes 81–89 identify these cases in source order.
+
 `ListenerEntry` consumes the same `CallbackDescriptor` vocabulary emitted by
 Farscape for native listener fields. It checks an ordinary Clef unit call, a
 separate C `void` entry, field aliases and another address of the same handler,
