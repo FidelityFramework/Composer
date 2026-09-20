@@ -38,8 +38,8 @@ The full pipeline exposed two distinct callable defects:
 
 ### Companion revisions
 
-Use these revisions together. The Composer commit containing this record is the
-compiler/tooling integration checkpoint. The earlier `defaultValue` compiler work
+Use these revisions together. Composer `252f8d9` is the compiler/tooling
+integration checkpoint. The earlier `defaultValue` compiler work
 was incorporated in clef `94e28c7ba`; `f3bea0377` expanded its admission tests.
 
 | Repository | Revision | Scope |

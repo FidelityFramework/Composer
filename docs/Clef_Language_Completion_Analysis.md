@@ -370,6 +370,14 @@ Incremental.NET remains a reference after observed propagation failures;
 IcedTasks is an optional host proof-worker experiment. Neither is an adopted
 dependency or the semantic definition of Clef incremental computation.
 
+The [Costanich front-end investigation](Costanich_Frontend_Investigation_2026-09-19.md)
+adds a declaration-discovery waypoint before native body checking: retain NTU
+identities, lexical lookup and source provenance while making dependency groups
+explicit. First establish file/type-order behavior and build/editor agreement;
+measure parsing, discovery, resolution and Baker separately before claiming a
+timing benefit. The reviewed fork orders checking; it supplies neither Clef's
+hypergraph recompilation boundary nor a measured speedup.
+
 Each implementation slice should produce four reviewable artifacts: the source cases and their required behavior, the inspectable graph with origins and obligations, the witnessed/realized artifact with correspondence, and the actual gate results for that revision. Existing regression, dimensional, BAREWire, HelloProof, callback, and target acceptance records provide reusable gates. Their historical counts must be refreshed on the final binaries for the actual change rather than copied into an as-built. [Dimensional handoff](../../clef/docs/fidelity/phg/Dimensional_Handoff.md), [closure retooling gates](../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md).
 
 **15. Design reconciliation work, without reopening the north star**
