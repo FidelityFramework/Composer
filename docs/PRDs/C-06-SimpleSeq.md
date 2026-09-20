@@ -6,6 +6,18 @@
 
 > **Sample**: `15_SimpleSeq` | **Status**: Planned | **Depends On**: C-05 (Lazy), C-01 (Closures)
 
+> **Source constraint checkpoint (2026-09-20).** Baker now establishes an actual
+> sequence owner before checking the body. Owned yields share its element
+> constraint; delegation must supply the same sequence type, and nested sequences
+> have independent owners. See [language coverage waypoints](../Language_Coverage_Waypoints.md).
+> The generator also has a real typed formal with parameter/parent relationships,
+> anchored at a source point without introducing a user-visible binding.
+> This does not complete suspension segmentation, the generator's Boolean return
+> construction, frame layout, live-across residence/lifetime obligations or native
+> sequence execution. Those require the settled
+> [sequence representation contract](../../../clef-lang-spec/spec/seq-representation.md),
+> rather than implementation of the historical inline-code-pointer layout below.
+
 ## 1. Executive Summary
 
 Sequence expressions (`seq { }`) provide lazy, on-demand iteration in Clef. Unlike `Lazy<'T>` (single deferred value), `Seq<'T>` produces multiple values through resumable computation.

@@ -7,6 +7,52 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06 resident sequence generator formal — 2026-09-20
+
+The source sequence generator previously named `NodeId -1` as its formal. It now
+owns a real typed `PatternBinding`, ordered before its body, with the canonical
+parameter relation and matching parent. The formal's type agrees with its tuple
+and generator domain, retaining the current internal sequence-pointer type.
+Its zero-width source anchor preserves file/point provenance through the owner
+without occupying a source token or entering the user's lexical environment.
+
+All six new cases failed on the old missing formal. They now pair actual
+`01_psg0` artifacts with the saturated graph: identity, ordered children, parent,
+types and canonical `kindEdges` relations agree. Nested owners have distinct
+formals. Mutable captures and an immutable source binding also named `_seq_ptr`
+retain their original definition identities. Structural relations are projected
+by `kindEdges`, as documented by the graph contract; these tests do not require
+duplicating them in the explicit n-ary enrichment edge collection.
+
+| Gate | Result |
+|---|---|
+| CCS | **678/678**, including six formal cases; `/tmp/clef-sequence-formals-full.log`; baseline `/tmp/clef-sequence-formals-before.log` |
+| Public Composer | **4/4** selected SourceAdmission cases: three exact sequence rejections with no target artifacts and ordinary FP control with stock MLIR/native execution; `/tmp/composer-source-admission-f806f10b6e444b2c83141d0c359fcbdc/` |
+| FidelityHello | **11b_LoopCaptures passes**, exact output and native exit; `/tmp/composer-sequence-formals-fidelityhello.log` |
+| Analyzer projection | **33 accepted / 42 exact rejections**, revisions 1–92; `/tmp/lattice-ccs-surface-072679c2d2824ef480d70b06efb284ca/evidence.json` |
+| LSP | **46 diagnostic edits and repairs**, source `SeqExpr` hover, captured factory/result/seed hovers and exact seed definition; `/tmp/lattice-surface-waypoint-dCjrnm/result.json` |
+
+Both tooling gates loaded CCS SHA-256
+`b936e97e2cd68776a52dd72cc51368cc92856c10e0d37cf4f21080843ef4269d`.
+This repairs source graph identity. The generator still contains an unelaborated
+unit yield body; constructing its Boolean resumption result requires the
+suspension recipe. Frame representation, cut segmentation, live-across placement
+and lifetime obligations remain pending. Alex is unchanged.
+
+The next upstream dependency is consistency with recipe-produced sequences:
+`clef/src/Compiler/Baker/Ingredients/Primitives.fs` still creates raw-body
+`SeqExpr` nodes and gives `yield'`/`yieldBang` element types instead of unit.
+`SeqRecipes` expands HOFs into these structures; `BakerSaturation` does not yet
+select source `SeqExpr`/`Yield` for suspension construction. Align those producer
+contracts before implementing owner-scoped cuts, segments and live-across facts
+through Baker's existing recipe fan-out/fold-in seam. The canonical
+[suspension contract](../../clef-lang-spec/spec/dcont-representation.md) requires
+VC-EXT, VC-STATE, VC-ACC, VC-DOM and VC-ONE; existing obligation ingredients are
+integration mechanisms, not evidence that these proofs already exist.
+
+Companion revisions: clef `62a0d38dc`, lattice-analyzers `3afbad7`,
+lattice-vscode `a83fd82`, CAC `9d09823d`.
+
 ## F-09 Result case predicates — 2026-09-20
 
 Specification `5f49a02` defines `Result.isOk` and `Result.isError` as unary
