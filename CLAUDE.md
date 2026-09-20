@@ -1,5 +1,14 @@
 # Composer Compiler - Claude Context
 
+## Language Coverage Checkpoints
+
+When continuing language/compiler work, read the latest entries in
+`docs/Language_Coverage_Waypoints.md` and their referenced contracts alongside
+the roadmap. Keep that record current at each completed checkpoint: concrete
+scope, validation results, companion repository revisions, and the next unsettled
+contract. Distinguish pending implementation from tested behavior so later
+sessions can resume from the recorded state.
+
 ## Alex Architecture
 
 The Element/Pattern/Witness model with XParsec throughout:

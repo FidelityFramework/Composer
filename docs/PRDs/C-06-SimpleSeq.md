@@ -18,7 +18,7 @@
 > [sequence representation contract](../../../clef-lang-spec/spec/seq-representation.md),
 > rather than implementation of the historical inline-code-pointer layout below.
 
-> **Delimiter ownership checkpoint (2026-09-20, validation pending).** After
+> **Delimiter ownership checkpoint (2026-09-20).** After
 > producer and capture elaboration, Baker records each suspension site's owner
 > and generator as a joint `Suspension/Delimiter` relation to its `Yield` or
 > `YieldBang` node. Nested sequence owners remain separate; ordinary lambda,
@@ -31,7 +31,20 @@
 > Ownership alone does not satisfy that witness boundary. Suspension segments,
 > frame/resumption construction and their proof obligations remain pending;
 > no native sequence completion is claimed. See the latest
-> [waypoint](../Language_Coverage_Waypoints.md) for the eventual gate evidence.
+> [waypoint](../Language_Coverage_Waypoints.md) for the recorded gate evidence.
+
+> **Delegation iteration checkpoint (2026-09-20).** Baker
+> expands `yield!` into owner-local iterator initialization and a while loop
+> that binds current once per successful pull and yields it. The unit wrapper
+> preserves the source site's identity and range; explicit provenance relates
+> it and its input to the generated yield, whose delimiter remains the outer
+> owner. Input sequence suspension sites retain their own owner. Empty delegation
+> continues without an outer yield. The shared iteration ingredient also serves
+> producer recipes. Graph-ordered evaluation relations must precede segment
+> liveness; this step supplies neither a complete control-flow graph nor a native
+> frame. Alex continues to refuse the generated yield until suspension segments,
+> frame and resumption are settled. See the latest
+> [waypoint](../Language_Coverage_Waypoints.md) for validation status.
 
 ## 1. Executive Summary
 

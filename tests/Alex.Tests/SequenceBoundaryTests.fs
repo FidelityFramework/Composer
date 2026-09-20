@@ -10,6 +10,7 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.Traversal.ScopeContext
 open Alex.Tests.Fixtures
 module Zipper = Alex.Traversal.PSGZipper
+module SourceChecker = Clef.Compiler.NativeService
 
 /// An owner with its typed generator formal, but no suspension segments,
 /// frame or resumption construction. A delimiter adds ownership only.
@@ -101,3 +102,54 @@ let ``unrelated node remains available to other witnesses`` () =
     match observe position with
     | TRSkip -> ()
     | result -> failwithf "Sequence witness consumed an unrelated node: %A" result
+
+[<Fact>]
+let ``checked delegation retains origin and ownership without authorizing frame-less witnessing`` () =
+    let source = """module SequenceBoundary
+let input = seq { yield true }
+let outer = seq { yield! input }
+[<EntryPoint>]
+let main _ = ignore outer; 0
+"""
+    let graph =
+        match SourceChecker.parseAndCheck source "sequence-boundary.clef" with
+        | SourceChecker.Success result -> result.Graph
+        | SourceChecker.CheckFailure result -> failwithf "Delegation source was rejected: %A" result.Diagnostics
+        | SourceChecker.ParseFailure errors -> failwithf "Delegation source did not parse: %A" errors
+    Assert.DoesNotContain(graph.Nodes.Values, fun node ->
+        match node.Kind with SemanticKind.Error _ -> true | _ -> false)
+    let origin = graph.Edges |> List.filter (fun edge ->
+        edge.Class = EdgeClass.Provenance && edge.Role = EdgeRole.DelegationOrigin) |> Assert.Single
+    match origin.Sources with
+    | [wrapper; input] ->
+        Assert.Equal<NativeType>(Types.unitType, graph.Nodes[wrapper].Type)
+        Assert.Equal<NativeType>(Types.mkSeqType Types.boolType, graph.Nodes[input].Type)
+        match graph.Nodes[wrapper].Kind with
+        | SemanticKind.Sequential [_] -> ()
+        | kind -> failwithf "Delegation lost its source wrapper: %A" kind
+    | sources -> failwithf "Delegation lost its source/input provenance: %A" sources
+    match graph.Nodes[origin.Target].Kind with
+    | SemanticKind.Yield current -> Assert.Equal<NativeType>(Types.boolType, graph.Nodes[current].Type)
+    | kind -> failwithf "Baker did not produce a typed delegated yield: %A" kind
+    let ownership = graph.Edges |> List.filter (fun edge ->
+        edge.Class = EdgeClass.Suspension && edge.Role = EdgeRole.Delimiter && edge.Target = origin.Target) |> Assert.Single
+    let owner =
+        match ownership.Sources with
+        | [owner; generator] ->
+            match graph.Nodes[owner].Kind with
+            | SemanticKind.SeqExpr(actual, _) -> Assert.Equal(generator, actual)
+            | kind -> failwithf "Delegated yield has no sequence owner: %A" kind
+            owner
+        | sources -> failwithf "Delegated yield lost its owner/generator: %A" sources
+    let rec pathToOwner id path =
+        if id = owner then path
+        else
+            let parent = graph.Nodes[id].Parent |> require "Delegated yield lost its structural parent"
+            pathToOwner parent (id :: path)
+    let root = Zipper.create graph owner |> require "Missing checked sequence owner"
+    let position = pathToOwner origin.Target [] |> List.fold (fun position child -> atChild child position) root
+    Assert.NotEmpty(position.Path)
+    match observe position with
+    | TRError diagnostic ->
+        Assert.Equal("Yield requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient", diagnostic.Message)
+    | result -> failwithf "Ownership and delegation provenance authorized an unsettled frame: %A" result

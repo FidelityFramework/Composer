@@ -7,6 +7,60 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06 delegation iteration before suspension segments — 2026-09-20
+
+Baker now expands admitted `yield! input` into iteration within the delegating
+owner. The shared `Ingredients.Sequences.iterate` ingredient is also used by
+sequence producers: it initializes one enumerator, checks `moveNext`, binds
+`current` once on success, and runs the supplied unit action. Delegation supplies
+an ordinary yield as that action. Exhaustion follows the while loop's false
+path; an empty delegated input does not introduce a yield before the surrounding
+computation continues. The original input is evaluated once when execution
+reaches that delegation, not when its enclosing sequence value is created.
+
+The source site's identity and range remain on a unit `Sequential` wrapper.
+Generated protocol nodes have point source anchors. A `DelegationOrigin`
+provenance relation joins the original site and input to the generated yield;
+the owner/generator delimiter relation transfers to that yield and ownership
+is checked again after fold-in. A supplied sequence's own suspension sites
+retain their separate owner. Existing enclosing branches, loops, operand
+identities and proof incidence remain attached to the source wrapper.
+
+Alex production code is unchanged. An additional boundary test uses public
+`parseAndCheck` on Boolean delegation, finds the actual Baker-generated yield
+with both provenance and delimiter relations, and observes it at its Huet focus.
+The required result remains an explicit missing-frame error with no operations
+or graph/accumulator changes. These facts do not authorize native suspension.
+
+| Gate | Result |
+|---|---|
+| CCS | **723/723**, including 11 delegation cases; focused delegation/ownership/producer/element cohort **64/64**; `/tmp/clef-sequence-delegation-full.log`, `/tmp/clef-sequence-delegation-tests.log` |
+| Alex | **8/8** sequence boundary cases, including the source-derived delegated yield with both resident relations; `/tmp/composer-sequence-delegation-alex.log` |
+| Public Composer | **3/3** selected SourceAdmission cases: exact map/append dimension rejections before artifacts, ordinary FP control with stock MLIR verification and native execution; `/tmp/composer-source-admission-10e7973256424b53afc7dec8f30a8725/` |
+| FidelityHello | **11b_LoopCaptures passes**, fresh compilation, exact output and native exit; `/tmp/composer-sequence-delegation-fidelityhello.log` |
+| Analyzer projection | **39 accepted / 45 exact rejections**, revisions 1–104; `/tmp/lattice-ccs-surface-b7f9259f2ca54e88afb7bdbbc82052d8/evidence.json` |
+| LSP | **49 diagnostic edits and repairs**, original `yield!` span/unit result, nested append/collect types and captured-storage definitions; `/tmp/lattice-surface-waypoint-eHlq9I/result.json` |
+
+Both tooling gates loaded CCS SHA-256
+`167ef2f9d2124344499ff9bf900961410fd10b2a022203cd2fbb1a8f6527e1a6`.
+The source tests also preserve unrelated resident proof relations, the source
+wrapper's emission boundary and the original input's range, and require a
+second delegation pass to be a no-op. Unowned or scalar sites are left intact
+for their admission diagnostics; no owner or sequence element type is invented.
+Specification `2d5a85b` records delegation timing and ownership.
+
+The next step is graph-resident evaluation order, preserving conditional choices,
+joins, loop backedges and deferred boundaries before segment liveness is
+computed. That relation must distinguish reuse of an already evaluated value
+from a new evaluation; a definition reference does not re-run its initializer,
+and a global visited set does not determine evaluation multiplicity across loops.
+This checkpoint does not supply a complete control-flow graph,
+suspension segments, frame layout, Boolean resumption or lifetime proofs.
+The aggregate storage-budget follow-up recorded below remains open.
+
+Companion revisions: clef `a3c43be9b`, lattice-analyzers `d605d4d`,
+lattice-vscode `a35bf3f`, CAC `de169cb4`.
+
 ## C-06 delimiter ownership and passive witness boundary — 2026-09-20
 
 Baker's `Suspensions` ingredient constructs a `Suspension/Delimiter` hyperedge

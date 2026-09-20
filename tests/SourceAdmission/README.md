@@ -41,11 +41,14 @@ produce exact output. Existing intrinsic `seq` remains a separate source-only
 admission control; successful sequence type and graph checks live in CCS and
 editor tests. This gate does not claim that native sequence frames work.
 
-The subsequent [C-06 delimiter checkpoint](../../docs/Language_Coverage_Waypoints.md)
-records ownership in Baker's graph and retires the old sequence shape coeffect.
-Alex separately refuses unelaborated sequence suspension nodes until segments,
-frame and resumption are settled. Neither that witness refusal nor a delimiter
-relation counts as one of this harness's exact source-typing rejections.
+The [C-06 checkpoints](../../docs/Language_Coverage_Waypoints.md) record ownership
+in Baker's graph, retire the old shape coeffect, and elaborate admitted delegation
+into owner-local iteration. The delegated yield retains both origin and delimiter
+relations. Alex separately refuses sequence suspension nodes until segments,
+frame and resumption are settled; its source-derived delegation component test
+checks this boundary. Neither that witness refusal nor those graph relations
+count as one of this harness's exact source-typing rejections. Valid sequence
+source remains a CCS/editor gate while native frame construction is pending.
 
 Each run retains source, projects, logs and compiler hashes in its printed
 temporary directory. `evidence.json` records every selected result, including
