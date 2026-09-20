@@ -1,0 +1,65 @@
+module RangeLoops
+
+let mutable private trace: int = 0
+let mutable private values: int = 0
+let mutable private starts: int = 0
+let mutable private finishes: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private reset () =
+    trace <- 0
+    values <- 0
+    starts <- 0
+    finishes <- 0
+
+let private first value =
+    record 1
+    starts <- starts + 1
+    value
+
+let private last value =
+    record 2
+    finishes <- finishes + 1
+    value
+
+let private visit value =
+    record 3
+    values <- values * 10 + value
+
+let private consumeUnit (_value: unit) = record 9
+
+[<EntryPoint>]
+let main _ =
+    reset ()
+    consumeUnit (
+        for value in first 1 .. last 3 do
+            visit value)
+    let directOk = trace = 123339 && values = 123 && starts = 1 && finishes = 1
+
+    reset ()
+    consumeUnit (
+        for value in (first 1 .. last 2) do
+            visit value)
+    let parenthesizedOk = trace = 12339 && values = 12 && starts = 1 && finishes = 1
+
+    reset ()
+    let saved: unit =
+        for value in (first (-2)) .. (last 1) do
+            visit value
+    // The ordered values -2, -1, 0, 1 produce -2099 in the observation accumulator.
+    let formedOnce = trace = 123333 && values = -2099 && starts = 1 && finishes = 1
+    consumeUnit saved
+    consumeUnit saved
+    let signedStoredOk = formedOnce && trace = 12333399 && values = -2099 && starts = 1 && finishes = 1
+
+    reset ()
+    consumeUnit (
+        for value in first 2 .. last (-1) do
+            visit value)
+    let emptyOk = trace = 129 && values = 0 && starts = 1 && finishes = 1
+
+    if not directOk then 185
+    elif not parenthesizedOk then 186
+    elif not signedStoredOk then 187
+    elif not emptyOk then 188
+    else 0

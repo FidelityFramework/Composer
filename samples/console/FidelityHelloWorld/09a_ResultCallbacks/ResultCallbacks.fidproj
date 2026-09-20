@@ -1,0 +1,15 @@
+[package]
+name = "ResultCallbacks"
+version = "0.1.0"
+description = "Typed Result transformations, callback order, captures and failure propagation"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["ResultCallbacks.clef"]
+output = "resultcallbacks"
+output_kind = "console"

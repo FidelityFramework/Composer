@@ -6,6 +6,8 @@ open System.Security.Cryptography
 open System.Text.Json
 
 let cases = [
+    "RangeLoops", "RangeLoops.clef", "range-loops", ["scf.while";"func.call @RangeLoops.first";"func.call @RangeLoops.last"]
+    "ResultCallbacks", "ResultCallbacks.clef", "result-callbacks", ["scf.if";"func.call_indirect"]
     "CountedLoops", "CountedLoops.clef", "counted-loops", ["scf.while";"func.call @CountedLoops.startBound";"func.call @CountedLoops.finishBound"]
     "OptionFolds", "OptionFolds.clef", "option-folds", ["scf.if";"func.call_indirect"]
     "UnitExpressions", "UnitExpressions.clef", "unit-expressions", ["scf.if";"scf.while";"func.call @UnitExpressions.consumeUnit"]

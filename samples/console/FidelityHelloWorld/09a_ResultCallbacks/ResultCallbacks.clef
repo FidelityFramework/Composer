@@ -1,0 +1,93 @@
+/// Sample 09a: Result callbacks transform one typed case and preserve the other.
+module ResultCallbacksSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeMapper () =
+    record 1
+    fun value -> record 3; value + 10
+
+let private argument successful : Result<int, int> =
+    record 2
+    if successful then Ok 7 else Error 9
+
+let private isOk expected result =
+    match result with Ok value -> value = expected | Error _ -> false
+
+let private isError expected result =
+    match result with Error value -> value = expected | Ok _ -> false
+
+let transform = Result.map
+let transformError = Result.mapError
+let continueWith = Result.bind
+
+[<EntryPoint>]
+let main _ =
+    calls <- 0
+    let callback = fun value -> calls <- calls + 1; value + 10
+    let mapped = Result.map callback (Ok 7: Result<int, int>)
+    let keptError = Result.map callback (Error 9: Result<int, int>)
+    let mappedError = Result.mapError callback (Error 9: Result<int, int>)
+    let keptOk = Result.mapError callback (Ok 7: Result<int, int>)
+    let casesOk = isOk 17 mapped && isError 9 keptError && isError 19 mappedError && isOk 7 keptOk && calls = 2
+
+    trace <- 0
+    let direct = Result.map (makeMapper ()) (argument false)
+    let directOk = isError 9 direct && trace = 12
+    trace <- 0
+    let forward = argument true |> Result.map (makeMapper ())
+    let forwardOk = isOk 17 forward && trace = 213
+    trace <- 0
+    let backward = Result.mapError (makeMapper ()) <| argument false
+    let orderOk = directOk && forwardOk && isError 19 backward && trace = 123
+
+    let mutable scale: int = 2
+    let mutable selected = fun value -> value * scale
+    let stored = Result.map selected
+    selected <- fun value -> value * 10
+    scale <- 3
+    let mutable shared: int = 5
+    let preservedPayload = fun value -> shared + value
+    let preserved = Result.mapError (fun error -> error + 1) (Ok preservedPayload: Result<int -> int, int>)
+    shared <- 9
+    let payloadOk = match preserved with Ok work -> work 2 = 11 | Error _ -> false
+    let capturesOk = isOk 12 (stored (Ok 4: Result<int, int>)) && selected 4 = 40 && payloadOk
+
+    let measuredInput: Result<int<distance>, float<1/duration>> = Ok 2<distance>
+    let measuredMap = transform (fun value -> if value = 2<distance> then 3<duration> else 4<duration>) measuredInput
+    let measuredError = transformError (fun value -> if value = 3<duration> then 0.25<1/duration> else 0.5<1/duration>) (Error 3<duration>: Result<int<distance>, int<duration>>)
+    let measuredBind = continueWith (fun value -> if value = 2<distance> then Ok 3<duration> else Error 0.25<1/duration>) measuredInput
+    let measuredOk = isOk 3<duration> measuredMap && isError 0.25<1/duration> measuredError && isOk 3<duration> measuredBind
+
+    trace <- 0
+    let pipeline =
+        (Ok 2: Result<int, int>)
+        |> Result.map (fun value -> record 1; value + 1)
+        |> Result.bind (fun value -> record 2; if value = 3 then Error 7 else Ok value)
+        |> Result.map (fun value -> record 3; value * 2)
+        |> Result.mapError (fun error -> record 4; error + 10)
+    let failureOk = isError 17 pipeline && trace = 124
+    let success = Result.bind (fun value -> Ok (value + 1)) (Ok 3: Result<int, int>)
+    let pipelineOk = failureOk && isOk 4 success
+
+    if not casesOk then 1
+    elif not orderOk then 2
+    elif not capturesOk then 3
+    elif not measuredOk then 4
+    elif not pipelineOk then 5
+    else
+        Console.writeln "=== Result callbacks Test ==="
+        Console.writeln "Selected cases and preserved payloads: pass"
+        Console.writeln "Factory and pipe order: pass"
+        Console.writeln "Stored callbacks and shared captures: pass"
+        Console.writeln "Independent measured cases: pass"
+        Console.writeln "Explicit failure propagation: pass"
+        0

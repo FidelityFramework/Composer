@@ -1,0 +1,174 @@
+module ResultCallbacks
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Failure = { Code: int; Recoverable: bool }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeMapper () =
+    record 1
+    fun value -> record 3; value + 10
+
+let private makeBinder () =
+    record 1
+    fun value -> record 3; (Ok (value + 10): Result<int, int>)
+
+let private argument successful : Result<int, int> =
+    record 2
+    if successful then Ok 7 else Error 9
+
+let private isOk expected result =
+    match result with
+    | Ok value -> value = expected
+    | Error _ -> false
+
+let private isError expected result =
+    match result with
+    | Ok _ -> false
+    | Error value -> value = expected
+
+let transform = Result.map
+let transformError = Result.mapError
+let continueWith = Result.bind
+
+[<EntryPoint>]
+let main _ =
+    calls <- 0
+    let mapper = fun value -> calls <- calls + 1; value + 10
+    let good: Result<int, Failure> = Ok 7
+    let bad: Result<int, Failure> = Error { Code = 9; Recoverable = true }
+    let mapped = Result.map mapper good
+    let preserved = Result.map mapper bad
+    let preservedErrorOk =
+        match preserved with
+        | Error error -> error.Code = 9 && error.Recoverable
+        | Ok _ -> false
+    let mapOk = isOk 17 mapped && preservedErrorOk && calls = 1
+
+    calls <- 0
+    let errorMapper = fun error -> calls <- calls + 1; error + 10
+    let mappedError = Result.mapError errorMapper (Error 9: Result<int, int>)
+    let preservedOk = Result.mapError errorMapper (Ok 7: Result<int, int>)
+    let mapErrorOk = isError 19 mappedError && isOk 7 preservedOk && calls = 1
+
+    calls <- 0
+    let binder = fun value ->
+        calls <- calls + 1
+        if value > 0 then Ok (value + 10) else Error 4
+    let boundGood = Result.bind binder (Ok 7: Result<int, int>)
+    let boundFailure = Result.bind binder (Ok 0: Result<int, int>)
+    let skipped = Result.bind binder (Error 9: Result<int, int>)
+    let bindOk = isOk 17 boundGood && isError 4 boundFailure && isError 9 skipped && calls = 2
+
+    trace <- 0
+    let directMap = Result.map (makeMapper ()) (argument true)
+    let mapOrderSome = isOk 17 directMap && trace = 123
+    trace <- 0
+    let directMapError = Result.map (makeMapper ()) (argument false)
+    let mapOrderOk = mapOrderSome && isError 9 directMapError && trace = 12
+    trace <- 0
+    let directError = Result.mapError (makeMapper ()) (argument false)
+    let errorOrderSome = isError 19 directError && trace = 123
+    trace <- 0
+    let directErrorOk = Result.mapError (makeMapper ()) (argument true)
+    let errorOrderOk = errorOrderSome && isOk 7 directErrorOk && trace = 12
+    trace <- 0
+    let directBind = Result.bind (makeBinder ()) (argument true)
+    let bindOrderSome = isOk 17 directBind && trace = 123
+    trace <- 0
+    let directBindError = Result.bind (makeBinder ()) (argument false)
+    let bindOrderOk = bindOrderSome && isError 9 directBindError && trace = 12
+
+    trace <- 0
+    let forwardMap = argument false |> Result.map (makeMapper ())
+    let forwardMapOk = isError 9 forwardMap && trace = 21
+    trace <- 0
+    let backwardError = Result.mapError (makeMapper ()) <| argument false
+    let backwardErrorOk = isError 19 backwardError && trace = 123
+    trace <- 0
+    let forwardBind = argument true |> Result.bind (makeBinder ())
+    let forwardBindOk = isOk 17 forwardBind && trace = 213
+    trace <- 0
+    let backwardBind = Result.bind (makeBinder ()) <| argument false
+    let pipesOk = forwardMapOk && backwardErrorOk && forwardBindOk && isError 9 backwardBind && trace = 12
+
+    // Partials retain the chosen callbacks while their captured cells stay shared.
+    let mutable scale: int = 2
+    let mutable selected = fun value -> value * scale
+    let storedMap = Result.map selected
+    let storedError = Result.mapError selected
+    let mutable selectedBinder: int -> Result<int, int> = fun value -> Ok (value * scale)
+    let storedBind = Result.bind selectedBinder
+    selected <- fun value -> value * 10
+    selectedBinder <- fun value -> Error value
+    scale <- 3
+    let snapshotsOk =
+        isOk 12 (storedMap (Ok 4: Result<int, int>))
+        && isError 12 (storedError (Error 4: Result<int, int>))
+        && isOk 12 (storedBind (Ok 4)) && selected 4 = 40
+
+    // Bare aliases instantiate success and error dimensions independently.
+    let measuredInput: Result<int<distance>, float<1/duration>> = Ok 2<distance>
+    let measuredMap = transform (fun value -> if value = 2<distance> then 3<duration> else 4<duration>) measuredInput
+    let measuredError = transformError (fun value -> if value = 3<duration> then 0.25<1/duration> else 0.5<1/duration>) (Error 3<duration>: Result<int<distance>, int<duration>>)
+    let measuredBind = continueWith (fun value -> if value = 2<distance> then Ok 3<duration> else Error 0.25<1/duration>) measuredInput
+    let booleanMap = transform (fun value -> not value) (Ok true: Result<bool, int>)
+    let booleanError = transformError (fun value -> not value) (Error true: Result<int, bool>)
+    let booleanBind = continueWith (fun value -> if value then Ok 6 else Error 8) (Ok true: Result<bool, int>)
+    let aliasesOk = isOk 3<duration> measuredMap && isError 0.25<1/duration> measuredError && isOk 3<duration> measuredBind && isOk false booleanMap && isError false booleanError && isOk 6 booleanBind
+
+    // Explicit argument order: map/bind <input, output, error>; mapError <ok, inputError, outputError>.
+    let explicitMap = Result.map<int<distance>, int<duration>, bool> (fun _ -> 3<duration>) (Ok 2<distance>)
+    let explicitError = Result.mapError<int<distance>, int<duration>, bool> (fun error -> error = 3<duration>) (Error 3<duration>)
+    let explicitBind = Result.bind<int<distance>, int<duration>, bool> (fun _ -> Ok 3<duration>) (Ok 2<distance>)
+    let explicitOk = isOk 3<duration> explicitMap && isError true explicitError && isOk 3<duration> explicitBind
+
+    // Preserving a callable payload preserves its shared capture, regardless of container reconstruction.
+    let mutable shared: int = 5
+    let payload = fun value -> shared + value
+    let errorPayload: Result<int, int -> int> = Error payload
+    let mapKept = Result.map (fun value -> value + 1) errorPayload
+    let bindKept = Result.bind (fun value -> Ok (value + 1)) errorPayload
+    let okKept = Result.mapError (fun error -> error + 1) (Ok payload: Result<int -> int, int>)
+    shared <- 9
+    let mapIdentity = match mapKept with Error work -> work 2 = 11 | Ok _ -> false
+    let bindIdentity = match bindKept with Error work -> work 2 = 11 | Ok _ -> false
+    let errorIdentity = match okKept with Ok work -> work 2 = 11 | Error _ -> false
+    let payloadIdentityOk = mapIdentity && bindIdentity && errorIdentity
+
+    trace <- 0
+    let pipeline =
+        (Ok 2: Result<int, int>)
+        |> Result.map (fun value -> record 1; value + 1)
+        |> Result.bind (fun value -> record 2; if value = 3 then Error 7 else Ok value)
+        |> Result.map (fun value -> record 3; value * 2)
+        |> Result.mapError (fun error -> record 4; error + 10)
+    let failurePipelineOk = isError 17 pipeline && trace = 124
+    trace <- 0
+    let successPipeline =
+        (Ok (): Result<unit, int>)
+        |> Result.map (fun () -> record 1; 3)
+        |> Result.bind (fun value -> record 2; Ok (value + 1))
+        |> Result.mapError (fun error -> record 4; error + 10)
+    let pipelinesOk = failurePipelineOk && isOk 4 successPipeline && trace = 12
+
+    if not mapOk then 191
+    elif not mapErrorOk then 192
+    elif not bindOk then 193
+    elif not mapOrderOk then 194
+    elif not errorOrderOk then 195
+    elif not bindOrderOk then 196
+    elif not pipesOk then 197
+    elif not snapshotsOk then 198
+    elif not aliasesOk then 199
+    elif not explicitOk then 200
+    elif not payloadIdentityOk then 201
+    elif not pipelinesOk then 202
+    else 0

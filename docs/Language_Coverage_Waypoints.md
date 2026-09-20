@@ -7,6 +7,63 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## F-09 Result callbacks and integer range loops — 2026-09-20
+
+Specification `808cb1a` records the native `Result.map`, `mapError` and `bind`
+contracts in [Error Handling](../../clef-lang-spec/spec/error-handling.md#native-result-operations).
+Use clef `4f1dea0b4`, lattice-analyzers `8051e73`, lattice-vscode `3d196f8`
+and CAC `06ef01f2` with this Composer checkpoint.
+The source implementation uses fresh quantified schemes and Baker case recipes.
+`map` and `bind` select Ok; `mapError` selects Error. Supplied operands remain
+eager, with the callback invoked once only in its selected case. Untouched
+payloads retain their types, dimensions and resource identities; a changed
+Result type may require reconstruction of its enclosing case. Bind returns the
+callback's Result with its case unchanged. Placement retains the existing DU
+lifetime contract rather than F-09's historical byte-size assumptions.
+
+Stored partials retain their callback values and shared captured storage. Bare
+aliases instantiate independently. Explicit type arguments are ordered
+`map<'a,'b,'e>`, `bind<'a,'b,'e>` and `mapError<'a,'e,'f>`. The
+[12-group native fixture](../tests/NativeCallbacks/ResultCallbacks.clef) and
+[09a sample](../samples/console/FidelityHelloWorld/09a_ResultCallbacks/README.md)
+cover both cases, callback factories and pipes, snapshots, independent measured
+success/error types, record/function/unit payloads and propagation pipelines.
+These are native acceptance oracles; source admission alone does not pass them.
+
+The first native Result run stopped at placement: a reachable
+`Result<'?467,'?469>` retained unresolved case payload types and had no settled
+size. The diagnostic is retained in `/tmp/composer-result-native.log`, with the
+project under `/tmp/composer-callbacks-fsharp-aaef35089c134ae0b08b52b1b7001b6b/`.
+Monomorphization's bare-alias classifier recognized only resolved Option
+intrinsics. It now admits resolved Result intrinsics through the same existing
+specialization rules. Four regressions fail before the correction and pass
+afterward; all Result source cases also reject open types in reachable closure,
+formal and DU nodes. The original native expectations pass unchanged. No Alex
+representation fallback or witness change was needed.
+
+A separate source normalization handles named, closed, unstepped integer
+`for value in first .. last` loops, including whole-range and endpoint
+parentheses. It reuses the existing counted-loop elaboration, preserving
+first-before-last evaluation and resolved induction references. A lexical
+`op_Range` binding excludes this normalization, as do stepped ranges; their
+existing ForEach path is not newly admitted. This is not general iterable or
+range-operator support. Source induction mutability and per-iteration captures
+remain separate contracts.
+
+| Gate | Current checkpoint |
+|---|---|
+| CCS | **536/536**, including 46 Result cases with 19 exact negatives and eight range-loop cases; `/tmp/clef-result-alias-full.log` |
+| Native / MLIR | **2/2 fresh executables**, 12 Result and four range-loop groups; retained modules pass stock verification; `/tmp/composer-callbacks-fsharp-f66bfe0235064c1ba147fb9eab8719de/` |
+| FidelityHello | **09a_ResultCallbacks passes** fresh compilation, zero exit and exact six-line output; `/tmp/composer-result-alias-fidelityhello.log` |
+| Analyzer projection | **24 accepted / 28 exact rejections**; `/tmp/lattice-ccs-surface-513dd2dde02d4c98ad5294c8aa22169a/evidence.json` |
+| LSP | **32 diagnostic edits and repairs**, four Result hovers plus unit loop result and integer induction hovers; `/tmp/lattice-surface-waypoint-6aFHHu/result.json` |
+
+Both final tooling gates loaded CCS SHA-256
+`c711fc455867ae963984f4388a4a7776cb109a13d7505a4277772e09d8816659`.
+Alex implementation, solver transfer and transport interfaces are unchanged;
+their preceding gates remain applicable. No new dialect-family coverage is
+claimed. CAC's handoff now includes the independent Result payload contract.
+
 ## C-04 optional folds and counted-bound order — 2026-09-20
 
 Clef `a8c5229df` implements the native fold contracts adopted in specification

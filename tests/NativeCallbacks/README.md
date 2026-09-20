@@ -19,6 +19,28 @@ cases. A selected passing subset does not establish the remaining cases. Each
 retained MLIR module must also pass `mlir-opt --verify-each`; missing tooling is
 a failed gate. The evidence records the executable and compiler assembly hashes.
 
+`ResultCallbacks` checks map/mapError/bind case selection, eager factories and
+pipes, preserved payloads, stored callback snapshots and shared captures,
+independent success/error dimensions, explicit generics, callable payload
+identity, and success/failure pipelines. Exit codes 191–202 identify 12 groups.
+Bare aliases specialize independently; partials retain their chosen callback
+while preserving shared captured storage. An untouched payload retains its
+identity even when Baker must reconstruct a differently typed enclosing case.
+The first native run exposed an Option-only alias-specialization classifier.
+The corrected upstream classifier passes the original native expectations;
+source regressions also require concrete residual closure and DU types.
+
+`RangeLoops` checks named, closed, unstepped integer range syntax, including
+whole-range and bound parentheses. Four groups (exit codes 185–188) require
+first-before-last evaluation once, signed values, zero-trip behavior and direct
+or stored unit consumption. The source normalization reuses counted loops and
+preserves their induction definition identity. Stepped ranges and lexical
+`op_Range` bindings are excluded; general ForEach and operator overload support
+are not claimed. Both fixtures passed fresh native execution and stock MLIR
+verification in `/tmp/composer-callbacks-fsharp-f66bfe0235064c1ba147fb9eab8719de/`. The
+[current waypoint](../../docs/Language_Coverage_Waypoints.md) records the source
+checkpoint and separate gate results.
+
 `CountedLoops` checks once-only start-before-finish evaluation for ascending,
 descending and zero-trip loops, including direct and stored unit consumption.
 Exit codes 181–184 identify the four groups. Source induction-variable

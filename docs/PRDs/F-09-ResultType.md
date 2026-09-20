@@ -2,6 +2,16 @@
 
 > **Sample**: `09_Result` | **Status**: Retrospective | **Category**: Foundation
 
+> **Current contract (2026-09):** this retrospective's fixed byte sizes and
+> allocation-by-payload-size descriptions are historical. Current placement is
+> governed by the [DU lifetime contract](../../../clef-lang-spec/spec/discriminated-union-representation.md),
+> with representations and layout settled before Alex. The native `map`,
+> `mapError` and `bind` contracts are specified in
+> [Error Handling](../../../clef-lang-spec/spec/error-handling.md#native-result-operations).
+> Their implementation and native/tooling gates are recorded in
+> [Language coverage waypoints](../Language_Coverage_Waypoints.md); the
+> `ResultRecipes` sketch below is not an implementation-completeness claim.
+
 ## 1. Executive Summary
 
 This sample implements `Result<'T, 'E>` as a heterogeneous discriminated union. Unlike Option's homogeneous layout, Result requires arena allocation when `'T` and `'E` have different sizes.

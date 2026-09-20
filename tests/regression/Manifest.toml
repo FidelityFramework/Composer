@@ -239,6 +239,23 @@ Done!
 """
 
 # =============================================================================
+# Sample 09a: ResultCallbacks
+# Case-specific callbacks, preserved payloads and independent success/error types
+# =============================================================================
+[[samples]]
+name = "09a_ResultCallbacks"
+project = "ResultCallbacks.fidproj"
+binary = "targets/resultcallbacks"
+expected_output = """
+=== Result callbacks Test ===
+Selected cases and preserved payloads: pass
+Factory and pipe order: pass
+Stored callbacks and shared captures: pass
+Independent measured cases: pass
+Explicit failure propagation: pass
+"""
+
+# =============================================================================
 # Sample 10: Records
 # Record types, field access, copy-update
 # =============================================================================
