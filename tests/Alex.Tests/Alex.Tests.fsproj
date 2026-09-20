@@ -13,6 +13,7 @@
     <Compile Include="UnitResultTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
     <Compile Include="CallableSymbolTests.fs" />
+    <Compile Include="SequenceBoundaryTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FSharp.Core" Version="10.1.401" />

@@ -7,6 +7,67 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06 delimiter ownership and passive witness boundary — 2026-09-20
+
+Baker's `Suspensions` ingredient constructs a `Suspension/Delimiter` hyperedge
+whose ordered sources are the sequence owner and its generator, and whose target
+is that owner's `Yield` or `YieldBang` site. `SequenceOwnershipRecipes` visits the
+canonical structural relation beneath each reachable owner's generator body.
+Nested sequence expressions establish their own ownership; ordinary lambda,
+lazy and quotation bodies are separate deferred boundaries. Definition references
+do not cause a traversal into a called function's body.
+
+The `SequenceOwnership` nanopass runs after producer and capture elaboration.
+It diagnoses malformed or multiply owned reachable suspension sites and folds
+only delimiter relations into the graph. Repeating the pass replaces that
+projection while retaining unrelated hyperedges. Conditional branches and loop
+bodies retain their original structure: lexical ownership does not establish
+whether a guarded site executes or where evaluation resumes. A false guard is
+not permission to discard its surrounding effects.
+
+The obsolete `SeqSaturation` coeffect and its body-shape classifier are removed
+from graph construction and fold-in. That scan crossed deferred owners, flattened
+body structure and guessed internal frame indices. Its removal establishes one
+authority for ownership; it does not replace the missing suspension recipe.
+Alex's independent mutable-binding scan and placeholder current-value type are
+also removed. The public Seq nanopass returns an explicit error at unelaborated
+`SeqExpr`, `Yield` and `YieldBang` focuses, including graphs that already carry a
+delimiter relation. Focused component cases require zero emitted operations and
+unchanged graph, zipper and accumulator state; unrelated nodes remain available
+to other witnesses. The existing `ForEach` path is unchanged.
+
+| Gate | Result |
+|---|---|
+| CCS | **712/712**, including 15 ownership cases for source/generated/nested/deferred/delegated sites, guarded and effect-only bodies, malformed ownership (`CCS8402`) and relation replacement/retraction; `/tmp/clef-sequence-ownership-full.log` |
+| Alex | **7/7** public witness cases at explicit Huet focuses: unsettled owner/yield/delegation rejected with and without delimiter evidence, unrelated focus skipped, no operations or graph/accumulator changes; `/tmp/composer-sequence-ownership-alex.log` |
+| Public Composer | **3/3** selected SourceAdmission cases: exact map/append dimension rejections before target artifacts, ordinary FP control with stock MLIR verification and native execution; `/tmp/composer-source-admission-4403d1740ef5475a92a573188006743f/` |
+| FidelityHello | **11b_LoopCaptures passes**, fresh compilation, exact output and native exit; `/tmp/composer-sequence-ownership-fidelityhello.log` |
+| Analyzer projection | **37 accepted / 45 exact rejections**, revisions 1–102; `/tmp/lattice-ccs-surface-e3301ee0a7b94705b7ededffe037e9c7/evidence.json` |
+| LSP | **49 diagnostic edits and repairs**, nested/delegated/effect-only sequence hovers and original captured-storage definitions; `/tmp/lattice-surface-waypoint-gvFlXL/result.json` |
+
+Both tooling gates loaded CCS SHA-256
+`4b82f075ecfae0504e75bccafdd5453c9c4078bfdc25dee4470bbc046d179c8d`.
+Specification `fd25a36` states the ownership law separately from suspension
+execution. This is a whole-projection re-fire today, not a claim that incremental
+dependency-directed invalidation is implemented.
+
+Evaluation segments, post-yield continuation, short-circuit and loop behavior,
+delegation, live-across storage, Boolean resumption and frame extent/lifetime
+obligations remain subsequent Baker work. Empty effectful bodies also require
+correct enumeration behavior. This waypoint establishes neither native sequence
+execution nor aggregate storage bounds. Public SourceAdmission remains a source
+rejection gate with an ordinary FP native control; valid sequence source and
+editor projections do not substitute for the missing native frame contract.
+
+The separate CAC documentation drift gate currently fails on **five pre-existing
+retired-vocabulary lines**, recorded in
+`/tmp/lattice-sequence-ownership-doc-drift.log`. They are outside this checkpoint's
+modified files. Its scheduled-code and inherited FCS-surface counts are inventory,
+not additional failures; no broad documentation cleanup is included here.
+
+Companion revisions: clef `57dccfcfa`, lattice-analyzers `9fc09b2`,
+lattice-vscode `4eb588e`, CAC `7153f1f2`.
+
 ## C-06/C-07 producer graph and timing contracts — 2026-09-20
 
 `Seq.map`, `filter`, `collect` and `append` now form immutable snapshots of their

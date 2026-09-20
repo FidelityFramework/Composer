@@ -1,23 +1,17 @@
-/// SeqWitness - Witness Seq<'T> operations via XParsec
+/// SeqWitness - Observe sequence operations at their graph focus.
 ///
-/// Uses XParsec combinators from PSGCombinators to match PSG structure,
-/// then delegates to Patterns for MLIR elision.
+/// Unelaborated suspension nodes require upstream Baker settlement; the
+/// witness does not reconstruct a frame from body shape or mutable bindings.
 ///
 /// NANOPASS: This witness handles ONLY Seq-related nodes.
 /// All other nodes return WitnessOutput.skip for other nanopasses to handle.
 module Alex.Witnesses.SeqWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Clef.Compiler.PSGSaturation.SemanticGraph.Core
-open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
-open Alex.Patterns.ClosurePatterns
 open Alex.Patterns.ControlFlowPatterns
-open XParsec
-open XParsec.Parsers
-open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -25,84 +19,14 @@ open XParsec.Combinators
 
 /// Witness Seq operations - category-selective (handles only Seq nodes)
 let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    match tryMatch pSeqExpr ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-    | Some ((bodyId, captures), _) ->
-        // Extract SSAs monadically using XParsec state threading
-        let seqPattern =
-            parser {
-                let! state = getUserState
-                let arch = state.Coeffects.Platform.TargetArch
-
-                // Extract result SSAs for SeqExpr (monadic)
-                let! ssas = getNodeSSAs node.Id
-
-                // Extract capture SSAs (monadic)
-                let captureNodeIds =
-                    captures
-                    |> List.choose (fun cap ->
-                        cap.SourceNodeId
-                        |> Option.map (fun id -> (id, cap.Type)))
-
-                let! captureVals =
-                    let rec extractCaptures caps =
-                        parser {
-                            match caps with
-                            | [] -> return []
-                            | (id, capType) :: rest ->
-                                let! ssa = getNodeSSA id
-                                let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph capType
-                                let! restVals = extractCaptures rest
-                                return { SSA = ssa; Type = mlirType } :: restVals
-                        }
-                    extractCaptures captureNodeIds
-
-                // Extract mutable binding SSAs from body (monadic)
-                let rec extractMutableBindings nodeId =
-                    parser {
-                        match SemanticGraph.tryGetNode nodeId state.Graph with
-                        | None -> return []
-                        | Some n ->
-                            let! thisVal =
-                                match n.Kind with
-                                | SemanticKind.Binding (_, true, _, _) ->
-                                    parser {
-                                        let! ssa = getNodeSSA nodeId
-                                        let mlirType = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph n.Type
-                                        return [{ SSA = ssa; Type = mlirType }]
-                                    }
-                                | _ -> preturn []
-
-                            // Recursively extract from children
-                            let rec extractChildren children =
-                                parser {
-                                    match children with
-                                    | [] -> return []
-                                    | child :: rest ->
-                                        let! childVals = extractMutableBindings child
-                                        let! restVals = extractChildren rest
-                                        return childVals @ restVals
-                                }
-                            let! childVals = extractChildren n.Children
-                            return thisVal @ childVals
-                    }
-
-                let! internalState = extractMutableBindings bodyId
-
-                // Get code pointer from accumulator
-                match MLIRAccumulator.recallNode bodyId state.Accumulator with
-                | None -> return! fail (Message "SeqExpr: Body not yet witnessed")
-                | Some (codePtr, codePtrTy) ->
-                    // Get Seq<T> type from node
-                    // TODO(AX1002): Extract element type from Seq<T> node type via mapType
-                    let currentTy = TIndex  // Seq<T> element type extraction not yet implemented
-                    return! pBuildSeqStruct currentTy codePtrTy codePtr captureVals internalState ssas arch
-            }
-
-        match tryMatchWithDiagnostics seqPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-        | Result.Error diagnostic -> WitnessOutput.error $"SeqExpr: {diagnostic}"
-
-    | None ->
+    match node.Kind with
+    | SemanticKind.SeqExpr _ ->
+        WitnessOutput.error "SeqExpr requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient"
+    | SemanticKind.Yield _ ->
+        WitnessOutput.error "Yield requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient"
+    | SemanticKind.YieldBang _ ->
+        WitnessOutput.error "YieldBang requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient"
+    | _ ->
         match tryMatch pForEach ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Some ((_, collectionId, _), _) ->
             match MLIRAccumulator.recallNode collectionId ctx.Accumulator with
@@ -120,7 +44,7 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
 // NANOPASS REGISTRATION (Public)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Seq nanopass - witnesses SeqExpr and ForEach nodes
+/// Seq nanopass - rejects unelaborated suspension nodes and handles ForEach
 let nanopass : Nanopass = {
     Name = "Seq"
     Witness = witnessSeq

@@ -18,6 +18,21 @@
 > [sequence representation contract](../../../clef-lang-spec/spec/seq-representation.md),
 > rather than implementation of the historical inline-code-pointer layout below.
 
+> **Delimiter ownership checkpoint (2026-09-20, validation pending).** After
+> producer and capture elaboration, Baker records each suspension site's owner
+> and generator as a joint `Suspension/Delimiter` relation to its `Yield` or
+> `YieldBang` node. Nested sequence owners remain separate; ordinary lambda,
+> lazy and quotation bodies do not inherit an enclosing sequence's delimiter.
+> This records structural ownership, not branch feasibility, evaluation segments
+> or runtime state numbers. The unused `SeqSaturation` shape coeffect is retired:
+> its body scan and guessed frame indices cannot compete with those graph facts.
+> Alex now refuses unelaborated `SeqExpr`, `Yield` and `YieldBang` at their focus
+> instead of reconstructing storage or guessing the current-value carrier.
+> Ownership alone does not satisfy that witness boundary. Suspension segments,
+> frame/resumption construction and their proof obligations remain pending;
+> no native sequence completion is claimed. See the latest
+> [waypoint](../Language_Coverage_Waypoints.md) for the eventual gate evidence.
+
 ## 1. Executive Summary
 
 Sequence expressions (`seq { }`) provide lazy, on-demand iteration in Clef. Unlike `Lazy<'T>` (single deferred value), `Seq<'T>` produces multiple values through resumable computation.
