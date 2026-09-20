@@ -7,6 +7,70 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## Target-aware dialect planning and next-session handoff — 2026-09-20
+
+**Planning synchronized; M-01 remains Planned.** Start the next session with
+[M-01](PRDs/M-01-DialectAdmission.md), especially its
+[contract map](PRDs/M-01-DialectAdmission.md#5-numeric-selection-parallelism-and-design-time-projection)
+and [implementation handoff](PRDs/M-01-DialectAdmission.md#9-resuming-implementation-across-repositories),
+then the owning language PRD and the linked clef-lang-spec chapters. The standard
+governs semantics; the [PRD index](PRDs/README.md) records scope and status.
+Historical blog/PRD pseudocode does not override the current contracts.
+
+Baker owns semantic construction, joint constraints, elaboration and saturation.
+Alex's passive Huet zipper observes the full settled expression and platform
+facts to select appropriate Elements/Patterns/Witnesses for the backend. The
+admission key is expression family × platform/backend profile × witness form.
+An explicit-block `cf` form can suit one profile while another requires `scf`.
+Numeric selection and arithmetic construction govern `arith`/`math` forms;
+operation-specific capabilities, rounding, capacity and allowed decomposition
+survive the handoff. RPC wait relationships and scheduler manifests carry the
+separate progress, resource and supervision requirements. Tooling receives these
+target-specific facts and diagnostics through the shared CCS projection.
+
+M-01 links Numeric Selection §§10.3–10.5/11/14, Synchronous RPC and Wait
+Classification, Scheduler Contract and Platform Bindings. The reviewed
+*Pondering Fearless Parallelism*, *Fearless Concurrency Gets Real* and
+*Carrying Proofs into JavaScript* articles supply motivation and oracle cases.
+The plan distinguishes specified obligations from open fact schemas,
+construction-selection mechanisms and unimplemented target support.
+
+Candidate math/affine/vector/tensor/async/cf families are demand-driven;
+index is already baseline. CIRCT, existing GPU/ROCDL, AIE, proposed Triton and
+JSIR pathways retain distinct acceptance scopes. No new dialect is enabled by
+this record. The source inventory at Composer `1fccb02` identifies incomplete
+index serialization/vector sizing, existing direct cf/CIRCT/AIE forms needing
+boundary reconciliation, and a backend interface accepting text/configuration
+without a general graph/proof-correspondence input. M-01.a/b pair that inventory
+with one demanded expression/profile and its complete information transport
+before expanding vocabulary. Preserve working target oracles during this work.
+
+| Repository | Revision | Scope |
+|---|---|---|
+| clef-lang-spec | `2813371` | Backend lowering §2.1.1: target-aware operation/profile admission, complete information handoff and existing numeric/concurrency contract dependencies |
+| clef | `97dc5e478` | Baker retooling and Lattice consumer plans; retire the stale claim that current specs require deferred closure casts |
+| Fidelity.Platform | `d42c998` | Operation-specific numeric/scheduler capability plan and documentation index |
+| BAREWire | `6e21248` | Layout, publication, partial-state fidelity and lifecycle handoff acceptance plan |
+| Fidelity.UI | `a1c280b` | Piped FP/CE, numeric and display/parallel execution triangulation |
+| ClefAutoComplete | `c55d25e3` | Shared projection and protocol acceptance responsibilities; reference fork remains reference-only |
+| lattice-analyzers | `239d983` | Numeric/concurrency regression purposes and required CCS checks |
+| lattice-vscode | `9388a6b` | Target evidence presentation and invalidation acceptance plan |
+| lattice-vim | `9e99649` | Target-aware real-compiler gate planning, separate from existing transport fixtures |
+| Composer | This coordinated commit | M-01, PRD index/handoff, Lattice integration, thin-middle/completion analysis clarification, dated audit follow-up and this waypoint |
+
+Validation: changed local documentation links/anchors and PRD status columns
+checked; `git diff --check` passes. The repository-wide vocabulary drift gate
+still reports **six existing findings**, all verified unchanged by this batch;
+`/tmp/clef-m01-planning-drift.log` records them. Its initial seventh finding
+exposed a stale five-dialect/direct-cf exclusion in the completion analysis,
+now reconciled to M-01. This is not a clean global drift-gate claim.
+No compiler code changed and no compiler,
+solver, native or device tests were rerun. The F-05 evidence below remains the
+latest implementation tranche. F-06 and C-01–C-07 retain their recorded open
+gates. This planning commit does not close them. Companion library/tooling
+implementation duties are recorded in M-01 §9 and in the companion plans at the
+revisions above; no executable source edits are part of this synchronization.
+
 ## F-05 character storage and native formatting — 2026-09-20
 
 **F-05 restored to Complete at its sample scope.** The original AddNumbers sample

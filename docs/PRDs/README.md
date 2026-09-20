@@ -30,6 +30,7 @@ lifetimes still require work in the computation PRDs.
 | **T-xx** | Threading | Threads, Mutex, Actors | T-01 to T-05 |
 | **R-xx** | Reactive | Observable, Rx operators, Incremental | R-01 to R-06 |
 | **E-xx** | Embedded | USB, RTOS, bounded native UI | Future |
+| **M-xx** | Middle End | Alex expression coverage, dialect admission and backend information transport | M-01 |
 
 ---
 
@@ -47,6 +48,7 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 | **Threading (T)** | Required | Partial | N/A | Required |
 | **Reactive (R)** | Required | Partial | Partial | Optional |
 | **Embedded (E)** | N/A | Required | Required | N/A |
+| **Middle End (M)** | Required | Required | Required | Required |
 
 Embedded UI is a deployment profile of the portable Fidelity.UI contract. The
 primary native direction is a Clef reactive-area engine, with shared component
@@ -128,12 +130,18 @@ scheduling, async lifetime admission, or a new MLIR dialect's preservation gates
 
 ### Next implementation handoff
 
+Read the current [coverage waypoints](../Language_Coverage_Waypoints.md) and
+[M-01 contract map](M-01-DialectAdmission.md#5-numeric-selection-parallelism-and-design-time-projection)
+with the linked clef-lang-spec chapters before using inherited implementation
+sketches. The standard governs semantics; this index records acceptance status;
+M-01 records target-aware expression and information-preservation gates.
+
 | Area | Concrete entry condition and first gate |
 |------|-----------------------------------------|
 | C-01 / C-02 | Reuse staged operand snapshots for Seq partial/bare values; admit retained sequence and callable environments with exact residence/use evidence. `16h_SequenceApplications` is the unchanged native gate. |
 | C-04 with remaining C-07 consumers | Establish collection storage, bounded links, extent and current/nonempty contracts before claiming `toList`, `toArray` or extrema support. Use the existing BAREWire collection contracts and native oracles. |
 | C-05 | Reconcile the inherited lazy implementation with the canonical closure/thunk contract before treating it as a foundation for native `Incremental<'T>`. |
-| A / T families and added dialects | Reconcile CE, suspension, actor and scheduler contracts first. New `math`, `affine`, `vector`, `async`, `tensor` or `cf` witnesses consume settled Baker relationships and need source-to-native preservation gates; adding an MLIR operation alone is not language coverage. |
+| A / T families and added dialects | Follow [M-01](M-01-DialectAdmission.md): numeric selection and construction govern arith/math forms; RPC wait relationships and scheduler manifests govern async/control forms. Alex selects witnesses from settled facts for the actual target. Require graph, backend and design-time gates for each admitted operation/profile. |
 | R-04 first within Reactive, with R-01/R-02 | After the preceding Async/Threading work, lead with the static incremental core on C-01/C-05: tracked inputs, cached `return`/`map`/`map2`, demand and cutoff. Develop typed Observable delivery and matched operators alongside it, with shared versioned invalidation and an event-to-cache native gate. |
 | R-05 with R-03/R-06 | Add dynamic dependency replacement and child lifetimes alongside the corresponding Observable bridges. Gate independent invalidations, ordered effects, stale work, demand withdrawal and disposal before extending actor/target integration. |
 
@@ -221,6 +229,20 @@ component/resource reference and an optional Farscape interoperability adapter.
 | E-02 | RTOS Integration | Future | Planned | Future scope; PRD not yet specified. |
 | E-03 | Native Embedded UI | Future | Planned | Fidelity.UI shared semantics and native reactive-area engine under a bounded device profile; optional Farscape/LVGL adapter. PRD and engine acceptance are not yet complete. |
 
+### Middle End (M-xx) - Expression and Information Preservation
+
+Alex must receive the complete Baker-settled expression and carry every fact
+needed by the selected backend. Dialect admission is per expression family,
+selected platform/backend profile and witness form, with explicit target-aware
+Elements/Patterns/Witnesses coverage and information transport. Numeric selection,
+arithmetic construction, wait-for relationships and scheduler capabilities are
+governing inputs, including in design-time tooling. Candidate dialects are evaluated as language and target work demands
+them; they are not a mandatory list or a new serial phase before C/A/T/R work.
+
+| PRD | Title | Sample | Status | Note |
+|-----|-------|--------|--------|------|
+| [M-01](M-01-DialectAdmission.md) | Dialect Admission and Target Realization | Per operation/pathway oracle | Planned | Complete Alex's receiving/forwarding contract for Baker-settled expression, graph facts and proofs; consider math, affine, vector, tensor, async and cf, complete demanded index operations, and distinguish CIRCT, existing GPU/AIE and proposed Triton pathways. |
+
 ### Second Horizon - Admitted Papers
 
 Three working papers are admitted to the future reach, at the second horizon or beyond. The work each sets out is primarily PSG and hypergraph engineering, carried through the Alex coeffect and codata architecture.
@@ -236,6 +258,10 @@ This reach is load-bearing on the closure, lazy, and incremental families: the f
 ---
 
 ## Dependency Graph
+
+M-01 spans the language families and target pathways below. Its operation-level
+gates accompany the feature that requires them; target availability and
+information-preservation evidence determine which dialect forms are admitted.
 
 ```
 Foundation (F-01 to F-10)

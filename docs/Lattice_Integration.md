@@ -6,6 +6,28 @@ Language requirements remain in the [Clef specification](https://github.com/Fide
 
 ## Repository map
 
+### Target-aware planning synchronization — 2026-09-20
+
+[M-01 §5](PRDs/M-01-DialectAdmission.md#5-numeric-selection-parallelism-and-design-time-projection)
+connects this integration plan to the standard's numeric-selection, arithmetic
+construction, RPC wait and scheduler contracts. The required projection extends
+beyond CPU layout: retain the selected profile, representation/range premises,
+operation eligibility, blocking participants and target assumption manifest.
+Keep representation error, computation error, reproducibility and cost separate,
+and distinguish established, refuted and unresolved obligations. CCS owns those
+facts; the server and clients display the checked version and its source links.
+
+Planned gates pair compiler and editor diagnostics for unsupported arithmetic
+modes, invalid decomposition, missing progress/recovery capabilities and stale
+target facts, including unsaved repair. Changes to platform declarations must
+invalidate affected results. Use the same graph projection for VSCode, Neovim,
+CAC's reference cases and the analyzer regression corpus. No new protocol is
+invented here; add query fields only with the owning CCS contract and consumer
+tests. The [waypoints](Language_Coverage_Waypoints.md) pin this coordinated
+planning set separately from existing implementation evidence.
+
+### Current repository responsibilities
+
 The [multi-core CPU plan](./multi-core-cpu.md) uses HelloWayland to exercise
 compiler-derived dispatch-region evidence as Ariel develops. Its proposed bounds,
 ownership and retirement results belong to the same compiler-owned projection;

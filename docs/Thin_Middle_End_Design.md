@@ -17,13 +17,27 @@ Stochastic programming hosted inside a general-purpose scripting surface has sho
 
 ## 2. The Witness Boundary as the Formal Line
 
+The five-dialect list below is the baseline, not a ceiling on Alex's expressive
+capacity. [M-01](PRDs/M-01-DialectAdmission.md) applies the existing admission
+register discipline to complete Elements/Patterns/Witnesses and the information
+they carry to each backend. The standard's
+[admission requirements](../../clef-lang-spec/spec/backend-lowering-architecture.md#211-operation-and-pathway-admission)
+govern each extension. Candidate vocabulary alone does not enable operations.
+All semantic decisions remain Baker-owned; the receiving contract covers both
+the expression and the correlated graph facts/proof identities it needs.
+Alex is target-aware: it selects an admitted Pattern/Witness using the settled
+platform/backend facts. One profile may require `scf`, while another warrants
+`cf`. Numeric selection and arithmetic construction likewise govern the admitted
+`arith`/`math` forms. Portable vocabulary does not require identical IR for every
+target. M-01 records the receiving, information-preservation and testing duties.
+
 One normative half of the boundary is in the spec: `clef-lang-spec/spec/backend-lowering-architecture.md` requires that the middle end emit only portable dialects and treats an `llvm.*` op in the middle end as a category error, because a target commitment is lossy and forecloses every other leg.
 
-This document states the second half, the hard-stop rule in full: **no llvm dialect, and no semantic dialect, in the MLIR witnessed out of the PSG.** The standard dialects, `func`, `memref`, `arith`, `scf`, `index`, are the lingua franca of the witnessed region. The first ban keeps the middle end target-free. The second keeps it semantics-free in a precise sense: the semantics ride in the graph, the judgments discharge over its literals, and what reaches MLIR is the settled decomposition. A dialect that encoded closure-ness or continuation-ness into the witnessed region would carry semantics past the point of their discharge.
+This document states the second half, the hard-stop rule in full: **no llvm dialect, and no semantic dialect, in the MLIR witnessed out of the PSG.** The standard dialects, `func`, `memref`, `arith`, `scf`, `index`, are the baseline vocabulary of the witnessed region, extended under M-01's operation/profile admission contract. The first ban reserves target-specific encoding for the backend realization stage; it does not prohibit target-aware witnessing. The second keeps the middle end semantics-free in a precise sense: the semantics ride in the graph, the judgments discharge over its literals, and what reaches MLIR is the settled decomposition. A dialect that encoded closure-ness or continuation-ness into the witnessed region would carry semantics past the point of their discharge.
 
 ## 3. The Evidence
 
-The doctrine has a record. Each time a semantic dialect has been proposed or built for this pipeline, the standard-dialect decomposition has been found sufficient, and the record now has four entries.
+The doctrine has a record. Each time a semantic dialect has been proposed or built for this pipeline, the standard-dialect decomposition has been found sufficient, and the record now has four entries. The cast/plugin entries below are historical episodes: the current standard prohibits unrealized casts above the boundary and requires no closure cast-resolution plugin. They do not authorize reintroducing those mechanisms.
 
 **The closure dialect dissolved.** C-01 Section 14.3 demonstrates, primitive by primitive, that byte frames, static views, function values, and `func.call_indirect` express every interior closure form. MLIR's own documentation carries the decisive precondition: `memref.view` requires a 1-D i8 source with identity layout and a byte-shift operand. That precondition is exactly the saturated environment's shape, byte extent literal in the type, offsets literal as `arith.constant` shifts. The standard dialect already contained the elaborated form.
 
@@ -31,7 +45,7 @@ The doctrine has a record. Each time a semantic dialect has been proposed or bui
 
 **The anonymous cast resolved into a named pair.** The interim encoding carried function-address and environment conversions as `builtin.unrealized_conversion_cast`, an anonymous op with its meaning in a comment. That episode resolved into the named materialize and scatter pair governed by a round-trip law: scatter after materialize is the identity on the value it carried. The law is checkable. The anonymous cast was not. The episode is the doctrine in miniature: the fix was a name and a law at the boundary, and at no point a dialect above it.
 
-**The two tail plugins, correctly below the line.** `flat-closure-lowering` and `reconcile-ffi-externs` (the mlir-plugins repository) resolve deferred casts and reconcile the `ffi.` fence at the tail of the LLVM leg. Both are interim, and both run below the boundary, where such mechanism belongs. Their own trajectory note records the interim scope. They are superseded when per-obligation correspondence lands (C-01 Section 14.5), obligations and assertions matching one for one, with the plugins' counters serving, until then, as the mechanism side of the audit equation.
+**The historical tail plugins.** `flat-closure-lowering` and `reconcile-ffi-externs` (the mlir-plugins repository) were described as interim cast/fence reconciliation at the tail of the LLVM leg. Their counters served as a mechanism-side audit scaffold. The current closure contract in the standard supersedes the deferred-cast design; per-obligation correspondence remains the preservation requirement. This history establishes neither current plugin use nor permission to restore cast-based closure witnessing.
 
 ## 4. Where a Dialect Is Justified
 
@@ -56,6 +70,6 @@ In each case the dialect is transliteration vocabulary for what the target nativ
 - [Closure_Nanopass_Architecture.md](./Closure_Nanopass_Architecture.md) Section 4: the canonical finiteness lemma, and the quantifier-free discharge the graph-side judgments rest on.
 - [C-01 PRD](./PRDs/C-01-Closures.md) Section 14: the form family, the standard-dialect correspondence table, and the per-obligation correspondence that supersedes the interim plugins.
 - [Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md): the suspension instance of the doctrine, and the second dissolved dialect.
-- `clef-lang-spec/spec/backend-lowering-architecture.md`: the portable-dialect requirement, the target-commitment argument, and the deferred-cast mechanism.
+- `clef-lang-spec/spec/backend-lowering-architecture.md`: the portable-dialect requirement, operation admission and target realization; its current closure contract retires deferred casts.
 - `clef-lang-spec/spec/boundary-constraints-status.md`: the boundary-constraint sequencing under which the interim plugins operate.
 - `mlir-plugins/ROADMAP.md`: the tail plugins' own statement of interim scope.

@@ -275,7 +275,7 @@ The initial service slice therefore needs a declared proof profile, one admitted
 
 **11. What MiddleEnd and Alex must witness**
 
-The executable witness vocabulary is the specification's five dialects: `func`, `memref`, `arith`, `scf`, and `index`. The specification excludes `llvm.*`, `cf.*`, `builtin.unrealized_conversion_cast`, and target-specific operations from that boundary. Additional vocabulary requires a design change to the register rather than an incidental implementation import. Verification artifacts beside the program are a separate concern from the executable vocabulary. [Backend §§2 and 7](../../clef-lang-spec/spec/backend-lowering-architecture.md), [C-01 §14.5](PRDs/C-01-Closures.md).
+The baseline executable vocabulary is `func`, `memref`, `arith`, `scf` and `index`, with operation/profile extensions governed by [Backend §2.1.1](../../clef-lang-spec/spec/backend-lowering-architecture.md#211-operation-and-pathway-admission) and [M-01](PRDs/M-01-DialectAdmission.md). Alex is target-aware: it chooses the admitted form from Baker-settled relationships and platform requirements, including `scf` or direct `cf` where appropriate. Numeric selection and arithmetic construction govern arith/math witnessing. Target-specific encoding stays at the declared backend realization boundary, and unrealized casts remain prohibited above it. The handoff retains the expression and every correlated graph/proof fact needed downstream. Verification artifacts remain distinct from executable vocabulary. [C-01 §14.5](PRDs/C-01-Closures.md).
 
 | Settled graph fact | Witness responsibility |
 |---|---|

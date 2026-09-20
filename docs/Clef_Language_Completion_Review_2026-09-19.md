@@ -162,6 +162,11 @@ new sequence. Multi-shot duals and grade-axis composition remain open there.
 
 ## 5. Alex's standard dialect expansion
 
+**September 20 follow-up:** [M-01](PRDs/M-01-DialectAdmission.md) now records the
+operation/pathway admission contract, Alex's complete information handoff and
+candidate register. Its current source inventory supersedes dated details in
+the table below, including the subsequently implemented `scf.index_switch`.
+
 The requested `affine`, `tensor`, `async`, `math`, `index` and `cf`, alongside `memref`,
 `vector`, `func`, `scf` and `arith`, extend the historical five-dialect baseline.
 The existing retooling plan provides the admission register and consumer-gate
