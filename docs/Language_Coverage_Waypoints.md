@@ -7,6 +7,52 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-01 immutable direct captures — 2026-09-19
+
+Clef `cdbaf8636` moves eligible named-function capture passing into Baker
+ingredients, a recipe and nanopass fan-out/fold-in. Complete-use admission permits
+direct calls and recursive forwarding; named function value uses, partial uses,
+opaque references and mutable capture frontiers remain unconverted. Capture
+formals and operands retain NTU types, source identity, structural/reference
+incidence and explicit capture-origin provenance. Independent resident graph
+relations survive the transformation. Returned anonymous closures capture the
+new formal without collapsing their own callable boundary.
+
+This Composer companion projects resolved local binding identity into a shared
+target symbol for definitions, ordinary/saturated calls and hardware step
+references. The native oracle exposed the old collision between independent
+local functions with the same name; those duplicate names remain in the fixture.
+Module/external symbols and settled native callback address plans retain their
+existing spelling. Alex's traversal and witness responsibilities are unchanged.
+
+CCS.Editor retains the source callable signature and follows the explicit capture
+origin to the source declaration for navigation. Hidden formals remain visible in
+the semantic graph. Companion peering is pinned by lattice-vscode `f839e28` and
+lattice-analyzers `9a762be`; both test the actual compiler projection. CAC's active
+handoff, grammar and Neovim transport interfaces are unchanged from the preceding
+waypoint, so their recorded revisions remain applicable.
+
+| Gate | Result |
+|---|---|
+| CCS | **334/334**, including 17 direct-capture cases: recursion, nested capture identity, shadowing, source signatures/origins, exact incidence, independent-edge preservation, idempotence and located dimensional rejection |
+| Alex | **21/21**, including three new callable-symbol cases, ordinary/saturated witness calls, hardware reference projection and preserved native address plans |
+| Native | **3/3** fresh executables: DirectCaptures, OptionDefaultWith and ListenerEntry; each retained module passes stock `mlir-opt --verify-each`. `/tmp/composer-callbacks-fsharp-a97319380d584c4981172fac9e8b30d9/` |
+| FidelityHello | **11a_DirectCaptures** compiles, exits zero and matches exact manifest output; `/tmp/composer-direct-captures-fidelityhello.log` |
+| CCS.Editor | **14 groups**, including source callable signatures, measured results and captured-variable definition origins; `/tmp/clef-direct-captures-editor.log` |
+| LSP | Existing 10 Option negative cases plus exact CCS8040 direct-call rejection, source signatures, measured result and real go-to-definition; unsaved repair restores the views. `/tmp/lattice-surface-waypoint-5ky2GK/result.json` |
+| Analyzer-facing projection | Existing 6 accepted/6 rejected Option cases plus direct-capture views/origins and exact dimensional rejection; `/tmp/lattice-ccs-surface-298468aa4259456da14fd8ddfc487015/evidence.json` |
+| Proof/artifact controls | **50 SMT transfer** and **10 static-storage correspondence** cases pass; `/tmp/composer-direct-captures-smt.log`, `/tmp/composer-direct-captures-storage.log` |
+
+The two external tooling gates independently loaded CCS SHA-256
+`9d946c2a330b819bff364f36e541f1a80f161b6545c411d2b28781a4c59044fb`.
+Temporary evidence can expire; the committed tests and manifests remain the
+repeatable contract. This is the immutable direct form, not completion of C-01's
+materialized environments, lifetime/release obligations or final two-value closure
+representation. The [mutable cell direction](Direct_Capture_Cell_Contract.md)
+records the next storage, call-effect and residence requirements. The existing
+mutable `OptionFunctionPayloads` failure remains open, as does Platform formatter
+migration needed by the older `11_Closures` oracle.
+
 ## C-01 fold-in reference identity — 2026-09-19
 
 Clef `70f233fcf` redirects resolved variable definitions and Lambda/Lazy/Seq

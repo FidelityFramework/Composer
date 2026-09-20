@@ -1,0 +1,47 @@
+/// Sample 11a: Baker settles direct named captures before Alex witnesses them.
+module DirectCapturesSample
+
+[<Measure>] type s
+
+let repeated offset =
+    let add value = offset + value
+    add 10 + add 20
+
+let recursive offset =
+    let rec sum count =
+        if count = 0 then offset
+        else offset + sum (count - 1)
+    sum 3
+
+let returned offset =
+    let make extra = fun value -> offset + extra + value
+    let first = make 3
+    let second = make 5
+    first 4 + second 6
+
+let bounded (values: int array) =
+    let read index = if Array.length values = 2 then Array.get values index else 0
+    read 0 + read 1
+
+let measured (offset: float<1/s>) =
+    let add (value: float<1/s>) = offset + value
+    add 3.0<1/s>
+
+[<EntryPoint>]
+let main _ =
+    let values: int array = Array.zeroCreate 2
+    Array.set values 0 7
+    Array.set values 1 9
+    if repeated 7 <> 44 then 1
+    elif recursive 7 <> 28 then 2
+    elif returned 7 <> 32 then 3
+    elif bounded values <> 16 then 4
+    elif measured 2.0<1/s> <> 5.0<1/s> then 5
+    else
+        Console.writeln "=== Direct Capture Test ==="
+        Console.writeln "Repeated direct calls: pass"
+        Console.writeln "Recursive forwarding: pass"
+        Console.writeln "Returned closure captures: pass"
+        Console.writeln "Bounded array captures: pass"
+        Console.writeln "Inverse dimensions: pass"
+        0

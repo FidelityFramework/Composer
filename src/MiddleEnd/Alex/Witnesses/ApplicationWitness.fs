@@ -114,22 +114,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
         | Some satInfo ->
             // Saturated call: emit direct call to flattened function with ALL args
             let funcName =
-                match SemanticGraph.tryGetNode satInfo.TargetBindingId ctx.Graph with
-                | Some bindingNode ->
-                    match bindingNode.Kind with
-                    | SemanticKind.Binding (bindName, _, _, _) ->
-                        match bindingNode.Parent with
-                        | Some parentId ->
-                            match SemanticGraph.tryGetNode parentId ctx.Graph with
-                            | Some parentNode ->
-                                match parentNode.Kind with
-                                | SemanticKind.ModuleDef (moduleName, _) ->
-                                    sprintf "%s.%s" moduleName bindName
-                                | _ -> bindName
-                            | None -> bindName
-                        | None -> bindName
-                    | _ -> sprintf "saturated_%d" (NodeId.value node.Id)
-                | None -> sprintf "saturated_%d" (NodeId.value node.Id)
+                Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph satInfo.TargetBindingId
+                |> Option.defaultWith (fun () -> sprintf "saturated_%d" (NodeId.value node.Id))
 
             let argsResult =
                 satInfo.AllArgNodes
@@ -226,22 +212,8 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let funcName =
                         match funcNode.Kind with
                         | SemanticKind.VarRef (localName, Some defId) ->
-                            match SemanticGraph.tryGetNode defId ctx.Graph with
-                            | Some bindingNode ->
-                                match bindingNode.Kind with
-                                | SemanticKind.Binding (bindName, _, _, _) ->
-                                    match bindingNode.Parent with
-                                    | Some parentId ->
-                                        match SemanticGraph.tryGetNode parentId ctx.Graph with
-                                        | Some parentNode ->
-                                            match parentNode.Kind with
-                                            | SemanticKind.ModuleDef (moduleName, _) ->
-                                                sprintf "%s.%s" moduleName bindName
-                                            | _ -> bindName
-                                        | None -> bindName
-                                    | None -> bindName
-                                | _ -> localName
-                            | None -> localName
+                            Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph defId
+                            |> Option.defaultValue localName
                         | SemanticKind.VarRef (localName, None) -> localName
                         | _ -> sprintf "func_%d" (NodeId.value funcId)
 

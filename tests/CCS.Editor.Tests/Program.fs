@@ -300,6 +300,61 @@ let main _ =
     equal source (File.ReadAllText file)
     printfn "PASS measured integer source obligations, cvc5 dispatch and fresh edit/removal queries"
 
+let directCaptureChecks () =
+    let project = write "direct-captures/Editor.fidproj" """[package]
+name = "editor-direct-captures"
+[compilation]
+target = "library"
+[build]
+sources = ["Main.clef"]
+output_kind = "library"
+"""
+    let source = """module DirectCaptures
+[<Measure>] type m
+[<EntryPoint>]
+let main _ =
+    let offset = 7<m>
+    let shift (value: int<m>) = offset + value
+    let plain (value: int<m>) = value
+    let make () = fun (value: int<m>) -> offset + value
+    let shifted = shift 3<m>
+    let unchanged = plain 10<m>
+    let produced = make () 3<m>
+    if shifted = unchanged && produced = 10<m> then 0 else 1
+"""
+    let file = write "direct-captures/Main.clef" source
+    let session = EditorSession(project)
+    let snapshot = session.CheckAsync(Map.empty).Result |> get
+    check snapshot.Failure.IsNone $"Direct capture fixture failed: {snapshot.Failure}"
+    check snapshot.ParseFailures.IsEmpty $"Direct capture fixture did not parse: {snapshot.ParseFailures}"
+    check (snapshot.Diagnostics |> List.forall (fun diagnostic -> diagnostic.EffectiveSeverity <> "Error"))
+        $"Direct capture fixture has errors: {snapshot.Diagnostics}"
+    let lines = source.Split('\n')
+    let at (marker: string) (name: string) =
+        let line = lines |> Array.findIndex (fun text -> text.Contains(marker, StringComparison.Ordinal))
+        let column = lines[line].IndexOf(name, StringComparison.Ordinal)
+        session.TryHover(snapshot.Revision, file, line, column) |> get
+    for name, signature, declaration, reference in
+        [ "shift", "int<m> -> int<m>", "let shift", "let shifted = shift"
+          "plain", "int<m> -> int<m>", "let plain", "let unchanged = plain"
+          "make", "unit -> int<m> -> int<m>", "let make", "let produced = make" ] do
+        let definition = at declaration name
+        let referenceLine = lines |> Array.findIndex (fun text -> text.Contains(reference, StringComparison.Ordinal))
+        let referenceColumn = lines[referenceLine].LastIndexOf(name, StringComparison.Ordinal)
+        let useSite = session.TryHover(snapshot.Revision, file, referenceLine, referenceColumn) |> get
+        equal signature definition.Type
+        equal signature useSite.Type
+        equal "VarRef" useSite.Kind
+        equal definition.Range (useSite.Definition |> get)
+    equal "int<m>" (at "let produced" "produced").Type
+    let capture = at "let offset" "offset"
+    for marker in ["let shift"; "let make"] do
+        let reference = at marker "offset"
+        equal "VarRef" reference.Kind
+        equal "int<m>" reference.Type
+        equal capture.Range (reference.Definition |> get)
+    printfn "PASS source callable signatures and capture origins for direct captures, captureless control and returned functions"
+
 let checks () =
     Directory.CreateDirectory(root) |> ignore
     let project = write "Editor.fidproj" """[package]
@@ -406,6 +461,7 @@ let main _ = if message = "proof fixture" then 0 else 1
     inputFileChecks ()
     importVisibilityChecks ()
     integerLiteralChecks ()
+    directCaptureChecks ()
 
 let inspectSample project =
     let session = EditorSession(project)
@@ -433,8 +489,9 @@ let main args =
         try
             match args with
             | [| "--sample"; project |] -> inspectSample project
+            | [| "--direct-captures" |] -> directCaptureChecks ()
             | [||] -> checks ()
-            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj]"
+            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures]"
             0
         with error -> eprintfn "%O" error; 1
     finally if Directory.Exists root then Directory.Delete(root, true)

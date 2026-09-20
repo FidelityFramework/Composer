@@ -58,6 +58,13 @@ module private Projection =
         let case, _ = FSharpValue.GetUnionFields(kind, typeof<SemanticKind>)
         case.Name
 
+    let sourceType (value: SemanticNode) =
+        // Closure elaboration adds semantic capture formals. Public source views
+        // use the compiler-retained signature, including its inferred dimensions.
+        match value.Metadata.TryFind ClosureMetadata.SourceSignature with
+        | Some (MetadataValue.Type signature) -> signature
+        | _ -> value.Type
+
     let node (value: SemanticNode) : NodeView = {
         NodeId = NodeId.value value.Id
         Name =
@@ -67,7 +74,7 @@ module private Projection =
             | _ -> None
         Kind = kindName value.Kind
         // Reading substitutions and formatting remain compiler operations.
-        Type = value.Type |> Clef.Compiler.NativeTypedTree.UnionFind.applySubst |> formatType
+        Type = sourceType value |> Clef.Compiler.NativeTypedTree.UnionFind.applySubst |> formatType
         Range = span value.Range
         IsReachable = value.IsReachable
         ValueRange = value.ValueRange |> Option.map ValueRange.render
@@ -112,7 +119,9 @@ module private Projection =
                 | Some range, _ ->
                     let definition =
                         match value.Kind with
-                        | SemanticKind.VarRef(_, Some definition) -> nodes |> Map.tryFind definition |> Option.bind (fun n -> n.Range)
+                        | SemanticKind.VarRef(_, Some definition) ->
+                            let source = Clef.Compiler.PSGSaturation.SemanticGraph.DirectCaptures.sourceDefinition graph definition
+                            nodes |> Map.tryFind source |> Option.bind (fun n -> n.Range)
                         | _ -> None
                     let anchors =
                         match Map.tryFind ObligationMetadata.Anchors value.Metadata with

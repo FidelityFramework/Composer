@@ -261,40 +261,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     | CaptureSlotKind.Handle | CaptureSlotKind.Scalar _ -> 1
                 List.init count (fun k -> own.[16 + 8 * slot.Index + k])
 
-            // Extract QUALIFIED function name from parent Binding + ModuleDef (if present)
-            // Same logic as ApplicationWitness for qualified name resolution
-            let funcName =
-                // Anonymous closure code is addressed through its pair. A local binding
-                // name is not a module symbol: two scopes may both bind `work`.
-                if closureLayoutOpt.IsSome
-                   && ([ClosureMetadata.LambdaExpression; ClosureMetadata.RequiresClosurePair]
-                       |> List.exists (fun key -> Map.tryFind key node.Metadata = Some (MetadataValue.Bool true))) then
-                    sprintf "lambda_%d" nodeIdValue
-                else
-                // Named declarations retain the symbol used by direct calls.
-                match node.Parent with
-                | Some bindingId ->
-                    match SemanticGraph.tryGetNode bindingId ctx.Graph with
-                    | Some bindingNode ->
-                        match bindingNode.Kind with
-                        | SemanticKind.Binding (bindingName, _, _, _) ->
-                            // Got binding name - check if Binding has ModuleDef parent for qualification
-                            match bindingNode.Parent with
-                            | Some moduleParentId ->
-                                match SemanticGraph.tryGetNode moduleParentId ctx.Graph with
-                                | Some moduleParent ->
-                                    match moduleParent.Kind with
-                                    | SemanticKind.ModuleDef (moduleName, _) ->
-                                        // Qualified name: Module.Function
-                                        sprintf "%s.%s" moduleName bindingName
-                                    | _ -> bindingName  // No ModuleDef parent, use binding name
-                                | None -> bindingName
-                            | None -> bindingName
-                        | _ ->
-                            // Parent is not a Binding - use generic lambda name
-                            sprintf "lambda_%d" nodeIdValue
-                    | None -> sprintf "lambda_%d" nodeIdValue
-                | None -> sprintf "lambda_%d" nodeIdValue
+            // Definitions, direct calls and closure code addresses share the same
+            // resolved binding identity; equal local source names remain distinct.
+            let funcName = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node closureLayoutOpt.IsSome
 
             // Map parameters to MLIR types and build parameter list with SSAs
             // For FPGA, parameter types are abstract (IntWidth 0) and must be narrowed

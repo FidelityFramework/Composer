@@ -44,6 +44,7 @@
 
       <!-- Alex CodeGeneration - TypeMapping first (no deps) -->
       <Compile Include="MiddleEnd/Alex/CodeGeneration/TypeMapping.fs" />
+      <Compile Include="MiddleEnd/Alex/CodeGeneration/CallableSymbols.fs" />
 
       <!-- Values - the names emission derives for what it emits (no pass, no counter) -->
       <Compile Include="MiddleEnd/Alex/Traversal/Values.fs" />

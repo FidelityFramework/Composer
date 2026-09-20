@@ -19,6 +19,16 @@ cases. A selected passing subset does not establish the remaining cases. Each
 retained MLIR module must also pass `mlir-opt --verify-each`; missing tooling is
 a failed gate. The evidence records the executable and compiler assembly hashes.
 
+`DirectCaptures` checks Baker's immutable direct capture form: repeated calls,
+recursive forwarding, shadowed bindings, nested declarations, returned anonymous
+closures, array descriptors, records, captured function values and inverse
+dimensions. Two explicit effectful arguments retain their source order. Separate
+local functions deliberately share names, requiring definition identity to survive
+target symbol assignment. Exit codes 221–230 identify the ten groups. Mutable
+capture frontiers and named functions used as values remain outside this recipe's
+admission; this gate does not establish complete closure residence obligations
+or retire the interim representation used by returned function values.
+
 `OptionDefaults` checks eager fallback evaluation for Some and None, direct and
 piped evaluation order, partial-formation snapshots, independent measured
 specialization, nested options, record payloads and stored function fields.

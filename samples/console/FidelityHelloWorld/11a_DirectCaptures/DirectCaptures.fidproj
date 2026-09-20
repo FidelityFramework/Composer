@@ -1,0 +1,15 @@
+[package]
+name = "DirectCaptures"
+version = "0.1.0"
+description = "Direct named capture elaboration with recursion and NTU values"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["DirectCaptures.clef"]
+output = "directcaptures"
+output_kind = "console"

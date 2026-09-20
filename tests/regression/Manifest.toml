@@ -282,6 +282,23 @@ twice (fun x -> x * 2) on 3: 12
 """
 
 # =============================================================================
+# Sample 11a: DirectCaptures
+# Immutable direct captures, recursive forwarding and returned closures
+# =============================================================================
+[[samples]]
+name = "11a_DirectCaptures"
+project = "DirectCaptures.fidproj"
+binary = "targets/directcaptures"
+expected_output = """
+=== Direct Capture Test ===
+Repeated direct calls: pass
+Recursive forwarding: pass
+Returned closure captures: pass
+Bounded array captures: pass
+Inverse dimensions: pass
+"""
+
+# =============================================================================
 # Sample 12: HigherOrderFunctions
 # Functions as values, composition
 # =============================================================================

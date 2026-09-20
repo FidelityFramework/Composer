@@ -11,6 +11,7 @@
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
+    <Compile Include="CallableSymbolTests.fs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FSharp.Core" Version="10.1.401" />

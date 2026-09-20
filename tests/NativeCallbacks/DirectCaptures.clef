@@ -1,0 +1,73 @@
+module DirectCaptures
+
+[<Measure>] type s
+type Config = { Offset: int; Enabled: bool }
+
+let scalar offset =
+    let add value = offset + value
+    add 10 + add 20
+
+let recursive offset =
+    let rec sum count =
+        if count = 0 then offset
+        else offset + sum (count - 1)
+    sum 3
+
+let shadow offset =
+    let work value =
+        let first = offset + value
+        let offset = 100
+        first + offset
+    work 3
+
+let returned offset =
+    let make extra = fun value -> offset + extra + value
+    let first = make 3
+    let second = make 5
+    first 4 + second 6
+
+let nested offset =
+    let outer first =
+        let inner second = offset + first + second
+        inner 3
+    outer 2
+
+let buffer (values: int array) =
+    let read index = if Array.length values = 2 then Array.get values index else 0
+    read 0 + read 1
+
+let record (config: Config) =
+    let read value = if config.Enabled then config.Offset + value else value
+    read 4
+
+let functionValue (work: int -> int) =
+    let invoke value = work value
+    invoke 4 + invoke 6
+
+let measured (offset: float<1/s>) =
+    let add (value: float<1/s>) = offset + value
+    add 3.0<1/s>
+
+[<EntryPoint>]
+let main _ =
+    let offset = 7
+    let mutable trace = 0
+    let emit = fun value -> trace <- trace * 10 + value; value
+    let ordered first second = offset + first + second
+    let orderedResult = (ordered: int -> int -> int) (emit 1) (emit 2)
+    let values: int array = Array.zeroCreate 2
+    Array.set values 0 7
+    Array.set values 1 9
+    let config = { Offset = 7; Enabled = true }
+    let captured = fun value -> offset + value
+    if scalar 7 <> 44 then 221
+    elif recursive 7 <> 28 then 222
+    elif shadow 7 <> 110 then 223
+    elif returned 7 <> 32 then 224
+    elif nested 7 <> 12 then 225
+    elif buffer values <> 16 then 226
+    elif record config <> 11 then 227
+    elif functionValue captured <> 24 then 228
+    elif measured 2.0<1/s> <> 5.0<1/s> then 229
+    elif orderedResult <> 10 || trace <> 12 then 230
+    else 0

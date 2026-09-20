@@ -118,25 +118,8 @@ let resolveStepFunctionName (graph: SemanticGraph) (stepNodeId: NodeId) : string
     match SemanticGraph.tryGetNode stepNodeId graph with
     | Some node ->
         match node.Kind with
-        | SemanticKind.VarRef (name, Some defId) ->
-            // Get the definition binding
-            match SemanticGraph.tryGetNode defId graph with
-            | Some defNode ->
-                match defNode.Kind with
-                | SemanticKind.Binding (bindingName, _, _, _) ->
-                    // Check for ModuleDef parent for qualification
-                    match defNode.Parent with
-                    | Some moduleId ->
-                        match SemanticGraph.tryGetNode moduleId graph with
-                        | Some moduleNode ->
-                            match moduleNode.Kind with
-                            | SemanticKind.ModuleDef (moduleName, _) ->
-                                Some (sprintf "%s.%s" moduleName bindingName)
-                            | _ -> Some bindingName
-                        | None -> Some bindingName
-                    | None -> Some bindingName
-                | _ -> None
-            | None -> None
+        | SemanticKind.VarRef (_, Some defId) ->
+            Alex.CodeGeneration.CallableSymbols.tryBinding graph defId
         | _ -> None
     | None -> None
 
