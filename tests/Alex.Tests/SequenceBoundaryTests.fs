@@ -75,6 +75,15 @@ let private observe (position: Zipper.PSGZipper) =
     Assert.Empty(operands.DeferredInlineOps)
     output.Result
 
+let private focusWithin (graph: SemanticGraph) owner site =
+    let rec pathToOwner id path =
+        if id = owner then path
+        else
+            let parent = graph.Nodes[id].Parent |> require "Sequence site lost its structural parent"
+            pathToOwner parent (id :: path)
+    let root = Zipper.create graph owner |> require "Missing checked sequence owner"
+    pathToOwner site [] |> List.fold (fun position child -> atChild child position) root
+
 [<Theory>]
 [<InlineData("SeqExpr", false)>]
 [<InlineData("SeqExpr", true)>]
@@ -141,15 +150,62 @@ let main _ = ignore outer; 0
             | kind -> failwithf "Delegated yield has no sequence owner: %A" kind
             owner
         | sources -> failwithf "Delegated yield lost its owner/generator: %A" sources
-    let rec pathToOwner id path =
-        if id = owner then path
-        else
-            let parent = graph.Nodes[id].Parent |> require "Delegated yield lost its structural parent"
-            pathToOwner parent (id :: path)
-    let root = Zipper.create graph owner |> require "Missing checked sequence owner"
-    let position = pathToOwner origin.Target [] |> List.fold (fun position child -> atChild child position) root
+    let position = focusWithin graph owner origin.Target
     Assert.NotEmpty(position.Path)
     match observe position with
     | TRError diagnostic ->
         Assert.Equal("Yield requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient", diagnostic.Message)
     | result -> failwithf "Ownership and delegation provenance authorized an unsettled frame: %A" result
+
+[<Fact>]
+let ``checked guarded loop retains evaluation facts without authorizing frame-less witnessing`` () =
+    let source = """module SequenceEvaluationBoundary
+let outer (gate: bool) = seq {
+    let mutable active = true
+    while active do
+        if gate && active then yield gate
+        active <- false
+}
+[<EntryPoint>]
+let main _ = ignore (outer true); 0
+"""
+    let graph =
+        match SourceChecker.parseAndCheck source "sequence-evaluation-boundary.clef" with
+        | SourceChecker.Success result -> result.Graph
+        | SourceChecker.CheckFailure result -> failwithf "Guarded sequence was rejected: %A" result.Diagnostics
+        | SourceChecker.ParseFailure errors -> failwithf "Guarded sequence did not parse: %A" errors
+    Assert.DoesNotContain(graph.Nodes.Values, fun node ->
+        match node.Kind with SemanticKind.Error _ -> true | _ -> false)
+    let site = graph.Nodes.Values |> Seq.filter (fun node ->
+        match node.Kind with SemanticKind.Yield _ -> true | _ -> false) |> Assert.Single
+    let payload = match site.Kind with SemanticKind.Yield value -> value | _ -> failwith "Missing yield"
+    let ownership = graph.Edges |> List.filter (fun edge ->
+        edge.Class = EdgeClass.Suspension && edge.Role = EdgeRole.Delimiter && edge.Target = site.Id) |> Assert.Single
+    let owner = List.head ownership.Sources
+    let facts = graph.Edges |> List.filter (fun edge -> edge.Class = EdgeClass.Evaluation)
+    let flow target fromPort toPort transfer =
+        facts |> List.filter (fun edge ->
+            edge.Target = target && edge.Role = EdgeRole.EvaluationFlow(fromPort, toPort, transfer)) |> Assert.Single
+    let demand = facts |> List.filter (fun edge ->
+        edge.Target = site.Id && edge.Role = EdgeRole.EvaluationOperand EvaluationAccess.Value) |> Assert.Single
+    Assert.Equal(0, demand.Ordinal)
+    Assert.Equal<NodeId list>([owner; payload], demand.Sources)
+    let ready = flow site.Id (EvaluationPort.OperandExit 0) EvaluationPort.Ready EvaluationTransfer.Continue
+    Assert.Equal<NodeId list>([owner; payload], ready.Sources)
+    let resume = flow site.Id EvaluationPort.Ready EvaluationPort.Exit EvaluationTransfer.Resume
+    Assert.Equal<NodeId list>([owner], resume.Sources)
+    let loop = graph.Nodes.Values |> Seq.filter (fun node ->
+        match node.Kind with SemanticKind.WhileLoop _ -> true | _ -> false) |> Assert.Single
+    match loop.Kind with
+    | SemanticKind.WhileLoop(guard, body) ->
+        let back = flow loop.Id (EvaluationPort.OperandExit 1) (EvaluationPort.OperandEntry 0) EvaluationTransfer.Continue
+        Assert.Equal<NodeId list>([owner; body; guard], back.Sources)
+        flow loop.Id (EvaluationPort.OperandExit 0) (EvaluationPort.OperandEntry 1) EvaluationTransfer.WhenTrue |> ignore
+        flow loop.Id (EvaluationPort.OperandExit 0) EvaluationPort.Ready EvaluationTransfer.WhenFalse |> ignore
+    | _ -> failwith "Missing loop"
+    let position = focusWithin graph owner site.Id
+    Assert.NotEmpty(position.Path)
+    match observe position with
+    | TRError diagnostic ->
+        Assert.Equal("Yield requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient", diagnostic.Message)
+    | result -> failwithf "Local evaluation contracts authorized an unsettled frame: %A" result

@@ -7,6 +7,60 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06 local evaluation relations before suspension segments — 2026-09-20
+
+Baker records local evaluation demands and entry/completion ports on the graph
+after curry normalization, so those relations reference the final operand
+identities. Ordered operands remain distinct from references to values already
+produced. A binding's initializer precedes its result; a definition reference
+does not cause that initializer to execute again.
+
+Conditional paths retain their guard and selected branch, including the nested
+conditionals that implement short-circuit expressions. Loop relations distinguish
+the initial guard, successful body path, body-to-guard backedge and exhausted
+continuation. Creating a lambda, lazy value or nested sequence retains its
+capture-formation boundary without entering the deferred body. At a yield, its
+payload demand precedes the suspension's `Resume` continuation. These facts are
+compositional local relations; they do not constitute a complete global control-
+flow graph or prove dominance, path feasibility or segment liveness.
+
+`EvaluationOperand` distinguishes value demands from assignment storage;
+`EvaluationFlow` connects ports of its target node. Operand identities named by
+those ports are explicit edge participants. Root and capture relations retain
+the owner/generator and captured declaration identities. Unsupported local forms
+carry `EvaluationPending` residuals; no fall-through execution path is invented.
+
+Alex production code remains unchanged. The added component case parses and
+checks a guarded loop sequence, requires the final graph's evaluation facts,
+then observes its unresolved yield at a Huet focus. The expected result remains
+the explicit missing-frame diagnostic, no emitted operations, and no graph,
+zipper or accumulator mutation. Local evaluation evidence does not authorize
+native suspension witnessing.
+
+| Gate | Result |
+|---|---|
+| CCS | **740/740**, zero skipped; focused sequence cohort **89/89**, including 17 new evaluation cases; `/tmp/clef-sequence-evaluation-full.log`, `/tmp/clef-sequence-evaluation-tests.log` |
+| Alex | **9/9** sequence boundary cases, including parsed guarded-loop evaluation facts at a real Huet focus; `/tmp/composer-sequence-evaluation-alex.log`. Tests built with `BuildProjectReferences=false`; no compiler references rebuilt |
+| Public Composer | **3/3** selected SourceAdmission cases: exact map/append dimension rejections before artifacts and ordinary FP control with stock MLIR verification/native execution; `/tmp/composer-source-admission-5c758e6b5ab44809b762bec0555916f2/` |
+| FidelityHello | **11b_LoopCaptures passes**, fresh compilation, exact output and native exit; `/tmp/composer-sequence-evaluation-fidelityhello.log` |
+| Analyzer projection | **41 accepted / 45 exact rejections**, revisions 1–106; `/tmp/lattice-ccs-surface-f378d9c5505f463aa6c2f621ff83023c/evidence.json` |
+| LSP | **49 diagnostic edits and repairs**, guarded-loop types, lambda signature and four original capture definitions; `/tmp/lattice-surface-waypoint-BkOf1a/result.json` |
+
+Both tooling gates loaded CCS SHA-256
+`5e228d39c0d0134229834bb9b0df818fa6b3bd02aea00f48f9144b7a16aa302f`.
+The separate CAC documentation drift gate's five pre-existing findings remain
+unchanged, with evidence in `/tmp/lattice-sequence-ownership-doc-drift.log`;
+that gate was not rerun for this checkpoint.
+
+Suspension segments, live-across storage, frame extent and placement, Boolean
+resumption and their proof obligations remain upstream work. The aggregate
+storage-budget follow-up recorded below also remains open. The passing source,
+tooling and witness checks are separate from any eventual native sequence gate;
+this checkpoint establishes no native sequence execution result.
+
+Companion revisions: clef `945c3e9b9`, clef-lang-spec `0d5db4e`,
+lattice-analyzers `aea8a54`, lattice-vscode `72df049`, CAC `fed959a6`.
+
 ## C-06 delegation iteration before suspension segments — 2026-09-20
 
 Baker now expands admitted `yield! input` into iteration within the delegating

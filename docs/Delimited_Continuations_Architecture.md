@@ -2,7 +2,9 @@
 
 > **Delimited continuations as saturated graph structure, witnessed in standard dialects.**
 > This document extends the closure saturation form family of [C-01 PRD](./PRDs/C-01-Closures.md) Section 14
-> to suspension. The seq state machine of `clef-lang-spec/spec/seq-representation.md` is its implemented precedent.
+> to suspension. The [sequence representation contract](../../clef-lang-spec/spec/seq-representation.md)
+> specifies the caller-pulled instance; native frame and resumption construction remain pending
+> as recorded in the [language coverage waypoints](Language_Coverage_Waypoints.md).
 
 ## 1. A Concurrency Language First
 
@@ -99,7 +101,7 @@ Because VC-ONE is stated on the frame value, multi-shot is well-defined where it
 
 What crosses the witness boundary is standard dialects only: a discriminant, a byte frame with static `memref.view`s, function values, and `scf.index_switch` over the discriminant. No continuation dialect, no llvm dialect, no new op. The correspondence table of C-01 Section 14.3 covers every constituent. The suspension form adds the discriminant switch and nothing else.
 
-The existence proof is already in the spec. The seq chapter's layout, `{state, current, code_ptr, captures, internal_state}`, is a compiled one-shot delimited continuation: `state` is the discriminant, `current` is the in-flight value, the captures and internal state are the live-across slots, and MoveNext is resume with a narrowed signature. `seq { }` is the degenerate case in which every resumption source is the caller's pull. The suspension recipe generalizes the resumption edge and keeps the representation.
+The [seq specification](../../clef-lang-spec/spec/seq-representation.md) fixes the pair `(moveNext, {state, current, captures, internal_state})`: the function value is separate from its environment, with no code pointer stored as an environment field. `state` is the discriminant, `current` is the in-flight value, the captures and internal state are the live-across slots, and MoveNext is resume with a narrowed signature. `seq { }` is the instance in which every resumption source is the caller's pull. The suspension recipe generalizes the resumption edge and keeps that representation. This is the settled design contract, not evidence that native sequence frame construction is complete.
 
 ## 8. Target Realizations
 
@@ -127,7 +129,11 @@ Stack switching is the one target whose native structure is itself a delimited c
 
 ## 9. Status and Sequencing
 
-Design, in full. The seq lowering is the implemented precedent: its patterns are complete in Composer (C-01 Section 9, Phase 3), and its struct is the frame Sections 3 and 4 generalize. The spec's `dcont-representation.md` still records the `cont.*` operation surface. That chapter is brought to this architecture at its next revision.
+The [delimited-continuation specification](../../clef-lang-spec/spec/dcont-representation.md) already adopts this graph-resident architecture and explicitly retires the earlier `cont.*` operation surface above the witness boundary. Its frame, segment and proof contracts are normative; target realizations in Section 8 remain design work.
+
+Current sequence implementation establishes source element constraints, resident generator formals, producer capture timing, delimiter ownership, owner-local delegation iteration and local evaluation contracts. The [language coverage waypoints](Language_Coverage_Waypoints.md) record their separate source, editor and witness gates. Native sequence frame construction and execution are not complete. The obsolete shape coeffect and Alex's guessed frame reconstruction have been retired; Alex refuses unsettled sequence suspension nodes even when ownership, delegation provenance and local evaluation facts are present.
+
+The next upstream steps compose local evaluation contracts to establish value availability, dominance and suspension segments, then per-cut liveness, frame layout/placement, Boolean resumption and their proof obligations. These prerequisites belong in Baker before the native CPU realization can pass its witness and execution gates.
 
 Sequencing:
 
@@ -150,4 +156,4 @@ Each stage produces a findings document, on the pattern this repository follows.
 - Appel, A. W. *SSA is Functional Programming* (SIGPLAN Notices, 1998). The state-machine and CFG equivalence the CPU realization rests on.
 - [C-01 PRD](./PRDs/C-01-Closures.md) Section 14. The environment as the general object, the form family, and the discharge regime.
 - `clef-lang-spec/spec/closure-representation.md` Section 7. The slot-class schema the continuation frame instantiates.
-- `clef-lang-spec/spec/seq-representation.md`. The implemented one-shot precedent.
+- [Sequence Representation](../../clef-lang-spec/spec/seq-representation.md). The caller-pulled suspension contract; implementation status is tracked separately in the language coverage waypoints.

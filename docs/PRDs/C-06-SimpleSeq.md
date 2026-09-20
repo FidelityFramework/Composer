@@ -46,6 +46,18 @@
 > frame and resumption are settled. See the latest
 > [waypoint](../Language_Coverage_Waypoints.md) for validation status.
 
+> **Local evaluation checkpoint (2026-09-20).** Baker's
+> graph enrichment records compositional operand demands and evaluation
+> ports after curry normalization, retaining final operand identity. It preserves
+> conditional paths, loop backedges and deferred capture-formation boundaries;
+> a yield's payload is evaluated before its `Resume` continuation. These local
+> facts precede suspension segmentation and liveness. They do not establish a
+> global control-flow graph, dominance, a settled frame or native sequence
+> execution. The full CCS suite passes **740/740** and the Alex sequence boundary
+> cohort **9/9**; Alex's missing-frame boundary remains in force. See the latest
+> [waypoint](../Language_Coverage_Waypoints.md) for the separate source, tooling
+> and ordinary native-control gate evidence.
+
 ## 1. Executive Summary
 
 Sequence expressions (`seq { }`) provide lazy, on-demand iteration in Clef. Unlike `Lazy<'T>` (single deferred value), `Seq<'T>` produces multiple values through resumable computation.
