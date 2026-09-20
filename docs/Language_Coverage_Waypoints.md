@@ -7,12 +7,68 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## F-05 character storage and native formatting — 2026-09-20
+
+**F-05 restored to Complete at its sample scope.** The original AddNumbers sample
+again passes compilation, stock MLIR verification and exact native output. The
+character-buffer regression is resolved in Baker's graph; Alex consumes settled
+carriers and rejects mismatches. F-06's parsing regression and the open C-series
+exit gates remain separate work.
+
+Both `String.fromBytes` and `String.toBytes` have logical `int[]` signatures.
+Baker retains the exact allocation, aliases, writes, dependent reads and selected
+platform representation declaration in resident storage/proof incidence.
+`fromBytes` establishes an immutable snapshot; `toBytes` composes an ordinary
+allocation and copy loop from an internal byte view into independently inferred
+integer storage. A later write of 4096 remains an integer write and cannot mutate
+the source string. Source element types and unrelated array storage are preserved.
+Range and loop saturation run after these recipes, followed by placement and
+settled obligations. Canonical reachability refresh retires replaced intrinsic
+callees without deleting proof provenance or relaxing witness coverage.
+
+The [standard conversion contract](../../clef-lang-spec/spec/native-type-mappings.md#integer-byte-unit-conversions)
+and NTU representation tables are reconciled. Current `fromBytes` admission covers
+closed ASCII buffers and immutable constant valid UTF-8 sequences; unknown or
+escaping storage and unproved text validity are explicit errors. This does not
+claim general dynamic UTF-8 validation or arbitrary floating-point formatting.
+
+| Repository | Revision | Scope |
+|---|---|---|
+| clef | `30f64b061` | Baker storage/snapshot recipes, range and meet integration, exact diagnostics and 15 encoding cases |
+| Fidelity.Platform | `92752a7` | Plain NTU formatter buffers, bounded digit construction and minimum signed integer handling |
+| clef-lang-spec | `5dace04` | Standard conversion signatures, snapshot laws and NTU representation authority |
+| Composer | This coordinated commit | Passive carrier witnessing, native and editor gates, F-05 status, Fidelity.UI/LVGL roadmap correction |
+
+Final CCS SHA-256 is `2581ee6415188161541896fced63d6ed992ebabd193ddbd9d45c22698907e33c`;
+Composer is `dfb0d7c02fd450441e277bafa4759f841a5866240c86de963b37eab49931ae7b`.
+
+| Gate | Result and retained evidence |
+|---|---|
+| CCS | **1006/1006** on preceding `563959af…af1065`, `/tmp/clef-string-storage-full-tests.log`; after the focused reachability correction, **15/15** encoding cases pass on the final artifact, `/tmp/clef-string-storage-reachability-focused.log` |
+| Alex | **94/94**, `/tmp/composer-string-storage-alex-full.log`, before that core-only reachability correction; no Alex change followed |
+| SMT transfer | **85/85** through `mlir-translate`/cvc5, `/tmp/composer-string-storage-smt.log`, on the preceding core artifact |
+| Native formatter | **PASS**: UTF-8 bytes, empty/nonzero slices, both snapshot directions, a subsequent 4096 write and 22 numeric outputs; `/tmp/composer-platform-format-c854c08cf4ff4ad8875fad9821954a8e/` |
+| Original F-05 | **PASS**, `/tmp/composer-foundation-native-0c1fc64d1b0a449cbbac16143006d9bf/` |
+| Full-profile 16g | **PASS**, `/tmp/composer-foundation-native-355ce0de5afe49499751980e252c6047/` |
+| Editor projection | **PASS** on the final artifact: exact `CCS8404` span/message/participants, unsaved repair, immutable prior snapshot and source-only absence of physical proof; `/tmp/composer-string-encoding-reachability-editor-tests.log` |
+
+All three native gates require stock MLIR verification, native exit zero, empty
+stderr and exact output; their directories retain input hashes and evidence.
+The formatter runner now lives in Composer's F# bootstrap tests; the earlier
+Python draft was removed from Fidelity.Platform. BAREWire descriptors and the
+public editor/diagnostic transport contracts are unchanged. CAC, Lattice and the
+analyzers continue through that shared CCS projection; no new live LSP run is
+claimed. The PRD index now identifies Fidelity.UI native rendering as the primary
+direction, with an optional Farscape/LVGL adapter and HelloWayland as a working
+experimental oracle.
+
 ## PRD status and repository synchronization — 2026-09-20
 
 The [PRD index](PRDs/README.md) now uses only Planned, In-Progress and Complete,
 with a separate Note in every category. Foundation completion follows the
 recorded native evidence: F-00–F-04 and F-07–F-10 are Complete at their stated
-scope; F-05/F-06 are reopened for the recorded formatter/parsing regressions.
+scope; F-05/F-06 were reopened for the recorded formatter/parsing regressions.
+The later character-storage entry above closes F-05.
 C-01–C-07 remain In-Progress. Later sequence composition has exposed additional
 closure, callable storage and residence requirements in the earlier areas.
 
@@ -60,14 +116,15 @@ reports six findings outside the edited tooling READMEs
 
 Explicitly pending local work:
 
-- Fidelity.Platform's `Format.clef` migration and `tests/Format/native/` remain
-  unpublished. Its existing 22-case native gate was rerun and still fails stock
+- At that synchronization, Fidelity.Platform's `Format.clef` migration and
+  `tests/Format/native/` remained unpublished. Its 22-case native gate failed stock
   MLIR verification: the first `Format.int` call expects `memref<?xi8>` while the
   callee returns `memref<?xi64>`. No native boundary assertion ran.
   `/tmp/platform-format-native-xv9_k_me/compile.log`; Composer assembly SHA-256
   `0121c21407e8a15fb8e9fd3803c1384f82e56e04d55c0262afa1a61d5a81fb43`, CCS
   `9fe00834eda63cc9a4b91253b983d5e2aaf2e49fb4ba536fb3b271ae1f709e0f`.
-  This is a compiler/storage-contract blocker, not an approval gate.
+  That compiler/storage-contract blocker is now resolved by the coordinated
+  character-storage entry above; the runner was moved to Composer.
 - Fidelity.Font's matching FreeType dependency-path change is committed locally
   as `79f022a`; the repository has no configured remote or upstream. Its SSH
   publication destination has been requested.
@@ -120,6 +177,10 @@ remain green on this artifact:
 `/tmp/composer-native-sequences-5286f211d8b0432d812bb60cbd726125`.
 The unchanged full-profile **16g passes** stock MLIR, exact output and exit 0:
 `/tmp/composer-native-sequences-177d299383c0462c8cfbb2925dfa8b8b`.
+That run's full-profile input closure included the then-uncommitted Format
+migration, although 16g did not call it; 16a–f used CompilerSurface without Format.
+The character-storage entry above records a fresh 16g run with the now-published
+formatter source and its hash.
 It exercises two files, multiple modules, unused observable initialization,
 once-only formation, deferred pulls, and repeated main/named-function use.
 The broader suite and tooling records above retain their actual preceding hash;

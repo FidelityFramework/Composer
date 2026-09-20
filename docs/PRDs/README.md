@@ -29,7 +29,7 @@ lifetimes still require work in the computation PRDs.
 | **D-xx** | Desktop | GTK, WebView | D-01 to D-02 |
 | **T-xx** | Threading | Threads, Mutex, Actors | T-01 to T-05 |
 | **R-xx** | Reactive | Observable, Rx operators, Incremental | R-01 to R-06 |
-| **E-xx** | Embedded | USB, RTOS, LVGL | Future |
+| **E-xx** | Embedded | USB, RTOS, bounded native UI | Future |
 
 ---
 
@@ -37,7 +37,7 @@ lifetimes still require work in the computation PRDs.
 
 Not all PRDs apply to all targets. This matrix clarifies which features are needed for which platform configurations.
 
-| PRD Category | WREN Stack | QuantumCredential | LVGL MCU | Unikernel |
+| PRD Category | WREN Stack | QuantumCredential | Embedded UI | Unikernel |
 |--------------|------------|-------------------|----------|-----------|
 | **Foundation (F)** | Required | Required | Required | Required |
 | **Computation (C)** | Required | Required | Required | Required |
@@ -45,8 +45,15 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 | **IO (I)** | Required | Partial | N/A | Required |
 | **Desktop (D)** | Required | N/A | N/A | N/A |
 | **Threading (T)** | Required | Partial | N/A | Required |
-| **Reactive (R)** | Required | Partial | N/A | Optional |
+| **Reactive (R)** | Required | Partial | Partial | Optional |
 | **Embedded (E)** | N/A | Required | Required | N/A |
+
+Embedded UI is a deployment profile of the portable Fidelity.UI contract. The
+primary native direction is a Clef reactive-area engine, with shared component
+semantics across native and DOM/WebView realizations. An optional Farscape binding
+can adapt LVGL to that interface; LVGL does not define a compiler target. The
+[Fidelity.UI architecture](../../../Fidelity.UI/docs/00_architecture.md) records
+the design and current implementation boundary.
 
 ---
 
@@ -57,20 +64,21 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 The latest recorded foundation-wide native run is the
 [C-06 regression checkpoint](../Language_Coverage_Waypoints.md#c-06-native-continuation-settlement--2026-09-20)
 on CCS `08d54752…84482`: 01–04, 07–10 and every 08a–e / 09a–c variant compiled,
-ran and matched expected output. Samples 05 and 06 have the specific regressions
-below. The [regression manifest](../../tests/regression/Manifest.toml) retains
+ran and matched expected output. Sample 05's formatter regression is now closed
+by the [character-storage acceptance](../Language_Coverage_Waypoints.md#f-05-character-storage-and-native-formatting--2026-09-20);
+06 retains the specific regression below. The [regression manifest](../../tests/regression/Manifest.toml) retains
 their original acceptance programs and output; `/tmp/composer-c06-final-regression.log`
 records that run. C-07's later focused gates do not constitute a new all-foundation
 run.
 
 | PRD | Title | Sample | Status | Note |
 |-----|-------|--------|--------------------|--------------------------------------------|
-| [F-00](F-00-Synopsis.md) | Foundation Series Synopsis | 01–10 | Complete | Retrospective overview of the implemented foundation. Its old pending entry for Records is superseded by the passing 10 native gate; the two reopened sample regressions are listed below. |
+| [F-00](F-00-Synopsis.md) | Foundation Series Synopsis | 01–10 | Complete | Retrospective overview of the implemented foundation. Its old pending entry for Records is superseded by the passing 10 native gate; F-06 retains the reopened parsing regression below. |
 | [F-01](F-01-HelloWorldDirect.md) | HelloWorldDirect | 01 | Complete | Native pipeline, static strings and console output are operational; 01 passes. |
 | [F-02](F-02-ArenaAllocation.md) | Arena Allocation | 02 | Complete | The PRD's input/string-allocation sample passes. Its explicit future arena/region extension belongs to A-04; this status does not close that contract. |
 | [F-03](F-03-PipeOperators.md) | Pipe Operators | 03 | Complete | Pipe normalization and function application are operational; 03 passes. |
 | [F-04](F-04-CurryingLambdas.md) | Currying & Lambdas | 04 | Complete | Curried calls, lambdas and the sample's partial application pass. Broader returned/retained callable environments remain C-01/C-02 work. |
-| [F-05](F-05-DiscriminatedUnions.md) | Discriminated Unions | 05 | In-Progress | Implemented and operational in Option/Result gates; original 05 has a recorded stock-MLIR regression at the `Format.float` result carrier (`memref<?xi8>` versus `memref<?xi64>`). |
+| [F-05](F-05-DiscriminatedUnions.md) | Discriminated Unions | 05 | Complete | Original 05 again passes stock MLIR and exact native output after Baker settles integer/UTF-8 storage and snapshot ownership; the separate 22-case formatter and encoding oracle also passes. |
 | [F-06](F-06-InteractiveParsing.md) | Interactive Parsing | 06 | In-Progress | Implemented interactive parsing/mixed numeric DU baseline; original 06 has a recorded source-admission regression on three legacy `int` conversion calls in platform Parse (`CCS8009`). |
 | [F-07](F-07-BitwiseOperators.md) | Bitwise Operators | 07 | Complete | AND/OR/XOR/complement/shifts, comparisons and Boolean composition pass. The surface is native operators, not the retired `Bits.*` byte-order/bitcast API. |
 | [F-08](F-08-OptionType.md) | Option Type | 08, 08a–e | Complete | Some/None and matching, plus tested defaults, alternatives, iteration and folds; all six samples pass. Wider collection/callable contracts remain separately scoped. |
@@ -198,11 +206,20 @@ govern reconciliation of the inherited PRD sketches. All six rows remain Planned
 
 ### Embedded (E-xx) - MCU & Unikernel
 
+The UI work follows [Fidelity.UI's native portable model](../../../Fidelity.UI/README.md):
+owned reactive areas, component composition and explicit capabilities, with
+bounded storage, work queues and display completion on embedded profiles.
+[HelloWayland](../../../HelloWayland/README.md) supplies a working experimental
+renderer oracle, including native presentation, parallel raster work, resize and
+teardown. Its ad hoc rendering path is useful acceptance evidence; the general
+Fidelity.UI engine and portable component gates remain planned. LVGL remains a
+component/resource reference and an optional Farscape interoperability adapter.
+
 | PRD | Title | Sample | Status | Note |
 |-----|-------|--------|--------|------|
 | E-01 | USB Device Stack | Future | Planned | Future scope; PRD not yet specified. |
 | E-02 | RTOS Integration | Future | Planned | Future scope; PRD not yet specified. |
-| E-03 | LVGL Basics | Future | Planned | Future scope; PRD not yet specified. |
+| E-03 | Native Embedded UI | Future | Planned | Fidelity.UI shared semantics and native reactive-area engine under a bounded device profile; optional Farscape/LVGL adapter. PRD and engine acceptance are not yet complete. |
 
 ### Second Horizon - Admitted Papers
 

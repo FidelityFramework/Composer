@@ -545,8 +545,8 @@ let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
     drainTypeMappingErrors () |> ignore
     result
 
-/// A continuation value's physical carrier is keyed by its exact graph use,
-/// including the generator formal. Its source type alone cannot name a frame.
+/// A value's specialized physical carrier is keyed by its exact graph use.
+/// Source type alone cannot name a continuation frame or a settled byte buffer.
 let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType =
     let codata = ctx.Graph.Codata.Value
     match codata.EnvironmentOrigins |> Map.tryFind nodeId, codata.SequenceOrigins |> Map.tryFind nodeId with
@@ -558,7 +558,10 @@ let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType
         match ctx.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
         | Some frame when frame.Bytes > 0 -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8))
         | _ -> failwithf "Sequence value %d has no settled frame for origin %d" (NodeId.value nodeId) (NodeId.value owner)
-    | None, None -> mapType ty ctx
+    | None, None ->
+        match tryArrayElementTypeAt ctx.Graph nodeId with
+        | Some element -> TMemRef element
+        | None -> mapType ty ctx
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =

@@ -414,7 +414,7 @@ let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
         // The element type of the array node's type: an element of the bare kind at the element
         // range's settled width, a record at its physical storage
         let! state = getUserState
-        let elemType = arrayElementType state.Platform.TargetArch state.Graph state.Current.Type
+        let elemType = arrayElementTypeAt state.Platform.TargetArch state.Graph node.Id node.Type
 
         let! allocOp = pAlloc resultSSA sizeIndexSSA elemType
         let resultType = TMemRef elemType
@@ -730,7 +730,7 @@ let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
             do! ensure (ssas.Length >= 2 + n) $"pBuildArrayLiteral: Expected {2 + n} SSAs, got {ssas.Length}"
             let! state = getUserState
             let arch = state.Platform.TargetArch
-            let elemType = arrayElementType arch state.Graph node.Type
+            let elemType = arrayElementTypeAt arch state.Graph node.Id node.Type
             let arrayType = TMemRef elemType
             let! sizeOp = pConstI ssas.[0] (int64 n) TIndex
             let! allocOp = pAlloc ssas.[1] ssas.[0] elemType

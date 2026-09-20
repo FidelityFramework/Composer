@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Infrastructure/ProgramLifetimeProjection.fs" Link="ProgramLifetimeProjection.fs" />
+    <Compile Include="StringEncodingChecks.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

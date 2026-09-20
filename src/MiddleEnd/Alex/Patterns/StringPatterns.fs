@@ -532,13 +532,18 @@ let pStringToBytesIntrinsic : PSGParser<MLIROp list * TransferResult> =
         return ([], TRValue { SSA = stringSSA; Type = stringType })
     }
 
-/// The witness simply returns the input memref as-is.
+/// Identity is available only after Baker settles the string's byte-buffer carrier.
 let pStringFromBytesIntrinsic : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! (info, argIds) = pIntrinsicApplication IntrinsicModule.String
         do! ensure (info.Operation = "fromBytes") "Not String.fromBytes"
         do! ensure (argIds.Length >= 1) "String.fromBytes: Expected 1 arg"
+        let! node = getCurrentNode
+        let! stringType = pMapType Types.stringType
         let! (_, bytesSSA, bytesType) = pRecallArgWithLoad argIds.[0]
-        // Identity: byte[] and string are both memref<?xi8>
+        let unsettled =
+            sprintf "String.fromBytes: byte-buffer representation is not settled at node %d; operand %d has carrier %A, expected %A"
+                (NodeId.value node.Id) (NodeId.value argIds.[0]) bytesType stringType
+        do! ensure (bytesType = stringType) unsettled
         return ([], TRValue { SSA = bytesSSA; Type = bytesType })
     }

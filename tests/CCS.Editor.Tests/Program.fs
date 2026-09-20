@@ -672,6 +672,7 @@ let main _ = if message = "proof fixture" then 0 else 1
     loopObligationChecks ()
     callEffectRangeChecks ()
     programLifetimeChecks ()
+    StringEncodingChecks.run root
 
 let inspectSample project =
     let session = EditorSession(project)
@@ -704,8 +705,9 @@ let main args =
             | [| "--loop-obligations" |] -> loopObligationChecks ()
             | [| "--call-effects" |] -> callEffectRangeChecks ()
             | [| "--program-lifetime" |] -> programLifetimeChecks ()
+            | [| "--string-encoding" |] -> StringEncodingChecks.run root
             | [||] -> checks ()
-            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --loop-obligations | --call-effects | --program-lifetime]"
+            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --loop-obligations | --call-effects | --program-lifetime | --string-encoding]"
             0
         with error -> eprintfn "%O" error; 1
     finally if Directory.Exists root then Directory.Delete(root, true)

@@ -2,7 +2,26 @@
 
 > **Surface note (2026-09).** `nativeptr<'T>`, `NativePtr.*`, `voidptr`, and `FSharp.NativeInterop` are not denotable in Clef source (spec `ffi-boundary.md` §1, `special-attributes-and-types.md`; `TNativePtr` is compiler-internal only). Where this PRD shows them, it records the pre-strip surface the code was written against; the settled surfaces are the opaque `Ptr<'T, 'Region, 'Access>` handle in the interior and `CHandle<'T>` at the C boundary, with buffers as bounded arrays and captures as `memref` views.
 
-> **Sample**: `05_AddNumbers` | **Status**: Implemented | **Category**: Foundation
+> **Sample**: `05_AddNumbers` | **Status**: Complete | **Category**: Foundation
+
+> **Acceptance, 2026-09-20.** The original sample again compiles, passes stock MLIR
+> verification and produces exact native output. The formatter regression was
+> closed by Baker's occurrence-specific integer/UTF-8 storage and snapshot recipes,
+> with Alex consuming the settled carriers. The companion native gate exercises
+> 22 formatting boundaries and array/string mutation isolation; compiler tests
+> cover rejected ranges, invalid UTF-8, alias escapes and dimensional mismatch.
+> See the [coordinated waypoint](../Language_Coverage_Waypoints.md#f-05-character-storage-and-native-formatting--2026-09-20)
+> for revisions, evidence and admission limits.
+
+> **Representation authority.** The fixed-width layouts below record the original
+> sample implementation. Clef source integers do not prescribe `i64`, and those
+> diagrams do not select current storage. Baker settles representation and layout
+> from NTU ranges, joint constraints and the selected platform; Alex witnesses the
+> resulting graph. The standard is
+> [Clef native type mappings](../../../clef-lang-spec/spec/native-type-mappings.md).
+> The array/string boundary follows its
+> [integer byte-unit conversion contract](../../../clef-lang-spec/spec/native-type-mappings.md#integer-byte-unit-conversions),
+> including UTF-8 validity and independent snapshots in both directions.
 
 ## 1. Executive Summary
 

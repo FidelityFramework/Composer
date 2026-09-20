@@ -1,0 +1,52 @@
+module FormatBoundaries
+
+let encodingSemantics () =
+    let source = [|65; 66|]
+    let snapshot = String.fromBytes source
+    Array.set source 0 67
+    let bytes = String.toBytes snapshot
+    let first = Array.get bytes 0
+    Array.set bytes 0 4096
+    let unchanged = String.toBytes snapshot
+    let wide = [|4096|]
+    let utf8 = [|195; 169|]
+    let text = String.fromBytes utf8
+    let roundTrip = String.toBytes text
+    let empty = String.fromBytes (Array.sub utf8 0 0)
+    let slice = String.fromBytes (Array.sub source 1 1)
+    let sliceBytes = String.toBytes slice
+    first = 65 && Array.get bytes 0 = 4096 && Array.get bytes 1 = 66 &&
+    Array.get unchanged 0 = 65 && Array.get unchanged 1 = 66 &&
+    Array.get source 0 = 67 && Array.get wide 0 = 4096 &&
+    String.length text = 2 && Array.get roundTrip 0 = 195 &&
+    Array.get roundTrip 1 = 169 && String.length empty = 0 &&
+    String.length slice = 1 && Array.get sliceBytes 0 = 66
+
+let formatBoundaries () =
+    Console.writeln (Format.int 0)
+    Console.writeln (Format.int 1)
+    Console.writeln (Format.int -1)
+    Console.writeln (Format.int 9)
+    Console.writeln (Format.int 10)
+    Console.writeln (Format.int -9)
+    Console.writeln (Format.int -10)
+    Console.writeln (Format.int 99)
+    Console.writeln (Format.int 100)
+    Console.writeln (Format.int -99)
+    Console.writeln (Format.int -100)
+    Console.writeln (Format.int 9223372036854775807)
+    Console.writeln (Format.int -9223372036854775808)
+    Console.writeln (Format.float 0.0)
+    Console.writeln (Format.float 0.125)
+    Console.writeln (Format.float -0.125)
+    Console.writeln (Format.float 1.5)
+    Console.writeln (Format.float -1.5)
+    Console.writeln (Format.float 10.25)
+    Console.writeln (Format.float -10.25)
+    Console.writeln (Format.float 100.0)
+    Console.writeln (Format.float -100.0)
+    0
+
+[<EntryPoint>]
+let main _ =
+    if encodingSemantics () then formatBoundaries () else 93

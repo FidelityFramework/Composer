@@ -10,6 +10,7 @@
     <Compile Include="ZipperTests.fs" />
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
+    <Compile Include="StringBoundaryTests.fs" />
     <Compile Include="UnitResultTests.fs" />
     <Compile Include="IndexSwitchTests.fs" />
     <Compile Include="ContinuationPatternTests.fs" />

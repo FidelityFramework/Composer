@@ -459,3 +459,15 @@ let arrayElementType (arch: Architecture) (graph: SemanticGraph) (arrayTy: Nativ
     match mapNativeTypeWithGraphForArch arch graph arrayTy with
     | TMemRef elem | TMemRefStatic (_, elem) -> elem
     | other -> failwithf "TypeMapping: '%s' is not an array (mapped to %A)" (formatType arrayTy) other
+
+/// A buffer's settled element carrier is occurrence-specific. Its logical
+/// integer element type does not authorize narrowing other arrays of that type.
+let tryArrayElementTypeAt (graph: SemanticGraph) (nodeId: NodeId) : MLIRType option =
+    Clef.Compiler.PSGSaturation.SemanticGraph.StringByteStorage.element graph nodeId
+    |> Option.map (fun slot ->
+        settledScalarType slot
+        |> Option.defaultWith (fun () ->
+            failwithf "Array value %d has an unsupported settled element slot %A" (NodeId.value nodeId) slot))
+
+let arrayElementTypeAt (arch: Architecture) (graph: SemanticGraph) (nodeId: NodeId) (arrayTy: NativeType) : MLIRType =
+    tryArrayElementTypeAt graph nodeId |> Option.defaultWith (fun () -> arrayElementType arch graph arrayTy)
