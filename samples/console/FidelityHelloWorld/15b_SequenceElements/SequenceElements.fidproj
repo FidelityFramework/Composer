@@ -1,0 +1,15 @@
+[package]
+name = "SequenceElements"
+version = "0.1.0"
+description = "C-06 native boolean, unit, real and measured sequence elements"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceElements.clef"]
+output = "sequence-elements"
+output_kind = "console"

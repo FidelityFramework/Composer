@@ -384,6 +384,7 @@ type MLIROp =
 /// Structured Control Flow (SCF) dialect operations
 and SCFOp =
     | If of SSA * MLIROp list * MLIROp list option * (SSA * MLIRType) option  // cond, thenOps, elseOps, result (None = void)
+    | IndexSwitch of selector: SSA * cases: (int64 * MLIROp list) list * defaultBody: MLIROp list * results: (SSA * MLIRType) list
     | While of MLIROp list * MLIROp list                      // condOps, bodyOps
     | For of SSA * SSA * SSA * MLIROp list                    // lower, upper, step, bodyOps
     | Yield of (SSA * MLIRType) list                          // values with types

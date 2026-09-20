@@ -561,6 +561,54 @@ Expected values:
   powersOfTwo 8: 1 2 4 8 16 32 64 128
 """
 
+# C-06 native state-machine semantics; the original formatter oracle stays separate.
+[[samples]]
+name = "15a_SequenceSemantics"
+project = "SequenceSemantics.fidproj"
+binary = "targets/sequence-semantics"
+timeout_seconds = 120
+expected_output = """
+=== Sequence semantics Test ===
+Literal yields and for-in consumption: pass
+Repeated enumeration: pass
+Delayed effects and shared captures: pass
+Loop state and conditional suspension: pass
+Empty sequence effects without a payload: pass
+Caller-owned factories and counted yields: pass
+Delegation and nested independent enumeration: pass
+Retained mutable child captures: pass
+Factories inside suspended generators: pass
+Chained empty delegation preserves effects: pass
+"""
+
+# C-06 native scalar elements and NTU dimensions.
+[[samples]]
+name = "15b_SequenceElements"
+project = "SequenceElements.fidproj"
+binary = "targets/sequence-elements"
+timeout_seconds = 120
+expected_output = """
+=== Sequence elements Test ===
+Boolean payload order: pass
+Unit yields retain pull count and effects: pass
+Fractional real payloads: pass
+Measured integer payloads: pass
+Inverse measured real payloads: pass
+"""
+
+# C-06 captured templates with a proven covering activation.
+[[samples]]
+name = "15c_SequenceTemplateBorrows"
+project = "SequenceTemplateBorrows.fidproj"
+binary = "targets/sequence-template-borrows"
+timeout_seconds = 120
+expected_output = """
+=== Sequence template borrows Test ===
+Captured template delegation stays deferred: pass
+Independent enumeration retains shared cells: pass
+Nested captured templates retain covering lifetime: pass
+"""
+
 # =============================================================================
 # Sample 16: SeqOperations
 # Seq.map, Seq.filter, Seq.take, Seq.fold, Seq.collect (PRD-16)

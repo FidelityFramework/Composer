@@ -7,6 +7,112 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06 native continuation settlement — 2026-09-20
+
+**Native continuation implementation waypoint; aggregate C-06 regression gate
+remains open.** This combines the sequence feature's source, graph, placement,
+proof, middle-end, native-oracle and tooling work into one coordinated revision
+set. It does not mark the five compilation failures below as successful gates.
+
+Baker now composes its local evaluation relationships into control occurrences,
+definite value availability, cuts, resume entries and live-across sets. Recipes
+construct Boolean MoveNext bodies as ordinary PSG frame accesses, conditionals,
+loops and literal-case dispatch. A persistent discriminant names the resume
+cut; a local dispatch position sequences work within one pull. Alex follows
+those regions through its existing Huet zipper and passive witness function,
+using standard `scf.index_switch`, `func`, `memref` and arithmetic operations.
+The standard MLIR pipeline lowers structured control to `cf` and LLVM.
+
+Source `for ... in` declarations retain real identities. Consumption and
+`yield!` share the guarded iterator ingredient. Current-read certificates name
+the exact iterator, successful guard and consuming loop. Element-range evidence
+retains that prerequisite together with all possible owners and yielded payloads;
+the range fixed point joins their bounds. Missing incidence or an unknown
+alternative prevents a narrow result. A zero-cut body still runs its effects on
+the final pull; its current identity requires no physical payload storage.
+
+Placement separates persistent values from scratch needed only within one pull.
+A mutable cell retained by a child extends storage liveness even after the outer
+body stops reading its scalar value. Layout obligations retain actual slot
+participants, offsets, extents and alignments. Source cut/resume identities and
+numeric state obligations survive machine elaboration. These relations do not
+claim that layout checking alone proves lifetime, target capacity or the full
+linear-continuation contract.
+
+Named, fully applied factories can receive explicit caller-owned destination
+storage. Generator-local children occupy distinct, bounded regions of the parent
+frame. Captured mutable cells retain their original identity. Physical frame
+storage is unboxed: retained descriptors carry addresses, offsets, extents and
+strides; source NTU types and proof information guide compilation rather than
+becoming runtime type objects. Generated capture reads/borrows occur explicitly
+before constructor initialization. Layout-owner incidence is provenance, so it
+does not reactivate a retired source initializer on the emission spine.
+
+Native frame construction requires successful source admission. Invalid source
+types keep their precise source diagnostic without additional errors from
+attempting to settle a frame from the rejected premise. Valid source whose
+control, current-read, layout or residence prerequisites remain unresolved still
+receives an explicit settlement diagnostic. No heap/static residence fallback
+is inferred for an escaping template or captured cell.
+
+| Gate | Current evidence |
+|---|---|
+| CCS | **848/848**, zero skipped, on final CCS `f4bbc287…432c1a`; `/tmp/clef-c06-captured-templates-full-tests.log` |
+| Alex | **71/71** on CCS `08d54752…84482`, before the native-only captured-template extension; `/tmp/alex-c06-final-admission-tests.log` |
+| SMT transfer | **65/65**, including 15 continuation-layout source/native/cvc5 parity and false-claim cases; `/tmp/composer-smt-c06-final-admission.log` |
+| Native 15a | Fresh compilation, stock MLIR verification, exact output and exit 0; `/tmp/composer-native-sequences-d001fa03098148f8a94fb2fdf37454e2` on final CCS `f4bbc287…432c1a` |
+| Native 15b | Boolean, unit, real, measured integer and inverse measured real payloads; same required native stages; `/tmp/composer-native-sequences-1d8223ce127843b7884aa296956c0e2f` on earlier CCS `5dad941b…40f44` |
+| Native 15c | Scoped captured templates, repeated deferred delegation, shared cells and nested capture levels; fresh compile, stock MLIR verification and exact native output; `/tmp/composer-native-sequences-6f767e0ab8374941a1d041b0b9789985` on final CCS `f4bbc287…432c1a` |
+| Public CLI | 12/16 cases passed before the source-admission correction; the four original type/dimension rejections pass unchanged on the corrected artifact. `/tmp/composer-source-admission-000edec5a3b74f4286abaac3d3dba11c`, `/tmp/composer-source-admission-15540117b5aa4ec4928ea13d70ce4f38` |
+| FidelityHello 01–15 plus variants | **23/28 compiled, 23/23 executed successfully**, no skips; final CCS `08d54752…84482`. `/tmp/composer-c06-final-regression.log` includes the separate compilation failures below. Both 15a and 15b pass this final-artifact run. |
+| Analyzer projection | **44 accepted / 46 exact rejected** on CCS `08d54752…84482`; `/tmp/lattice-ccs-surface-a5571e6451fd49eeb0018150240a0396/evidence.json` |
+| LSP | **50 diagnostic edits and repairs**, source capture/induction definitions and normal server exit; same artifact; `/tmp/lattice-surface-waypoint-gTl1Dg/result.json` |
+
+15a checks literal and repeated enumeration, delayed pre/post-yield effects,
+conditional and counted loops, empty effects, caller-owned factories, delegation,
+nested independent iteration, retained mutable child captures, factories inside
+generators and chained empty inputs. 15b adds scalar/NTU element representation
+coverage; fractional numeric values do not claim admission of fractional measure
+exponents. 15c passes scoped captured-template delegation. Its finite borrow relation retains
+the source allocation, covering activation, captured declaration, generator and
+constructor. Complete use must stay within the covering lifetime; lexical nesting
+alone cannot authorize it. The dedicated residence/factory/region cohort passes
+**30/30**, including return/store/opaque/unknown and ambiguous-owner negatives.
+The original 15 remains a separate oracle; neither a 15a nor a 15b pass
+substitutes for it. Its accumulating generators require observable frame ranges
+that the current recurrence analysis does not establish. Other recorded failures
+are 05's `Format.float` result-carrier mismatch, 06's legacy `int` conversion
+names in Parse, 13's unresolved generic integer width, and 14's lazy width/extent
+read. These are observed failures, not skipped or successful gates. The ordinary
+Option/Result/control/capture oracle families pass. Board deploy pipelines have
+not been exercised.
+
+The existing CAC drift gate reports the same five findings outside these changes;
+CAC remains a retired bridge, with CCS.Editor as semantic authority. The source
+projection fixtures and tracking docs in lattice-analyzers, lattice-vscode and
+CAC move with this feature. The coordinated revisions below identify this implementation waypoint; the
+aggregate regression gate remains open.
+
+The next feature is C-07. Its revised PRD follows these graph contracts rather
+than historical wrapper emission: captured-template residence feeds append;
+callback producers need the full callable/environment contract; take requires
+a count guard before input demand; consumers must use certified iteration, and
+fold must retain independent state and element types. Unknown/mixed callable
+origins, escaping/reference-capturing factory results and aggregate storage
+budgets remain explicit contracts, not inferred successes.
+
+Final CCS artifact SHA-256:
+`f4bbc2879280b8252e3c7424a1b399e981eb492e49b07fb1def617d45f432c1a`.
+Composer artifact SHA-256:
+`6074e2fbe0d7f4339b3302ebb50673f53c06c69e6d352ba60c24711391258580`.
+The projection gates identify their earlier source-equivalent CCS artifact
+explicitly; Editor and Server copies were refreshed to the final artifact after
+the native-only residence extension. No repeated full tooling run is implied.
+
+Companion revisions: clef `12aa78d2b`, clef-lang-spec `1b1ab6b`,
+lattice-analyzers `24e4a667`, lattice-vscode `32dbe19e`, CAC `21930abd`.
+The Composer commit containing this entry is the coordinating anchor.
+
 ## C-06 local evaluation relations before suspension segments — 2026-09-20
 
 Baker records local evaluation demands and entry/completion ports on the graph

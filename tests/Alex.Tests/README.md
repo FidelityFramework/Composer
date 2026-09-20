@@ -34,6 +34,33 @@ These tests cover the existing public observation boundary:
   canonical i32 zero value. It preserves the body's missing-operand diagnostic
   and rejects an already returned value. Its composed conditional output verifies
   and lowers through standard MLIR without changing graph facts or operand recall.
+- The index-switch pattern preserves supplied case labels, arm effects and ordered
+  result values, with an explicit default region. It rejects incompatible selector
+  and arm types, duplicate labels and already terminated arms. Zero, one and multiple
+  results verify and lower through stock MLIR; declarations inside its arms still
+  reach the existing module collection pass. These are dialect component checks,
+  not continuation segmentation or sequence execution tests.
+- Continuation patterns read supplied slot placement, descriptor identity and
+  selector ranges. Scalar and captured-cell access verifies and lowers through
+  stock MLIR; missing placement and mismatched carriers fail explicitly. Fresh
+  enumerators allocate distinct state, copy only capture fields, and require
+  explicit residence and resident layout obligations. These component fixtures
+  do not establish the upstream liveness, lifetime or proof-discharge premises.
+  Caller-owned factory storage is allocated without initialization, then its
+  exact descriptor is initialized by the constructor. Empty activation storage
+  verifies at extent zero and rejects every attempted slot access.
+  Owned child regions use the supplied parent formal and distinct settled offsets
+  without allocating child storage; their typed views verify and lower through
+  stock MLIR. Inconsistent extents, alignment and containment fail explicitly.
+
+Continuation descriptor fields retain physical address, offset, extent and stride
+data. They contain no runtime type object, type tag or boxed scalar payload.
+The current rank-one carrier's five-word cost is a target representation choice
+settled upstream; it is not a Clef type-size rule. These tests claim no elimination
+of statically known descriptor fields. Literal frame offsets and extents come from
+the supplied graph, in accord with the closure and continuation representation
+contracts; MLIR verification establishes neither target layout admission nor
+captured-storage lifetime.
 
 Fixtures supply already settled graph facts and previously witnessed operands.
 The current parser API requires `MLIRAccumulator` for operand recall; this suite

@@ -16,6 +16,7 @@ let rec private flatten ops =
          | MLIROp.SCFOp (SCFOp.If (_, yes, no, _)) -> flatten (yes @ Option.defaultValue [] no)
          | MLIROp.SCFOp (SCFOp.While (condition, body)) -> flatten (condition @ body)
          | MLIROp.SCFOp (SCFOp.For (_, _, _, body)) -> flatten body
+         | MLIROp.SCFOp (SCFOp.IndexSwitch (_, cases, fallback, _)) -> flatten ((cases |> List.collect snd) @ fallback)
          | _ -> []))
 
 let validate (graph: SemanticGraph) (ops: MLIROp list) : Result<unit, string> =

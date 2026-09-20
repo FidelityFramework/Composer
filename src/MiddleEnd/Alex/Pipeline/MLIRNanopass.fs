@@ -56,6 +56,8 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
         | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
             (condOps |> List.collect collectDecls) @ (bodyOps |> List.collect collectDecls)
         | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) -> bodyOps |> List.collect collectDecls
+        | MLIROp.SCFOp (SCFOp.IndexSwitch (_, cases, fallback, _)) ->
+            ((cases |> List.collect snd) @ fallback) |> List.collect collectDecls
         | MLIROp.Block (_, blockOps) -> blockOps |> List.collect collectDecls
         | MLIROp.Region ops -> ops |> List.collect collectDecls
         | _ -> []
@@ -79,6 +81,8 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
         | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
             (condOps |> List.collect collectCalls) @ (bodyOps |> List.collect collectCalls)
         | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) -> bodyOps |> List.collect collectCalls
+        | MLIROp.SCFOp (SCFOp.IndexSwitch (_, cases, fallback, _)) ->
+            ((cases |> List.collect snd) @ fallback) |> List.collect collectCalls
         | MLIROp.Block (_, blockOps) -> blockOps |> List.collect collectCalls
         | MLIROp.Region ops -> ops |> List.collect collectCalls
         | _ -> []
@@ -111,6 +115,10 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
             Some (MLIROp.SCFOp (SCFOp.While (condOps |> List.choose stripDecls, bodyOps |> List.choose stripDecls)))
         | MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps)) ->
             Some (MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps |> List.choose stripDecls)))
+        | MLIROp.SCFOp (SCFOp.IndexSwitch (selector, cases, fallback, results)) ->
+            Some (MLIROp.SCFOp (SCFOp.IndexSwitch (selector,
+                cases |> List.map (fun (label, body) -> label, body |> List.choose stripDecls),
+                fallback |> List.choose stripDecls, results)))
         | MLIROp.Block (label, blockOps) ->
             Some (MLIROp.Block (label, blockOps |> List.choose stripDecls))
         | MLIROp.Region ops ->

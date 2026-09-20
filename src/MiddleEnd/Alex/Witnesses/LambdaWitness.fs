@@ -145,7 +145,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // result is ABI-governed (§4.1): the body node sits at the declared Register width,
             // and the last value is brought to it by the return meet SSAAssignment derived.
             let innerReturnNativeType = unrollReturnType (List.length params') node.Type
-            let expectedReturnType = mapType innerReturnNativeType ctx |> narrowType ctx.Coeffects ctx.Graph bodyId
+            let expectedReturnType = mapTypeAt bodyId innerReturnNativeType ctx |> narrowType ctx.Coeffects ctx.Graph bodyId
             let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
             let returnMeetOps =
                 match returnMeet, bodyResult with
@@ -224,6 +224,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let ptrBytes () = declaredPointerBytes ctx.Coeffects.Platform.TargetArch
             let slotType (slot: CaptureSlot) : MLIRType =
                 match slot.Holds with
+                | CaptureSlotKind.CellView _ | CaptureSlotKind.ValueView _ ->
+                    failwithf "LambdaWitness: closure %d has a continuation descriptor slot; its dedicated frame witness is required" nodeIdValue
                 | CaptureSlotKind.Address | CaptureSlotKind.Handle -> TIndex
                 | CaptureSlotKind.Decomposed ->
                     let ptr = ptrBytes ()
@@ -256,6 +258,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let constructionValues (slot: CaptureSlot) : SSA list =
                 let count =
                     match slot.Holds with
+                    | CaptureSlotKind.CellView _ | CaptureSlotKind.ValueView _ ->
+                        failwithf "LambdaWitness: closure %d has a continuation descriptor slot; its dedicated frame witness is required" nodeIdValue
                     | CaptureSlotKind.Decomposed -> 5
                     | CaptureSlotKind.Address -> 2
                     | CaptureSlotKind.Handle | CaptureSlotKind.Scalar _ -> 1
@@ -275,7 +279,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                             match ps with
                             | [] -> return []
                             | (_paramName, paramType, paramNodeId) :: rest ->
-                                let rawType = mapType paramType ctx
+                                let rawType = mapTypeAt paramNodeId paramType ctx
                                 let mlirType = narrowType ctx.Coeffects ctx.Graph paramNodeId rawType
                                 let! paramSSA = getNodeSSA paramNodeId
                                 let! restParams = extractParams rest
@@ -448,7 +452,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
                 printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
                     funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
-            let rawReturnType = mapType innerReturnNativeType2 ctx
+            let rawReturnType = mapTypeAt bodyId innerReturnNativeType2 ctx
             let nativeVoid =
                 Clef.Compiler.PSGSaturation.SemanticGraph.CallbackDeclarations.forLambda ctx.Graph node.Id
                 |> Option.exists (fun callback -> callback.ReturnsVoid)

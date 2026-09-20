@@ -20,6 +20,12 @@ let pSCFIf (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list option) (res
         return MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps, resultOpt))
     }
 
+/// Emit a switch over an already typed index, with explicit case/default regions.
+let pSCFIndexSwitch selector cases defaultBody results : PSGParser<MLIROp> =
+    parser {
+        return MLIROp.SCFOp (SCFOp.IndexSwitch (selector, cases, defaultBody, results))
+    }
+
 /// Emit SCF While operation
 let pSCFWhile (condOps: MLIROp list) (bodyOps: MLIROp list) : PSGParser<MLIROp> =
     parser {

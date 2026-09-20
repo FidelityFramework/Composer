@@ -104,6 +104,14 @@ let pAllocStatic (ssa: SSA) (count: int) (elemType: MLIRType) (alignment: int op
         return MLIROp.MemRefOp (MemRefOp.AllocStatic (ssa, memrefType, alignment))
     }
 
+/// Expose a settled typed view at an explicit byte offset in a byte buffer.
+let pMemRefView (result: SSA) (source: SSA) (byteOffset: SSA) (sourceType: MLIRType) (resultType: MLIRType) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        MLIRAccumulator.registerSSAType result resultType state.Accumulator
+        return MLIROp.MemRefOp(MemRefOp.View(result, source, byteOffset, sourceType, resultType))
+    }
+
 /// Emit memref.subview operation (replaces GEP for arrays)
 let pSubView (ssa: SSA) (source: SSA) (offsets: SSA list) : PSGParser<MLIROp> =
     parser {

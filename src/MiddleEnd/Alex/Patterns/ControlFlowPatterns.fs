@@ -25,31 +25,75 @@ open Core.Types.Dialects                        // TargetPlatform (codata-depend
 // ═══════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════
-// SEQ FOREACH LOOP
-// ═══════════════════════════════════════════════════════════
-
-/// ForEach loop over seq (MoveNext-based iteration)
-/// MoveNext should: extract code_ptr[2], alloca seq, store seq, call code_ptr(seq_ptr) -> i1
-let pBuildForEachLoop (collectionSSA: SSA) (bodyOps: MLIROp list)
-                      (arch: Architecture)
-                      : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        // ForEach is a while loop structure:
-        // 1. Extract code_ptr from seq struct at [2]
-        // 2. Alloca space for seq, store seq to get pointer
-        // 3. Call code_ptr(seq_ptr) -> i1 (returns true if has next)
-        // 4. If true, extract current element, execute body, loop
-        // 5. If false, exit loop
-
-        // Implementation: Use SCF.While with:
-        //   - Condition region: call MoveNext, extract result
-        //   - Body region: extract current, execute bodyOps, yield
-        return! fail (Message "ForEach MoveNext implementation gap - needs: extract code_ptr[2], alloca/store seq, indirect call")
-    }
-
-// ═══════════════════════════════════════════════════════════
 // STRUCTURED CONTROL FLOW (SCF)
 // ═══════════════════════════════════════════════════════════
+
+/// Compose already witnessed, unterminated arms into a stock index switch.
+/// The caller supplies the settled labels and result carriers; this pattern
+/// neither chooses control flow nor inspects the source graph for segments.
+let pBuildIndexSwitch (selector: Val) (cases: (int64 * (MLIROp list * Val list)) list)
+                      (defaultBody: MLIROp list * Val list) (results: Val list)
+                      : PSGParser<MLIROp list> =
+    parser {
+        do! ensure (selector.Type = TIndex) "scf.index_switch requires an index selector"
+        let labels = cases |> List.map fst
+        do! ensure ((Set.ofList labels).Count = labels.Length) "scf.index_switch requires distinct case labels"
+        let expected = results |> List.map (fun value -> value.Type)
+        let arm label (operations, values: Val list) = parser {
+            do! ensure ((values |> List.map (fun value -> value.Type)) = expected) $"scf.index_switch {label} yield types do not match its results"
+            do! ensure (operations |> List.exists (function MLIROp.SCFOp (SCFOp.Yield _) -> true | _ -> false) |> not) $"scf.index_switch {label} already has a yield terminator"
+            let! terminator = pSCFYield (values |> List.map (fun value -> value.SSA, value.Type))
+            return operations @ [terminator]
+        }
+        let! branches =
+            cases |> List.map (fun (label, body) -> parser {
+                let! operations = arm (sprintf "case %d" label) body
+                return label, operations
+            }) |> Alex.XParsec.Extensions.sequence
+        let! fallback = arm "default" defaultBody
+        let! operation = pSCFIndexSwitch selector.SSA branches fallback (results |> List.map (fun value -> value.SSA, value.Type))
+        return [operation]
+    }
+
+/// Observe a Baker dispatch's explicit operands. Width adaptation is the
+/// consumer's existing settled meet; integer-to-index conversion preserves
+/// the selector's established sign using the shared index conversion pattern.
+let pBuildContinuationDispatch (nodeId: NodeId) (selectorId: NodeId)
+                               (cases: (int * NodeId * MLIROp list) list)
+                               (otherwise: NodeId * MLIROp list)
+                               (result: (SSA * MLIRType) option)
+                               : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! state = getUserState
+        let! selectorSSA, selectorType = pRecallNode selectorId
+        let! indexOps, indexValue =
+            match selectorType with
+            | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
+            | TInt (IntWidth width) when width > 0 ->
+                let indexSSA = Alex.Traversal.Values.value nodeId 1
+                let range = nodeRange state.Graph selectorId |> Option.defaultValue ValueRange.Unbounded
+                let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range indexSSA selectorSSA selectorType
+                preturn ([operation], { SSA = indexSSA; Type = TIndex })
+            | _ -> fail (Message $"ContinuationDispatch selector {NodeId.value selectorId} has unsupported carrier {selectorType}")
+        let arm bodyId operations = parser {
+            match result with
+            | None -> return operations, []
+            | Some _ ->
+                let! value, valueType = pRecallNode bodyId
+                let! adaptations, adapted, adaptedType = pAdapt nodeId bodyId value valueType
+                return operations @ adaptations, [{ SSA = adapted; Type = adaptedType }]
+        }
+        let! branches =
+            cases |> List.map (fun (label, bodyId, operations) -> parser {
+                let! branch = arm bodyId operations
+                return int64 label, branch
+            }) |> Alex.XParsec.Extensions.sequence
+        let! fallback = arm (fst otherwise) (snd otherwise)
+        let values = result |> Option.map (fun (ssa, ty) -> { SSA = ssa; Type = ty }) |> Option.toList
+        let! operations = pBuildIndexSwitch indexValue branches fallback values
+        let transfer = values |> List.tryHead |> Option.map TRValue |> Option.defaultValue TRVoid
+        return indexOps @ operations, transfer
+    }
 
 /// If/then/else via SCF.If (void — no result value)
 let pBuildIfThenElse (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list option) : PSGParser<MLIROp list> =

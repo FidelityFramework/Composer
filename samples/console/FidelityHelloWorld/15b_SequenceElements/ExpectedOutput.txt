@@ -1,0 +1,6 @@
+=== Sequence elements Test ===
+Boolean payload order: pass
+Unit yields retain pull count and effects: pass
+Fractional real payloads: pass
+Measured integer payloads: pass
+Inverse measured real payloads: pass

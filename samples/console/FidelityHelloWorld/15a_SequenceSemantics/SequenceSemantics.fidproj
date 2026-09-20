@@ -1,0 +1,15 @@
+[package]
+name = "SequenceSemantics"
+version = "0.1.0"
+description = "C-06 native sequence evaluation and consumption acceptance"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceSemantics.clef"]
+output = "sequence-semantics"
+output_kind = "console"

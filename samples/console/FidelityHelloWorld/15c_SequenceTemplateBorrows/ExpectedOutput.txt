@@ -1,0 +1,4 @@
+=== Sequence template borrows Test ===
+Captured template delegation stays deferred: pass
+Independent enumeration retains shared cells: pass
+Nested captured templates retain covering lifetime: pass

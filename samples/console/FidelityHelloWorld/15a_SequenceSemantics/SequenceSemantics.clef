@@ -1,0 +1,150 @@
+/// C-06 native acceptance: all checks consume the generated state machines.
+module SequenceSemantics
+
+let countUp (start: int) (finish: int) = seq {
+    let mutable current = start
+    while current <= finish do
+        yield current
+        current <- current + 1
+}
+
+let multiplesOf (factor: int) (limit: int) = seq {
+    for index in 1 .. limit do
+        yield factor * index
+}
+
+[<EntryPoint>]
+let main _ =
+    let values = seq {
+        yield 1
+        yield 2
+        yield 3
+    }
+    let mutable count = 0
+    let mutable observed = 0
+    for value in values do
+        count <- count + 1
+        observed <- observed * 10 + value
+    let literals = count = 3 && observed = 123
+    count <- 0
+    observed <- 0
+    for value in values do
+        count <- count + 1
+        observed <- observed * 10 + value
+    let independent = count = 3 && observed = 123
+
+    let mutable trace = 0
+    let delayed = seq {
+        trace <- 1
+        yield trace
+        trace <- 2
+        yield trace
+        trace <- 3
+    }
+    let cold = trace = 0
+    let mutable traceValues = 0
+    let mutable traceAtPull = 0
+    for value in delayed do
+        traceValues <- traceValues * 10 + value
+        traceAtPull <- traceAtPull * 10 + trace
+    let delayedEffects = cold && traceValues = 12 && traceAtPull = 12 && trace = 3
+
+    let limit = 4
+    let looped = seq {
+        let mutable i = 1
+        while i <= limit do
+            if i % 2 = 0 then yield i
+            i <- i + 1
+    }
+    let mutable loopValues = 0
+    for value in looped do
+        loopValues <- loopValues * 10 + value
+    let loopState = loopValues = 24
+
+    let mutable emptyEffects = 0
+    let empty: seq<int> = seq { emptyEffects <- 1 }
+    let emptyWasCold = emptyEffects = 0
+    for value in empty do
+        emptyEffects <- 99
+    let emptyState = emptyWasCold && emptyEffects = 1
+
+    let mutable factoryValues = 0
+    for value in countUp 1 3 do
+        factoryValues <- factoryValues * 10 + value
+    let mutable scaledValues = 0
+    for value in multiplesOf 2 3 do
+        scaledValues <- scaledValues * 10 + value
+    let factories = factoryValues = 123 && scaledValues = 246
+
+    let delegated = seq {
+        let seed = 5
+        yield 1
+        let child = seq { yield seed; yield seed + 1 }
+        yield! child
+        yield! child
+        yield! seq { () }
+        yield 9
+    }
+    let mutable delegatedValues = 0
+    for value in delegated do
+        delegatedValues <- delegatedValues * 10 + value
+    let nested = delegatedValues = 156569
+
+    let mutable matrix = 0
+    for row in values do
+        for column in values do
+            matrix <- matrix + row * 10 + column
+    let independentNested = matrix = 198
+
+    let borrowed = seq {
+        let mutable seed = 4
+        let child = seq { yield seed; seed <- (seed + 1) % 10; yield seed }
+        yield! child
+        seed <- (seed + 2) % 10
+        yield! child
+        yield seed
+    }
+    let mutable borrowedValues = 0
+    for value in borrowed do
+        borrowedValues <- borrowedValues * 10 + value
+    let retainedCell = borrowedValues = 45788
+
+    let generated = seq {
+        yield 2
+        yield! countUp 3 4
+        yield! multiplesOf 2 2
+        yield 5
+    }
+    let mutable generatedValues = 0
+    for value in generated do
+        generatedValues <- generatedValues * 10 + value
+    let nestedFactories = generatedValues = 234245
+
+    let mutable chainedEffects = 0
+    let chainedEmpty = seq {
+        yield! seq {
+            yield! seq { chainedEffects <- 7 }
+            chainedEffects <- (chainedEffects + 1) % 10
+        }
+        yield chainedEffects
+    }
+    let chainWasCold = chainedEffects = 0
+    let mutable chainedValues = 0
+    for value in chainedEmpty do
+        chainedValues <- chainedValues * 10 + value
+    let emptyChain = chainWasCold && chainedEffects = 8 && chainedValues = 8
+
+    if not (literals && independent && delayedEffects && loopState && emptyState && factories && nested && independentNested && retainedCell && nestedFactories && emptyChain) then 1
+    else
+        Console.writeln "=== Sequence semantics Test ==="
+        Console.writeln "Literal yields and for-in consumption: pass"
+        Console.writeln "Repeated enumeration: pass"
+        Console.writeln "Delayed effects and shared captures: pass"
+        Console.writeln "Loop state and conditional suspension: pass"
+        Console.writeln "Empty sequence effects without a payload: pass"
+        Console.writeln "Caller-owned factories and counted yields: pass"
+        Console.writeln "Delegation and nested independent enumeration: pass"
+        Console.writeln "Retained mutable child captures: pass"
+        Console.writeln "Factories inside suspended generators: pass"
+        Console.writeln "Chained empty delegation preserves effects: pass"
+        0

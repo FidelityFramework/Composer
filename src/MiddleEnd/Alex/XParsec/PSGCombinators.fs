@@ -849,7 +849,7 @@ let pForEach : PSGParser<string * NodeId * NodeId> =
     parser {
         let! node = getCurrentNode
         match node.Kind with
-        | SemanticKind.ForEach (var, collection, body) ->
+        | SemanticKind.ForEach (var, _, collection, body) ->
             return (var, collection, body)
         | _ ->
             return! fail (Message "Expected ForEach node")

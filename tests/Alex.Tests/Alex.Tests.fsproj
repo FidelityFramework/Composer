@@ -11,6 +11,8 @@
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
     <Compile Include="UnitResultTests.fs" />
+    <Compile Include="IndexSwitchTests.fs" />
+    <Compile Include="ContinuationPatternTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
     <Compile Include="CallableSymbolTests.fs" />
     <Compile Include="SequenceBoundaryTests.fs" />

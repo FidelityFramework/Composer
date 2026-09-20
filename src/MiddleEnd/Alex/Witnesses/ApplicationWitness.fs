@@ -92,8 +92,8 @@ let private callResult (ctx: WitnessContext) (node: SemanticNode) (ops: MLIROp l
 /// mapped result type.
 let private calleeReturnType (ctx: WitnessContext) (node: SemanticNode) (bodyId: NodeId option) : MLIRType =
     match bodyId with
-    | Some body -> mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
-    | None -> mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+    | Some body -> mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
+    | None -> mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
 /// Witness application nodes - emits function calls (non-intrinsic only)
 let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
@@ -199,7 +199,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : Witn
                         // a call through a value: every argument at the declared Register width
                         // (ruling 1), the call's derived meets
                         let (meetOps, args) = adaptArguments ctx node.Id (List.zip argIds (argsResult |> List.choose id))
-                        let retType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                        let retType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
 
                         match tryMatchWithDiagnostics (pClosureCall node.Id closureSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }

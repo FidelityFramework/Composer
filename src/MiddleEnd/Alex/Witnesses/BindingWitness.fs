@@ -65,7 +65,7 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         | Some (initialSSA, initialTy) ->
                             let meetOps, valueSSA, _ = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId initialSSA initialTy
                             // the slot's element type at the binding's range width on fabric
-                            let valueTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                            let valueTy = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                             let globalName = ModuleValues.globalName name node.Id
                             match tryMatchWithDiagnostics (pGlobalSlotInit node.Id globalName valueSSA valueTy)
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -85,7 +85,7 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                             let (NodeId nodeIdInt) = node.Id
                             let (meetOps, initSSA, initTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawInitSSA rawInitTy
                             let elemType =
-                                match mapType node.Type ctx with
+                                match mapTypeAt node.Id node.Type ctx with
                                 | TInt (IntWidth 0) -> narrowType ctx.Coeffects ctx.Graph node.Id (TInt (IntWidth 0))
                                 | _ -> initTy
                             match tryMatchWithDiagnostics (pBuildMutableBinding nodeIdInt elemType initSSA)

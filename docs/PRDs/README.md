@@ -63,7 +63,7 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 | [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | Planned |
 | [C-04](C-04-CoreCollections.md) | Core Collections | 13a | Planned |
 | [C-05](C-05-Lazy.md) | Lazy Evaluation | 14 | Planned |
-| [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15 | Planned |
+| [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–c | Native core implemented; aggregate gate open |
 | [C-07](C-07-SeqOperations.md) | Sequence Operations | 16 | Planned |
 
 ### Async (A-xx) - Asynchronous Programming

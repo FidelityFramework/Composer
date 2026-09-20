@@ -407,6 +407,8 @@ module MLIRAccumulator =
                 1 + countOperations condOps + countOperations bodyOps
             | MLIROp.SCFOp (SCFOp.For (_, _, _, bodyOps)) ->
                 1 + countOperations bodyOps
+            | MLIROp.SCFOp (SCFOp.IndexSwitch (_, cases, fallback, _)) ->
+                1 + countOperations ((cases |> List.collect snd) @ fallback)
             | MLIROp.Block (_, blockOps) ->
                 1 + countOperations blockOps
             | MLIROp.Region ops ->
@@ -564,6 +566,16 @@ let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
     // CCS diagnostics surface these at the appropriate level; Alex doesn't re-report.
     drainTypeMappingErrors () |> ignore
     result
+
+/// A continuation value's physical carrier is keyed by its exact graph use,
+/// including the generator formal. Its source type alone cannot name a frame.
+let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType =
+    match ctx.Graph.Codata.Value.SequenceOrigins |> Map.tryFind nodeId with
+    | Some owner ->
+        match ctx.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
+        | Some frame when frame.Bytes > 0 -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8))
+        | _ -> failwithf "Sequence value %d has no settled frame for origin %d" (NodeId.value nodeId) (NodeId.value owner)
+    | None -> mapType ty ctx
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =

@@ -1,0 +1,42 @@
+/// A surrounding activation covers every use of these captured templates.
+module SequenceTemplateBorrows
+
+[<EntryPoint>]
+let main _ =
+    let mutable pulls = 0
+    let input = seq {
+        pulls <- (pulls + 1) % 10
+        yield pulls
+        yield pulls + 10
+    }
+    let outer = seq { yield! input; yield! input }
+    let cold = pulls = 0
+    let mutable first = 0
+    let mutable firstCount = 0
+    for value in outer do
+        first <- first * 100 + value
+        firstCount <- firstCount + 1
+    let firstPass = cold && firstCount = 4 && first = 1110212 && pulls = 2
+    let mutable second = 0
+    for value in outer do
+        second <- second * 100 + value
+    let secondPass = second = 3130414 && pulls = 4
+
+    let middle = seq { yield! input }
+    let nested = seq { yield! middle; yield 9 }
+    let mutable nestedValues = 0
+    let mutable nestedCount = 0
+    for value in nested do
+        nestedValues <- nestedValues * 100 + value
+        nestedCount <- nestedCount + 1
+    let nestedPass = nestedCount = 3 && nestedValues = 51509 && pulls = 5
+
+    if not firstPass then 81
+    elif not secondPass then 82
+    elif not nestedPass then 83
+    else
+        Console.writeln "=== Sequence template borrows Test ==="
+        Console.writeln "Captured template delegation stays deferred: pass"
+        Console.writeln "Independent enumeration retains shared cells: pass"
+        Console.writeln "Nested captured templates retain covering lifetime: pass"
+        0

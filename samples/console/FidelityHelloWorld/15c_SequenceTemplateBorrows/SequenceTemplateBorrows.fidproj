@@ -1,0 +1,15 @@
+[package]
+name = "SequenceTemplateBorrows"
+version = "0.1.0"
+description = "C-06 native sequence evaluation and consumption acceptance"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceTemplateBorrows.clef"]
+output = "sequence-template-borrows"
+output_kind = "console"

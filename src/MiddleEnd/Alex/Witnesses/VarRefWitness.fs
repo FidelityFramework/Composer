@@ -53,7 +53,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                 let! state = getUserState
                                 let platform = state.Coeffects.TargetPlatform
                                 let arch = state.Coeffects.Platform.TargetArch
-                                let rawTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeForTarget platform arch state.Graph bindingNode.Type
+                                let rawTy = mapTypeAt bindingId bindingNode.Type ctx
                                 let ty = Alex.XParsec.PSGCombinators.narrowType state.Coeffects state.Graph bindingId rawTy
                                 // the parameter's width, then this read's own (ruling 3)
                                 let! (meetOps, readSSA, readTy) = pAdapt node.Id node.Id ssa ty
@@ -90,7 +90,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         // Module-level value: reload from its slot (valid in any function)
                         let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> name
                         // the slot's element type at the binding's range width on fabric
-                        let valueTy = mapType bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
+                        let valueTy = mapTypeAt bindingId bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
                         let globalName = ModuleValues.globalName bindingName bindingId
                         match tryMatchWithDiagnostics (pGlobalSlotLoad node.Id globalName valueTy)
                                       ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

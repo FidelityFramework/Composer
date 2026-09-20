@@ -431,16 +431,8 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
         let elemMlir = recurse elemTy
         let totalBytes = 1 + mlirTypeSize arch elemMlir + mlirTypeSize arch TIndex
         TMemRefStatic(totalBytes, TInt (IntWidth 8))
-    | NativeType.TSeq elemTy ->
-        // PRD-15: Seq<T> - flat closure {state: i32, current: T, moveNext_ptr: ptr}; as TLazy
-        let elemMlir = recurse elemTy
-        let totalSize = mlirTypeSize arch (TInt (IntWidth 32)) + mlirTypeSize arch elemMlir + mlirTypeSize arch TIndex
-        TMemRefStatic (totalSize, TInt (IntWidth 8))
-    | NativeType.TSeqEnumerator elemTy ->
-        // PRD-15/16: { seq_ptr: ptr, state: i32, current: T, hasValue: i1 }; as TLazy
-        let elemMlir = recurse elemTy
-        let totalSize = mlirTypeSize arch TIndex + mlirTypeSize arch (TInt (IntWidth 32)) + mlirTypeSize arch elemMlir + mlirTypeSize arch (TInt (IntWidth 1))
-        TMemRefStatic (totalSize, TInt (IntWidth 8))
+    | NativeType.TSeq _ | NativeType.TSeqEnumerator _ ->
+        failwithf "Sequence carrier '%s' requires its exact graph use and Baker-settled continuation origin" (formatType ty)
     | NativeType.TVar tvar ->
         // Resolve type variable through Union-Find and recurse through target-aware mapper
         match find tvar with

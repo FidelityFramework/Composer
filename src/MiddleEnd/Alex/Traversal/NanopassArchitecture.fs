@@ -39,6 +39,7 @@ let private isScopeBoundary (node: SemanticNode) : bool =
     match node.Kind with
     | SemanticKind.Lambda _ -> true
     | SemanticKind.IfThenElse _ -> true
+    | SemanticKind.ContinuationDispatch _ -> true
     | SemanticKind.WhileLoop _ -> true
     | SemanticKind.ForLoop _ -> true
     | SemanticKind.ForEach _ -> true

@@ -29,6 +29,8 @@ let returnMeetValue (lambdaId: NodeId) : SSA = V (NodeId.value lambdaId, 1100)
 let unitReturnValue (lambdaId: NodeId) : SSA = V (NodeId.value lambdaId, 1101)
 /// The k-th value of a closure's callee prologue (capture extraction and env reconstruction).
 let prologueValue (lambdaId: NodeId) (k: int) : SSA = V (NodeId.value lambdaId, 2000 + k)
+/// The fixed work lanes of a settled continuation initializer/copy slot.
+let continuationValue (nodeId: NodeId) (slot: int) (lane: int) : SSA = V (NodeId.value nodeId, 4000 + 16 * slot + lane)
 /// The k-th value of a hardware module's body, per role (HardwareModuleWitness).
 let hardwareValue (bindingId: NodeId) (k: int) : SSA = V (NodeId.value bindingId, 3000 + k)
 /// The k-th value of an isolated solver scope (the SMT module's, not the program's).

@@ -686,12 +686,28 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             let bodyStr = bodyOps |> List.map (opToString pointer) |> String.concat "\n      "
             sprintf "scf.for %s = %s to %s step %s {\n      %s\n    }" 
                 (ssaToString lower) (ssaToString upper) (ssaToString step) (ssaToString step) bodyStr
+        | SCFOp.IndexSwitch (selector, cases, defaultBody, results) ->
+            let prefix, resultTypes =
+                match results with
+                | [] -> "", ""
+                | _ ->
+                    let names = results |> List.map (fst >> ssaToString) |> String.concat ", "
+                    let types = results |> List.map (snd >> typeToString pointer) |> String.concat ", "
+                    names + " = ", " -> " + types
+            let region label body =
+                let text = body |> List.map (opToString pointer) |> String.concat "\n      "
+                sprintf "%s {\n      %s\n    }" label text
+            let regions =
+                (cases |> List.map (fun (label, body) -> region (sprintf "case %d" label) body))
+                @ [region "default" defaultBody]
+            sprintf "%sscf.index_switch %s%s\n    %s" prefix (ssaToString selector) resultTypes (String.concat "\n    " regions)
         | SCFOp.Yield vals ->
             match vals with
             | [] -> "scf.yield"
             | _ ->
-                let valStr = vals |> List.map (fun (ssa, ty) -> sprintf "%s : %s" (ssaToString ssa) (typeToString pointer ty)) |> String.concat ", "
-                sprintf "scf.yield %s" valStr
+                let values = vals |> List.map (fst >> ssaToString) |> String.concat ", "
+                let types = vals |> List.map (snd >> typeToString pointer) |> String.concat ", "
+                sprintf "scf.yield %s : %s" values types
         | SCFOp.Condition (cond, args) ->
             let argsStr = args |> List.map ssaToString |> String.concat ", "
             sprintf "scf.condition(%s) %s" (ssaToString cond) argsStr

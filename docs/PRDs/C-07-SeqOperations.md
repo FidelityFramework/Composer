@@ -1,1388 +1,285 @@
 # C-07: Sequence Operations
 
-> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
-
-> **Surface note (2026-09).** `nativeptr<'T>`, `NativePtr.*`, `voidptr`, and `FSharp.NativeInterop` are not denotable in Clef source (spec `ffi-boundary.md` §1, `special-attributes-and-types.md`; `TNativePtr` is compiler-internal only). Where this PRD shows them, it records the pre-strip surface the code was written against; the settled surfaces are the opaque `Ptr<'T, 'Region, 'Access>` handle in the interior and `CHandle<'T>` at the C boundary, with buffers as bounded arrays and captures as `memref` views.
-
-> **Sample**: `16_SeqOperations` | **Status**: Planned | **Depends On**: C-06 (SimpleSeq), C-05 (Lazy), C-02 (HOFs), C-01 (Closures)
-
-> **Producer graph checkpoint (2026-09-20).** The admitted `map`, `filter`,
-> `collect` and `append` recipes now establish eager operand snapshots and typed
-> generator-local capture references. Their sequence owner, generator/formal
-> relationships and unit yield operations agree with source sequences. Enumerator
-> initialization precedes the generator loop; each current value is bound before
-> callback execution. [Recorded gates](../Language_Coverage_Waypoints.md) establish
-> these graph contracts, source diagnostics and editor projections. Suspension
-> cuts, live-across frame settlement and native sequence execution remain pending.
-
----
-
-## CONTEXT WINDOW RESET PROTOCOL
-
-> **At the START of every new context window, IMMEDIATELY review this section to establish bearings.**
-
-### Quick Start Checklist
-
-1. **Activate Composer project**: `mcp__serena-local__activate_project "Composer"`
-2. **Read progress memory**: `mcp__serena-local__read_memory "prd16_seqoperations_progress"`
-3. **Review this PRD**: Understand the architectural through-line
-4. **Check standing art files**: Review the key implementation files listed below
-
-### Standing Art Files (C-01, C-05, C-06)
-
-These files contain the patterns that C-07 MUST compose from:
-
-#### Witness Layer (`src/Alex/Witnesses/`)
-
-| File | Purpose | Key Exports to Study |
-|------|---------|---------------------|
-| `SeqWitness.fs` | Seq struct creation & MoveNext | `seqStructTypeFull`, `witnessSeqCreateFull`, `witnessMoveNextWhileBased`, `WhileBasedMoveNextInfo`, `YieldBlockInfo` — interim: the two-shape recognizer and its info records are superseded by the suspension recipe (spec `seq-representation.md` §6; `Delimited_Continuations_Architecture.md`) |
-| `LazyWitness.fs` | Lazy thunk pattern (simpler precursor) | `lazyStructType`, `witnessLazyCreate`, `witnessLazyForce` |
-| `LambdaWitness.fs` | Flat closure construction | `buildClosureConstruction`, `buildCaptureExtractionOps`, `witness` |
-
-#### Preprocessing Layer (`src/Alex/Preprocessing/`)
-
-| File | Purpose | Key Exports to Study |
-|------|---------|---------------------|
-| `SSAAssignment.fs` | SSA allocation + ClosureLayout coeffect | `ClosureLayout`, `CaptureSlot`, `CaptureMode` (ByValue/ByRef), `computeSeqExprSSACost`, `buildClosureLayout`, `computeLambdaSSACost` |
-| `YieldStateIndices.fs` | Seq body structure analysis | `SeqYieldInfo`, `WhileBodyInfo`, `InternalStateField`, `YieldInfo`, `analyzeBodyStructure`, `collectMutableBindings` |
-
-#### Transfer/Traversal Layer (`src/Alex/Traversal/`)
-
-| File | Purpose | Key Patterns |
-|------|---------|--------------|
-| `CCSTransfer.fs` | PSG traversal → MLIR emission | `SemanticKind.SeqExpr` handling (~line 408, ~1128), WhileBased pattern with `loadVar`/`storeVar`, capture extraction |
-
-#### Type Mapping (`src/Alex/CodeGeneration/`)
-
-| File | Purpose |
-|------|---------|
-| `TypeMapping.fs` | `NativeType` → `MLIRType` conversion, `mapNativeTypeWithGraphForArch` |
-
-### Architectural Through-Line
-
-```
-C-01 (Closures)     → Flat closure: {code_ptr, cap₀, cap₁, ...}
-         ↓ extends (adds state prefix)
-C-05 (Lazy)         → Extended closure: {computed: i1, value: T, code_ptr, cap₀...}
-         ↓ extends (adds internal state suffix)
-C-06 (SimpleSeq)    → State machine: {state: i32, current: T, code_ptr, cap₀..., internalState₀...}
-         ↓ composes (nests inner structures)
-C-07 (SeqOperations)→ Wrapper sequences: {state, current, code_ptr, inner_seq, closure}
-```
-
-### Key Serena Memories
-
-- `architecture_principles` - Layer separation, non-dispatch model
-- `negative_examples` - Anti-patterns to avoid
-- `lazy_seq_flat_closure_architecture` - Flat closure model specifics
-- `true_flat_closures_implementation` - C-01 closure patterns
-- `fncs_functional_decomposition_principle` - How intrinsics should decompose
-- `prd16_seqoperations_progress` - **EPHEMERAL**: Current implementation progress
-
----
-
-## NORMATIVE SPEC REFERENCES
-
-> **The clef-spec repository contains the authoritative specifications. These documents are the "north star" for implementation.**
-
-### Primary Spec Chapters (clef-spec/spec/)
-
-| Chapter | Path | C-07 Relevance |
-|---------|------|------------------|
-| **Closure Representation** | `spec/closure-representation.md` | §3: Flat closure struct layout; §8: Nested functions vs escaping closures (mappers/predicates are ESCAPING) |
-| **Lazy Representation** | `spec/lazy-representation.md` | §4: Struct pointer passing convention; foundation pattern for MoveNext |
-| **Seq Representation** | `spec/seq-representation.md` | §3: Base seq struct layout; §4: MoveNext calling convention; §5: Sequential flattening |
-| **Backend Lowering** | `spec/drafts/backend-lowering-architecture.md` | §3: Flat closure pattern requires backend-specific MLIR (addressof, indirect call) |
-
-### NEW: Seq Operations Representation (Draft)
-
-**Path**: `clef-spec/spec/drafts/seq-operations-representation.md`
-
-This draft chapter was created to fill a spec gap identified during C-07 development. It specifies:
-
-- §4: Wrapper struct layouts (MapSeq, FilterSeq, TakeSeq, CollectSeq)
-- §5: Copy semantics - inner seq and closure copied by VALUE
-- §6: Composition model - nested structs for pipelines
-- §7: MoveNext algorithms for each operation
-- §8: Seq.fold as eager consumer (no wrapper)
-
-**ACTION REQUIRED**: This draft should be promoted to a formal spec chapter before C-07 implementation is complete.
-
-### Key Spec Constraints for C-07
-
-From the spec audit, these constraints MUST be honored:
-
-1. **Flat Representation** (closure-representation.md §2.2): Wrappers use flat closures, NO `env_ptr`
-2. **Copy Semantics** (seq-operations-representation.md §5): Inner seq and closure copied by value at wrapper creation
-3. **Escaping Closure Classification** (closure-representation.md §8.3): Mappers/predicates are escaping (passed as values), use closure struct not parameter-passing
-4. **Struct Pointer Passing** (lazy-representation.md §4.1): MoveNext receives pointer to containing struct
-5. **Module-Level Exclusion** (lazy-representation.md §5.1): Module-level bindings are NOT captured
-6. **Backend-Specific Operations** (backend-lowering.md §3): Taking function address uses `index` type; struct/record fields accessed via `memref.view`/`memref.load`/`memref.store` on flat byte buffers
-
-### Spec Gap Identified and Addressed
-
-**Gap**: The original `seq-representation.md` covered C-06 (seq expressions) but NOT C-07 (Seq module operations).
-
-**Resolution**: Created `spec/drafts/seq-operations-representation.md` covering:
-- Wrapper sequence structures
-- Copy semantics rationale
-- Composition (nested struct) model
-- MoveNext algorithm specifications
-- SSA cost formulas
-
----
-
-## 1. Executive Summary
-
-This PRD covers the core sequence operations: `Seq.map`, `Seq.filter`, `Seq.take`, `Seq.fold`, etc. These are higher-order functions over sequences - they transform or consume lazy enumerations.
-
-**Key Insight**: Seq operations create **composed flat closures**. `Seq.map f xs` produces a new seq struct that contains:
-1. The original sequence (inlined, not by pointer)
-2. The mapper closure (flat closure, no `env_ptr`)
-3. Its own state machine fields
-
-**Builds on C-06**: Seq operations wrap inner sequences. The wrapper is itself a flat closure with state machine fields. The inner sequence and transformation closure are inlined captures.
-
-## 2. Language Feature Specification
-
-### 2.1 Seq.map
-
-```fsharp
-let doubled = Seq.map (fun x -> x * 2) numbers
-```
-
-Transforms each element lazily.
-
-### 2.2 Seq.filter
-
-```fsharp
-let evens = Seq.filter (fun x -> x % 2 = 0) numbers
-```
-
-Yields only elements matching predicate.
-
-### 2.3 Seq.take
-
-```fsharp
-let first5 = Seq.take 5 infiniteSeq
-```
-
-Yields at most N elements.
-
-### 2.4 Seq.fold
-
-```fsharp
-let sum = Seq.fold (fun acc x -> acc + x) 0 numbers
-```
-
-Eager reduction to single value (consumes sequence).
-
-### 2.5 Seq.collect (flatMap)
-
-```fsharp
-let flattened = Seq.collect (fun x -> seq { yield x; yield x * 10 }) numbers
-```
-
-Maps then flattens.
-
-## 3. Architectural Principles
-
-### 3.1 Composed Flat Closures (No `env_ptr`)
-
-Seq operations create wrapper sequences. Following the flat closure model:
-
-```
-MapSeq<A,B> = {state: i32, current: B, moveNext_ptr: ptr, inner_seq: Seq<A>, mapper: (A -> B)}
-```
-
-Both `inner_seq` and `mapper` are **inlined** (flat), not stored by pointer.
-
-| Field | Type | Purpose |
-|-------|------|---------|
-| `state` | `i32` | Wrapper's own state |
-| `current` | `B` | Current transformed value |
-| `moveNext_ptr` | `ptr` | Wrapper's MoveNext function |
-| `inner_seq` | `Seq<A>` | Inlined inner sequence struct |
-| `mapper` | `(A -> B)` | Inlined mapper closure |
-
-**No `env_ptr` anywhere.** The mapper closure itself is flat: `{code_ptr, cap₀, cap₁, ...}`.
-
-### 3.2 Struct Layout Examples
-
-**Seq.map** (mapper with no captures):
-```
-{state: i32, current: i32, moveNext_ptr: ptr,
- inner: {inner_state: i32, inner_current: i32, inner_moveNext_ptr: ptr},
- mapper: {mapper_code_ptr: ptr}}
-```
-
-**Seq.map** (mapper captures `factor`):
-```
-{state: i32, current: i32, moveNext_ptr: ptr,
- inner: {inner_state: i32, inner_current: i32, inner_moveNext_ptr: ptr},
- mapper: {mapper_code_ptr: ptr, factor: i32}}
-```
-
-**Seq.filter**:
-```
-{state: i32, current: i32, moveNext_ptr: ptr,
- inner: {inner_state: i32, inner_current: i32, inner_moveNext_ptr: ptr},
- predicate: {pred_code_ptr: ptr, ...captures...}}
-```
-
-**Seq.take**:
-```
-{state: i32, current: i32, moveNext_ptr: ptr,
- inner: {inner_state: i32, inner_current: i32, inner_moveNext_ptr: ptr},
- remaining: i32}
-```
-
-### 3.3 The Composition Challenge
-
-When sequences are composed (e.g., `Seq.take 5 (Seq.map f (Seq.filter p xs))`), the struct grows:
-
-```
-TakeSeq {
-    state, current, moveNext_ptr,
-    inner: MapSeq {
-        state, current, moveNext_ptr,
-        inner: FilterSeq {
-            state, current, moveNext_ptr,
-            inner: OriginalSeq { ... },
-            predicate: {...}
-        },
-        mapper: {...}
-    },
-    remaining: i32
-}
-```
-
-This is a **compile-time known** nested struct. No heap allocation. Each composition adds to the struct size, but the exact size is known at compile time.
-
-### 3.4 Why Inline Instead of Pointer?
-
-**Flat closure philosophy**: Self-contained, no indirection.
-
-If we stored inner sequences by pointer:
-- Need arena/heap allocation for the inner sequence
-- Add indirection (cache misses)
-- Lifetime management complexity
-
-With inlining:
-- Single contiguous struct
-- Stack allocation works
-- Predictable memory layout
-- No lifetime issues (everything has same lifetime)
-
-**Trade-off**: Struct size grows with composition depth. For typical pipeline depths (3-5), this is acceptable. Very deep pipelines would benefit from alternative strategies (future optimization).
-
-### 3.5 Copy Semantics (Critical for Correctness)
-
-**Seq operation wrappers COPY the inner seq and closure structs by value, not by pointer.**
-
-When creating a wrapper sequence (e.g., `Seq.map`):
-
-```fsharp
-let mapped = Seq.map mapper innerSeq
-```
-
-The wrapper struct creation performs **value copies**:
-
-```mlir
-// Create map wrapper — memref<Nxi8> flat byte buffer
-// Fields stored at known byte offsets via memref.view + memref.store
-%wrapper = memref.alloca() : memref<Nxi8>
-
-// state = 0 (at offset 0)
-%state_ref = memref.reinterpret_cast %wrapper to offset: [0], sizes: [1], strides: [1] : memref<Nxi8> to memref<1xi32>
-%zero = arith.constant 0 : i32
-memref.store %zero, %state_ref[%c0] : memref<1xi32>
-
-// MoveNext code_ptr (at offset 8)
-%moveNext_ref = memref.view %wrapper[%c8][] : memref<Nxi8> to memref<1xindex>
-memref.store %code_ptr, %moveNext_ref[%c0] : memref<1xindex>
-
-// COPY inner seq bytes (at inner_offset)
-// ... memref byte copy from inner_seq into wrapper at inner_offset ...
-
-// COPY mapper closure bytes (at mapper_offset)
-// ... memref byte copy from mapper into wrapper at mapper_offset ...
-```
-
-**Why this matters:**
-1. **Independence**: Each wrapper owns its own copy of the inner seq's state
-2. **Iteration**: Multiple iterations of the same wrapper are independent
-3. **No aliasing**: No shared mutable state between wrappers
-
-**Consequence for closure invocation**: When invoking the mapper/predicate closure, we view the flat closure within the wrapper's byte buffer and extract code_ptr + captures:
-
-```mlir
-// View mapper closure within wrapper (at mapper_offset)
-%mapper_ref = memref.view %self[%mapper_offset][] : memref<Nxi8> to memref<closure_size x i8>
-
-// Load code_ptr (at offset 0 within closure)
-%code_ref = memref.reinterpret_cast %mapper_ref to offset: [0], sizes: [1], strides: [1]
-    : memref<closure_size x i8> to memref<1xindex>
-%code_ptr = memref.load %code_ref[%c0] : memref<1xindex>
-
-// Load captures (at successive byte offsets within closure)
-%cap0_ref = memref.view %mapper_ref[%cap0_offset][] : memref<closure_size x i8> to memref<1x!cap0_type>
-%cap0 = memref.load %cap0_ref[%c0] : memref<1x!cap0_type>
-
-// Invoke: code_ptr(captures..., value)
-%result = func.call_indirect %code_ptr(%cap0, %inner_val) : (index, ...) -> !output_type
-```
-
-**Critical**: The closure is stored **by value** (bytes copied) in the wrapper's byte buffer. When invoking, we view the code pointer and captures from the inlined closure bytes, not from a pointer indirection.
-
-## 4. CCS Layer Implementation
-
-### 4.1 Seq Module Intrinsics
-
-**File**: `~/repos/clef/src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs`
-
-> **Note (January 2026)**: `Seq.empty` was added early to CCS to unblock BAREWire dependency resolution.
-> This is a foundational sequence producer that belongs conceptually between C-06 (seq expressions)
-> and C-07 (seq operations). Added here for convenience given shared PRD boundaries.
-
-```fsharp
-// Seq intrinsic module
-| "Seq.empty" ->
-    // seq<'T> - Returns an empty sequence (polymorphic value)
-    let ty = NativeType.TForall([tyParamSpecT], seqT)
-    Resolved (mkIntrinsic IntrinsicModule.Seq op IntrinsicCategory.Pure fullName, ty)
-
-| "Seq.map" ->
-    // ('a -> 'b) -> seq<'a> -> seq<'b>
-    let aVar = freshTypeVar ()
-    let bVar = freshTypeVar ()
-    NativeType.TFun(
-        NativeType.TFun(aVar, bVar),
-        NativeType.TFun(NativeType.TSeq(aVar), NativeType.TSeq(bVar)))
-
-| "Seq.filter" ->
-    // ('a -> bool) -> seq<'a> -> seq<'a>
-    let aVar = freshTypeVar ()
-    NativeType.TFun(
-        NativeType.TFun(aVar, env.Globals.BoolType),
-        NativeType.TFun(NativeType.TSeq(aVar), NativeType.TSeq(aVar)))
-
-| "Seq.take" ->
-    // int -> seq<'a> -> seq<'a>
-    let aVar = freshTypeVar ()
-    NativeType.TFun(
-        env.Globals.IntType,
-        NativeType.TFun(NativeType.TSeq(aVar), NativeType.TSeq(aVar)))
-
-| "Seq.fold" ->
-    // ('state -> 'a -> 'state) -> 'state -> seq<'a> -> 'state
-    let stateVar = freshTypeVar ()
-    let aVar = freshTypeVar ()
-    NativeType.TFun(
-        NativeType.TFun(stateVar, NativeType.TFun(aVar, stateVar)),
-        NativeType.TFun(stateVar,
-            NativeType.TFun(NativeType.TSeq(aVar), stateVar)))
-```
-
-### 4.2 SemanticKind for Seq Operations
-
-Use existing `Application` with `IntrinsicInfo` marking:
-
-> **Membrane note.** The `NativePtr` intrinsic module recorded in this PRD is membrane plumbing, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
-
-```fsharp
-// In SemanticGraph.fs
-type IntrinsicModule =
-    | Console
-    | Format
-    | Sys
-    | NativePtr
-    | Math
-    | Lazy
-    | Seq  // NEW
-
-type IntrinsicInfo = {
-    Module: IntrinsicModule
-    Operation: string
-    // ...
-}
-```
-
-The PSG represents `Seq.map f xs` as:
-```
-Application(
-    Application(VarRef "Seq.map", [mapperNode]),
-    [sourceSeqNode])
-```
-
-With intrinsic info attached marking it as `{Module = Seq; Operation = "map"}`.
-
-### 4.3 Files to Modify (CCS)
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `CheckExpressions.fs` | MODIFY | Add Seq.map, filter, take, fold intrinsics |
-| `SemanticGraph.fs` | MODIFY | Add `Seq` to IntrinsicModule |
-| `NativeGlobals.fs` | MODIFY | Seq module registration |
-
-### 4.4 Type Unification Considerations
-
-C-07 operations produce and consume `TSeq` types. The type unification bridge cases documented in **C-06 Section 4.8** ensure that:
-
-1. `Seq.map f xs` where `xs: seq<int>` (TApp form from type annotation) correctly unifies with `TSeq int`
-2. The result type `seq<'b>` can be used in contexts expecting either representation
-3. Chained operations like `Seq.take 5 (Seq.map f xs)` work regardless of how types are constructed
-
-**No new bridge cases are needed for C-07** - it uses the existing `TSeq` type and its bridge cases from C-06.
-
-## 5. Alex Layer Implementation
-
-### 5.1 SeqOpLayout Coeffect
-
-Compute layouts for sequence operation wrappers:
-
-**File**: `src/Alex/Preprocessing/SeqOpLayout.fs`
-
-```fsharp
-/// Layout for a Seq.map wrapper
-type MapSeqLayout = {
-    ElementType: MLIRType           // Output element type (B)
-    InnerElementType: MLIRType      // Input element type (A)
-    InnerSeqLayout: SeqLayout       // Layout of inner sequence (inlined)
-    MapperLayout: ClosureLayout     // Layout of mapper closure (flat)
-    StructType: MLIRType            // Complete wrapper struct type
-    MoveNextFuncName: string
-}
-
-/// Layout for a Seq.filter wrapper
-type FilterSeqLayout = {
-    ElementType: MLIRType
-    InnerSeqLayout: SeqLayout
-    PredicateLayout: ClosureLayout
-    StructType: MLIRType
-    MoveNextFuncName: string
-}
-
-/// Layout for a Seq.take wrapper
-type TakeSeqLayout = {
-    ElementType: MLIRType
-    InnerSeqLayout: SeqLayout
-    StructType: MLIRType
-    MoveNextFuncName: string
-}
-
-/// Generate struct type for MapSeq
-let mapSeqStructType (outElemType: MLIRType) (innerSeqType: MLIRType) (mapperType: MLIRType) : MLIRType =
-    // {state: i32, current: B, moveNext_ptr: ptr, inner: InnerSeq, mapper: Mapper}
-    TStruct [TInt I32; outElemType; TPtr; innerSeqType; mapperType]
-```
-
-### 5.2 Seq.map MoveNext Implementation
-
-```fsharp
-/// Generate MoveNext for Seq.map wrapper
-/// Algorithm:
-/// 1. Call inner.MoveNext()
-/// 2. If false, return false
-/// 3. Get inner.current
-/// 4. Apply mapper to get transformed value
-/// 5. Store in self.current
-/// 6. Return true
-let emitMapMoveNext (layout: MapSeqLayout) : MLIROp list =
-    // MoveNext signature: (memref<Nxi8>) -> i1
-    // Seq layout: memref<Nxi8> flat byte buffer
-    //   [0..] state tag, [tag_size..] current slot, [current_end..] inner seq, [inner_end..] mapper closure
-
-    mlir {
-        // View inner sequence within self (at fixed byte offset)
-        yield "%inner_ref = memref.view %self[%inner_offset][] : memref<Nxi8> to memref<Mxi8>"
-
-        // Call inner's MoveNext
-        yield "%has_next = func.call @inner_MoveNext(%inner_ref) : (memref<Mxi8>) -> i1"
-
-        // Conditionally transform
-        yield "%result = scf.if %has_next -> (i1) {"
-
-        // Get inner's current value (view into inner seq's current slot)
-        yield "  %inner_curr_ref = memref.view %inner_ref[%curr_offset][] : memref<Mxi8> to memref<1x!elem_type>"
-        yield "  %inner_val = memref.load %inner_curr_ref[%c0] : memref<1x!elem_type>"
-
-        // === MAPPER CLOSURE INVOCATION (Flat Closure Pattern) ===
-        // The mapper is stored as a flat closure in the seq's byte buffer.
-        // View it, extract code_ptr and each capture, then call with captures prepended.
-
-        // View mapper closure (at mapper offset within self)
-        yield "  %mapper_ref = memref.view %self[%mapper_offset][] : memref<Nxi8> to memref<closure_size x i8>"
-
-        // Load code_ptr (at byte offset 0 within mapper closure)
-        yield "  %code_ref = memref.reinterpret_cast %mapper_ref to offset: [0], sizes: [1], strides: [1] : memref<closure_size x i8> to memref<1xindex>"
-        yield "  %mapper_code = memref.load %code_ref[%c0] : memref<1xindex>"
-
-        // Load captures (at successive byte offsets within closure)
-        // For each capture at index i:
-        for i, cap in layout.MapperLayout.Captures |> List.indexed do
-            yield sprintf "  %%cap_%d_ref = memref.view %%mapper_ref[%%cap_%d_offset][] : memref<closure_size x i8> to memref<1x!cap_%d_type>" i i i
-            yield sprintf "  %%cap_%d = memref.load %%cap_%d_ref[%%c0] : memref<1x!cap_%d_type>" i i i
-
-        // Call mapper: code_ptr(cap₀, cap₁, ..., inner_val) -> B
-        // Following flat closure calling convention from C-01:
-        // - Captures come FIRST (prepended)
-        // - Original parameters come LAST
-        let capArgs = layout.MapperLayout.Captures |> List.mapi (fun i _ -> sprintf "%%cap_%d" i) |> String.concat ", "
-        let callArgs = if capArgs = "" then "%inner_val" else sprintf "%s, %%inner_val" capArgs
-        yield sprintf "  %%result_val = func.call_indirect %%mapper_code(%s) : (index, ...) -> !output_elem_type" callArgs
-
-        // Store transformed value into self's current slot
-        yield "  %curr_ref = memref.view %self[%curr_offset][] : memref<Nxi8> to memref<1x!output_elem_type>"
-        yield "  memref.store %result_val, %curr_ref[%c0] : memref<1x!output_elem_type>"
-        yield "  %true = arith.constant true"
-        yield "  scf.yield %true : i1"
-        yield "} else {"
-        yield "  %false = arith.constant false"
-        yield "  scf.yield %false : i1"
-        yield "}"
-        yield "func.return %result : i1"
-    }
-```
-
-**Mapper Invocation SSA Breakdown** (for N captures):
-| SSA | Purpose |
-|-----|---------|
-| 1 | View to mapper location |
-| 1 | Load code_ptr via reinterpret_cast |
-| N | View + load each capture |
-| 1 | Call mapper (func.call_indirect) |
-| **Total** | **3 + 2N** |
-
-### 5.3 Seq.filter MoveNext Implementation
-
-```fsharp
-/// Generate MoveNext for Seq.filter wrapper
-/// Algorithm:
-/// 1. Loop: call inner.MoveNext()
-/// 2. If false, return false
-/// 3. Get inner.current
-/// 4. Apply predicate
-/// 5. If true: store in self.current, return true
-/// 6. If false: continue loop
-let emitFilterMoveNext (layout: FilterSeqLayout) : MLIROp list =
-    // Seq layout: memref<Nxi8> flat byte buffer
-    //   [0..] state, [..] current slot, [..] inner seq, [..] predicate closure
-    mlir {
-        // Loop: keep calling inner MoveNext until predicate matches or exhausted
-        yield "%result = scf.while (%dummy = %c0) : (index) -> i1 {"
-
-        // Call inner MoveNext
-        yield "  %inner_ref = memref.view %self[%inner_offset][] : memref<Nxi8> to memref<Mxi8>"
-        yield "  %has_next = func.call @inner_MoveNext(%inner_ref) : (memref<Mxi8>) -> i1"
-
-        // If no more elements, exit loop with false
-        yield "  %check = scf.if %has_next -> (i1) {"
-
-        // Get inner current value
-        yield "    %inner_curr_ref = memref.view %inner_ref[%curr_offset][] : memref<Mxi8> to memref<1x!elem_type>"
-        yield "    %val = memref.load %inner_curr_ref[%c0] : memref<1x!elem_type>"
-
-        // Apply predicate (flat closure)
-        yield "    %pred_ref = memref.view %self[%pred_offset][] : memref<Nxi8> to memref<pred_size x i8>"
-        yield "    %pred_code_ref = memref.reinterpret_cast %pred_ref to offset: [0], sizes: [1], strides: [1] : ... to memref<1xindex>"
-        yield "    %pred_code = memref.load %pred_code_ref[%c0] : memref<1xindex>"
-        yield "    %matches = func.call_indirect %pred_code(..., %val) : (...) -> i1"
-
-        yield "    %matched = scf.if %matches -> (i1) {"
-        // Store matched value in self's current slot
-        yield "      %curr_ref = memref.view %self[%curr_offset][] : memref<Nxi8> to memref<1x!elem_type>"
-        yield "      memref.store %val, %curr_ref[%c0] : memref<1x!elem_type>"
-        yield "      %true = arith.constant true"
-        yield "      scf.yield %true : i1"
-        yield "    } else {"
-        yield "      %false_inner = arith.constant false"
-        yield "      scf.yield %false_inner : i1"  // Continue loop
-        yield "    }"
-        yield "    scf.yield %matched : i1"
-        yield "  } else {"
-        yield "    %false = arith.constant false"
-        yield "    scf.yield %false : i1"
-        yield "  }"
-
-        // condition: continue while check is false (not yet matched and not exhausted)
-        yield "  scf.condition %check"
-        yield "}"
-        yield "func.return %result : i1"
-    }
-```
-
-### 5.4 Seq.take MoveNext Implementation
-
-```fsharp
-/// Generate MoveNext for Seq.take wrapper
-/// Algorithm:
-/// 1. Check remaining > 0
-/// 2. If false, return false
-/// 3. Call inner.MoveNext()
-/// 4. If false, return false
-/// 5. Copy inner.current to self.current
-/// 6. Decrement remaining
-/// 7. Return true
-let emitTakeMoveNext (layout: TakeSeqLayout) : MLIROp list =
-    // Seq layout: memref<Nxi8> flat byte buffer
-    //   [0..] state, [..] current slot, [..] inner seq, [..] remaining count (i32)
-    mlir {
-        // Load remaining count
-        yield "%remaining_ref = memref.view %self[%remaining_offset][] : memref<Nxi8> to memref<1xi32>"
-        yield "%remaining = memref.load %remaining_ref[%c0] : memref<1xi32>"
-        yield "%zero = arith.constant 0 : i32"
-        yield "%has_remaining = arith.cmpi sgt, %remaining, %zero : i32"
-
-        yield "%result = scf.if %has_remaining -> (i1) {"
-        // Try inner MoveNext
-        yield "  %inner_ref = memref.view %self[%inner_offset][] : memref<Nxi8> to memref<Mxi8>"
-        yield "  %has_next = func.call @inner_MoveNext(%inner_ref) : (memref<Mxi8>) -> i1"
-
-        yield "  %inner_result = scf.if %has_next -> (i1) {"
-        // Copy current value from inner to self
-        yield "    %inner_curr_ref = memref.view %inner_ref[%curr_offset][] : memref<Mxi8> to memref<1x!elem_type>"
-        yield "    %val = memref.load %inner_curr_ref[%c0] : memref<1x!elem_type>"
-        yield "    %curr_ref = memref.view %self[%curr_offset][] : memref<Nxi8> to memref<1x!elem_type>"
-        yield "    memref.store %val, %curr_ref[%c0] : memref<1x!elem_type>"
-
-        // Decrement remaining
-        yield "    %one = arith.constant 1 : i32"
-        yield "    %new_remaining = arith.subi %remaining, %one : i32"
-        yield "    memref.store %new_remaining, %remaining_ref[%c0] : memref<1xi32>"
-
-        yield "    %true = arith.constant true"
-        yield "    scf.yield %true : i1"
-        yield "  } else {"
-        yield "    %false_inner = arith.constant false"
-        yield "    scf.yield %false_inner : i1"
-        yield "  }"
-        yield "  scf.yield %inner_result : i1"
-        yield "} else {"
-        yield "  %false = arith.constant false"
-        yield "  scf.yield %false : i1"
-        yield "}"
-        yield "func.return %result : i1"
-    }
-```
-
-### 5.5 Seq.fold (Eager Consumer)
-
-Fold is NOT a sequence transformer - it consumes the sequence eagerly:
-
-```fsharp
-/// Emit Seq.fold - consumes sequence to produce single value
-let witnessSeqFold
-    (z: PSGZipper)
-    (folderClosure: Val)       // Flat closure: (state, elem) -> state
-    (initialVal: Val)          // Initial accumulator
-    (seqVal: Val)              // Source sequence
-    (layout: SeqLayout)
-    : (MLIROp list * TransferResult) =
-
-    mlir {
-        // Allocate accumulator on stack (mutable slot)
-        yield "%acc_ref = memref.alloca() : memref<1x!state_type>"
-        yield "memref.store %initial_val, %acc_ref[%c0] : memref<1x!state_type>"
-
-        // Loop: call MoveNext until exhausted
-        yield "scf.while () : () -> () {"
-
-        // Call MoveNext on source sequence
-        yield "  %has_next = func.call @seq_MoveNext(%seq_ref) : (memref<Nxi8>) -> i1"
-        yield "  scf.condition %has_next"
-
-        yield "} do {"
-
-        // Get current element from sequence's current slot
-        yield "  %curr_ref = memref.view %seq_ref[%curr_offset][] : memref<Nxi8> to memref<1x!elem_type>"
-        yield "  %elem = memref.load %curr_ref[%c0] : memref<1x!elem_type>"
-
-        // Get current accumulator
-        yield "  %acc = memref.load %acc_ref[%c0] : memref<1x!state_type>"
-
-        // Apply folder (flat closure — extract code_ptr and captures via memref ops)
-        yield "  %folder_code_ref = memref.reinterpret_cast %folder_ref to offset: [0], sizes: [1], strides: [1] : ... to memref<1xindex>"
-        yield "  %folder_code = memref.load %folder_code_ref[%c0] : memref<1xindex>"
-        // ... load captures via memref.view at successive offsets ...
-        yield "  %new_acc = func.call_indirect %folder_code(..., %acc, %elem) : (...) -> !state_type"
-
-        // Store new accumulator
-        yield "  memref.store %new_acc, %acc_ref[%c0] : memref<1x!state_type>"
-        yield "  scf.yield"
-        yield "}"
-
-        // Return final accumulator
-        yield "%result = memref.load %acc_ref[%c0] : memref<1x!state_type>"
-        yield "func.return %result : !state_type"
-    }
-```
-
-### 5.6 SSA Cost Formulas
-
-Following C-05's coeffect-based SSA pre-computation, each seq operation has deterministic SSA requirements:
-
-#### 5.6.1 Wrapper Creation SSA Costs
-
-| Operation | Formula | Breakdown |
-|-----------|---------|-----------|
-| **Seq.map** | `5 + sizeof(inner) + sizeof(mapper)` | state(1) + code_ptr(1) + insertvalue×3 + inner fields + mapper fields |
-| **Seq.filter** | `5 + sizeof(inner) + sizeof(predicate)` | state(1) + code_ptr(1) + insertvalue×3 + inner fields + predicate fields |
-| **Seq.take** | `6 + sizeof(inner)` | state(1) + remaining(1) + code_ptr(1) + insertvalue×3 + inner fields |
-| **Seq.fold** | `5` (no wrapper created) | alloca(1) + store(1) + acc_alloca(1) + acc_store(1) + result_load(1) |
-
-```fsharp
-/// SSA cost for Seq.map wrapper creation
-let mapWrapperSSACost (innerSeqSize: int) (mapperSize: int) : int =
-    // 1: constant 0 for state
-    // 1: undef wrapper struct
-    // 1: insert state
-    // 1: addressof moveNext
-    // 1: insert moveNext ptr
-    // innerSeqSize: copy inner seq into wrapper (insertvalue chain)
-    // mapperSize: copy mapper closure into wrapper
-    5 + innerSeqSize + mapperSize
-
-/// SSA cost for Seq.filter wrapper creation
-let filterWrapperSSACost (innerSeqSize: int) (predicateSize: int) : int =
-    5 + innerSeqSize + predicateSize
-
-/// SSA cost for Seq.take wrapper creation
-let takeWrapperSSACost (innerSeqSize: int) : int =
-    // Same as map/filter, plus 1 for the "remaining" count
-    6 + innerSeqSize
-
-/// Seq.fold doesn't create a wrapper - it's an eager consumer
-/// Returns SSA cost for the fold loop setup (not per-iteration)
-let foldSetupSSACost : int = 5
-```
-
-#### 5.6.2 MoveNext Function SSA Costs (Per Invocation)
-
-| Operation | Formula | Notes |
-|-----------|---------|-------|
-| **map MoveNext** | `10 + N_mapper_caps` | GEP×3 + load×3 + call×2 + extract(1+N) + store + constants |
-| **filter MoveNext** | `12 + N_pred_caps` | Same as map + loop branch overhead |
-| **take MoveNext** | `14` | remaining check + all of map's cost |
-| **fold (per iteration)** | `8 + N_folder_caps` | No wrapper, direct iteration |
-
-```fsharp
-/// SSA cost for map MoveNext function body
-let mapMoveNextSSACost (numMapperCaptures: int) : int =
-    // Inner sequence operations: gep(1) + load moveNext ptr(1) + call(1) + gep curr(1) + load curr(1)
-    // Mapper invocation: gep(1) + load(1) + extract code(1) + extract caps(N) + call(1)
-    // Store result: gep(1) + store(1)
-    // Constants and branch: 2
-    10 + numMapperCaptures
-
-/// SSA cost for filter MoveNext (includes loop)
-let filterMoveNextSSACost (numPredicateCaptures: int) : int =
-    // Same as map, plus loop control
-    12 + numPredicateCaptures
-
-/// SSA cost for take MoveNext
-let takeMoveNextSSACost : int =
-    // Remaining check: load(1) + cmp(1) + constant(1)
-    // Plus map-equivalent cost for pass-through
-    14
-
-/// SSA cost for fold per-iteration body
-let foldIterationSSACost (numFolderCaptures: int) : int =
-    8 + numFolderCaptures
-```
-
-#### 5.6.3 Composed Pipeline SSA Analysis
-
-For a composition like `Seq.take 5 (Seq.map f (Seq.filter p xs))`:
-
-**Creation phase SSA cost**:
-```
-filterWrapper = 5 + innerSize + predSize
-mapWrapper = 5 + filterWrapperSize + mapperSize
-takeWrapper = 6 + mapWrapperSize
-```
-
-**Per-iteration SSA cost** (worst case - filter matches):
-```
-take.MoveNext calls map.MoveNext calls filter.MoveNext calls inner.MoveNext
-= takeMoveNext + mapMoveNext + filterMoveNext + innerMoveNext
-```
-
-### 5.7 Files to Create/Modify (Alex)
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `Alex/Preprocessing/SeqOpLayout.fs` | CREATE | Wrapper sequence layouts |
-| `Alex/Witnesses/SeqWitness.fs` | MODIFY | Add map, filter, take, fold witnesses |
-
-## 6. MLIR Output Specification
-
-### 6.1 Seq.map Example
-
-```mlir
-// Source: Seq.map (fun x -> x * 2) numbers
-// where numbers: seq { yield 1; yield 2; yield 3 }
-
-// All seq types are flat byte buffers: memref<Nxi8>
-// Inner seq (from C-06): memref<inner_size x i8>
-//   [0..3] state (i32), [4..7] current (i32), [8..15] moveNext code_ptr (index)
-// Mapper closure: memref<mapper_size x i8>
-//   [0..7] code_ptr (index), [8..] captures (if any)
-// MapSeq wrapper: memref<map_size x i8>
-//   [0..3] state, [4..7] current, [8..15] moveNext, [16..] inner_seq bytes, [...] mapper bytes
-
-// Map MoveNext function
-func.func @map_double_moveNext(%self: memref<map_size x i8>) -> i1 {
-    // View inner seq within self (at inner_offset)
-    %inner_ref = memref.view %self[%inner_offset][] : memref<map_size x i8> to memref<inner_size x i8>
-
-    // Call inner MoveNext
-    %has_next = func.call @inner_MoveNext(%inner_ref) : (memref<inner_size x i8>) -> i1
-
-    %result = scf.if %has_next -> (i1) {
-        // Get inner current (view into inner seq's current slot)
-        %inner_curr_ref = memref.view %inner_ref[%c4][] : memref<inner_size x i8> to memref<1xi32>
-        %inner_val = memref.load %inner_curr_ref[%c0] : memref<1xi32>
-
-        // Apply mapper (x * 2)
-        %two = arith.constant 2 : i32
-        %mapped = arith.muli %inner_val, %two : i32
-
-        // Store result in self's current slot
-        %curr_ref = memref.view %self[%c4][] : memref<map_size x i8> to memref<1xi32>
-        memref.store %mapped, %curr_ref[%c0] : memref<1xi32>
-
-        %true = arith.constant true
-        scf.yield %true : i1
-    } else {
-        %false = arith.constant false
-        scf.yield %false : i1
-    }
-    func.return %result : i1
-}
-
-// Creation: Seq.map (fun x -> x * 2) numbers
-// 1. Create inner seq (numbers) — from C-06
-%inner_seq = ... // memref<inner_size x i8>
-
-// 2. Allocate map wrapper
-%wrapper = memref.alloca() : memref<map_size x i8>
-
-// 3. Initialize: state = 0
-%state_ref = memref.reinterpret_cast %wrapper to offset: [0], sizes: [1], strides: [1]
-    : memref<map_size x i8> to memref<1xi32>
-%zero = arith.constant 0 : i32
-memref.store %zero, %state_ref[%c0] : memref<1xi32>
-
-// 4. Store MoveNext code_ptr
-%moveNext_ref = memref.view %wrapper[%c8][] : memref<map_size x i8> to memref<1xindex>
-// ... store @map_double_moveNext address ...
-
-// 5. Copy inner seq bytes into wrapper
-// ... memref byte copy from %inner_seq into wrapper at inner_offset ...
-
-// 6. Store mapper closure (just code_ptr for no-capture lambda)
-%mapper_ref = memref.view %wrapper[%mapper_offset][] : memref<map_size x i8> to memref<1xindex>
-// ... store @double_func address ...
-```
-
-### 6.2 Seq.filter Example
-
-```mlir
-// Source: Seq.filter (fun x -> x % 2 = 0) numbers
-// FilterSeq wrapper: memref<filter_size x i8>
-//   [0..3] state, [4..7] current, [8..15] moveNext, [16..] inner_seq, [...] predicate
-
-func.func @filter_even_moveNext(%self: memref<filter_size x i8>) -> i1 {
-    %inner_ref = memref.view %self[%inner_offset][] : memref<filter_size x i8> to memref<inner_size x i8>
-
-    // Loop: keep calling inner MoveNext until predicate matches or exhausted
-    %result = scf.while (%found = %false_init) : (i1) -> i1 {
-        %has_next = func.call @inner_MoveNext(%inner_ref) : (memref<inner_size x i8>) -> i1
-
-        %check = scf.if %has_next -> (i1) {
-            // Get inner current
-            %inner_curr_ref = memref.view %inner_ref[%c4][] : memref<inner_size x i8> to memref<1xi32>
-            %val = memref.load %inner_curr_ref[%c0] : memref<1xi32>
-
-            // Check x % 2 == 0
-            %two = arith.constant 2 : i32
-            %rem = arith.remsi %val, %two : i32
-            %zero = arith.constant 0 : i32
-            %is_even = arith.cmpi eq, %rem, %zero : i32
-
-            %matched = scf.if %is_even -> (i1) {
-                // Store matched value in self's current slot
-                %curr_ref = memref.view %self[%c4][] : memref<filter_size x i8> to memref<1xi32>
-                memref.store %val, %curr_ref[%c0] : memref<1xi32>
-                %true = arith.constant true
-                scf.yield %true : i1
-            } else {
-                %not_yet = arith.constant false
-                scf.yield %not_yet : i1  // continue loop
-            }
-            scf.yield %matched : i1
-        } else {
-            %exhausted = arith.constant false
-            scf.yield %exhausted : i1
-        }
-        scf.condition %check
-    } do {
-        ^bb0(%prev: i1):
-        scf.yield %prev : i1
-    }
-    func.return %result : i1
-}
-```
-
-### 6.3 Seq.fold Example
-
-```mlir
-// Source: Seq.fold (fun acc x -> acc + x) 0 numbers
-
-func.func @fold_sum(%seq_ref: memref<Nxi8>, %initial: i32) -> i32 {
-    // Allocate accumulator on stack (mutable slot)
-    %acc_ref = memref.alloca() : memref<1xi32>
-    memref.store %initial, %acc_ref[%c0] : memref<1xi32>
-
-    // Loop: call MoveNext until exhausted
-    scf.while () : () -> () {
-        %has_next = func.call @seq_MoveNext(%seq_ref) : (memref<Nxi8>) -> i1
-        scf.condition %has_next
-    } do {
-        // Get current element from sequence's current slot
-        %curr_ref = memref.view %seq_ref[%c4][] : memref<Nxi8> to memref<1xi32>
-        %elem = memref.load %curr_ref[%c0] : memref<1xi32>
-
-        // Get current accumulator
-        %acc = memref.load %acc_ref[%c0] : memref<1xi32>
-
-        // acc + x
-        %new_acc = arith.addi %acc, %elem : i32
-        memref.store %new_acc, %acc_ref[%c0] : memref<1xi32>
-        scf.yield
-    }
-
-    // Return final accumulator
-    %result = memref.load %acc_ref[%c0] : memref<1xi32>
-    func.return %result : i32
-}
-```
-
-## 7. Validation and Sample Coverage Requirements
-
-> **CRITICAL**: The sample MUST exercise ALL feature variants. Incomplete samples lead to incomplete implementations.
-
-### 7.1 Sample Structure Overview
-
-Sample 16 (`16_SeqOperations`) must comprehensively test:
-
-| Part | Feature Area | Coverage Goal |
-|------|--------------|---------------|
-| 1 | Source sequences | C-06 constructs as inputs |
-| 2 | Seq.map | No-capture and with-capture variants |
-| 3 | Seq.filter | No-capture and with-capture variants |
-| 4 | Seq.take | Normal case and edge cases |
-| 5 | Seq.fold | No-capture and with-capture variants |
-| 6 | Composed pipelines (no captures) | Multiple operation chains |
-| 7 | Manual comparison | Verify equivalence |
-| **8** | **Closures with captures** | **CRITICAL: Tests flat closure model** |
-| **9** | **Seq.collect (flatMap)** | **Nested sequence production** |
-| **10** | **Composed pipelines with captures** | **Full integration test** |
-| **11** | **Edge cases** | **Empty, single, boundary conditions** |
-| **12** | **Deep composition** | **3+ operations chained** |
-
-### 7.2 Part-by-Part Test Specifications
-
-#### Part 1: Source Sequences (C-06 Foundation)
-```fsharp
-let range (start: int) (stop: int) = seq { ... }
-let naturals (n: int) = range 1 n
-```
-**Purpose**: Establish C-06 sequences as inputs for transformation operations.
-
-#### Part 2: Seq.map - Basic (No Captures)
-```fsharp
-let doubled = Seq.map (fun x -> x * 2) (naturals 5)      // Expected: 2 4 6 8 10
-let squared = Seq.map (fun x -> x * x) (naturals 5)      // Expected: 1 4 9 16 25
-let addTen = Seq.map (fun x -> x + 10) (naturals 5)      // Expected: 11 12 13 14 15
-```
-**Validates**: Basic transformation with inline computation.
-
-#### Part 3: Seq.filter - Basic (No Captures)
-```fsharp
-let evens = Seq.filter (fun x -> x % 2 = 0) (naturals 10)       // Expected: 2 4 6 8 10
-let odds = Seq.filter (fun x -> x % 2 = 1) (naturals 10)        // Expected: 1 3 5 7 9
-let greaterThan5 = Seq.filter (fun x -> x > 5) (naturals 10)    // Expected: 6 7 8 9 10
-```
-**Validates**: Predicate filtering with inline conditions.
-
-#### Part 4: Seq.take
-```fsharp
-let firstThree = Seq.take 3 (naturals 100)    // Expected: 1 2 3
-let exactlyFive = Seq.take 5 (naturals 5)     // Expected: 1 2 3 4 5 (boundary)
-let takeMoreThanAvailable = Seq.take 10 (naturals 3)  // Expected: 1 2 3 (graceful)
-```
-**Validates**: Count limiting with boundary conditions.
-
-#### Part 5: Seq.fold - Basic (No Captures)
-```fsharp
-let sum = Seq.fold (fun acc x -> acc + x) 0 (naturals 10)           // Expected: 55
-let product = Seq.fold (fun acc x -> acc * x) 1 (naturals 5)        // Expected: 120
-let findMax = Seq.fold (fun acc x -> if x > acc then x else acc) 0 (naturals 10)  // Expected: 10
-let countElements = Seq.fold (fun acc _ -> acc + 1) 0 (naturals 10) // Expected: 10
-```
-**Validates**: Eager consumption with various accumulation patterns.
-
-#### Part 6: Composed Pipelines (No Captures)
-```fsharp
-let evensSquared = naturals 10 |> Seq.filter (fun x -> x % 2 = 0) |> Seq.map (fun x -> x * x)
-// Expected: 4 16 36 64 100
-
-let squaresOver10 = naturals 10 |> Seq.map (fun x -> x * x) |> Seq.filter (fun x -> x > 10)
-// Expected: 16 25 36 49 64 81 100
-
-let first3EvensDoubled = naturals 100 
-    |> Seq.filter (fun x -> x % 2 = 0) 
-    |> Seq.map (fun x -> x * 2) 
-    |> Seq.take 3
-// Expected: 4 8 12
-
-let sumEvenSquares = naturals 10 
-    |> Seq.filter (fun x -> x % 2 = 0) 
-    |> Seq.map (fun x -> x * x) 
-    |> Seq.fold (fun acc x -> acc + x) 0
-// Expected: 220 (4+16+36+64+100)
-```
-**Validates**: Multiple operations compose correctly with nested structs.
-
-#### Part 7: Manual Comparison
-```fsharp
-let manualSum (s: seq<int>) : int = ...
-let manualCount (s: seq<int>) : int = ...
-```
-**Validates**: Seq.fold behaves equivalently to manual for-loop consumption.
-
-#### Part 8: Closures with Captures (CRITICAL)
-
-> **This part exercises the flat closure model. Without it, capture handling is untested.**
-
-```fsharp
-// === Seq.map with captured value ===
-let scale (factor: int) (xs: seq<int>) = 
-    Seq.map (fun x -> x * factor) xs  // 'factor' is captured
-
-let scaledBy3 = scale 3 (naturals 5)
-// Expected: 3 6 9 12 15
-
-let scaledBy7 = scale 7 (naturals 3)
-// Expected: 7 14 21
-
-// === Seq.filter with captured value ===
-let aboveThreshold (threshold: int) (xs: seq<int>) =
-    Seq.filter (fun x -> x > threshold) xs  // 'threshold' is captured
-
-let above5 = aboveThreshold 5 (naturals 10)
-// Expected: 6 7 8 9 10
-
-let above0 = aboveThreshold 0 (naturals 5)
-// Expected: 1 2 3 4 5
-
-// === Seq.fold with captured value ===
-let sumWithOffset (offset: int) (xs: seq<int>) =
-    Seq.fold (fun acc x -> acc + x + offset) 0 xs  // 'offset' captured in folder
-
-let sumPlus10Each = sumWithOffset 10 (naturals 5)
-// Expected: 65 (1+10 + 2+10 + 3+10 + 4+10 + 5+10 = 15 + 50)
-
-// === Multiple captures ===
-let rangeTransform (lo: int) (hi: int) (xs: seq<int>) =
-    Seq.map (fun x -> x * lo + hi) xs  // Both 'lo' and 'hi' captured
-
-let transformed = rangeTransform 2 100 (naturals 3)
-// Expected: 102 104 106
-```
-
-**Validates**: 
-- Flat closure struct includes capture fields
-- Capture extraction at invocation time
-- Multiple captures work correctly
-- Captures don't interfere with inner seq state
-
-#### Part 9: Seq.collect (flatMap)
-
-```fsharp
-// === Basic flatMap ===
-let expandDouble = Seq.collect (fun x -> seq { yield x; yield x * 2 }) (naturals 3)
-// Expected: 1 2 2 4 3 6
-
-let expandTriple = Seq.collect (fun x -> seq { yield x; yield x; yield x }) (naturals 2)
-// Expected: 1 1 1 2 2 2
-
-// === flatMap with captured value ===
-let expandWithFactor (factor: int) (xs: seq<int>) =
-    Seq.collect (fun x -> seq { yield x; yield x * factor }) xs
-
-let expandBy10 = expandWithFactor 10 (naturals 3)
-// Expected: 1 10 2 20 3 30
-
-// === flatMap producing variable-length sequences ===
-let repeat (xs: seq<int>) =
-    Seq.collect (fun x -> seq {
-        let mutable i = 0
-        while i < x do
-            yield x
-            i <- i + 1
-    }) xs
-
-let repeated = repeat (range 1 4)
-// Expected: 1  2 2  3 3 3  4 4 4 4
-```
-
-**Validates**:
-- Inner sequence production from mapper
-- Nested iteration (outer advances only after inner exhausted)
-- Captures in the mapper that produces sequences
-
-#### Part 10: Composed Pipelines with Captures
-
-```fsharp
-// === Pipeline where each operation captures ===
-let complexPipeline (threshold: int) (multiplier: int) (count: int) =
-    naturals 20
-    |> Seq.filter (fun x -> x > threshold)      // captures 'threshold'
-    |> Seq.map (fun x -> x * multiplier)        // captures 'multiplier'
-    |> Seq.take count                            // captures 'count'
-
-let result1 = complexPipeline 5 2 5
-// naturals 20 = 1..20
-// filter > 5 = 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
-// map * 2 = 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40
-// take 5 = 12 14 16 18 20
-// Expected: 12 14 16 18 20
-
-// === Fold at the end with captures throughout ===
-let sumFilteredScaled (minVal: int) (factor: int) (xs: seq<int>) =
-    xs
-    |> Seq.filter (fun x -> x >= minVal)
-    |> Seq.map (fun x -> x * factor)
-    |> Seq.fold (fun acc x -> acc + x) 0
-
-let total = sumFilteredScaled 3 10 (naturals 5)
-// filter >= 3: 3 4 5
-// map * 10: 30 40 50
-// fold sum: 120
-// Expected: 120
-```
-
-**Validates**:
-- Each wrapper correctly captures its own closure
-- Nested struct contains multiple closure instances
-- Captures from different pipeline stages don't interfere
-
-#### Part 11: Edge Cases
-
-```fsharp
-// === Empty source sequence ===
-let emptySource = seq { if false then yield 0 }
-let mapEmpty = Seq.map (fun x -> x * 2) emptySource
-let filterEmpty = Seq.filter (fun x -> x > 0) emptySource
-let foldEmpty = Seq.fold (fun acc x -> acc + x) 42 emptySource
-// Expected: mapEmpty yields nothing, filterEmpty yields nothing, foldEmpty = 42
-
-// === Single element ===
-let singleElement = seq { yield 99 }
-let mapSingle = Seq.map (fun x -> x + 1) singleElement
-// Expected: 100
-
-// === Filter removes all ===
-let filterNone = Seq.filter (fun x -> x > 100) (naturals 10)
-// Expected: (empty)
-
-// === Take zero ===
-let takeZero = Seq.take 0 (naturals 10)
-// Expected: (empty)
-
-// === Take from empty ===
-let takeFromEmpty = Seq.take 5 emptySource
-// Expected: (empty)
-```
-
-**Validates**: Boundary conditions handled gracefully without crashes.
-
-#### Part 12: Deep Composition (3+ Operations)
-
-```fsharp
-// === Four operations chained ===
-let deepPipeline1 =
-    naturals 50
-    |> Seq.filter (fun x -> x % 2 = 0)    // evens: 2 4 6 8 ... 50
-    |> Seq.map (fun x -> x / 2)           // halved: 1 2 3 4 ... 25
-    |> Seq.filter (fun x -> x % 3 = 0)    // div by 3: 3 6 9 12 15 18 21 24
-    |> Seq.take 5
-// Expected: 3 6 9 12 15
-
-// === Five operations with fold ===
-let deepPipelineWithFold =
-    naturals 100
-    |> Seq.filter (fun x -> x % 5 = 0)    // 5 10 15 20 ... 100 (20 elements)
-    |> Seq.map (fun x -> x * 2)           // 10 20 30 40 ... 200
-    |> Seq.filter (fun x -> x > 50)       // 60 70 80 ... 200 (15 elements)
-    |> Seq.take 5                          // 60 70 80 90 100
-    |> Seq.fold (fun acc x -> acc + x) 0
-// Expected: 400 (60+70+80+90+100)
-```
-
-**Validates**: Struct nesting works correctly at depth 4-5.
-
-### 7.3 Complete Expected Output Summary
-
-```
-=== Sample 16: Sequence Operations ===
-
---- Part 2: Seq.map ---
-naturals 5: 1 2 3 4 5
-doubled (x*2): 2 4 6 8 10
-squared (x*x): 1 4 9 16 25
-addTen (x+10): 11 12 13 14 15
-
---- Part 3: Seq.filter ---
-evens from 1..10: 2 4 6 8 10
-odds from 1..10: 1 3 5 7 9
-greaterThan5 from 1..10: 6 7 8 9 10
-
---- Part 4: Seq.take ---
-firstThree from 1..100: 1 2 3
-exactlyFive from 1..5: 1 2 3 4 5
-takeMoreThanAvailable: 1 2 3
-
---- Part 5: Seq.fold ---
-sum of 1..10: 55
-product of 1..5: 120
-max of 1..10: 10
-count of 1..10: 10
-
---- Part 6: Composed Operations ---
-evensSquared: 4 16 36 64 100
-squaresOver10: 16 25 36 49 64 81 100
-first3EvensDoubled: 4 8 12
-sumEvenSquares: 220
-
---- Part 7: Manual vs Seq.fold ---
-manualSum 1..10: 55
-manualCount 1..10: 10
-
---- Part 8: Closures with Captures ---
-scaledBy3: 3 6 9 12 15
-scaledBy7: 7 14 21
-above5: 6 7 8 9 10
-above0: 1 2 3 4 5
-sumPlus10Each: 65
-transformed (2*x+100): 102 104 106
-
---- Part 9: Seq.collect ---
-expandDouble: 1 2 2 4 3 6
-expandTriple: 1 1 1 2 2 2
-expandBy10: 1 10 2 20 3 30
-repeated: 1 2 2 3 3 3 4 4 4 4
-
---- Part 10: Composed with Captures ---
-complexPipeline 5 2 5: 12 14 16 18 20
-sumFilteredScaled 3 10: 120
-
---- Part 11: Edge Cases ---
-mapEmpty: (done)
-filterEmpty: (done)
-foldEmpty: 42
-mapSingle: 100
-filterNone: (done)
-takeZero: (done)
-takeFromEmpty: (done)
-
---- Part 12: Deep Composition ---
-deepPipeline1: 3 6 9 12 15
-deepPipelineWithFold: 400
-```
-
-### 7.4 Validation Checklist
-
-- [ ] **Parts 1-7**: All basic operations work with no-capture lambdas
-- [ ] **Part 8**: Closure with captures works for map, filter, fold
-- [ ] **Part 9**: Seq.collect (flatMap) works with nested iteration
-- [ ] **Part 10**: Composed pipelines with captures don't interfere
-- [ ] **Part 11**: All edge cases handled gracefully
-- [ ] **Part 12**: Deep composition (4-5 operations) works correctly
-- [ ] **Regression**: Samples 01-15 still pass
-
-## 8. Implementation Checklist
-
-### Phase 0: SSA Cost Infrastructure
-- [ ] Implement `mapWrapperSSACost` function
-- [ ] Implement `filterWrapperSSACost` function
-- [ ] Implement `takeWrapperSSACost` function
-- [ ] Implement `foldSetupSSACost` function
-- [ ] Implement MoveNext SSA cost functions
-- [ ] Verify SSA cost formulas match actual generation
-
-### Phase 1: Seq.map
-- [ ] Add Seq.map intrinsic to CCS
-- [ ] Create MapSeqLayout coeffect (with SSA cost)
-- [ ] Implement MapSeq wrapper creation with copy semantics
-- [ ] Implement MapSeq MoveNext generation
-- [ ] Implement mapper closure invocation with explicit capture extraction
-- [ ] Test: map doubles values
-
-### Phase 2: Seq.filter
-- [ ] Add Seq.filter intrinsic
-- [ ] Create FilterSeqLayout coeffect (with SSA cost)
-- [ ] Implement FilterSeq wrapper creation with copy semantics
-- [ ] Implement FilterSeq MoveNext generation with loop
-- [ ] Implement predicate closure invocation with capture extraction
-- [ ] Test: filter for evens
-
-### Phase 3: Seq.take
-- [ ] Add Seq.take intrinsic
-- [ ] Create TakeSeqLayout coeffect (with SSA cost)
-- [ ] Implement TakeSeq wrapper creation (includes remaining counter)
-- [ ] Implement TakeSeq MoveNext generation
-- [ ] Test: take limits sequence
-
-### Phase 4: Seq.fold
-- [ ] Add Seq.fold intrinsic
-- [ ] Implement fold as eager consumer (not a wrapper)
-- [ ] Implement folder closure invocation with capture extraction
-- [ ] Test: fold sums sequence
-
-### Validation
-- [ ] Sample 16 compiles without errors
-- [ ] Sample 16 produces correct output
-- [ ] Composed pipelines work (e.g., `take (map (filter xs))`)
-- [ ] Copy semantics verified (independent iteration)
-- [ ] SSA counts match cost formulas
-- [ ] Samples 01-15 still pass
-
-## 9. Related PRDs
-
-- **C-01**: Closures - Mapper/predicate are flat closures
-- **C-02**: HOFs - Seq operations are HOFs
-- **C-05**: Lazy - Foundation for deferred computation
-- **C-06**: SimpleSeq - Foundation for sequences
-
-## 10. Architectural Alignment
-
-This PRD aligns with the flat closure architecture:
-
-**Key principles maintained:**
-1. **No nulls** - Every field initialized
-2. **No env_ptr** - Closures and inner sequences are flat
-3. **Self-contained structs** - Wrappers inline their dependencies
-4. **Coeffect-based layout** - Wrapper layouts computed before witnessing
-5. **Composition = nesting** - Composed sequences are nested structs
-
-**Trade-off acknowledged:**
-- Struct size grows with composition depth
-- For typical depths (3-5 operations), this is acceptable
-- Very deep pipelines may need alternative strategies (future optimization)
-
-> **Critical:** See Serena memory `compose_from_standing_art_principle` for why composing from C-01/14/15 patterns is essential. New features MUST extend standing art, not reinvent.
+> **Status:** Planned native completion; existing source schemes and Baker
+> recipes provide part of the implementation. C-07 is not complete.
+> **Sample:** [16_SeqOperations](../../samples/console/FidelityHelloWorld/16_SeqOperations).
+> **Dependencies:** [C-06](C-06-SimpleSeq.md), [C-01](C-01-Closures.md),
+> [C-02](C-02-HigherOrderFunctions.md); [C-05](C-05-Lazy.md) supplies related
+> deferred-formation contracts.
+>
+> **Authority:** [Sequence representation](../../../clef-lang-spec/spec/seq-representation.md),
+> [closure representation](../../../clef-lang-spec/spec/closure-representation.md),
+> [sequence operations](../../../clef-lang-spec/spec/seq-operations-representation.md)
+> and [delimited continuations](../../../clef-lang-spec/spec/dcont-representation.md).
+> [Language coverage waypoints](../Language_Coverage_Waypoints.md) record tested
+> implementation evidence and the C-06 dependency handoff. Historical Alex wrapper
+> layout passes, stored function-address fields, fixed SSA formulas and imperative
+> operation emitters in this PRD are superseded by the direction below.
+
+## 1. Feature and semantic commitments
+
+Sequence operations compose deferred producers and eager consumers over Clef
+`seq<'T>`. Source NTU element, callback, accumulator and dimensional constraints
+survive graph construction and proof settlement. Physical placement does not
+replace those types with a universal integer width or an erased object carrier.
+
+| Operation | Source contract | Required evaluation behavior |
+|-----------|-----------------|------------------------------|
+| `map` | `('T -> 'U) -> seq<'T> -> seq<'U>` | Lazily invoke the mapper once per pulled input element |
+| `filter` | `('T -> bool) -> seq<'T> -> seq<'T>` | Pull until a predicate accepts an element or the input exhausts; preserve order |
+| `append` | `seq<'T> -> seq<'T> -> seq<'T>` | Enumerate the first input to exhaustion, then the second |
+| `collect` | `('T -> seq<'U>) -> seq<'T> -> seq<'U>` | Invoke the mapper once per outer element and fully enumerate that inner result before advancing the outer input |
+| `take` | `int -> seq<'T> -> seq<'T>` | Yield at most the requested count; stop on earlier input exhaustion; never pull after the limit |
+| `fold` | `('S -> 'T -> 'S) -> 'S -> seq<'T> -> 'S` | Consume immediately in order, preserving independent accumulator and element types |
+| `iter` | `('T -> unit) -> seq<'T> -> unit` | Consume immediately and perform one ordered action per element |
+
+Constructing a producer evaluates its supplied expressions in source argument
+order and preserves their values/captured storage. It does not run its deferred
+iterator body or invoke callbacks prematurely. A consumer likewise evaluates its
+supplied expressions before iteration; moving an argument into a loop must not
+repeat its formation effects.
+
+Each enumeration owns independent iteration state. Copies of sequence or callback
+values preserve the identities of referenced mutable cells. Re-enumeration must
+not copy another iterator's progress, deep-copy external mutable captures or
+repeat an operand initializer that already ran at producer formation.
+
+`take` checks its remaining count before asking the input for an element. Zero or
+negative remaining count produces no pull. A shorter input completes normally;
+this PRD does not import F#/CLR exception behavior. Filtering can require several
+upstream pulls to produce one output, and a downstream limit must stop the entire
+upstream demand chain at the correct point.
+
+Empty inputs invoke no per-element callback. An input that performs effects and
+then exhausts still performs those effects when a consumer actually pulls it.
+No current value exists merely because an iterator was constructed; every read
+requires the successful-pull premise for that exact iterator.
+
+## 2. Canonical representation and current limits
+
+Every sequence follows the full `(moveNext, env)` callable contract. Callback
+values likewise retain their callable identity and environment. Function values
+are not stored as untyped addresses inside sequence environments. A direct call
+is available only when the graph establishes its exact callable identity; known
+code identity alone does not supply a captured activation environment.
+
+C-06 supplies typed frame slots, independent iteration state, explicit caller
+storage and bounded parent-owned child regions. It also supplies exact sequence
+origins for supported callable-half elision. C-07 must compose these contracts;
+it must not create an independent `MapSeqLayout`/`FilterSeqLayout` subsystem in
+Alex or infer layout by traversing source callback bodies.
+
+A retained view descriptor is an unboxed physical storage value containing
+address, offset, extent and stride information. Its backing storage needs an
+admitted lifetime independently of the descriptor. Capturing an input template
+or a callback does not extend either backing allocation's lifetime automatically.
+Target placement determines field widths, alignments, offsets and complete
+extents; no capture-count formula determines the resulting SSA count or layout.
+
+The sequence-operations specification still contains historical requirements
+for ordinal wrapper fields, whole-environment inline copies and fixed SSA costs.
+Those sections require explicit reconciliation with the current base sequence
+and closure contracts as C-07 representation support is implemented. This PRD
+preserves their operation semantics and ownership intent; it does not treat an
+unsettled storage choice as already admitted. The canonical full callable remains
+the contract for function-valued parameters and multiple possible origins.
+
+## 3. Existing implementation inventory
+
+This table distinguishes registration and graph construction from native support.
+The C-06 native gate alone does not complete these operation paths.
+
+| Area | Present in source | Remaining work |
+|------|-------------------|----------------|
+| `map`, `filter`, `collect`, `append` | Baker producer recipes snapshot eager arguments, construct typed generator-local capture references and use the shared iterator/delegation ingredient | Consume the bounded captured-template contract implemented in C-06; settle remaining escaping/opaque input and callback environments; validate native composition |
+| `take`, `iter` | Public NTU schemes | No corresponding Seq recipe dispatch; add graph recipes with the required demand/effect order |
+| `fold`, `length`, `toList`, `toArray` | Older recursive consumer recipes | Retain one initialized iterator, exact current admission and eager inputs through the settled consumer protocol |
+| `fold` state | Public scheme quantifies independent `<'S,'T>` | Baker dispatch currently passes no state type and the recipe falls back to element type; preserve the actual accumulator type |
+| `isEmpty` | Recipe makes one pull and negates its result | Establish native source/effect behavior; do not turn a zero-cut effectful input into a skipped pull |
+| `head`, `min`, `max`, `minBy` | Consumer recipes | Initial successful-pull evidence is absent where current is read; settle nonempty and comparison/key premises before native use |
+| `exists`, `forall`, `tryHead`, `maxBy` | Recipe branches | Public Seq resolver does not register these names; admission and implementation remain separate work |
+| `forall` | Older Boolean-fold recipe | Its predicate polarity is wrong for the helper's true-branch short circuit; correct before exposing the operation |
+| `tryPick` | Public scheme and recursive recipe | Bind each chooser result once and preserve short-circuit/current admission |
+| `Seq.empty` | Public polymorphic value and primitive designation | Keep its concrete lowering/admission distinct from the tested C-06 no-yield source generator |
+
+The producer foundation is in
+[SeqRecipes.fs](../../../clef/src/Compiler/Baker/Recipes/SeqRecipes.fs) and
+[Sequences.fs](../../../clef/src/Compiler/Baker/Ingredients/Sequences.fs).
+[Intrinsics.fs](../../../clef/src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs)
+owns source schemes;
+[BakerSaturation.fs](../../../clef/src/Compiler/Nanopass/BakerSaturation.fs)
+owns recipe dispatch and supplies the checked operand/result types.
+
+The shared iterator ingredient already establishes an enumerator binding before
+its loop, a guarded pull, and one current binding before the supplied unit action.
+Its source/provenance relationships are reused by C-06 consumption and delegation.
+The older recursive consumers are not equivalent evidence merely because their
+comments describe an iterator loop. They must establish the same allocation,
+value-availability, current and capture contracts, through that ingredient or a
+separately admitted graph protocol.
+
+## 4. Missing contracts and owning layers
+
+### 4.1 Captured input template and backing storage
+
+Existing producer snapshots capture the input sequence value. Ordinary scoped
+delegation of a captured input is also a C-06 requirement. Its bounded
+captured-template contract is implemented there through
+[SequenceResidence](../../../clef/src/Compiler/PSGSaturation/SemanticGraph/SequenceResidence.fs):
+proven activation coverage and finite borrow incidence must establish the
+backing storage's availability. C-07 consumes that contract for callback-free
+`append` and transformers; it must not build a competing lifetime analysis.
+
+The resulting contract must connect the exact input allocation/template, producer
+capture, fresh enumerator and their uses. An owned copy or child region needs
+its placed extent and lifetime evidence; a retained view needs evidence that its
+backing storage survives every admitted use. Caller-destination and parent-region
+facts must retain allocation-occurrence identity, including factory-created
+inputs and multiple enumerations. A permissive escape default is not a substitute
+for that relationship.
+
+### 4.2 Callback callable and environment
+
+Continuation placement currently supports scalar fields and typed sequence,
+array and record views; it does not supply a general `TFun` frame field.
+[SequenceMachineRecipes](../../../clef/src/Compiler/Baker/Recipes/SequenceMachineRecipes.fs)
+recognizes some declaration bindings as symbolic code. That distinction must not
+elide the environment of a callback with captures.
+
+C-01/C-02 closure ingredients must establish callback formation, source capture
+identities, parameter/result types, environment storage and call representation.
+Literal and named callbacks, aliases, callbacks returned from factories and
+function-valued parameters can have different admission requirements. A helper
+called with several possible callback or sequence origins still requires the
+full callable contract when exact-origin elision is unavailable.
+
+For `collect`, the callback returns a sequence whose backing storage must survive
+its delegated iteration and the outer suspension. Reusing C-06 caller destinations
+and owned regions requires exact returned-origin and residence premises; merely
+storing the returned descriptor is insufficient.
+
+### 4.3 Demand and consumer state
+
+`take` needs explicit short-circuit control in the graph: inspect remaining count,
+pull only on the positive path, bind current after success, then update count and
+yield. Retain the original count type/range premises and source formation effects.
+This law must hold through a composed filter/map pipeline, including count zero
+and an input that can continue indefinitely.
+
+`fold` and `iter` should compose ordered consumer actions with the shared iterator
+protocol. Folder state and element types remain independent; callback and input
+snapshots precede enumeration. `length`, list/array materialization and search
+operations have additional accumulator, extent, nonempty or stopping contracts.
+These are upstream graph and proof obligations, not new Alex loop emitters.
+
+Search/current admission must cite the actual successful guard and iterator.
+The current certification pass supports the shared while protocol. A recursive
+or single-pull consumer requires its own equally explicit admission or a recipe
+that produces the supported protocol. Empty/nonempty behavior must be decided
+before allowing a current read; no default element can fill the gap.
+
+## 5. Implementation direction
+
+Use the following dependency order to guide work. It is not a rigid gate against
+an independent consumer improvement whose premises are already settled.
+
+1. **Native append and captured input residence.** Exercise the existing producer
+   and delegation recipes without adding callback storage. Apply the captured
+   template/backing relationship and fresh iterator ownership, then validate
+   delayed input effects, empty prefixes/suffixes, repeated enumeration and
+   supported factory inputs. Preserve the original left/right eager argument
+   order and separate suspension owners. This slice applies C-06's bounded
+   contract for captured templates; escaping and opaque input uses remain explicit
+   residuals until their additional lifetime premises are admitted.
+2. **Native map/filter and callback composition.** Add the missing callable/
+   environment contract through C-01/C-02 ingredients, retaining immutable and
+   mutable captures. Cover no-capture and captured callbacks, aliases and admitted
+   parameter/factory paths; then extend `collect` with returned child residence.
+3. **Counted demand and eager consumers.** Add `take` through the shared producer
+   structure and its guarded demand relation. Retool `fold`/`iter` around the
+   settled iterator/action protocol, fixing independent state typing and eager
+   input order. Extend short-circuit and materializing consumers only with their
+   own type, storage and proof premises.
+
+Each slice begins from a source/native oracle with fixed expected values and
+effects, plus exact rejected premises at their owning layer. Complete the related
+source, graph, Alex and peered-tooling work together. Do not use a standalone MLIR
+module or a hand-emitted special case as source conformance.
+
+## 6. Baker to Alex integration
+
+Producer recipes create ordinary `SeqExpr`, generator, binding, application,
+conditional, loop and yield nodes with exact source/provenance relationships.
+Consumption and delegation use their shared ingredients. The existing Baker
+sequence passes then settle ownership, evaluation, composed control, cut/resume
+incidence, liveness, placement, residence and current-read admission. Recipe
+fan-out/fold-in retains every semantic/reference participant and obligation.
+
+The final graph publishes typed frames, origins, initializer/destination rows,
+owned regions, representation meets and resident evidence. A layout proof does
+not establish captured-storage lifetime, and known callable identity does not
+prove the callback's environment available. Missing premises remain explicit
+residuals at their owning layer.
+
+Alex consumes these facts at Huet zipper positions. Existing witnesses pull the
+declared child regions and existing patterns compose typed memory accesses,
+function calls, `scf.if`, `scf.while` and `scf.index_switch`. Standard backend
+lowering handles the resulting `func`/`memref`/`arith`/`index`/`scf` operations.
+There is no source-shape recognizer, recursive subtree emitter, mutable semantic
+state in the zipper or operation-specific imperative MoveNext builder.
+
+## 7. Coverage commitments
+
+The existing sample's feature coverage remains the acceptance target. Its legacy
+source fixture must be brought into the current Clef native harness; its presence
+in the repository is not a passing result. Keep expected behavior fixed and
+record actual artifacts in the waypoint.
+
+| Coverage group | Required cases and representative expected results |
+|----------------|----------------------------------------------------|
+| C-06 inputs | Literal, loop, conditional, effectful empty and supported factory sequences |
+| Basic map | Double `1..5` → `2,4,6,8,10`; square and offset transforms |
+| Basic filter | Even/odd/threshold predicates; preserve accepted order; all-rejected input exhausts |
+| Take boundaries | `take 3` of `1..100` → `1,2,3`; exact length; shorter input completes; nonpositive count does not pull |
+| Fold | Sum `1..10` → `55`, product `1..5` → `120`, maximum and count; empty input returns initial state |
+| Composed operations | Filter/map in either order; first three doubled evens → `4,8,12`; sum of even squares through ten → `220` |
+| Manual equivalence | Compare fold/iter consumers with ordinary `for ... in` for values and ordered effects |
+| Captured callbacks | Scale, threshold, multiple immutable captures and mutable-cell identity; offset-ten fold of `1..5` → `65` |
+| Collect | Two/three yields per element, captured multiplier, variable-length inner loops, empty inner sequences and independent outer/inner state |
+| Captured composition | Each stage retains its own callback environment; filter above five, double, take five → `12,14,16,18,20` |
+| Empty and singleton | No callback on empty input; singleton mapping; empty delegation effects; repeated enumeration |
+| Deep composition | Four/five stages; filter multiples of five, double, filter above fifty, take five, fold → `400` |
+
+Demand-sensitive tests must count upstream pulls and callback invocations, not
+only compare final totals. Exercise the same producer twice and wrappers created
+from one source, preserving shared external cell identity while separating
+iteration state. Captured and parameterized functions must not receive credit
+from tests that only use no-capture literals.
+
+Negative cases retain exact compiler codes, severity and source ranges for wrong
+callback argument/result dimensions, non-Boolean predicates, non-unit actions,
+wrong sequence elements and invalid accumulator types. Missing lifetime,
+nonempty/current or callable premises require the existing responsible diagnostic,
+with source/node provenance where available; accepting any error is insufficient.
+
+## 8. Completion record
+
+- [ ] Registered source schemes, recipes and supported operations agree; dormant
+  recipe branches are not advertised as implemented primitives.
+- [ ] Captured input templates, callbacks and callback-produced sequences have
+  admitted backing storage, full callable representation where needed, and
+  retained type/provenance/obligation participants.
+- [ ] Native source oracles cover the groups above with exact output and demand
+  effects, including composition and captures; expected results remain unchanged.
+- [ ] CCS source/graph negatives and Alex component prerequisites pass, alongside
+  real MLIR verification and standard target lowering.
+- [ ] CCS.Editor, analyzer-facing and actual LSP gates preserve dimensional public
+  signatures, original capture definitions, precise errors and unsaved repairs.
+- [ ] Relevant earlier FidelityHello controls remain correct on the final compiler.
+- [ ] The operations specification, this PRD and waypoint agree on actual support,
+  open representation decisions and final artifact evidence.
+
+[Closure nanopass architecture](../Closure_Nanopass_Architecture.md) and
+[delimited continuations architecture](../Delimited_Continuations_Architecture.md)
+govern this work alongside the normative chapters. Broader C-07 completion must
+not be inferred from the earlier producer graph checkpoint or C-06 native pass.

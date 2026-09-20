@@ -10,6 +10,8 @@ open System.IO
 open System.Diagnostics
 open Clef.Compiler.NativeTypedTree.DimensionAlgebra
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+// This file tests source/build dispatch parity, including exact frame layouts;
+// the separate continuation placement tests check the graph facts' provenance.
 let m = Dimension.ofBase { Name = "m"; Module = ["Units"] }
 let s = Dimension.ofBase { Name = "s"; Module = ["Units"] }
 let u = Dimension.ofVar { Id = 501; Name = Some "u" }
@@ -141,3 +143,31 @@ for index, (body, expected) in List.indexed staticLayoutCases do
     let native = run "cvc5" "--lang=smt2" smt
     if source <> expected || native <> expected then failwithf "Layout expected %s, source=%s native=%s for %A" expected source native body
 printfn "PASS %d concrete-layout source/native parity cases" staticLayoutCases.Length
+let continuationLayoutCases = [
+    [0,1,1; 1,1,1; 2,2,2], 4, 2, "unsat"
+    [0,1,1; 1,1,1; 8,40,8], 48, 8, "unsat"
+    [], 0, 1, "unsat"
+    [0,1,1; 3,1,1], 4, 1, "sat" // Misplaced slot/excess interior padding.
+    [0,2,2; 0,2,2], 2, 2, "sat" // Overlap.
+    [0,1,1; 2,2,2], 3, 2, "sat" // Truncated extent.
+    [0,1,1; 2,2,2], 6, 2, "sat" // Excess terminal padding.
+    [0,1,1; 2,2,2], 4, 1, "sat" // Insufficient frame alignment.
+    [0,3,3], 3, 3, "sat"       // Unsupported non-power-of-two alignment.
+    [0,1,0], 1, 1, "sat"
+    [-1,1,1], 0, 1, "sat"
+    [0,0,1], 0, 1, "sat"
+    [0,Int32.MaxValue,1; Int32.MaxValue,1,1], Int32.MaxValue, 1, "sat"
+    [], 1, 1, "sat"
+    [], 0, 2, "sat"
+]
+for index, (slots, extent, alignment, expected) in List.indexed continuationLayoutCases do
+    let ob = { Id = sprintf "continuation_layout_%d" index; Kind = "continuation-layout-regression"; Logic = "QF_LIA"
+               Statement = "exact continuation placement"; Source = "test"; Refs = []
+               Body = ObligationBody.ContinuationLayout(slots, extent, alignment) }
+    let source = run "cvc5" "--lang=smt2" (Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob])
+    let smt = run "mlir-translate" "--export-smtlib" (Alex.Traversal.SMTTransfer.transfer [ob])
+    if not (smt.Contains(ob.Id)) then failwithf "Continuation anchor %s did not survive transfer" ob.Id
+    let native = run "cvc5" "--lang=smt2" smt
+    if source <> expected || native <> expected then
+        failwithf "Continuation %d: expected %s, source=%s native=%s for %A" index expected source native ob.Body
+printfn "PASS %d continuation-layout source/native parity cases" continuationLayoutCases.Length

@@ -1,0 +1,77 @@
+/// C-06 scalar element values are checked after native sequence consumption.
+module SequenceElements
+
+[<Measure>] type distance
+[<Measure>] type duration
+
+[<EntryPoint>]
+let main _ =
+    let flags: seq<bool> = seq { yield true; yield false; yield true }
+    let mutable flagCount = 0
+    let mutable flagBits = 0
+    for flag in flags do
+        flagCount <- flagCount + 1
+        flagBits <- flagBits * 2 + (if flag then 1 else 0)
+    let booleans = flagCount = 3 && flagBits = 5
+
+    let mutable unitEffects = 0
+    let actions: seq<unit> = seq {
+        unitEffects <- 1
+        yield ()
+        unitEffects <- 2
+        yield ()
+        unitEffects <- 3
+    }
+    let unitWasCold = unitEffects = 0
+    let mutable unitCount = 0
+    let mutable unitAtPull = 0
+    for value in actions do
+        let observed: unit = value
+        ignore observed
+        unitCount <- unitCount + 1
+        unitAtPull <- unitAtPull * 10 + unitEffects
+    let units = unitWasCold && unitCount = 2 && unitAtPull = 12 && unitEffects = 3
+
+    let reals: seq<float> = seq { yield 0.25; yield -0.5; yield 0.75 }
+    let mutable realCount = 0
+    let mutable realTotal = 0.0
+    let mutable weightedTotal = 0.0
+    let mutable weight = 1.0
+    for value in reals do
+        realCount <- realCount + 1
+        realTotal <- realTotal + value
+        weightedTotal <- weightedTotal + value * weight
+        weight <- weight * 2.0
+    let fractionalValues = realCount = 3 && realTotal = 0.5 && weightedTotal = 2.25
+
+    let lengths: seq<int<distance>> = seq { yield 2<distance>; yield 5<distance> }
+    let mutable lengthCount = 0
+    let mutable lengthOrder = 0<distance>
+    for value in lengths do
+        lengthCount <- lengthCount + 1
+        lengthOrder <- lengthOrder * 10 + value
+    let measuredIntegers = lengthCount = 2 && lengthOrder = 25<distance>
+
+    let rates: seq<float<1/duration>> = seq { yield -0.25<1/duration>; yield 0.5<1/duration> }
+    let mutable rateCount = 0
+    let mutable rateTotal = 0.0<1/duration>
+    let mutable rateOrder = 0.0<1/duration>
+    for value in rates do
+        rateCount <- rateCount + 1
+        rateTotal <- rateTotal + value
+        rateOrder <- rateOrder * 2.0 + value
+    let inverseMeasures = rateCount = 2 && rateTotal = 0.25<1/duration> && rateOrder = 0.0<1/duration>
+
+    if not booleans then 71
+    elif not units then 72
+    elif not fractionalValues then 73
+    elif not measuredIntegers then 74
+    elif not inverseMeasures then 75
+    else
+        Console.writeln "=== Sequence elements Test ==="
+        Console.writeln "Boolean payload order: pass"
+        Console.writeln "Unit yields retain pull count and effects: pass"
+        Console.writeln "Fractional real payloads: pass"
+        Console.writeln "Measured integer payloads: pass"
+        Console.writeln "Inverse measured real payloads: pass"
+        0

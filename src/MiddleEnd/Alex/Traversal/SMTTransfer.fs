@@ -318,6 +318,66 @@ let private scope (ob: ObligationInfo) : MLIROp list =
             let definition = v ()
             statements.Add(smt (SMTAnd(definition, List.ofSeq clauses)))
             anchor definition (List.ofSeq statements)
+        | ObligationBody.ContinuationLayout (slots, extent, alignment) ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let result = v ()
+                statements.Add(smt (SMTBigIntConstant(result, value)))
+                result
+            let binary make left right =
+                let result = v ()
+                statements.Add(smt (make (result, left, right)))
+                result
+            let cmp predicate left right =
+                let result = v ()
+                statements.Add(smt (SMTIntCmp(result, predicate, left, right)))
+                result
+            let equal left right =
+                let result = v ()
+                statements.Add(smt (SMTEq(result, left, right, SMTInt)))
+                result
+            let any values =
+                let result = v ()
+                statements.Add(smt (SMTOr(result, values)))
+                result
+            let zero, one = constant 0I, constant 1I
+            let powerOfTwo value =
+                [0 .. 30] |> List.map (fun exponent -> equal value (constant (1I <<< exponent))) |> any
+            let aligned endpoint required =
+                // Nonpositive alignments fail their own clause; use a defined
+                // divisor while transcribing the exact rounding equation.
+                let divisor = constant (bigint (max 1 required))
+                let adjustment = binary SMTIntSub divisor one
+                let rounded = binary SMTIntDiv (binary SMTIntAdd endpoint adjustment) divisor
+                binary SMTIntMul rounded divisor
+            let extentTerm, alignmentTerm = constant (bigint extent), constant (bigint alignment)
+            let clauses = ResizeArray<SSA>()
+            clauses.Add(cmp SmtGe extentTerm zero)
+            clauses.Add(powerOfTwo alignmentTerm)
+            clauses.Add(cmp SmtGe alignmentTerm one)
+            let mutable previous = zero
+            let placements = slots |> List.map (fun (offset, bytes, alignment) ->
+                let beginAt, length, required = constant (bigint offset), constant (bigint bytes), constant (bigint alignment)
+                let endAt = binary SMTIntAdd beginAt length
+                clauses.Add(cmp SmtGe beginAt zero)
+                clauses.Add(cmp SmtGt length zero)
+                clauses.Add(powerOfTwo required)
+                clauses.Add(cmp SmtGe alignmentTerm required)
+                let divisor = constant (bigint (max 1 alignment))
+                clauses.Add(equal (binary SMTIntMod beginAt divisor) zero)
+                clauses.Add(equal (binary SMTIntMod alignmentTerm divisor) zero)
+                clauses.Add(equal beginAt (aligned previous alignment))
+                clauses.Add(cmp SmtLe endAt extentTerm)
+                previous <- endAt
+                beginAt, endAt, required)
+            clauses.Add(any (equal alignmentTerm one :: (placements |> List.map (fun (_, _, required) -> equal alignmentTerm required))))
+            clauses.Add(equal extentTerm (aligned previous alignment))
+            for index, (leftBegin, leftEnd, _) in List.indexed placements do
+                for rightBegin, rightEnd, _ in List.skip (index + 1) placements do
+                    clauses.Add(any [cmp SmtLe leftEnd rightBegin; cmp SmtLe rightEnd leftBegin])
+            let definition = v ()
+            statements.Add(smt (SMTAnd(definition, List.ofSeq clauses)))
+            anchor definition (List.ofSeq statements)
         | ObligationBody.ConsecutiveLayout (storages, span, capacity) ->
             let sizes = List.toArray storages
             let n' = sizes.Length

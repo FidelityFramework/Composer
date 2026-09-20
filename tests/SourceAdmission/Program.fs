@@ -4,12 +4,15 @@ open System
 open System.IO
 open System.Security.Cryptography
 open System.Text.Json
+open System.Text.RegularExpressions
 
 type Case = { Name: string; Source: string; ErrorLine: int; ErrorCode: string; ErrorMessage: string }
 type Evidence = {
     Name: string
     Passed: bool
     ExpectedDiagnostic: string
+    ExpectedDiagnostics: string list
+    ActualDiagnostics: string list
     CompileExit: int
     VerifyExit: int
     NativeExit: int
@@ -89,6 +92,40 @@ let cases = [
     sequenceCase "sequence-append-dimensions" "CCS8040" 6
         "Measure mismatch: 'm' vs 's'; the residual 'm / s' is not 1"
         ["    let wrong = Seq.append (seq { yield 1<m> }) (seq { yield 2<s> })"]
+    { Name = "sequence-current-is-internal"; ErrorLine = 2; ErrorCode = "CCS8009"
+      ErrorMessage = "The value or constructor 'SeqEnumerator.current' is not defined."
+      Source = source [
+        "module Admission"
+        "let read iterator : int = SeqEnumerator.current iterator"
+        "[<EntryPoint>]"
+        "let main _ ="
+        "    ignore read"
+        "    0"
+    ] }
+    { Name = "sequence-unknown-input-region"; ErrorLine = 3; ErrorCode = "CCS8403"
+      ErrorMessage = "Sequence suspension requires further settlement: Allocation residence is unresolved: UnknownInputRegion (NodeId {node:input})"
+      Source = source [
+        "module Admission"
+        "let consume (values: seq<int>) ="
+        "    for item in values do ignore item"
+        "[<EntryPoint>]"
+        "let main _ ="
+        "    ignore consume"
+        "    0"
+    ] }
+    { Name = "sequence-factory-local-cell"; ErrorLine = 2; ErrorCode = "CCS8403"
+      ErrorMessage = "Sequence suspension requires further settlement: Factory-local capture 'local' refers to storage in the returning activation; a covering caller/program region is not established."
+      Source = source [
+        "module Admission"
+        "let make (seed: int) ="
+        "    let mutable local = seed"
+        "    seq { yield local }"
+        "[<EntryPoint>]"
+        "let main _ ="
+        "    let values = make 7"
+        "    for value in values do ignore value"
+        "    0"
+    ] }
     { Name = "ordinary-control"; ErrorLine = 0; ErrorCode = ""; ErrorMessage = ""; Source = source [
         "module Admission"
         "let increment value = value + 1"
@@ -104,6 +141,30 @@ let cases = [
         "    else 1"
     ] }
 ]
+
+// These are additional required findings for the same rejected factory, not
+// an allowlist of ignorable diagnostics. The final native gate checks all of
+// them and the exact total. Node placeholders denote only compiler node IDs;
+// every surrounding character, source line, code and reason stays exact.
+let private additionalErrors name =
+    match name with
+    | "sequence-factory-local-cell" -> [
+        4, "CCS8403", "Sequence suspension requires further settlement: Allocation residence is unresolved: ReturnsFrom (NodeId {node:factory})"
+        8, "CCS8403", "Sequence suspension requires further settlement: Allocation residence is unresolved: FactoryResult (NodeId {node:call})"
+      ]
+    | _ -> []
+
+let private diagnosticMatches (expected: string) (actual: string) =
+    let placeholders = Regex.Matches(expected, @"\{node:([a-zA-Z][a-zA-Z0-9]*)\}")
+    let mutable index = 0
+    let pattern =
+        [ for matched in placeholders do
+            yield Regex.Escape(expected.Substring(index, matched.Index - index))
+            yield "(?<" + matched.Groups[1].Value + ">[0-9]+)"
+            index <- matched.Index + matched.Length
+          yield Regex.Escape(expected.Substring index) ]
+        |> String.concat ""
+    Regex.IsMatch(actual, "\\A" + pattern + "\\z")
 
 let private check compiler platform work (test: Case) =
     let directory = Path.Combine(work, test.Name)
@@ -121,23 +182,33 @@ let private check compiler platform work (test: Case) =
     // range retains the absolute filename passed to CCS by the project loader.
     let message = test.ErrorMessage.Replace("{source}", sourceFile)
     let expected = if test.ErrorLine = 0 then "" else sprintf "Main.clef:%d: error %s: %s" test.ErrorLine test.ErrorCode message
+    let expectedDiagnostics =
+        if test.ErrorLine = 0 then []
+        else expected :: (additionalErrors test.Name |> List.map (fun (line, code, message) ->
+            sprintf "Main.clef:%d: error %s: %s" line code (message.Replace("{source}", sourceFile))))
     let mutable compileExit, verifyExit, nativeExit = -1, -1, -1
+    let mutable actualDiagnostics: string list = []
     let mutable failure = ""
     try
         let compiled = Tests.Process.run compiler ["compile"; project; "-k"; "--no-color"] 600000 (Some (Path.Combine(directory, "compile.log")))
         compileExit <- compiled.ExitCode
         let output = Path.Combine(directory, "targets/admission")
         let intermediates = Path.Combine(directory, "targets/intermediates")
+        actualDiagnostics <-
+            compiled.Output.Replace("\r\n", "\n").Split('\n')
+            |> Array.filter (fun line -> line.Contains ": error ") |> Array.toList
         if test.ErrorLine > 0 then
             if compileExit <> 1 then failwithf "Expected source rejection exit 1, got %d" compileExit
-            let matching =
-                compiled.Output.Replace("\r\n", "\n").Split('\n')
-                |> Array.filter (fun line -> line = expected)
-            if matching.Length <> 1 then
-                failwithf "Expected exactly one diagnostic '%s'; got %d" expected matching.Length
-            if matching.[0].Contains "[unreachable]" then failwith "Expected an effective source error, not an unreachable finding"
-            if not (compiled.Output.Contains "Compilation failed with 1 error(s)") then
-                failwith "Expected the source diagnostic gate to reject this single invalid form"
+            if actualDiagnostics.Length <> expectedDiagnostics.Length then
+                failwithf "Expected exactly %d diagnostics, got %d: %A" expectedDiagnostics.Length actualDiagnostics.Length actualDiagnostics
+            for required in expectedDiagnostics do
+                let matching = actualDiagnostics |> List.filter (diagnosticMatches required)
+                if matching.Length <> 1 then
+                    failwithf "Expected exactly one diagnostic '%s'; got %d" required matching.Length
+                if matching.Head.Contains "[unreachable]" then failwith "Expected an effective source error, not an unreachable finding"
+            let summary = sprintf "Compilation failed with %d error(s)" expectedDiagnostics.Length
+            if not (compiled.Output.Contains summary) then
+                failwithf "Expected the exact source diagnostic summary '%s'" summary
             if File.Exists output then failwith "Rejected source produced a native executable"
             if Directory.Exists intermediates && not (Seq.isEmpty (Directory.EnumerateFiles(intermediates, "*.mlir", SearchOption.AllDirectories))) then
                 failwith "Rejected source reached witnessed MLIR output"
@@ -157,6 +228,7 @@ let private check compiler platform work (test: Case) =
     let passed = failure = ""
     printfn "%s %s%s" (if passed then "PASS" else "FAIL") test.Name (if passed then "" else ": " + failure)
     { Name = test.Name; Passed = passed; ExpectedDiagnostic = expected
+      ExpectedDiagnostics = expectedDiagnostics; ActualDiagnostics = actualDiagnostics
       CompileExit = compileExit; VerifyExit = verifyExit; NativeExit = nativeExit; Failure = failure }
 
 [<EntryPoint>]
