@@ -148,10 +148,13 @@ scheduling, async lifetime admission, or a new MLIR dialect's preservation gates
 Async and Threading precede the Reactive family in the intended progression.
 Existing [HelloWayland Ariel CPU acceptance](../../../HelloWayland/docs/multi-core-cpu.md)
 and [typed carrier gates](../../../HelloWayland/tests/ariel-typed/README.md)
-provide an operational baseline for formalization and regression oracles: native
-serial/parallel rendering, active worker threads, resize and normal close/join
-are recorded as passing. That explicit typed integration does not close every
-A/T PRD or prove automatic capture/access extraction for arbitrary dispatch.
+describe a working implementation sketch that predates full actor-model
+expression. Native serial/parallel rendering, active worker threads, resize and
+normal close/join are recorded as passing; the project author also reports
+saturation of all 32 CPU threads. These results supply workload and regression
+evidence. The sketch is not authoritative for the actor or scheduler contracts
+and does not close the A/T PRDs or establish automatic capture/access extraction
+for arbitrary dispatch.
 
 | PRD | Title | Sample | Status | Note |
 |-----|-------|--------|--------|------|

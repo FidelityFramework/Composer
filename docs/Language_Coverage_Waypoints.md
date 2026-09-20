@@ -20,9 +20,12 @@ Numbering guides the work; current dependencies determine the sequence. Async
 and Threading precede Reactive. Within Reactive, Incremental leads from the
 closure/lazy/thunk basis while Observable is developed alongside it, including
 shared invalidation, cutoff, effect order and ownership gates. HelloWayland's
-recorded Ariel CPU and typed-carrier acceptance informs A/T formalization without
-closing those PRDs. Its September 9 acceptance record is historical evidence,
-not a fresh hardware or native run in this synchronization batch.
+recorded Ariel CPU and typed-carrier acceptance supplies working-sketch evidence
+from before full actor-model expression. The project author reports saturation
+of all 32 CPU threads. This is useful workload evidence, not an authoritative
+actor/scheduler design or closure of the A/T PRDs. Its September 9 acceptance
+record and the author's observation are not fresh execution measurements from
+this synchronization batch.
 
 This batch publishes the previously pending design records, corrects stale
 server/tooling status, aligns sample/library manifests with the existing
@@ -32,7 +35,7 @@ compiler and proof results below retain their original revisions and limits.
 
 | Repository | Revision | Synchronization scope |
 |---|---|---|
-| Composer | This entry's containing commit | PRD status, incremental and JavaScript/WebView design, credential roadmap, sample catalog and obsolete SBC retirement |
+| Composer | `be0f14cd9666` | PRD status, incremental and JavaScript/WebView design, credential roadmap, sample catalog and obsolete SBC retirement |
 | clef-lang-spec | `d04574a` | Credential custody, authenticated sealing, durable commit and recovery requirements |
 | ClefAutoComplete (`fidelity`) | `1f347d78` | Reference fork and active CCS/Lattice boundary reconciled |
 | lattice-vscode (`fidelity`) | `390d5b2` | Active client status and root development launch configuration |
