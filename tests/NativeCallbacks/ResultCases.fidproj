@@ -1,0 +1,14 @@
+[package]
+name = "ResultCases"
+version = "0.1.0"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["ResultCases.clef"]
+output = "result-cases"
+output_kind = "console"

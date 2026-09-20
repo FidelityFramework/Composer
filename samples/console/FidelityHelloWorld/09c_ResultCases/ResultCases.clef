@@ -1,0 +1,87 @@
+/// Sample 09c: Result case predicates observe tags without invoking payloads.
+module ResultCasesSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private argument digit successful : Result<int, int> =
+    record digit
+    calls <- calls + 1
+    if successful then Ok 7 else Error 9
+
+let private payload digit =
+    record digit
+    fun value -> calls <- calls + 1; value + digit
+
+let succeeds = Result.isOk
+let fails = Result.isError
+
+[<EntryPoint>]
+let main _ =
+    let success: Result<int, int> = Ok 7
+    let failure: Result<int, int> = Error 9
+    let unitSuccess: Result<unit, unit> = Ok ()
+    let unitFailure: Result<unit, unit> = Error ()
+    let tagsOk = succeeds success && not (fails success)
+                 && fails failure && not (succeeds failure)
+                 && succeeds unitSuccess && not (fails unitSuccess)
+                 && fails unitFailure && not (succeeds unitFailure)
+
+    trace <- 0
+    calls <- 0
+    let direct = Result.isOk (argument 1 true)
+    let forward = argument 2 false |> Result.isError
+    let backward = Result.isOk <| argument 3 false
+    let factoriesOk = direct && forward && not backward && trace = 123 && calls = 3
+
+    let mutable selected: Result<int, int> -> bool = Result.isOk
+    let stored = selected
+    selected <- Result.isError
+    let length: Result<int<distance>, int<duration>> = Ok 2<distance>
+    let elapsed: Result<int<duration>, int<distance>> = Error 3<distance>
+    let inverse: Result<float<1/duration>, bool> = Ok 0.25<1/duration>
+    let storedOk = stored success && not (stored failure) && selected failure
+                   && succeeds length && fails elapsed && succeeds inverse
+                   && Result.isError<int<duration>, int<distance>> elapsed
+
+    trace <- 0
+    calls <- 0
+    let callableSuccess: Result<int -> int, int -> int> = Ok (payload 1)
+    let callableFailure: Result<int -> int, int -> int> = Error (payload 2)
+    let functionsOk = succeeds callableSuccess && not (fails callableSuccess)
+                      && fails callableFailure && not (succeeds callableFailure)
+                      && trace = 12 && calls = 0
+
+    trace <- 0
+    calls <- 0
+    let stoppedAnd = succeeds (argument 1 false) && fails (argument 2 false)
+    let stoppedAndOk = not stoppedAnd && trace = 1 && calls = 1
+    trace <- 0
+    calls <- 0
+    let stoppedOr = fails (argument 1 false) || succeeds (argument 2 true)
+    let stoppedOrOk = stoppedOr && trace = 1 && calls = 1
+    trace <- 0
+    calls <- 0
+    let continuedOr = fails (argument 1 true) || succeeds (argument 2 true)
+    let compositionOk = stoppedAndOk && stoppedOrOk && continuedOr && trace = 12 && calls = 2
+
+    if not tagsOk then 1
+    elif not factoriesOk then 2
+    elif not storedOk then 3
+    elif not functionsOk then 4
+    elif not compositionOk then 5
+    else
+        Console.writeln "=== Result cases Test ==="
+        Console.writeln "Case tags and unit payloads: pass"
+        Console.writeln "Factory and pipe order: pass"
+        Console.writeln "Stored predicates and measured payloads: pass"
+        Console.writeln "Callable payloads remain uninvoked: pass"
+        Console.writeln "Short-circuit composition: pass"
+        0

@@ -7,6 +7,35 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## F-09 Result case predicates — 2026-09-20
+
+Specification `5f49a02` defines `Result.isOk` and `Result.isError` as unary
+predicates with two independent payload parameters. Baker composes the existing
+typed tag read and comparison ingredients, preceded by the original input.
+Predicates never extract or invoke a payload. Bare values become ordinary unary
+closures; their uses retain resolved parameter types and application obligation
+participants. No Alex witness or target layout rule was added.
+
+| Gate | Result |
+|---|---|
+| CCS | **672/672**, including 20 predicate cases with eight exact negative cases; `/tmp/clef-result-predicates-full.log` |
+| Native / MLIR | **2/2** ResultCases (eight groups, 141–148) and ResultElimination (15 groups), stock verification and native exit zero; `/tmp/composer-callbacks-fsharp-555a1a0ad1fb4a7293ad8f1eb33d0b8c/` |
+| FidelityHello | New **09c_ResultCases passes** five groups with exact six-line output; `/tmp/composer-result-predicates-fidelityhello.log` |
+| Analyzer projection | **32 accepted / 42 exact rejections**, revisions 1–91; `/tmp/lattice-ccs-surface-81efcb271ba34a32b0ad229a1120da7c/evidence.json` |
+| LSP | **46 diagnostic edits and repairs**, 12 Result hovers; `/tmp/lattice-surface-waypoint-fI5CJr/result.json` |
+
+Native cases include eager factories and pipes, stored predicate identity,
+independently measured and inverse-dimensional payloads, callable construction
+without invocation, unit and record payloads, lexical shadowing, and Boolean
+short-circuit composition. Every native Result fixes both payload types; tag-only
+use does not authorize inventing a representation for an unresolved payload.
+Source tests additionally retain captured storage identity and exact application
+obligation relationships. Both tooling gates loaded CCS SHA-256
+`da5931aca2af35313163c8e444a8339d725e37db591d40bcf4125154438a3809`.
+
+Companion revisions: clef `eba9b3349`, lattice-analyzers `aa22093`,
+lattice-vscode `df638c1`, CAC `d6fdb7f3`.
+
 ## C-06 sequence owner and element constraints — 2026-09-20
 
 Sequence elaboration creates the actual owner before checking its body. Each

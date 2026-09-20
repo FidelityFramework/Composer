@@ -6,6 +6,7 @@ open System.Security.Cryptography
 open System.Text.Json
 
 let cases = [
+    "ResultCases", "ResultCases.clef", "result-cases", ["arith.cmpi";"func.call_indirect"]
     "ResultElimination", "ResultElimination.clef", "result-elimination", ["scf.if";"func.call_indirect"]
     "LoopCaptures", "LoopCaptures.clef", "loop-captures", ["scf.while";"func.call_indirect"]
     "RangeLoops", "RangeLoops.clef", "range-loops", ["scf.while";"func.call @RangeLoops.first";"func.call @RangeLoops.last"]

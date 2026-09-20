@@ -19,6 +19,15 @@ cases. A selected passing subset does not establish the remaining cases. Each
 retained MLIR module must also pass `mlir-opt --verify-each`; missing tooling is
 a failed gate. The evidence records the executable and compiler assembly hashes.
 
+`ResultCases` passes native execution and stock MLIR verification. Its eight groups
+(141–148) check both tags, direct and piped factories exactly once, stored
+predicate identity, fresh aliases and explicit generics, independent measured
+payloads, uninvoked callable payloads, unit payloads, lexical `Result` shadowing,
+and short-circuit composition. Every Result fixes both payload types. The
+retained module must contain `arith.cmpi` and `func.call_indirect`; case predicates
+observe tags without extracting or invoking a payload. The companion
+`09c_ResultCases` FidelityHello variant checks five groups with exact output.
+
 `ResultElimination` checks eager defaults, Error-payload recovery and Ok-only
 iteration. Fifteen groups (221–235) cover case behavior, factories and pipes,
 partial snapshots with shared captures, independently measured success/error

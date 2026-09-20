@@ -6,11 +6,13 @@
 > allocation-by-payload-size descriptions are historical. Current placement is
 > governed by the [DU lifetime contract](../../../clef-lang-spec/spec/discriminated-union-representation.md),
 > with representations and layout settled before Alex. The native `map`,
-> `mapError` and `bind` contracts are specified in
+> `mapError`, `bind`, `defaultValue`, `defaultWith`, `iter`, `isOk` and `isError` contracts are specified in
 > [Error Handling](../../../clef-lang-spec/spec/error-handling.md#native-result-operations).
 > Their implementation and native/tooling gates are recorded in
 > [Language coverage waypoints](../Language_Coverage_Waypoints.md); the
 > `ResultRecipes` sketch below is not an implementation-completeness claim.
+> The historical `get`/`getError` entries below do not admit unchecked payload
+> extraction. They are not implemented native intrinsics by this checkpoint.
 
 ## 1. Executive Summary
 

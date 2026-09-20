@@ -1,0 +1,122 @@
+module ResultCases
+
+// Registered native oracle; execution gate pending predicate implementation.
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Failure = { Code: int; Retry: bool }
+type LocalPredicates = { isOk: int -> int; isError: int -> int }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private argument digit successful : Result<int, int> =
+    record digit
+    calls <- calls + 1
+    if successful then Ok 7 else Error 9
+
+let private payload digit =
+    record digit
+    fun value -> calls <- calls + 1; record 9; value + digit
+
+let succeeds = Result.isOk
+let fails = Result.isError
+
+let private lexicalPredicates () =
+    let Result = {
+        isOk = fun value -> record 1; value + 10
+        isError = fun value -> record 2; value + 20
+    }
+    let accepted = Result.isOk 3
+    let rejected = Result.isError 4
+    accepted = 13 && rejected = 24
+
+[<EntryPoint>]
+let main _ =
+    let success: Result<int, int> = Ok 7
+    let failure: Result<int, int> = Error 9
+    let tagsOk = Result.isOk success && not (Result.isError success)
+                 && Result.isError failure && not (Result.isOk failure)
+
+    trace <- 0
+    calls <- 0
+    let directOk = Result.isOk (argument 1 true)
+    let directError = Result.isError (argument 2 false)
+    let forwardOk = argument 3 false |> Result.isOk
+    let forwardError = argument 4 true |> Result.isError
+    let backwardOk = Result.isOk <| argument 5 true
+    let backwardError = Result.isError <| argument 6 false
+    let factoriesOk = directOk && directError && not forwardOk && not forwardError
+                      && backwardOk && backwardError && trace = 123456 && calls = 6
+
+    // A stored function value keeps the chosen predicate when its source slot changes.
+    let mutable selected: Result<int, int> -> bool = Result.isOk
+    let stored = selected
+    selected <- Result.isError
+    let recordSuccess: Result<Failure, bool> = Ok { Code = 3; Retry = true }
+    let recordFailure: Result<bool, Failure> = Error { Code = 4; Retry = false }
+    let aliasesOk = stored success && not (stored failure) && selected failure
+                    && succeeds recordSuccess && fails recordFailure
+                    && not (fails recordSuccess) && not (succeeds recordFailure)
+
+    // Success and error dimensions remain independent at each bare or explicit use.
+    let length: Result<int<distance>, int<duration>> = Ok 2<distance>
+    let elapsed: Result<int<duration>, int<distance>> = Error 3<distance>
+    let inverse: Result<float<1/duration>, bool> = Ok 0.25<1/duration>
+    let inverseError: Result<bool, float<1/distance>> = Error 0.5<1/distance>
+    let dimensionsOk = succeeds length && fails elapsed && succeeds inverse && fails inverseError
+                       && Result.isOk<int<distance>, int<duration>> length
+                       && Result.isError<bool, float<1/distance>> inverseError
+
+    // Payload construction is eager, but tag observation never invokes either callable.
+    trace <- 0
+    calls <- 0
+    let callableSuccess: Result<int -> int, int -> int> = Ok (payload 1)
+    let callableFailure: Result<int -> int, int -> int> = Error (payload 2)
+    let functionsOk = succeeds callableSuccess && not (fails callableSuccess)
+                      && fails callableFailure && not (succeeds callableFailure)
+                      && trace = 12 && calls = 0
+
+    let unitSuccess: Result<unit, int> = Ok ()
+    let unitFailure: Result<bool, unit> = Error ()
+    let bothUnitSuccess: Result<unit, unit> = Ok ()
+    let bothUnitFailure: Result<unit, unit> = Error ()
+    let unitsOk = succeeds unitSuccess && fails unitFailure
+                  && succeeds bothUnitSuccess && not (fails bothUnitSuccess)
+                  && fails bothUnitFailure && not (succeeds bothUnitFailure)
+
+    trace <- 0
+    let lexicalValuesOk = lexicalPredicates ()
+    let lexicalOk = lexicalValuesOk && trace = 12
+
+    trace <- 0
+    calls <- 0
+    let both = succeeds (argument 1 true) && fails (argument 2 false)
+    let bothOk = both && trace = 12 && calls = 2
+    trace <- 0
+    calls <- 0
+    let stoppedAnd = succeeds (argument 1 false) && fails (argument 2 false)
+    let stoppedAndOk = not stoppedAnd && trace = 1 && calls = 1
+    trace <- 0
+    calls <- 0
+    let stoppedOr = fails (argument 1 false) || succeeds (argument 2 true)
+    let stoppedOrOk = stoppedOr && trace = 1 && calls = 1
+    trace <- 0
+    calls <- 0
+    let continuedOr = fails (argument 1 true) || succeeds (argument 2 true)
+    let compositionOk = bothOk && stoppedAndOk && stoppedOrOk
+                        && continuedOr && trace = 12 && calls = 2
+
+    if not tagsOk then 141
+    elif not factoriesOk then 142
+    elif not aliasesOk then 143
+    elif not dimensionsOk then 144
+    elif not functionsOk then 145
+    elif not unitsOk then 146
+    elif not lexicalOk then 147
+    elif not compositionOk then 148
+    else 0
