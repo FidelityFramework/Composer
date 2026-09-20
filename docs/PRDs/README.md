@@ -2,6 +2,12 @@
 
 > **Purpose**: Category-prefixed PRD organization enabling modular growth across platform targets
 
+Status reconciliation, 2026-09-20: implementation and acceptance are separate.
+The [language coverage record](../Language_Coverage_Waypoints.md) carries the
+tested compiler/tooling revisions and unresolved gates. Historical foundation
+retrospectives are not fresh regression results. The remaining Planned rows
+identify roadmap work without claiming native acceptance.
+
 ---
 
 ## Category Overview
@@ -58,15 +64,19 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 
 | PRD | Title | Sample | Status |
 |-----|-------|--------|--------|
-| [C-01](C-01-Closures.md) | MLKit-Style Flat Closures | 11 | In Progress |
-| [C-02](C-02-HigherOrderFunctions.md) | Higher-Order Functions | 12 | Planned |
-| [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | Planned |
-| [C-04](C-04-CoreCollections.md) | Core Collections | 13a | Planned |
-| [C-05](C-05-Lazy.md) | Lazy Evaluation | 14 | Planned |
-| [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–c | Native core implemented; aggregate gate open |
-| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16 | Planned |
+| [C-01](C-01-Closures.md) | MLKit-Style Flat Closures | 11 | In progress: bounded native environments tested; broader callable storage open |
+| [C-02](C-02-HigherOrderFunctions.md) | Higher-Order Functions | 12 | In progress: native callback paths tested; retained Seq operation partials open |
+| [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | Inherited implementation; PRD acceptance not established by C-07 |
+| [C-04](C-04-CoreCollections.md) | Core Collections | 13a | Partial implementation; collection storage/extent and native gates open |
+| [C-05](C-05-Lazy.md) | Lazy Evaluation | 14 | Inherited implementation; canonical lazy acceptance open |
+| [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–d | Native core implemented; original recurrence/aggregate gates open |
+| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | Core implementation tested; full acceptance open (see waypoint) |
 
 ### Async (A-xx) - Asynchronous Programming
+
+Before advancing this family, reconcile the inherited implementation sketches
+with the Clef CE/delimited-continuation contracts. C-07 does not establish actor
+scheduling, async lifetime admission, or a new MLIR dialect's preservation gates.
 
 | PRD | Title | Sample | Status |
 |-----|-------|--------|--------|
@@ -76,6 +86,15 @@ Not all PRDs apply to all targets. This matrix clarifies which features are need
 | [A-04](A-04-BasicRegion.md) | Basic Regions | 20 | Planned |
 | [A-05](A-05-RegionPassing.md) | Region Passing | 21 | Planned |
 | [A-06](A-06-RegionEscape.md) | Region Escape Analysis | 22 | Planned |
+
+### Next implementation handoff
+
+| Area | Concrete entry condition and first gate |
+|------|-----------------------------------------|
+| C-01 / C-02 | Reuse staged operand snapshots for Seq partial/bare values; admit retained sequence and callable environments with exact residence/use evidence. `16h_SequenceApplications` is the unchanged native gate. |
+| C-04 with remaining C-07 consumers | Establish collection storage, bounded links, extent and current/nonempty contracts before claiming `toList`, `toArray` or extrema support. Use the existing BAREWire collection contracts and native oracles. |
+| C-05 | Reconcile the inherited lazy implementation with the canonical closure/thunk contract before treating it as a foundation for native `Incremental<'T>`. |
+| A / T families and added dialects | Reconcile CE, suspension, actor and scheduler contracts first. New `math`, `affine`, `vector`, `async`, `tensor` or `cf` witnesses consume settled Baker relationships and need source-to-native preservation gates; adding an MLIR operation alone is not language coverage. |
 
 ### IO (I-xx) - Network & File I/O
 

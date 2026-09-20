@@ -38,21 +38,11 @@ let solverValue (k: int) : SSA = V (0, k)
 /// A value no operation defines: the placeholder of a guard that cannot occur.
 let undefined : SSA = V (-1, -1)
 
-/// A module-level value binding realised as a program-lifetime slot: a module member with
-/// EmissionStrategy.MainPrologue whose value is not a lambda (a core's realisation; fabric has no slot).
-let isModuleValueSlot (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (node: SemanticNode) : bool =
-    match node.Kind with
-    | SemanticKind.Binding _ when platform <> Core.Types.Dialects.TargetPlatform.FPGA && node.EmissionStrategy = EmissionStrategy.MainPrologue ->
-        let isModuleMember = graph.ModuleClassifications.Value |> Map.exists (fun _ c -> List.contains node.Id c.ModuleInit)
-        isModuleMember &&
-        (match node.Children with
-         | childId :: _ ->
-             match SemanticGraph.tryGetNode childId graph with
-             | Some { Kind = SemanticKind.Lambda _ } -> false
-             | Some _ -> true
-             | None -> false
-         | [] -> false)
-    | _ -> false
+/// Runtime slot intent is an explicit Baker fact, independent of whether
+/// its physical authority has settled. A missing premise cannot turn a slot
+/// into an inline initializer at a later reference.
+let isModuleValueSlot (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (node: SemanticNode) : bool =
+    Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.isSlotBinding graph node.Id
 
 /// Whether a lambda takes an environment argument ahead of its parameters.
 let takesEnvironment (lambda: SemanticNode) : bool =

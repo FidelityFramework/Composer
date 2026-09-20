@@ -29,7 +29,7 @@ type Nanopass = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TRAVERSAL HELPERS
+// SCOPE CLASSIFICATION AND POST-ORDER TRAVERSAL
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Check if this node defines a scope boundary (owns its children)
@@ -130,6 +130,8 @@ let rec visitAllNodes
         | SemanticKind.VarRef (_, Some bindingId) ->
             let alreadyHandled =
                 Set.contains bindingId !visited
+                || (SemanticGraph.tryGetNode bindingId visitedCtx.Graph
+                    |> Option.exists (ModuleValues.isSlotBinding visitedCtx.Coeffects.TargetPlatform visitedCtx.Graph))
                 || // FPGA: function bindings are compiled once globally
                    (visitedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA
                     && Set.contains bindingId !(visitedCtx.GlobalVisited)
@@ -349,55 +351,15 @@ let runAllNanopasses
                     visitAllNodes combinedWitness nodeCtx node globalVisited
             | _ -> ()
 
-    // Visit structural roots from ModuleClassifications (semantically-ordered, not NodeId-ordered).
-    // This decouples traversal order from NodeId allocation order.
-    //
-    // Root selection is uniform across all platforms. The walk visits every definition;
-    // scope boundaries (HardwareModule, KernelModule, Lambda, etc.) prevent auto-visiting
-    // children, letting scope-owning witnesses manage their own subtrees. Platform-specific
-    // filtering of any residual ops (e.g. helper functions that produce FuncOps on NPU)
-    // is handled downstream by MLIRGeneration, not by the walk itself.
-    //
-    // CPU/MCU with an entry point: module-level value bindings (MainPrologue) are program-
-    // lifetime slots initialized in the entry point's prologue, so the entry point is walked
-    // FIRST and its LambdaWitness visits every module's ModuleInit bindings inside main's
-    // body scope. By the time the per-module roots are walked those bindings are already
-    // visited. Without an entry point (library, FPGA, NPU) the original order applies.
-    let classifications = graph.ModuleClassifications.Value
-    let isCPULike =
-        coeffects.TargetPlatform <> Core.Types.Dialects.FPGA && coeffects.TargetPlatform <> Core.Types.Dialects.NPU
-    let entryLambdaIds =
-        graph.Codata.Value.DeclarationRootLambdas
-        |> Map.toList
-        |> List.choose (fun (id, dr) -> if dr = DeclRoot.EntryPoint then Some id else None)
-    let prologueInEntry = isCPULike && not (List.isEmpty entryLambdaIds)
-    // A design has no prologue: on FPGA a module-level value is witnessed inside each hw.module
-    // that reads it (the per-module visited set re-walks the binding at its reference), and the
-    // platform's metadata (the clock chain) is consumed structurally by HardwareModuleWitness.
-    // Walking those bindings as roots would emit them at module scope, where an hw design has no
-    // place for them.
-    let moduleInitAsRoots = not prologueInEntry && coeffects.TargetPlatform <> Core.Types.Dialects.FPGA
-    if prologueInEntry then
-        for lambdaId in entryLambdaIds do
-            match SemanticGraph.tryGetNode lambdaId graph with
-            | Some lambdaNode ->
-                match lambdaNode.Parent with
-                | Some parentId -> processRoot parentId
-                | None -> processRoot lambdaId
-            | None -> ()
-    for kvp in classifications do
-        let moduleDefId = kvp.Key
-        let classification = kvp.Value
-        // Module-init first (prologue bindings) — unless the entry point's prologue owns them,
-        // or the target has no prologue at all (FPGA)
-        if moduleInitAsRoots then
-            for nodeId in classification.ModuleInit do
-                processRoot nodeId
-        // Then definitions in source order (includes entry point)
-        for nodeId in classification.Definitions do
-            processRoot nodeId
-        // Finally the ModuleDef node itself (for coverage validation)
-        processRoot moduleDefId
+    // The graph's declaration roots own execution. In particular, Baker's
+    // startup root contains its ordered initializer spine; a witness never
+    // discovers or schedules initialization from lexical module membership.
+    for nodeId, _ in graph.DeclarationRoots do
+        processRoot nodeId
+    for KeyValue(moduleId, classification) in graph.ModuleClassifications.Value do
+        for definition in classification.Definitions do
+            processRoot definition
+        processRoot moduleId
 
 /// Main entry point: Execute all nanopasses and return accumulator
 let executeNanopasses

@@ -743,7 +743,7 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
             let! boundaryBefore, boundaryAfter, argPairs = projectForeignArguments state.Graph funcId argIds argPairs ssas
             let argMeetOps = argMeetOps @ boundaryBefore
 
-            // Helper: check if an argument's original NativeType is option/voption.
+            // Read the argument's source option/voption type for boundary projection.
             // Record types (e.g., resvg_transform) also lower to TMemRefStatic(N, i8)
             // in MLIR, so we must check the NativeType to distinguish them from options.
             let isOptionArgument (argId: NodeId) =

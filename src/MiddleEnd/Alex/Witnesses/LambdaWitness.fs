@@ -6,9 +6,8 @@
 /// NANOPASS: This witness handles ONLY Lambda nodes.
 /// All other nodes return WitnessOutput.skip for other nanopasses to handle.
 ///
-/// SPECIAL CASE: Entry point Lambdas need to witness function bodies (sub-graphs)
-/// that can contain ANY category of nodes. Uses combinator to fold over
-/// all registered witnesses.
+/// Every function body, including Baker's startup activation, is pulled through
+/// the same registered witness fixed point. Startup order is resident in the PSG.
 module Alex.Witnesses.LambdaWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
@@ -81,124 +80,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
         let declRootOpt = Map.tryFind node.Id ctx.Graph.Codata.Value.DeclarationRootLambdas
 
         match declRootOpt with
-        | Some DeclRoot.EntryPoint ->
-            // Entry point Lambda: generate func.func @main wrapper
-
-            // ═══ SSATypes SCOPING ═══
-            // SSA values (V n, Arg n) are per-function — different functions reuse the same SSA names.
-            // SSATypes is a global map, so we save/restore to isolate each function's type registrations.
-            let savedSSATypes = ctx.Accumulator.SSATypes
-            let savedNodeAssoc = ctx.Accumulator.NodeAssoc
-            ctx.Accumulator.SSATypes <- Map.empty
-
-            // Register parameter SSA types for this function scope
-            let argvType = TMemRef (TInt (IntWidth 8))
-            MLIRAccumulator.registerSSAType (SSA.Arg 0) argvType ctx.Accumulator
-
-            // Create child scope for function body (principled accumulation)
-            let bodyScope = ScopeContext.createChild !ctx.ScopeContext FunctionLevel
-            let bodyScopeRef = ref bodyScope
-
-            // PROLOGUE: module-level value bindings of every module (in module order) are
-            // initialized here, inside the entry point's body scope, into their program-
-            // lifetime slots. Their SSAs were assigned in main's namespace (SSAAssignment
-            // Pass 1). Dependencies between them resolve through the VarRef cross-reference
-            // visit in visitAllNodes, in this same scope.
-            if ctx.Coeffects.TargetPlatform <> Core.Types.Dialects.FPGA && ctx.Coeffects.TargetPlatform <> Core.Types.Dialects.NPU then
-                for kvp in ctx.Graph.ModuleClassifications.Value do
-                    for initId in kvp.Value.ModuleInit do
-                        match SemanticGraph.tryGetNode initId ctx.Graph with
-                        | Some initNode when initNode.IsReachable && not (Set.contains initId !ctx.TraversalVisited) ->
-                            match focusOn initId ctx.Zipper with
-                            | Some initZipper ->
-                                let initCtx = { ctx with Zipper = initZipper; ScopeContext = bodyScopeRef }
-                                visitAllNodes combinator initCtx initNode ctx.TraversalVisited
-                            | None -> ()
-                        | _ -> ()
-
-            // Witness body nodes with child scope context
-            match SemanticGraph.tryGetNode bodyId ctx.Graph with
-            | Some bodyNode ->
-                match focusOn bodyId ctx.Zipper with
-                | Some bodyZipper ->
-                    let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef }
-                    visitAllNodes combinator bodyCtx bodyNode ctx.TraversalVisited
-                | None -> ()
-            | None -> ()
-
-            // Restore parent's SSATypes (isolate this function's registrations)
-            ctx.Accumulator.SSATypes <- savedSSATypes
-
-            // Extract operations from child scope ref (NOT from parent!)
-            let bodyOps = ScopeContext.getOps !bodyScopeRef
-
-            // Get body result for return value
-            // Traverse Sequential structure to find actual value-producing node
-            let actualValueNode = findLastValueNode bodyId ctx.Graph
-            let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
-            // A capture's prologue SSA belongs to this function. Restore parent
-            // associations before constructing this closure or its siblings.
-            ctx.Accumulator.NodeAssoc <- savedNodeAssoc
-
-            // Determine return type from Lambda type signature
-            // For flattened Lambdas with N params, unroll N levels of TFun. The entry point's
-            // result is ABI-governed (§4.1): the body node sits at the declared Register width,
-            // and the last value is brought to it by the return meet SSAAssignment derived.
-            let innerReturnNativeType = unrollReturnType (List.length params') node.Type
-            let expectedReturnType = mapTypeAt bodyId innerReturnNativeType ctx |> narrowType ctx.Coeffects ctx.Graph bodyId
-            let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
-            let returnMeetOps =
-                match returnMeet, bodyResult with
-                | Some (meet, result), Some (ssa, _) -> [ meetOp meet result ssa ]
-                | _ -> []
-
-            // Handle bodyResult based on return type
-            let returnSSA, returnType =
-                match returnMeet, bodyResult with
-                | Some (meet, result), Some _ -> (Some result, TInt (IntWidth meet.To))
-                | _, Some (ssa, ty) -> (Some ssa, ty)
-                | _, None ->
-                    // Check if Lambda returns unit - if so, None is expected (TRVoid)
-                    match innerReturnNativeType with
-                    | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
-                        // Unit-returning function - no result SSA is expected
-                        (None, expectedReturnType)
-                    | _ ->
-                        // Non-unit function should have produced a result
-                        let bodyNodeKindStr =
-                            match SemanticGraph.tryGetNode actualValueNode ctx.Graph with
-                            | Some bodyNode ->
-                                let kindStr = sprintf "%A" bodyNode.Kind |> fun s -> s.Split('\n').[0]
-                                let typeStr = sprintf "%A" bodyNode.Type
-                                sprintf "Body node %d is %s (type: %s)" (NodeId.value actualValueNode) kindStr typeStr
-                            | None ->
-                                sprintf "Body node %d not found in graph" (NodeId.value actualValueNode)
-                        let hint =
-                            match SemanticGraph.tryGetNode actualValueNode ctx.Graph with
-                            | Some bodyNode when bodyNode.Kind.ToString().StartsWith("Lambda") ->
-                                " [HINT: Body is a nested Lambda — Lambda produces TRVoid (emits FuncDef as side-effect). " +
-                                "Returning a function value (currying/thunk) is not yet implemented]"
-                            | _ -> ""
-                        let err = Diagnostic.error (Some node.Id) (Some "Lambda") (Some "Entry point return")
-                                    (sprintf "%s — produced no result.%s" bodyNodeKindStr hint)
-                        MLIRAccumulator.addError err ctx.Accumulator
-                        (None, expectedReturnType)
-
-            let returnOp = MLIROp.FuncOp (FuncOp.Return (returnSSA, Some returnType))
-            let completeBody = bodyOps @ returnMeetOps @ [returnOp]
-
-            // Build func.func @main wrapper (portable MLIR)
-            // Parameters: argv as memref<?xi8> (dynamic-sized buffer)
-            let argvType = TMemRef (TInt (IntWidth 8))
-            let funcParams = [(SSA.Arg 0, argvType)]
-            let funcDef = FuncOp.FuncDef("main", funcParams, returnType, completeBody, Public)
-
-            // Add FuncDef to parent scope (ctx.ScopeContext, which is root for entry points)
-            let updatedParentScope = ScopeContext.addOp (MLIROp.FuncOp funcDef) !ctx.ScopeContext
-            ctx.ScopeContext := updatedParentScope
-
-            // Return empty - FuncDef already added to parent scope
-            { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+        | Some DeclRoot.EntryPoint when
+            Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.read ctx.Graph
+            |> Option.forall (fun plan -> plan.EntryLambda <> node.Id) ->
+            WitnessOutput.error "Entry lambda lacks Baker's settled program-initialization relation"
 
         | Some DeclRoot.HardwareModule ->
             // HardwareModule Lambda — future: hw.module with Design<S,R> extraction
@@ -211,8 +96,9 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // not Lambdas. If a Lambda is tagged as KernelModule, it is an error.
             WitnessOutput.error "KernelModule Lambda not yet supported"
 
-        | None ->
-            // Non-root Lambda: Generate FuncDef for module-level function
+        | None | Some DeclRoot.EntryPoint ->
+            // Startup is an ordinary graph body with the same passive function
+            // witness. Its settled declaration root supplies export visibility.
             // Check for ClosureLayout — determines if this is a closure (escaping lambda with captures)
             let closureLayoutOpt = Map.tryFind node.Id ctx.Graph.Codata.Value.Closures
 
@@ -224,7 +110,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let ptrBytes () = declaredPointerBytes ctx.Coeffects.Platform.TargetArch
             let slotType (slot: CaptureSlot) : MLIRType =
                 match slot.Holds with
-                | CaptureSlotKind.CellView _ | CaptureSlotKind.ValueView _ ->
+                | CaptureSlotKind.CellView _ | CaptureSlotKind.ValueView _ | CaptureSlotKind.EnvironmentView _ | CaptureSlotKind.InlineValue _ ->
                     failwithf "LambdaWitness: closure %d has a continuation descriptor slot; its dedicated frame witness is required" nodeIdValue
                 | CaptureSlotKind.Address | CaptureSlotKind.Handle -> TIndex
                 | CaptureSlotKind.Decomposed ->
@@ -238,6 +124,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     | SettledSlot.Real 32 -> TFloat F32
                     | SettledSlot.Real _ -> TFloat F64
                     | SettledSlot.Pointer _ -> TIndex
+                    | SettledSlot.InlineBytes _ -> failwithf "LambdaWitness: closure %d has no admitted inline aggregate capture" nodeIdValue
                     | SettledSlot.Opaque what -> failwithf "LambdaWitness: closure %d holds %s, which has no MLIR type" nodeIdValue what
             let closureStructType (cl: ClosurePlacement) =
                 match cl.Prefix with
@@ -258,7 +145,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             let constructionValues (slot: CaptureSlot) : SSA list =
                 let count =
                     match slot.Holds with
-                    | CaptureSlotKind.CellView _ | CaptureSlotKind.ValueView _ ->
+                    | CaptureSlotKind.CellView _ | CaptureSlotKind.ValueView _ | CaptureSlotKind.EnvironmentView _ | CaptureSlotKind.InlineValue _ ->
                         failwithf "LambdaWitness: closure %d has a continuation descriptor slot; its dedicated frame witness is required" nodeIdValue
                     | CaptureSlotKind.Decomposed -> 5
                     | CaptureSlotKind.Address -> 2
@@ -267,7 +154,10 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Definitions, direct calls and closure code addresses share the same
             // resolved binding identity; equal local source names remain distinct.
-            let funcName = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node closureLayoutOpt.IsSome
+            let funcName =
+                match Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.read ctx.Graph with
+                | Some plan when plan.EntryLambda = node.Id -> plan.Symbol
+                | _ -> Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node closureLayoutOpt.IsSome
 
             // Map parameters to MLIR types and build parameter list with SSAs
             // For FPGA, parameter types are abstract (IntWidth 0) and must be narrowed
@@ -502,7 +392,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match closureLayoutOpt with
                 | Some _ -> "env" :: (params' |> List.map (fun (name, _, _) -> name))
                 | None -> params' |> List.map (fun (name, _, _) -> name)
-            match tryMatchWithDiagnostics (pFunctionDef funcName funcParams (Some paramNames) returnType bodyOps returnSSA (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            match tryMatchWithDiagnostics (pFunctionDef (if declRootOpt = Some DeclRoot.EntryPoint then FuncVisibility.Public else FuncVisibility.Private) funcName funcParams (Some paramNames) returnType bodyOps returnSSA (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope

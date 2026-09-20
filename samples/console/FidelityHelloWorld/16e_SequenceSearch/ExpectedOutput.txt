@@ -1,0 +1,6 @@
+=== Sequence search Test ===
+TryHead stops after one value and observes empty effects: pass
+TryPick selects the first independently measured result once: pass
+Absent search exhausts input and visits each current once: pass
+Chooser and input factories form once in source order: pass
+Nested Option selection preserves Some None: pass

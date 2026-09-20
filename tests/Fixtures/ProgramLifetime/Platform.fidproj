@@ -1,0 +1,10 @@
+[package]
+name = "ProgramLifetimeDeclarations"
+[compilation]
+target = "fpga"
+[platform]
+description = "StorageAuthority.description"
+runtime_model = "bare"
+[build]
+sources = ["Names.clef", "Platform.clef"]
+output_kind = "library"

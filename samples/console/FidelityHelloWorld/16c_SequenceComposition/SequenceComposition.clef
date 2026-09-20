@@ -1,0 +1,112 @@
+module SequenceComposition
+
+[<EntryPoint>]
+let main _ =
+    let basic = seq { for value in 1..5 do yield value }
+    let doubled = Seq.map (fun value -> value * 2) basic
+    let squared = Seq.map (fun value -> value * value) basic
+    let doubledSum = Seq.fold (fun state value -> state + value) 0 doubled
+    let squaredSum = Seq.fold (fun state value -> state + value) 0 squared
+
+    let mutable squareCalls = 0
+    let mutable squarePredicates = 0
+    let squaresOverTen =
+        basic
+        |> Seq.map (fun value -> squareCalls <- (squareCalls + 1) % 100; value * value)
+        |> Seq.filter (fun value -> squarePredicates <- (squarePredicates + 1) % 100; value > 10)
+    let squareCold = squareCalls = 0 && squarePredicates = 0
+    let squareOrder = Seq.fold (fun state value -> (state * 100 + value) % 10000) 0 squaresOverTen
+    let mapThenFilter = squareCold && squareOrder = 1625 && squareCalls = 5 && squarePredicates = 5
+
+    let ten = seq { for value in 1..10 do yield value }
+    let mutable evenPredicates = 0
+    let mutable evenSquares = 0
+    let evensSquared =
+        ten
+        |> Seq.filter (fun value -> evenPredicates <- (evenPredicates + 1) % 100; value % 2 = 0)
+        |> Seq.map (fun value -> evenSquares <- (evenSquares + 1) % 100; value * value)
+    let evenCold = evenPredicates = 0 && evenSquares = 0
+    let evenSum = Seq.fold (fun state value -> state + value) 0 evensSquared
+    let filterThenMap = evenCold && evenSum = 220 && evenPredicates = 10 && evenSquares = 5
+
+    let mutable limitedPredicates = 0
+    let mutable limitedMaps = 0
+    let firstDoubledEvens =
+        ten
+        |> Seq.filter (fun value -> limitedPredicates <- (limitedPredicates + 1) % 100; value % 2 = 0)
+        |> Seq.map (fun value -> limitedMaps <- (limitedMaps + 1) % 100; value * 2)
+        |> Seq.take 3
+    let limitedOrder = Seq.fold (fun state value -> (state * 100 + value) % 1000000) 0 firstDoubledEvens
+    let limitedDemand = limitedOrder = 40812 && limitedPredicates = 6 && limitedMaps = 3
+
+    let lo = 2
+    let hi = 5
+    let mutable capturedCalls = 0
+    let transformed = Seq.map (fun value -> capturedCalls <- (capturedCalls + 1) % 100; value * lo + hi) basic
+    let captureCold = capturedCalls = 0
+    let transformedSum = Seq.fold (fun state value -> state + value) 0 transformed
+    let multipleCaptures = captureCold && transformedSum = 55 && capturedCalls = 5
+
+    let mutable emptyPulls = 0
+    let mutable emptyCallbacks = 0
+    let empty = seq {
+        emptyPulls <- (emptyPulls + 1) % 100
+        if false then yield 1
+    }
+    let emptyMapped = Seq.map (fun value -> emptyCallbacks <- 99; value * 2) empty
+    let emptyFiltered = Seq.filter (fun value -> emptyCallbacks <- 99; value > 0) emptyMapped
+    let emptyCold = emptyPulls = 0 && emptyCallbacks = 0
+    let emptySum = Seq.fold (fun state value -> state + value) 0 emptyFiltered
+    let effectfulEmpty = emptyCold && emptySum = 0 && emptyPulls = 1 && emptyCallbacks = 0
+    let singleton = Seq.map (fun value -> value + 1) (seq { yield 99 })
+    let singletonValue = Seq.fold (fun state value -> state + value) 0 singleton
+    let mutable rejectedPredicates = 0
+    let mutable rejectedMaps = 0
+    let rejected =
+        ten
+        |> Seq.filter (fun value -> rejectedPredicates <- (rejectedPredicates + 1) % 100; value > 100)
+        |> Seq.map (fun value -> rejectedMaps <- 99; value * 2)
+    let rejectedSum = Seq.fold (fun state value -> state + value) 0 rejected
+    let allRejected = rejectedSum = 0 && rejectedPredicates = 10 && rejectedMaps = 0
+
+    let mutable deepPulls = 0
+    let mutable deepResumes = 0
+    let mutable firstPredicates = 0
+    let mutable deepMaps = 0
+    let mutable secondPredicates = 0
+    let mutable deepFolders = 0
+    let hundred = seq {
+        for value in 1..100 do
+            deepPulls <- (deepPulls + 1) % 1000
+            yield value
+            deepResumes <- (deepResumes + 1) % 1000
+    }
+    let deep =
+        hundred
+        |> Seq.filter (fun value -> firstPredicates <- (firstPredicates + 1) % 1000; value % 5 = 0)
+        |> Seq.map (fun value -> deepMaps <- (deepMaps + 1) % 1000; value * 2)
+        |> Seq.filter (fun value -> secondPredicates <- (secondPredicates + 1) % 1000; value > 50)
+        |> Seq.take 5
+    let deepCold = deepPulls = 0 && firstPredicates = 0 && deepMaps = 0 && secondPredicates = 0
+    let deepSum = Seq.fold (fun state value -> deepFolders <- (deepFolders + 1) % 100; state + value) 0 deep
+    let deepDemand = deepCold && deepSum = 400 && deepPulls = 50 && deepResumes = 49 && firstPredicates = 50 && deepMaps = 10 && secondPredicates = 10 && deepFolders = 5
+    let repeatedSum = Seq.fold (fun state value -> state + value) 0 deep
+    let deepRestarted = repeatedSum = 400 && deepPulls = 100 && deepResumes = 98 && firstPredicates = 100 && deepMaps = 20 && secondPredicates = 20
+
+    if doubledSum <> 30 || squaredSum <> 55 then 101
+    elif not mapThenFilter || not filterThenMap then 102
+    elif not limitedDemand then 103
+    elif not multipleCaptures then 104
+    elif not effectfulEmpty || singletonValue <> 100 || not allRejected then 105
+    elif not deepDemand then 106
+    elif not deepRestarted then 107
+    else
+        Console.writeln "=== Sequence composition Test ==="
+        Console.writeln "Uncaptured mapping preserves doubled and squared values: pass"
+        Console.writeln "Map/filter order preserves stage counts and even-square sum 220: pass"
+        Console.writeln "First three doubled evens stop upstream demand exactly: pass"
+        Console.writeln "Multiple immutable callback captures retain their values: pass"
+        Console.writeln "Empty, singleton and rejected inputs preserve callback and exhaustion laws: pass"
+        Console.writeln "Five-stage composition yields sum 400 with exact pull and callback counts: pass"
+        Console.writeln "Repeated deep enumeration restarts progress and preserves shared counters: pass"
+        0

@@ -1,0 +1,5 @@
+=== Sequence callbacks Test ===
+Captured mapper aliases preserve deferred repeated invocation: pass
+Filter and take preserve composed upstream demand: pass
+Mutable captures retain original storage identity: pass
+Repeated callback formation retains distinct environments: pass

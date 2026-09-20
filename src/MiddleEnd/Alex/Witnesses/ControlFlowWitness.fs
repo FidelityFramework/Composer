@@ -38,7 +38,7 @@ open Alex.Patterns.ControlFlowPatterns
 // The combinator getter is passed from WitnessRegistry, allowing deferred evaluation
 // and creating a proper fixed point where witnesses can recursively invoke themselves.
 
-/// Helper: Witness a branch/scope by marking boundaries and extracting operations
+/// Collect a branch region through the current scope traversal driver.
 /// Witness a branch scope (if-then, if-else, while-cond, while-body, for-body)
 /// Collects operations from the branch while using the SAME accumulator for bindings/errors
 /// Combinator passed through from top-level via Y-combinator fixed point

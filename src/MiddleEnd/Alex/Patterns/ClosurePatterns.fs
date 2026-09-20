@@ -21,45 +21,6 @@ open Core.Types.Dialects        // TargetPlatform (codata-dependent elision)
 open Clef.Compiler.NativeTypedTree.NativeTypes
 
 // ═══════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════
-// ARENA ALLOCATION
-// ═══════════════════════════════════════════════════════════
-
-/// Allocate in global closure heap arena (bump allocator)
-/// SSAs: [0] = heap_pos_ptr, [1] = heap_pos, [2] = heap_base, [3] = result_ptr, [4] = new_pos, [5] = index
-/// Returns ops and the result pointer SSA
-let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * SSA> =
-    parser {
-        do! ensure (ssas.Length >= 6) $"pAllocateInArena: Expected 6 SSAs, got {ssas.Length}"
-
-        let heapPosPtrSSA = ssas.[0]
-        let heapPosSSA = ssas.[1]
-        let heapBaseSSA = ssas.[2]
-        let resultPtrSSA = ssas.[3]
-        let newPosSSA = ssas.[4]
-        let indexSSA = ssas.[5]
-
-        // Generate index constant for memref operations (MLIR requires indices)
-        let! indexOp = pConstI indexSSA 0L TIndex
-
-        // Load current position
-        let! loadPosOp = pLoad heapPosSSA heapPosPtrSSA [indexSSA]
-
-        // Compute result pointer: heap_base + pos
-        let! subViewOp = pSubView resultPtrSSA heapBaseSSA [heapPosSSA]
-
-        // Update position: pos + size
-        let! addOp = pAddI newPosSSA heapPosSSA sizeSSA (TInt (IntWidth 64))
-        let memrefType = TMemRefStatic (1, TInt (IntWidth 64))  // 1-element heap position storage
-        let! storePosOp = pStore newPosSSA heapPosPtrSSA [indexSSA] (TInt (IntWidth 64)) memrefType
-
-        return ([indexOp; loadPosOp; subViewOp; addOp; storePosOp], resultPtrSSA)
-    }
-
-// ═══════════════════════════════════════════════════════════
 // FUNCTION DEFINITION
 // ═══════════════════════════════════════════════════════════
 
@@ -71,7 +32,7 @@ let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * S
 /// `paramNames`: optional port names for hw.module (defaults to "in0", "in1", ...)
 /// `returnSSA`: the SSA of the return value (None for a unit function)
 /// `unitReturnSSA`: for a unit function, the zero constant it returns, derived by SSAAssignment
-let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: string list option)
+let pFunctionDef (visibility: FuncVisibility) (name: string) (params': (SSA * MLIRType) list) (paramNames: string list option)
                  (retTy: MLIRType) (bodyOps: MLIROp list) (returnSSA: SSA option) (unitReturnSSA: SSA option)
                  : PSGParser<MLIROp> =
     parser {
@@ -92,7 +53,6 @@ let pFunctionDef (name: string) (params': (SSA * MLIRType) list) (paramNames: st
             return! pHWModule name inputs outputs body
         | _ ->
             // func.func with positional parameters
-            let visibility = if name = "main" then FuncVisibility.Public else FuncVisibility.Private
             // Preserve earlier witness diagnostics when a non-unit body failed
             // to produce a value, instead of throwing over the accumulated errors.
             do! ensure (returnSSA.IsSome || unitReturnSSA.IsSome) $"pFunctionDef: function '{name}' has no witnessed return value"
@@ -184,88 +144,6 @@ let pExtractCaptures (captures: (MLIRType * int * MLIRType) list) (structType: M
 
         return List.concat extractOpLists
     }
-
-// ═══════════════════════════════════════════════════════════
-// XPARSEC HELPERS
-// ═══════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════
-// CLOSURE PATTERNS
-// ═══════════════════════════════════════════════════════════
-
-/// Flat closure struct: code_ptr field + capture fields
-/// SSA layout: [0] = undef, [1-2] = insert code_ptr (offset, result), then for each capture: [3+2*i] = offsetSSA, [4+2*i] = resultSSA
-let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list) (ssas: SSA list) : PSGParser<MLIROp list> =
-    parser {
-        let! state = getUserState
-        let arch = state.Platform.TargetArch
-        do! ensure (ssas.Length >= 3 + 2 * captures.Length) $"pFlatClosure: Expected at least {3 + 2 * captures.Length} SSAs, got {ssas.Length}"
-
-        // Compute closure type: {code_ptr: ptr, capture0, capture1, ...}
-        let fieldTypes = codePtrTy :: (captures |> List.map (fun cap -> cap.Type))
-        let totalBytes = fieldTypes |> List.sumBy (mlirTypeSize arch)
-        let closureTy = TMemRefStatic(totalBytes, TInt (IntWidth 8))
-
-        // Create undef struct
-        let! undefOp = pUndef ssas.[0] closureTy
-
-        // Insert code_ptr at index 0
-        let codeOffsetSSA = ssas.[1]
-        let codeResultSSA = ssas.[2]
-        let! insertCodeOps = pInsertValue codeResultSSA ssas.[0] codePtr 0 codeOffsetSSA closureTy
-
-        // Insert captures starting at index 1
-        let! captureOpLists =
-            captures
-            |> List.mapi (fun i cap ->
-                parser {
-                    let offsetSSA = ssas.[3 + 2*i]
-                    let targetSSA = ssas.[4 + 2*i]
-                    let sourceSSA = if i = 0 then codeResultSSA else ssas.[2 + 2*i]
-                    return! pInsertValue targetSSA sourceSSA cap.SSA (i + 1) offsetSSA closureTy
-                })
-            |> sequence
-
-        return [undefOp] @ insertCodeOps @ List.concat captureOpLists
-    }
-
-/// Closure call: extract code_ptr, extract captures, call
-/// SSA layout: [0-1] = code_ptr extract (offset, result), then for each capture: [2+2*i] = offsetSSA, [3+2*i] = resultSSA
-let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType list)
-                 (args: Val list) (extractSSAs: SSA list) (resultSSA: SSA) : PSGParser<MLIROp list> =
-    parser {
-        let captureCount = captureTypes.Length
-        do! ensure (extractSSAs.Length >= 2 + 2 * captureCount) $"pClosureCall: Expected {2 + 2 * captureCount} extract SSAs, got {extractSSAs.Length}"
-
-        // Extract code_ptr from index 0 (first field is always ptr type)
-        let codeOffsetSSA = extractSSAs.[0]
-        let codePtrSSA = extractSSAs.[1]
-        let codePtrTy = TIndex  // Code pointer type
-        let! extractCodeOps = pExtractValue codePtrSSA closureSSA 0 codeOffsetSSA codePtrTy
-
-        // Extract captures from indices 1..captureCount
-        let! extractCaptureOpLists =
-            captureTypes
-            |> List.mapi (fun i capTy ->
-                parser {
-                    let offsetSSA = extractSSAs.[2 + 2*i]
-                    let capSSA = extractSSAs.[3 + 2*i]
-                    return! pExtractValue capSSA closureSSA (i + 1) offsetSSA capTy
-                })
-            |> sequence
-
-        // Call with captures prepended to args
-        let captureSSAs = List.init captureCount (fun i -> extractSSAs.[3 + 2*i])
-        let captureVals = List.zip captureSSAs captureTypes |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
-        let allArgs = captureVals @ args
-        let! state = getUserState
-        let retType = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
-        let! callOp = pFuncCallIndirect (Some resultSSA) codePtrSSA allArgs retType
-
-        return extractCodeOps @ List.concat extractCaptureOpLists @ [callOp]
-    }
-
-
 
 // ═══════════════════════════════════════════════════════════
 // LAZY PATTERNS (PRD-14)

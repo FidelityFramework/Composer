@@ -25,12 +25,22 @@ let main args =
         | [|compiler|] when compiler <> "--sample" -> Some compiler, "15a_SequenceSemantics"
         | [|"--sample"; sample|] -> None, sample
         | [|compiler; "--sample"; sample|] -> Some compiler, sample
-        | _ -> failwith "Usage: NativeSequences.Tests [Composer executable] [--sample 15a_SequenceSemantics|15b_SequenceElements|15c_SequenceTemplateBorrows]"
+        | _ -> failwith "Usage: NativeSequences.Tests [Composer executable] [--sample 15a_SequenceSemantics|15b_SequenceElements|15c_SequenceTemplateBorrows|15d_SequenceAdditive|16_SeqOperations|16a_SequenceOperations|16b_SequenceCallbacks|16c_SequenceComposition|16d_SequenceCollect|16e_SequenceSearch|16f_SequenceOptions|16g_SequenceStartup|16h_SequenceApplications]"
     let sourceName, outputName =
         match sampleName with
         | "15a_SequenceSemantics" -> "SequenceSemantics", "sequence-semantics"
         | "15b_SequenceElements" -> "SequenceElements", "sequence-elements"
         | "15c_SequenceTemplateBorrows" -> "SequenceTemplateBorrows", "sequence-template-borrows"
+        | "15d_SequenceAdditive" -> "SequenceAdditive", "sequence-additive"
+        | "16_SeqOperations" -> "SeqOperations", "SeqOperations"
+        | "16a_SequenceOperations" -> "SequenceOperations", "sequence-operations"
+        | "16b_SequenceCallbacks" -> "SequenceCallbacks", "sequence-callbacks"
+        | "16c_SequenceComposition" -> "SequenceComposition", "sequence-composition"
+        | "16d_SequenceCollect" -> "SequenceCollect", "sequence-collect"
+        | "16e_SequenceSearch" -> "SequenceSearch", "sequence-search"
+        | "16f_SequenceOptions" -> "SequenceOptions", "sequence-options"
+        | "16g_SequenceStartup" -> "SequenceStartup", "sequence-startup"
+        | "16h_SequenceApplications" -> "SequenceApplications", "sequence-applications"
         | other -> failwithf "Unknown sequence sample: %s" other
     let root = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../.."))
     let compiler =
@@ -40,10 +50,17 @@ let main args =
     let work = Path.Combine(Path.GetTempPath(), "composer-native-sequences-" + Guid.NewGuid().ToString("N"))
     Directory.CreateDirectory work |> ignore
     File.Copy(Path.Combine(sample, sourceName + ".clef"), Path.Combine(work, sourceName + ".clef"))
+    let additionalSources = if sampleName = "16g_SequenceStartup" then ["StartupFirst.clef"] else []
+    for source in additionalSources do
+        File.Copy(Path.Combine(sample, source), Path.Combine(work, source))
     File.Copy(Path.Combine(sample, "ExpectedOutput.txt"), Path.Combine(work, "ExpectedOutput.txt"))
-    let platform = Path.GetFullPath(Path.Combine(root, "../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj"))
     let project = File.ReadAllText(Path.Combine(sample, sourceName + ".fidproj"))
-    let copiedProject = project.Replace("\"../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj\"", JsonSerializer.Serialize platform)
+    let copiedProject =
+        [ "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj"
+          "../../../../../Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" ]
+        |> List.fold (fun (text: string) relative ->
+            let absolute = Path.GetFullPath(Path.Combine(sample, relative))
+            text.Replace(JsonSerializer.Serialize relative, JsonSerializer.Serialize absolute)) project
     let projectPath = Path.Combine(work, sourceName + ".fidproj")
     File.WriteAllText(projectPath, copiedProject)
     let expected = File.ReadAllText(Path.Combine(work, "ExpectedOutput.txt")) |> normalized

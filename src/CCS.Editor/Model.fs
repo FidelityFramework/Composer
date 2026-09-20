@@ -67,6 +67,29 @@ type ObligationView = {
 /// Only immutable display values leave a check. No compiler union-find cells,
 /// mutable arrays, lazy graph computations, or compiler object references escape.
 /// NodeId is meaningful only together with this snapshot's revision.
+type ProgramInitializerView = {
+    Ordinal: int
+    Module: NodeView
+    Binding: NodeView
+    Value: NodeView
+    RequiresProgramStorage: bool
+    HasProgramAuthority: bool
+}
+
+type ProgramInitializationView = {
+    Entry: NodeView
+    SourceEntry: NodeView
+    SpineNodeId: int
+    EntryCallNodeId: int
+    Initializers: ProgramInitializerView list
+}
+
+type ProgramInitializationPendingView = {
+    Site: NodeView
+    Sources: NodeView list
+    Reason: string
+}
+
 type EditorSnapshot = {
     Revision: int64
     ProjectPath: string
@@ -78,5 +101,7 @@ type EditorSnapshot = {
     Diagnostics: DiagnosticView list
     ParseFailures: ParseFailure list
     Obligations: ObligationView list
+    ProgramInitialization: ProgramInitializationView option
+    ProgramInitializationPending: ProgramInitializationPendingView list
     Failure: string option
 }

@@ -1,0 +1,15 @@
+[package]
+name = "SequenceStartup"
+version = "0.1.0"
+description = "Ordered once-only startup and program-resident sequence acceptance"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["StartupFirst.clef", "SequenceStartup.clef"]
+output = "sequence-startup"
+output_kind = "console"

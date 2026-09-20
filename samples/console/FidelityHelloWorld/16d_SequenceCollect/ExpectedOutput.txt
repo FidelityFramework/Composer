@@ -1,0 +1,6 @@
+=== Sequence collect Test ===
+Collect retains deferred ordered child enumeration: pass
+Repeated collect restarts outer and inner state: pass
+Returned children retain immutable captures: pass
+Variable and empty inner sequences preserve values and effects: pass
+Downstream take stops within the current child: pass

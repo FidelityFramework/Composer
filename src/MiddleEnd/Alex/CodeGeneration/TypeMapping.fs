@@ -139,7 +139,7 @@ let elementWidth (graph: SemanticGraph) (elemTy: NativeType) : IntWidth =
 
 /// The MLIR type of a settled scalar slot; None for a slot the mapping keeps as the field's own
 /// mapped type (a pointer-sized field, an opaque one).
-let private slotScalarType (slot: SettledSlot) : MLIRType option =
+let settledScalarType (slot: SettledSlot) : MLIRType option =
     match slot with
     | SettledSlot.Integer (bits, _) -> Some (TInt (IntWidth bits))
     | SettledSlot.Bool -> Some (TInt (IntWidth 1))
@@ -147,7 +147,7 @@ let private slotScalarType (slot: SettledSlot) : MLIRType option =
     | SettledSlot.Real 32 -> Some (TFloat F32)
     | SettledSlot.Real _ -> Some (TFloat F64)
     | SettledSlot.Unit -> Some (TInt (IntWidth 32))
-    | SettledSlot.Pointer _ | SettledSlot.Opaque _ -> None
+    | SettledSlot.Pointer _ | SettledSlot.Opaque _ | SettledSlot.InlineBytes _ -> None
 
 /// The settled bytes of a record layout, when every field of it is placed.
 let private bytesOf (fields: SettledField list) (size: int option) (align: int option) : StructBytes option =
@@ -319,7 +319,7 @@ let rec private settledStruct (platform: TargetPlatform) (arch: Architecture) (g
         let mapped =
             List.zip fields settled
             |> List.map (fun ((name, fieldTy), slot) ->
-                match slotScalarType slot.Slot with
+                match settledScalarType slot.Slot with
                 | Some scalar -> (name, scalar)
                 | None -> (name, recurse fieldTy))
         TStruct (mapped, bytesOf settled size align)

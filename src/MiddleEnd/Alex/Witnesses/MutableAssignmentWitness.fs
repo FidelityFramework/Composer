@@ -44,7 +44,7 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
                 let valueTy = mapType bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
                 let (meetOps, valueSSA, _) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawSSA rawTy
                 let globalName = ModuleValues.globalName bindingName bindingId
-                match tryMatchWithDiagnostics (pGlobalSlotStore node.Id globalName valueSSA valueTy)
+                match tryMatchWithDiagnostics (pGlobalSlotStore bindingId node.Id globalName valueSSA valueTy)
                               ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"Module value assignment: {diagnostic}"

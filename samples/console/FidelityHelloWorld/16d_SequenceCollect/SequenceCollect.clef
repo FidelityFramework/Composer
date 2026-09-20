@@ -1,0 +1,60 @@
+module SequenceCollect
+
+[<EntryPoint>]
+let main _ =
+    let source = seq { yield 1; yield 2; yield 3 }
+    let mutable calls = 0
+    let expanded = Seq.collect (fun value ->
+        calls <- (calls + 1) % 100
+        seq { yield value; yield value * 2 }) source
+    let cold = calls = 0
+    let mutable values = 0
+    for value in expanded do
+        values <- (values * 10 + value) % 1000000
+    let first = cold && calls = 3 && values = 122436
+    values <- 0
+    for value in expanded do
+        values <- (values * 10 + value) % 1000000
+    let repeated = calls = 6 && values = 122436
+
+    let factor = 10
+    let multiplied = Seq.collect (fun value -> seq { yield value; yield value * factor }) source
+    let mutable total = 0
+    for value in multiplied do
+        total <- (total + value) % 1000
+    let captured = total = 66
+
+    let variable = Seq.collect (fun value -> seq { for index in 1..value do yield value }) source
+    values <- 0
+    for value in variable do
+        values <- (values * 10 + value) % 1000000
+    let lengths = values = 122333
+
+    let mutable effects = 0
+    let withEmpty = Seq.collect (fun value -> seq {
+        effects <- (effects * 10 + value) % 10000
+        if value <> 2 then yield value }) source
+    values <- 0
+    for value in withEmpty do
+        values <- (values * 10 + value) % 100
+    let emptyInner = effects = 123 && values = 13
+
+    calls <- 0
+    values <- 0
+    for value in Seq.take 3 expanded do
+        values <- (values * 10 + value) % 1000
+    let demand = calls = 2 && values = 122
+
+    if not first || not repeated then 91
+    elif not captured then 92
+    elif not lengths then 93
+    elif not emptyInner then 94
+    elif not demand then 95
+    else
+        Console.writeln "=== Sequence collect Test ==="
+        Console.writeln "Collect retains deferred ordered child enumeration: pass"
+        Console.writeln "Repeated collect restarts outer and inner state: pass"
+        Console.writeln "Returned children retain immutable captures: pass"
+        Console.writeln "Variable and empty inner sequences preserve values and effects: pass"
+        Console.writeln "Downstream take stops within the current child: pass"
+        0

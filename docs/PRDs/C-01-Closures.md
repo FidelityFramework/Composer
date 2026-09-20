@@ -244,32 +244,20 @@ Plus additional SSAs for heap allocation (6), size computation (3), and uniform 
 
 Patterns compose Elements into semantic closure operations. All use the `parser { }` CE with XParsec state threading.
 
-#### 4.3.1 Closure Construction — `pFlatClosure`
+#### 4.3.1 Materialized environment construction and invocation
 
-Builds closure struct by inserting code_ptr at index [0], then captures at indices [1..N]:
+The unused `pFlatClosure` and capture-prepending `ClosurePatterns.pClosureCall`
+prototypes were removed during C-07. They computed storage from field counts,
+stored a function address in that storage and inferred call arguments in Alex.
+They never constituted the native callable contract.
 
-```fsharp
-let pFlatClosure (codePtr: SSA) (codePtrTy: MLIRType) (captures: Val list)
-                 (ssas: SSA list) : PSGParser<MLIROp list>
-```
-
-SSA layout: `[0]` = undef, `[1-2]` = insert code_ptr (offset, result), then for each capture: `[3+2*i]` = offsetSSA, `[4+2*i]` = resultSSA.
-
-The closure struct is `TMemRefStatic(totalBytes, TInt(IntWidth 8))` — a byte-level memref whose total size is the sum of all field sizes.
-
-#### 4.3.2 Closure Invocation — `pClosureCall`
-
-Extracts code_ptr from [0], captures from [1..N], then emits indirect function call with captures prepended to explicit args:
-
-```fsharp
-let pClosureCall (closureSSA: SSA) (closureTy: MLIRType) (captureTypes: MLIRType list)
-                 (args: Val list) (extractSSAs: SSA list) (resultSSA: SSA)
-                 : PSGParser<MLIROp list>
-```
-
-Calling convention: `call code_ptr(capture_0, capture_1, ..., explicit_arg_0, explicit_arg_1, ...)`
-
-Captures are explicit parameters in the generated code — not passed via context/userdata. This is the Clef calling convention, not the C calling convention.
+For the bounded materialized callback path, Baker establishes `ClosureValue`,
+`EnvironmentCreate`, explicit capture access and applications containing the
+actual environment argument. `EnvironmentPatterns` reads the settled layout and
+residence; `ApplicationPatterns` realizes the already formed call. The separate
+full-pair call path remains in `ApplicationPatterns.pClosureCall`.
+See [Closure values as data](../Closure_As_Data.md) for the supported forms,
+exact prerequisites and remaining work.
 
 #### 4.3.3 Capture Extraction — `pExtractCaptures`
 
@@ -282,15 +270,12 @@ let pExtractCaptures (baseIndex: int) (captureTypes: MLIRType list)
 
 `baseIndex` comes from `closureExtractionBaseIndex` — 1 for regular closures, 3 for lazy/seq.
 
-#### 4.3.4 Arena Allocation — `pAllocateInArena`
+#### 4.3.4 Allocation residence
 
-Bump allocator for closures that escape their defining scope:
-
-```fsharp
-let pAllocateInArena (sizeSSA: SSA) (ssas: SSA list) : PSGParser<MLIROp list * SSA>
-```
-
-SSA layout: `[0]` = heap_pos_ptr, `[1]` = heap_pos, `[2]` = heap_base, `[3]` = result_ptr, `[4]` = new_pos, `[5]` = index.
+The unused global-arena prototype was removed during C-07. It had no admitted
+allocation provenance and fixed its position arithmetic to 64 bits. Materialized
+environment allocation now requires Baker's residence and placed extent facts;
+escaping values require their own storage contract.
 
 #### 4.3.5 Function Definition — `pFunctionDef`
 
@@ -324,7 +309,7 @@ Categorized as Lambda nanopass. Uses Y-combinator thunk (`getCombinator`) for re
 
 Matches `pLambdaWithCaptures` from PSGCombinators:
 - **No captures** → simple `func.func` definition
-- **Has captures** → emit flat closure via `pFlatClosure`
+- **Has captures** → follow the admitted environment representation; materialized callbacks use `EnvironmentWitness` and a separate implementation Lambda
 
 Three Lambda flavors handled:
 1. **Entry point** (`DeclRoot.EntryPoint`) → `func.func @main` wrapper
@@ -602,10 +587,10 @@ ALL samples 01-10 must continue to pass after closure implementation.
 - [x] Samples 01-10 verified
 
 ### Phase 3: Closure Patterns — COMPLETE
-- [x] `pFlatClosure` — struct construction via insertvalue chain
-- [x] `pClosureCall` — extract + indirect call with captures prepended
+- Retired unused closure-construction prototype; see §4.3.1.
+- Retired unused capture-prepending invocation prototype; see §4.3.1.
 - [x] `pExtractCaptures` — environment extraction at function entry
-- [x] `pAllocateInArena` — heap arena bump allocation
+- Retired unused global-arena prototype; see §4.3.4.
 - [x] `pFunctionDef` — coeffect-aware (CPU → func.func, FPGA → hw.module)
 - [x] `pLazyStruct` / `pBuildLazyForce` — lazy thunk patterns
 - [x] `pSeqStruct` / `pSeqMoveNext` — seq generator patterns
@@ -615,8 +600,8 @@ ALL samples 01-10 must continue to pass after closure implementation.
 - [x] Non-root Lambda handling (qualified names)
 - [x] Parameter PatternBinding visiting
 - [x] Y-combinator recursive self-reference
-- [ ] Closure construction emission (connecting `pFlatClosure` to witness)
-- [ ] Closure invocation emission (connecting `pClosureCall` to witness)
+- Materialized callback construction uses `EnvironmentWitness`; coverage is recorded in C-07.
+- Materialized callback applications carry explicit environment operands from Baker; general full-pair coverage remains separate.
 - [ ] Nested lambda / returning function values
 
 ### Phase 5: FFI Boundary Marshaling — IN PROGRESS
@@ -765,7 +750,7 @@ let testBoundaryMarshal () =
 |---|---|---|
 | Coeffects.fs | DONE | CaptureMode, CaptureSlot, ClosureLayout, LambdaContext |
 | SSAAssignment.fs | DONE | buildClosureLayout, closure SSA allocation |
-| ClosurePatterns.fs | DONE | pFlatClosure, pClosureCall, pExtractCaptures, arena, lazy, seq |
+| ClosurePatterns.fs | DONE | Function definition and legacy capture/lazy patterns; materialized callback environments are in EnvironmentPatterns |
 | LambdaWitness.fs | PARTIAL | Entry/non-root handling done; closure emission pending |
 | ApplicationPatterns.fs | DONE | pTypeConversion TMemRef→TIndex |
 | PlatformPatterns.fs | DONE | pExternCallResolved argument marshaling |

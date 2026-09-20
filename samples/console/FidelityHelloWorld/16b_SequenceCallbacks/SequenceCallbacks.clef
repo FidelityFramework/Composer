@@ -1,0 +1,58 @@
+module SequenceCallbacks
+
+[<EntryPoint>]
+let main _ =
+    let source = seq { yield 1; yield 2; yield 3 }
+    let scale = 2
+    let mutable calls = 0
+    let mapper = fun value -> calls <- (calls + 1) % 100; value * scale
+    let alias = mapper
+    let mapped = Seq.map alias source
+    let cold = calls = 0
+    let mutable values = 0
+    for value in mapped do
+        values <- (values * 10 + value) % 1000
+    let first = cold && values = 246 && calls = 3
+    values <- 0
+    for value in mapped do
+        values <- (values * 10 + value) % 1000
+    let restarted = values = 246 && calls = 6
+
+    let threshold = 2
+    let mutable predicates = 0
+    let filtered = Seq.filter (fun value -> predicates <- (predicates + 1) % 100; value > threshold) mapped
+    let filterCold = predicates = 0 && calls = 6
+    values <- 0
+    for value in filtered do
+        values <- (values * 10 + value) % 1000
+    let orderedFilter = filterCold && values = 46 && predicates = 3 && calls = 9
+    values <- 0
+    for value in Seq.take 1 filtered do
+        values <- value
+    let demand = values = 4 && predicates = 5 && calls = 11
+
+    let mutable changing = 2
+    let shared = Seq.map (fun value -> value * changing) source
+    changing <- 3
+    values <- 0
+    for value in shared do
+        values <- (values * 10 + value) % 1000
+    let sharedCell = values = 369
+
+    let mutable distinct = 0
+    for offset in 1..2 do
+        let instance = Seq.map (fun value -> value + offset) (seq { yield 1 })
+        for value in instance do
+            distinct <- (distinct * 10 + value) % 100
+
+    if not first || not restarted then 91
+    elif not orderedFilter || not demand then 92
+    elif not sharedCell then 93
+    elif distinct <> 23 then 94
+    else
+        Console.writeln "=== Sequence callbacks Test ==="
+        Console.writeln "Captured mapper aliases preserve deferred repeated invocation: pass"
+        Console.writeln "Filter and take preserve composed upstream demand: pass"
+        Console.writeln "Mutable captures retain original storage identity: pass"
+        Console.writeln "Repeated callback formation retains distinct environments: pass"
+        0

@@ -1,0 +1,3 @@
+module StorageConsumer
+[<EntryPoint>]
+let main _ = if "retained" = "retained" then 0 else 1

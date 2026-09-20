@@ -1,0 +1,72 @@
+namespace SequenceStartup.Third
+
+module ZProducer =
+    open SequenceStartup.First
+
+    let values =
+        ZState.advance 2 3
+        ZState.formations <- (ZState.formations + 1) % 100
+        seq {
+            ZState.pulls <- (ZState.pulls + 1) % 100
+            yield 10
+            ZState.pulls <- (ZState.pulls + 1) % 100
+            yield 20
+        }
+
+    let sumFromFunction () =
+        if ZState.stage < 5 then ZState.invalidOrder <- true
+        ZState.stage <- 6
+        ZState.calls <- (ZState.calls + 1) % 100
+        let mutable sum = 0
+        for value in values do
+            sum <- sum + value
+        sum
+
+namespace SequenceStartup.Fourth
+
+module AEntry =
+    open SequenceStartup.First
+    open SequenceStartup.Third
+
+    let initialized =
+        ZState.advance 3 4
+        44
+
+    [<EntryPoint>]
+    let main _ =
+        let orderedStartup =
+            ZState.stage = 4 && not ZState.invalidOrder && ZState.initializations = 4
+            && ZState.initialized = 11 && initialized = 44
+        let formedWithoutPulling = ZState.formations = 1 && ZState.pulls = 0 && ZState.calls = 0
+
+        // Ordinary caller effects begin only after every startup declaration.
+        ZState.stage <- 5
+        let mutable firstSum = 0
+        for value in ZProducer.values do
+            firstSum <- firstSum + value
+        let mutable secondSum = 0
+        for value in ZProducer.values do
+            secondSum <- secondSum + value
+        let directEnumeration = firstSum = 30 && secondSum = 30 && ZState.pulls = 4 && ZState.stage = 5
+
+        let firstCall = ZProducer.sumFromFunction ()
+        let secondCall = ZProducer.sumFromFunction ()
+        let namedEnumeration = firstCall = 30 && secondCall = 30 && ZState.pulls = 8 && ZState.calls = 2
+        let repeatedRead = ZState.initialized + initialized + ZState.initialized + initialized
+        let onceOnly =
+            repeatedRead = 110 && ZState.initializations = 4 && ZState.formations = 1
+            && ZState.stage = 6 && not ZState.invalidOrder
+
+        if not orderedStartup then 201
+        elif not formedWithoutPulling then 202
+        elif not directEnumeration then 203
+        elif not namedEnumeration then 204
+        elif not onceOnly then 205
+        else
+            Console.writeln "=== Sequence startup Test ==="
+            Console.writeln "Two files and multiple declarations preserve startup order: pass"
+            Console.writeln "Module sequence formation precedes all deferred pulls: pass"
+            Console.writeln "Main enumerates the module sequence independently twice: pass"
+            Console.writeln "Named function calls enumerate after startup: pass"
+            Console.writeln "Repeated reads and calls do not repeat initialization: pass"
+            0

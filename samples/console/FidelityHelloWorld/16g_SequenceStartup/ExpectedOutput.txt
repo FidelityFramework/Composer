@@ -1,0 +1,7 @@
+Unreferenced startup initializer executes in source order: pass
+=== Sequence startup Test ===
+Two files and multiple declarations preserve startup order: pass
+Module sequence formation precedes all deferred pulls: pass
+Main enumerates the module sequence independently twice: pass
+Named function calls enumerate after startup: pass
+Repeated reads and calls do not repeat initialization: pass

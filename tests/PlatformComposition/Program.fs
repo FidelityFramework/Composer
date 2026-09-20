@@ -49,7 +49,7 @@ module %s =
     }
     let descriptor: PlatformDescription = {
         Id = "%s"; DisplayName = "%s"; Substrate = "cpu"; Core = Some core
-        Spaces = [| port |]; Surfaces = [||]; Buffers = [||]; Transports = [||]
+        Spaces = [| port |]; ProgramLifetime = None; Surfaces = [||]; Buffers = [||]; Transports = [||]
         Lifecycle = { Clocks = [||]; Resets = [||]; Entry = "main"; Teardown = ""; Persistence = "volatile" }
         Notes = [||]; Limits = [||]
     }

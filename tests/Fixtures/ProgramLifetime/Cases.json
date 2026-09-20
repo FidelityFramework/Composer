@@ -1,0 +1,16 @@
+[
+  {
+    "name": "unknown immutable designation",
+    "before": "ProgramLifetime = Some { Immutable = immutableName; Mutable = Some mutableName }",
+    "after": "ProgramLifetime = Some { Immutable = «\"missing-vault\"»; Mutable = Some mutableName }",
+    "code": "CCS8207",
+    "message": "The platform description of '{platform}': ProgramLifetime.Immutable names undeclared memory space 'missing-vault'"
+  },
+  {
+    "name": "runtime call cannot supply designation",
+    "before": "ProgramLifetime = Some { Immutable = immutableName; Mutable = Some mutableName }",
+    "after": "ProgramLifetime = «makeRoles ()»",
+    "code": "CCS8206",
+    "message": "The platform description of '{platform}': ProgramLifetime must be Some literal designation or None"
+  }
+]

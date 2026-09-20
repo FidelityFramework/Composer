@@ -1,7 +1,7 @@
 [package]
 name = "SeqOperations"
 version = "0.1.0"
-description = "Sample 16: Sequence Operations (PRD-16)"
+description = "Sample 16: original C-07 sequence operation coverage"
 authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 
@@ -9,9 +9,9 @@ license = "MIT"
 target = "cpu"
 
 [dependencies]
-platform = { path = "/home/hhh/repos/Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
+platform = { path = "../../../../../Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
 
 [build]
-sources = ["SeqOperations.fs"]
+sources = ["SeqOperations.clef"]
 output = "SeqOperations"
 output_kind = "console"

@@ -120,6 +120,10 @@ let resolve (projectPath: string) (graph: SemanticGraph) : XtensaTarget =
     let memoryProjection: PlatformDescription = {
         Id = platform.Id; DisplayName = platform.Id; Substrate = "mcu"; Core = None
         Spaces = spaces; Surfaces = [||]; Buffers = [||]; Transports = [||]; Notes = [||]; Limits = [||]
+        ProgramLifetime = platform.ProgramLifetime |> Option.map (fun roles -> {
+            Immutable = roles.Immutable.Space.Name
+            Mutable = roles.Mutable |> Option.map (fun role -> role.Space.Name)
+        })
         Lifecycle = { Clocks = [||]; Resets = [||]; Entry = image.EntrySymbol; Teardown = ""; Persistence = Persistence.Volatile }
     }
     let findings = Check.run memoryProjection

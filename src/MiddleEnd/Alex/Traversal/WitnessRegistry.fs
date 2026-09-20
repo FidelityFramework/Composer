@@ -126,6 +126,7 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         // ─── Advanced features (CPU/MCU only) ───
         |> conditionalRegister isCPULike LazyWitness.nanopass
         |> conditionalRegister isCPULike SeqWitness.nanopass
+        |> conditionalRegister isCPULike Alex.Witnesses.EnvironmentWitness.nanopass
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Y-COMBINATOR FIXED POINT FOR RECURSIVE SCOPE WITNESSES

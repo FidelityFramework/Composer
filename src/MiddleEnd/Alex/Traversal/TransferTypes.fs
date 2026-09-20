@@ -494,30 +494,8 @@ type WitnessContext = {
 /// value ever crosses a function boundary. Function values (Lambda children) are emitted as
 /// functions and are not slots.
 module ModuleValues =
-    /// True when the binding node is a module-level value that is realized as a slot: a direct
-    /// member of a ModuleDef (the ModuleInit set of its module's classification) whose value is
-    /// not a function. A binding nested inside a module-level value's initializer also carries
-    /// MainPrologue (it is outside every function) but is a local of that initializer, not a slot.
-    /// On fabric there is no program lifetime, no prologue and no slot: a module-level value is a
-    /// constant expression witnessed inside every hw.module that reads it (the per-module visited
-    /// set of the walk re-emits it there), so nothing is a slot on FPGA.
-    let isSlotBinding (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (bindingNode: SemanticNode) : bool =
-        match bindingNode.Kind with
-        | SemanticKind.Binding _ when platform <> Core.Types.Dialects.TargetPlatform.FPGA && bindingNode.EmissionStrategy = EmissionStrategy.MainPrologue ->
-            let isModuleMember =
-                graph.ModuleClassifications.Value
-                |> Map.exists (fun _ classification -> List.contains bindingNode.Id classification.ModuleInit)
-            isModuleMember &&
-            (match bindingNode.Children with
-             | childId :: _ ->
-                 match Clef.Compiler.PSGSaturation.SemanticGraph.Core.SemanticGraph.tryGetNode childId graph with
-                 | Some child ->
-                     match child.Kind with
-                     | SemanticKind.Lambda _ -> false
-                     | _ -> true
-                 | None -> false
-             | [] -> false)
-        | _ -> false
+    /// One shared observation determines both slot value naming and access.
+    let isSlotBinding = Alex.Traversal.Values.isModuleValueSlot
 
     /// The memref.global symbol for a slot: readable name plus the binding's node id for uniqueness.
     let globalName (bindingName: string) (bindingId: NodeId) : string =
@@ -570,12 +548,17 @@ let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
 /// A continuation value's physical carrier is keyed by its exact graph use,
 /// including the generator formal. Its source type alone cannot name a frame.
 let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType =
-    match ctx.Graph.Codata.Value.SequenceOrigins |> Map.tryFind nodeId with
-    | Some owner ->
+    let codata = ctx.Graph.Codata.Value
+    match codata.EnvironmentOrigins |> Map.tryFind nodeId, codata.SequenceOrigins |> Map.tryFind nodeId with
+    | Some owner, _ ->
+        match codata.EnvironmentLayouts |> Map.tryFind owner with
+        | Some layout when layout.Bytes >= 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
+        | _ -> failwithf "Environment value %d has no settled layout %d" (NodeId.value nodeId) (NodeId.value owner)
+    | None, Some owner ->
         match ctx.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
         | Some frame when frame.Bytes > 0 -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8))
         | _ -> failwithf "Sequence value %d has no settled frame for origin %d" (NodeId.value nodeId) (NodeId.value owner)
-    | None -> mapType ty ctx
+    | None, None -> mapType ty ctx
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =

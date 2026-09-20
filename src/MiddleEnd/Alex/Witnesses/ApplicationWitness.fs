@@ -23,7 +23,7 @@ open Alex.Dialects.Core.Types
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
-/// Helper: Navigate to actual function node (unwrap TypeAnnotation if present)
+/// Read the function node through one explicit TypeAnnotation wrapper.
 let private resolveFunctionNode funcId graph =
     match SemanticGraph.tryGetNode funcId graph with
     | Some funcNode ->

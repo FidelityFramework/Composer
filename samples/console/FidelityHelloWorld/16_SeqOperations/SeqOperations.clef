@@ -1,21 +1,21 @@
 /// Sample 16: Sequence Operations
 /// Comprehensive test coverage for Seq.map, Seq.filter, Seq.take, Seq.fold, Seq.collect
-/// PRD-16: Builds on PRD-15 (SimpleSeq), PRD-14 (Lazy), PRD-12 (HOFs), PRD-11 (Closures)
+/// C-07: sequence composition over the C-06 sequence and C-01 closure contracts
 ///
-/// KEY ARCHITECTURAL PRINCIPLE: Seq operations create COMPOSED FLAT CLOSURES
-/// Each wrapper contains: {state, current, moveNext_ptr, inner_seq, closure}
-/// Both inner_seq and closure are INLINED (copied by value, not by pointer)
+/// Producer formation retains supplied values and captured storage identities.
+/// Baker settles callback environments, iterator state, regions and their proofs.
+/// Physical layout follows those contracts; this source does not prescribe fields.
 module SeqOperationsSample
 
 open Console
 open Format
 
 // ============================================================================
-// PART 1: Source Sequences (from PRD-15)
+// PART 1: Source Sequences
 // Foundation sequences used as inputs for transformation operations
 // ============================================================================
 
-/// Simple range sequence using PRD-15 while-based pattern
+/// Range factory retaining its original while-based recurrence
 let range (start: int) (stop: int) = seq {
     let mutable i = start
     while i <= stop do
@@ -23,13 +23,13 @@ let range (start: int) (stop: int) = seq {
         i <- i + 1
 }
 
-/// First N natural numbers (convenience wrapper)
+/// First N natural numbers through the same range factory
 let naturals (n: int) = range 1 n
 
 // ============================================================================
 // PART 2: Seq.map - Transform Each Element (No Captures)
 // Tests basic transformation with inline computation
-// Mapper closure: {code_ptr} (no captures)
+// Mapper has no source captures; callable representation remains compiler-owned.
 // ============================================================================
 
 /// Double every element
@@ -44,7 +44,7 @@ let addTen = Seq.map (fun x -> x + 10) (naturals 5)
 // ============================================================================
 // PART 3: Seq.filter - Select Matching Elements (No Captures)
 // Tests predicate filtering with inline conditions
-// Predicate closure: {code_ptr} (no captures)
+// Predicate has no source captures; callable representation remains compiler-owned.
 // ============================================================================
 
 /// Filter for even numbers
@@ -59,7 +59,7 @@ let greaterThan5 = Seq.filter (fun x -> x > 5) (naturals 10)
 // ============================================================================
 // PART 4: Seq.take - Limit to First N Elements
 // Tests count limiting with boundary conditions
-// TakeSeq: {state, current, moveNext_ptr, inner_seq, remaining: int}
+// Each enumeration retains its own remaining demand and input iterator.
 // ============================================================================
 
 /// Take first 3 from a longer sequence
@@ -74,7 +74,7 @@ let takeMoreThanAvailable = Seq.take 10 (naturals 3)
 // ============================================================================
 // PART 5: Seq.fold - Reduce to Single Value (No Captures)
 // Eager consumer - consumes sequence immediately, returns accumulated value
-// NOT a wrapper sequence (doesn't produce seq<'T>)
+// Returns the final accumulator value.
 // ============================================================================
 
 /// Sum all elements: 1+2+3+4+5+6+7+8+9+10 = 55
@@ -92,25 +92,25 @@ let countElements = Seq.fold (fun acc _ -> acc + 1) 0 (naturals 10)
 // ============================================================================
 // PART 6: Composed Operations / Pipelines (No Captures)
 // Tests that multiple operations compose correctly
-// Creates nested struct: TakeSeq { MapSeq { FilterSeq { inner } } }
+// Every stage preserves formation, capture identity and downstream demand.
 // ============================================================================
 
 /// Filter then map: evens squared
-/// Struct: MapSeq { FilterSeq { naturals } }
+/// Mapping consumes only values accepted by the predicate.
 let evensSquared =
     naturals 10
     |> Seq.filter (fun x -> x % 2 = 0)
     |> Seq.map (fun x -> x * x)
 
 /// Map then filter: squares > 10
-/// Struct: FilterSeq { MapSeq { naturals } }
+/// The predicate observes the mapped value.
 let squaresOver10 =
     naturals 10
     |> Seq.map (fun x -> x * x)
     |> Seq.filter (fun x -> x > 10)
 
 /// Filter, map, take: first 3 even numbers doubled
-/// Struct: TakeSeq { MapSeq { FilterSeq { naturals } } }
+/// Taking three outputs stops demand through both earlier stages.
 let first3EvensDoubled =
     naturals 100
     |> Seq.filter (fun x -> x % 2 = 0)
@@ -146,11 +146,11 @@ let manualCount (s: seq<int>) : int =
 // ============================================================================
 // PART 8: Closures with Captures (CRITICAL for flat closure model)
 // Tests that mapper/predicate closures correctly capture values
-// Closure struct: {code_ptr, capture_0, capture_1, ...}
+// Captures retain their source identities and admitted backing lifetime.
 // ============================================================================
 
 /// Seq.map with captured multiplier
-/// Mapper closure: {code_ptr, factor: int}
+/// The mapper retains the factor supplied to this formation.
 let scale (factor: int) (xs: seq<int>) = 
     Seq.map (fun x -> x * factor) xs
 
@@ -158,7 +158,7 @@ let scaledBy3 = scale 3 (naturals 5)
 let scaledBy7 = scale 7 (naturals 3)
 
 /// Seq.filter with captured threshold
-/// Predicate closure: {code_ptr, threshold: int}
+/// The predicate retains the threshold supplied to this formation.
 let aboveThreshold (threshold: int) (xs: seq<int>) =
     Seq.filter (fun x -> x > threshold) xs
 
@@ -166,14 +166,14 @@ let above5 = aboveThreshold 5 (naturals 10)
 let above0 = aboveThreshold 0 (naturals 5)
 
 /// Seq.fold with captured offset added to each element
-/// Folder closure: {code_ptr, offset: int}
+/// Each folder invocation uses the retained offset.
 let sumWithOffset (offset: int) (xs: seq<int>) =
     Seq.fold (fun acc x -> acc + x + offset) 0 xs
 
 let sumPlus10Each = sumWithOffset 10 (naturals 5)
 
 /// Multiple captures in mapper
-/// Mapper closure: {code_ptr, lo: int, hi: int}
+/// Both immutable values belong to the actual mapper environment.
 let rangeTransform (lo: int) (hi: int) (xs: seq<int>) =
     Seq.map (fun x -> x * lo + hi) xs
 
@@ -182,7 +182,7 @@ let transformed = rangeTransform 2 100 (naturals 3)
 // ============================================================================
 // PART 9: Seq.collect (flatMap)
 // Maps each element to a sequence, then flattens
-// CollectSeq: {state, current, moveNext_ptr, outer_seq, mapper, inner_seq_state}
+// Returned child iterators require storage covering their delegated use.
 // ============================================================================
 
 /// Basic flatMap: expand each number to itself and its double
@@ -211,7 +211,7 @@ let repeated = repeatN (range 1 4)
 // ============================================================================
 // PART 10: Composed Pipelines with Captures
 // Tests that captures at different pipeline stages don't interfere
-// Each wrapper has its own closure with its own captures
+// Each stage retains the environment of its own callback formation.
 // ============================================================================
 
 /// Pipeline where each operation captures a different value
@@ -219,7 +219,7 @@ let complexPipeline (threshold: int) (multiplier: int) (count: int) =
     naturals 20
     |> Seq.filter (fun x -> x > threshold)      // captures 'threshold'
     |> Seq.map (fun x -> x * multiplier)        // captures 'multiplier'
-    |> Seq.take count                            // captures 'count' (in TakeSeq.remaining)
+    |> Seq.take count                            // retains 'count' as per-enumeration demand
 
 let pipelineResult = complexPipeline 5 2 5
 
@@ -259,7 +259,7 @@ let takeFromEmpty = Seq.take 5 emptySource
 
 // ============================================================================
 // PART 12: Deep Composition (3+ Operations)
-// Validates struct nesting works at depth 4-5
+// Preserves per-stage demand and values across four/five composed operations.
 // ============================================================================
 
 /// Four operations chained

@@ -1,0 +1,8 @@
+=== Sequence application forms Test ===
+Direct and pipeline callbacks retain their captured alias: pass
+Stored producer and iter partials preserve formation and restart: pass
+Both fold partial frontiers retain independent measured state: pass
+Predicate partials preserve short circuit and empty results: pass
+Append and collect partials retain ordered child values: pass
+Bare operation aliases preserve mapped and optional results: pass
+TryPick partial retains independent result dimensions: pass

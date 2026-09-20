@@ -92,7 +92,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         // the slot's element type at the binding's range width on fabric
                         let valueTy = mapTypeAt bindingId bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
                         let globalName = ModuleValues.globalName bindingName bindingId
-                        match tryMatchWithDiagnostics (pGlobalSlotLoad node.Id globalName valueTy)
+                        match tryMatchWithDiagnostics (pGlobalSlotLoad bindingId node.Id globalName valueTy)
                                       ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, TRValue v), _) ->
                             let (meetOps, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id v.SSA v.Type

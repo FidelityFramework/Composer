@@ -14,12 +14,24 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.DUPatterns
+open Alex.Patterns.LiteralPatterns
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
 let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    match node.Kind with
+    | SemanticKind.AggregateStorage _ ->
+        match tryMatchWithDiagnostics (pBuildAggregateStorage node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error diagnostic -> WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "aggregate storage") diagnostic
+    | SemanticKind.DUInitialize(destination, caseName, caseIndex, payload) ->
+        let pattern = pWithUnitResult node.Id (pBuildDUInitialize node.Id destination caseName caseIndex payload)
+        match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error diagnostic -> WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "destination initialization") diagnostic
+    | _ ->
     // Skip intrinsic nodes
     match node.Kind with
     | SemanticKind.Intrinsic _ -> WitnessOutput.skip

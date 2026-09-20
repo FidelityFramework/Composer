@@ -609,10 +609,146 @@ Independent enumeration retains shared cells: pass
 Nested captured templates retain covering lifetime: pass
 """
 
+# C-06 finite additive state across suspension.
+[[samples]]
+name = "15d_SequenceAdditive"
+project = "SequenceAdditive.fidproj"
+binary = "targets/sequence-additive"
+timeout_seconds = 180
+expected_output = """
+=== Sequence additive state Test ===
+Triangular state crosses each suspension: pass
+Repeated enumeration restarts additive state: pass
+Negative deltas preserve signed state: pass
+Mixed deltas preserve every intermediate value: pass
+Zero iterations preserve the initial state: pass
+Positive non-unit steps retain a finite trip bound: pass
+Descending non-unit steps retain a finite trip bound: pass
+"""
+
+# C-07 source composition and callback environment oracles.
+[[samples]]
+name = "16a_SequenceOperations"
+project = "SequenceOperations.fidproj"
+binary = "targets/sequence-operations"
+timeout_seconds = 180
+expected_output = """
+=== Sequence operations Test ===
+Append preserves deferred input order: pass
+Repeated append enumeration restarts state: pass
+Append forms input arguments once in source order: pass
+Iter and fold preserve ordered consumption: pass
+Fold retains independent accumulator types and empty state: pass
+Take respects demand limits, exhaustion and fresh enumeration: pass
+Exists and forall stop at the first deciding predicate: pass
+"""
+
+[[samples]]
+name = "16b_SequenceCallbacks"
+project = "SequenceCallbacks.fidproj"
+binary = "targets/sequence-callbacks"
+timeout_seconds = 180
+expected_output = """
+=== Sequence callbacks Test ===
+Captured mapper aliases preserve deferred repeated invocation: pass
+Filter and take preserve composed upstream demand: pass
+Mutable captures retain original storage identity: pass
+Repeated callback formation retains distinct environments: pass
+"""
+
+[[samples]]
+name = "16c_SequenceComposition"
+project = "SequenceComposition.fidproj"
+binary = "targets/sequence-composition"
+timeout_seconds = 180
+expected_output = """
+=== Sequence composition Test ===
+Uncaptured mapping preserves doubled and squared values: pass
+Map/filter order preserves stage counts and even-square sum 220: pass
+First three doubled evens stop upstream demand exactly: pass
+Multiple immutable callback captures retain their values: pass
+Empty, singleton and rejected inputs preserve callback and exhaustion laws: pass
+Five-stage composition yields sum 400 with exact pull and callback counts: pass
+Repeated deep enumeration restarts progress and preserves shared counters: pass
+"""
+
 # =============================================================================
 # Sample 16: SeqOperations
 # Seq.map, Seq.filter, Seq.take, Seq.fold, Seq.collect (PRD-16)
 # =============================================================================
+[[samples]]
+name = "16d_SequenceCollect"
+project = "SequenceCollect.fidproj"
+binary = "targets/sequence-collect"
+compile_timeout = 180
+expected_output = """
+=== Sequence collect Test ===
+Collect retains deferred ordered child enumeration: pass
+Repeated collect restarts outer and inner state: pass
+Returned children retain immutable captures: pass
+Variable and empty inner sequences preserve values and effects: pass
+Downstream take stops within the current child: pass
+"""
+
+[[samples]]
+name = "16e_SequenceSearch"
+project = "SequenceSearch.fidproj"
+binary = "targets/sequence-search"
+timeout_seconds = 180
+expected_output = """
+=== Sequence search Test ===
+TryHead stops after one value and observes empty effects: pass
+TryPick selects the first independently measured result once: pass
+Absent search exhausts input and visits each current once: pass
+Chooser and input factories form once in source order: pass
+Nested Option selection preserves Some None: pass
+"""
+
+[[samples]]
+name = "16f_SequenceOptions"
+project = "SequenceOptions.fidproj"
+binary = "targets/sequence-options"
+timeout_seconds = 180
+expected_output = """
+=== Sequence Option elements Test ===
+Retained Option values survive later pulls and exhaustion: pass
+Repeated construction at one loop site preserves prior values: pass
+Independent enumerators and re-enumeration retain values: pass
+Delegation preserves Some and None ordering: pass
+Boolean and inverse measured real payloads preserve values: pass
+"""
+
+[[samples]]
+name = "16g_SequenceStartup"
+project = "SequenceStartup.fidproj"
+binary = "targets/sequence-startup"
+timeout_seconds = 180
+expected_output = """
+Unreferenced startup initializer executes in source order: pass
+=== Sequence startup Test ===
+Two files and multiple declarations preserve startup order: pass
+Module sequence formation precedes all deferred pulls: pass
+Main enumerates the module sequence independently twice: pass
+Named function calls enumerate after startup: pass
+Repeated reads and calls do not repeat initialization: pass
+"""
+
+[[samples]]
+name = "16h_SequenceApplications"
+project = "SequenceApplications.fidproj"
+binary = "targets/sequence-applications"
+timeout_seconds = 180
+expected_output = """
+=== Sequence application forms Test ===
+Direct and pipeline callbacks retain their captured alias: pass
+Stored producer and iter partials preserve formation and restart: pass
+Both fold partial frontiers retain independent measured state: pass
+Predicate partials preserve short circuit and empty results: pass
+Append and collect partials retain ordered child values: pass
+Bare operation aliases preserve mapped and optional results: pass
+TryPick partial retains independent result dimensions: pass
+"""
+
 [[samples]]
 name = "16_SeqOperations"
 project = "SeqOperations.fidproj"
@@ -622,20 +758,20 @@ expected_output = """
 === Sample 16: Sequence Operations ===
 
 --- Part 2: Seq.map ---
-naturals 5: 1 2 3 4 5
-doubled (x*2): 2 4 6 8 10
-squared (x*x): 1 4 9 16 25
-addTen (x+10): 11 12 13 14 15
+naturals 5: 1 2 3 4 5\u0020
+doubled (x*2): 2 4 6 8 10\u0020
+squared (x*x): 1 4 9 16 25\u0020
+addTen (x+10): 11 12 13 14 15\u0020
 
 --- Part 3: Seq.filter ---
-evens from 1..10: 2 4 6 8 10
-odds from 1..10: 1 3 5 7 9
-greaterThan5 from 1..10: 6 7 8 9 10
+evens from 1..10: 2 4 6 8 10\u0020
+odds from 1..10: 1 3 5 7 9\u0020
+greaterThan5 from 1..10: 6 7 8 9 10\u0020
 
 --- Part 4: Seq.take ---
-firstThree from 1..100: 1 2 3
-exactlyFive from 1..5: 1 2 3 4 5
-takeMoreThanAvailable: 1 2 3
+firstThree from 1..100: 1 2 3\u0020
+exactlyFive from 1..5: 1 2 3 4 5\u0020
+takeMoreThanAvailable: 1 2 3\u0020
 
 --- Part 5: Seq.fold ---
 sum of 1..10: 55
@@ -644,9 +780,9 @@ max of 1..10: 10
 count of 1..10: 10
 
 --- Part 6: Composed Operations ---
-evensSquared (filter even, map x*x): 4 16 36 64 100
-squaresOver10 (map x*x, filter >10): 16 25 36 49 64 81 100
-first3EvensDoubled: 4 8 12
+evensSquared (filter even, map x*x): 4 16 36 64 100\u0020
+squaresOver10 (map x*x, filter >10): 16 25 36 49 64 81 100\u0020
+first3EvensDoubled: 4 8 12\u0020
 sumEvenSquares: 220
 
 --- Part 7: Manual vs Seq.fold ---
@@ -654,21 +790,21 @@ manualSum 1..10: 55
 manualCount 1..10: 10
 
 --- Part 8: Closures with Captures ---
-scaledBy3: 3 6 9 12 15
-scaledBy7: 7 14 21
-above5: 6 7 8 9 10
-above0: 1 2 3 4 5
+scaledBy3: 3 6 9 12 15\u0020
+scaledBy7: 7 14 21\u0020
+above5: 6 7 8 9 10\u0020
+above0: 1 2 3 4 5\u0020
 sumPlus10Each: 65
-transformed (2*x+100): 102 104 106
+transformed (2*x+100): 102 104 106\u0020
 
 --- Part 9: Seq.collect ---
-expandDouble: 1 2 2 4 3 6
-expandTriple: 1 1 1 2 2 2
-expandBy10: 1 10 2 20 3 30
-repeated: 1 2 2 3 3 3 4 4 4 4
+expandDouble: 1 2 2 4 3 6\u0020
+expandTriple: 1 1 1 2 2 2\u0020
+expandBy10: 1 10 2 20 3 30\u0020
+repeated: 1 2 2 3 3 3 4 4 4 4\u0020
 
 --- Part 10: Composed with Captures ---
-complexPipeline 5 2 5: 12 14 16 18 20
+complexPipeline 5 2 5: 12 14 16 18 20\u0020
 sumFilteredScaled 3 10: 120
 
 --- Part 11: Edge Cases ---
@@ -681,7 +817,7 @@ takeZero: (done)
 takeFromEmpty: (done)
 
 --- Part 12: Deep Composition ---
-deepPipeline1: 3 6 9 12 15
+deepPipeline1: 3 6 9 12 15\u0020
 deepPipelineWithFold: 400
 
 --- Verification Summary ---

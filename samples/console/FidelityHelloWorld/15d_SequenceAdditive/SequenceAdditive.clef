@@ -1,0 +1,126 @@
+/// Finite additive state is bounded by its actual loop, not a source clamp.
+module SequenceAdditive
+
+let triangular (limit: int) = seq {
+    let mutable total = 0
+    let mutable i = 1
+    while i <= limit do
+        total <- total + i
+        yield total
+        i <- i + 1
+}
+
+[<EntryPoint>]
+let main _ =
+    let triangles = triangular 6
+    let mutable trace = 0
+    let mutable count = 0
+    let mutable valid = true
+    for value in triangles do
+        valid <- valid && value >= 0 && value < 100
+        trace <- (trace * 100 + value) % 1000000000000
+        count <- (count + 1) % 100
+    let triangleValues = valid && count = 6 && trace = 10306101521
+
+    trace <- 0
+    count <- 0
+    for value in triangles do
+        trace <- (trace * 100 + value) % 1000000000000
+        count <- (count + 1) % 100
+    let restarted = count = 6 && trace = 10306101521
+
+    let negative = seq {
+        let mutable total = 0
+        let mutable i = 1
+        while i <= 6 do
+            total <- total + -i
+            yield total
+            i <- i + 1
+    }
+    trace <- 0
+    count <- 0
+    for value in negative do
+        valid <- valid && value <= 0 && value >= -36
+        trace <- (trace * 100 + value + 40) % 1000000000000
+        count <- (count + 1) % 100
+    let negativeValues = valid && count = 6 && trace = 393734302519
+
+    let mixed = seq {
+        let mutable total = 0
+        let mutable i = 1
+        while i <= 6 do
+            total <- total + (i - 3)
+            yield total
+            i <- i + 1
+    }
+    trace <- 0
+    count <- 0
+    for value in mixed do
+        valid <- valid && value >= -12 && value <= 18
+        trace <- (trace * 100 + value + 20) % 1000000000000
+        count <- (count + 1) % 100
+    let mixedValues = valid && count = 6 && trace = 181717182023
+
+    let zeroTrip = seq {
+        let mutable total = 7
+        let mutable i = 1
+        while i < 0 do
+            total <- total + 4
+            yield total
+            i <- i + 1
+        yield total
+    }
+    trace <- 0
+    count <- 0
+    for value in zeroTrip do
+        trace <- (trace * 100 + value) % 1000000000000
+        count <- (count + 1) % 100
+    let zeroValues = count = 1 && trace = 7
+
+    let stride = seq {
+        let mutable total = 0
+        let mutable i = 1
+        while i <= 7 do
+            total <- total + i
+            yield total
+            i <- i + 2
+    }
+    trace <- 0
+    count <- 0
+    for value in stride do
+        trace <- (trace * 100 + value) % 1000000000000
+        count <- (count + 1) % 100
+    let strideValues = count = 4 && trace = 1040916
+
+    let descending = seq {
+        let mutable total = 0
+        let mutable i = 6
+        while i >= 1 do
+            total <- total + i
+            yield total
+            i <- i - 2
+    }
+    trace <- 0
+    count <- 0
+    for value in descending do
+        trace <- (trace * 100 + value) % 1000000000000
+        count <- (count + 1) % 100
+    let descendingValues = count = 3 && trace = 61012
+
+    if not triangleValues then 1
+    elif not restarted then 2
+    elif not negativeValues then 3
+    elif not mixedValues then 4
+    elif not zeroValues then 5
+    elif not strideValues then 6
+    elif not descendingValues then 7
+    else
+        Console.writeln "=== Sequence additive state Test ==="
+        Console.writeln "Triangular state crosses each suspension: pass"
+        Console.writeln "Repeated enumeration restarts additive state: pass"
+        Console.writeln "Negative deltas preserve signed state: pass"
+        Console.writeln "Mixed deltas preserve every intermediate value: pass"
+        Console.writeln "Zero iterations preserve the initial state: pass"
+        Console.writeln "Positive non-unit steps retain a finite trip bound: pass"
+        Console.writeln "Descending non-unit steps retain a finite trip bound: pass"
+        0

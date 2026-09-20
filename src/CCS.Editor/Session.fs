@@ -14,6 +14,7 @@ open Clef.Compiler.Project
 module CompilerDiagnostics = Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics
 module Discharge = Clef.Compiler.Nanopass.ObligationDischarge
 module PhaseConfig = Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
+module ProgramInitialization = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization
 
 module private Projection =
     // Main CCS has process-global node counters, measure cells and phase config.
@@ -65,13 +66,23 @@ module private Projection =
         | Some (MetadataValue.Type signature) -> signature
         | _ -> value.Type
 
+    let sourceDefinition graph kind =
+        match kind with
+        | SemanticKind.VarRef(_, Some declaration)
+        | SemanticKind.EnvironmentRead(_, declaration)
+        | SemanticKind.EnvironmentBorrow(_, declaration) ->
+            Some (Clef.Compiler.PSGSaturation.SemanticGraph.DirectCaptures.sourceDefinition graph declaration)
+        | _ -> None
+
+    let declarationName kind =
+        match kind with
+        | SemanticKind.Binding(name, _, _, _) | SemanticKind.VarRef(name, _)
+        | SemanticKind.PatternBinding name -> Some name
+        | _ -> None
+
     let node (value: SemanticNode) : NodeView = {
         NodeId = NodeId.value value.Id
-        Name =
-            match value.Kind with
-            | SemanticKind.Binding(name, _, _, _) | SemanticKind.VarRef(name, _)
-            | SemanticKind.PatternBinding name -> Some name
-            | _ -> None
+        Name = declarationName value.Kind
         Kind = kindName value.Kind
         // Reading substitutions and formatting remain compiler operations.
         Type = sourceType value |> Clef.Compiler.NativeTypedTree.UnionFind.applySubst |> formatType
@@ -92,6 +103,19 @@ module private Projection =
     let freeze revision projectPath (result: ProjectCheckResult) =
         let graph = result.CheckResult.Graph
         let nodes = graph.Nodes |> Map.map (fun _ value -> node value)
+        let startup = ProgramInitialization.read graph |> Option.map (fun plan -> {
+            Entry = nodes[plan.EntryBinding]; SourceEntry = nodes[plan.SourceBinding]
+            SpineNodeId = NodeId.value plan.Spine; EntryCallNodeId = NodeId.value plan.EntryCall
+            Initializers = plan.Initializers |> List.map (fun row -> {
+                Ordinal = row.Ordinal; Module = nodes[row.Module]
+                Binding = nodes[row.Binding]; Value = nodes[row.Initializer]
+                RequiresProgramStorage = plan.ValueBindings.Contains row.Binding
+                HasProgramAuthority = (ProgramInitialization.tryValueAuthority graph row.Binding).IsSome }) })
+        let startupPending = graph.Edges |> List.choose (fun edge ->
+            match edge.Class, edge.Role with
+            | EdgeClass.Provenance, EdgeRole.ProgramInitializationPending reason ->
+                Some { Site = nodes[edge.Target]; Sources = edge.Sources |> List.map (fun id -> nodes[id]); Reason = reason }
+            | _ -> None)
         let obligations =
             SemanticGraph.obligations graph
             |> List.map (fun (value, obligation) ->
@@ -118,18 +142,19 @@ module private Projection =
                 | None, _ | _, SemanticKind.Obligation _ -> None
                 | Some range, _ ->
                     let definition =
-                        match value.Kind with
-                        | SemanticKind.VarRef(_, Some definition) ->
-                            let source = Clef.Compiler.PSGSaturation.SemanticGraph.DirectCaptures.sourceDefinition graph definition
-                            nodes |> Map.tryFind source |> Option.bind (fun n -> n.Range)
-                        | _ -> None
+                        sourceDefinition graph value.Kind |> Option.bind (fun source -> nodes.TryFind source)
+                    let name =
+                        match view.Name, value.Kind with
+                        | None, (SemanticKind.EnvironmentRead _ | SemanticKind.EnvironmentBorrow _) ->
+                            definition |> Option.bind (fun declaration -> declaration.Name)
+                        | _ -> view.Name
                     let anchors =
                         match Map.tryFind ObligationMetadata.Anchors value.Metadata with
                         | Some (MetadataValue.StringList values) -> values
                         | _ -> []
                     Some {
-                        NodeId = view.NodeId; Name = view.Name; Kind = view.Kind; Type = view.Type
-                        Range = range; Definition = definition; IsReachable = view.IsReachable
+                        NodeId = view.NodeId; Name = name; Kind = view.Kind; Type = view.Type
+                        Range = range; Definition = definition |> Option.bind (fun declaration -> declaration.Range); IsReachable = view.IsReachable
                         ValueRange = view.ValueRange; ObligationIds = anchors
                     })
         let snapshot = {
@@ -139,7 +164,8 @@ module private Projection =
             InputFiles = inputFiles projectPath @ (result.SourceFiles |> List.map (fst >> path)) |> List.distinct |> List.sort
             Diagnostics = result.CheckResult.Diagnostics |> List.map diagnostic
             ParseFailures = result.ParseErrors |> Map.toList |> List.map (fun (file, messages) -> { FilePath = path file; Messages = messages })
-            Obligations = obligations; Failure = None
+            Obligations = obligations; ProgramInitialization = startup
+            ProgramInitializationPending = startupPending; Failure = None
         }
         snapshot, hovers
 
@@ -185,6 +211,7 @@ type EditorSession(projectPath: string) =
                                   CompilerIdentity = Projection.compilerIdentity.Value
                                   Sources = []; InputFiles = Projection.inputFiles projectPath
                                   Diagnostics = []; ParseFailures = []; Obligations = []
+                                  ProgramInitialization = None; ProgramInitializationPending = []
                                   Failure = Some failure }, []
                         finally PhaseConfig.setConfig config
                     let index = hovers |> List.groupBy (fun view -> view.Range.FilePath) |> Map.ofList
@@ -213,7 +240,7 @@ type EditorSession(projectPath: string) =
                     |> List.sortBy (fun view ->
                         let r = view.Range
                         r.EndLine - r.StartLine, r.EndCharacter - r.StartCharacter,
-                        (match view.Kind with "VarRef" -> 0 | "Binding" | "PatternBinding" -> 1 | _ -> 2), view.NodeId)
+                        (match view.Kind with "VarRef" | "EnvironmentRead" | "EnvironmentBorrow" -> 0 | "Binding" | "PatternBinding" -> 1 | _ -> 2), view.NodeId)
                     |> List.tryHead
                     // Keep the error node in interval selection so an unresolved name
                     // cannot fall back to a containing expression's unrelated type.

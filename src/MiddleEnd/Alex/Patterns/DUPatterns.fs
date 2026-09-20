@@ -5,6 +5,7 @@
 module Alex.Patterns.DUPatterns
 
 open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
@@ -14,7 +15,53 @@ open Core.Types.Dialects         // TargetPlatform
 open Alex.Traversal.TransferTypes
 open Alex.Elements.MLIRAtomics  // pConstI
 open Alex.Elements.HWElements  // pHWAggregateConstant
+open Alex.Elements.MemRefElements
+open Alex.CodeGeneration.TypeMapping
 open Alex.Patterns.MemoryPatterns  // pDUCase, pExtractDUTag, pExtractDUPayload
+
+/// Allocate only the caller residence and exact union layout settled by Baker.
+/// The storage is not a value until an explicit DUInitialize selects its case.
+let pBuildAggregateStorage (nodeId: NodeId) : PSGParser<MLIROp list * TransferResult> = parser {
+    let! state = getUserState
+    do! ensure (state.Graph.Codata.Value.Escapes.TryFind nodeId = Some EscapeKind.StackScoped) $"Aggregate storage {NodeId.value nodeId} has no admitted caller activation"
+    let! bytes, alignment =
+        match settledLayout state.Graph state.Current.Type with
+        | Some(SettledLayout.Union(_, _, Some bytes, Some alignment)) when bytes > 0 && alignment > 0 -> preturn (bytes, alignment)
+        | _ -> fail (Message $"Aggregate storage {NodeId.value nodeId} has no complete union layout")
+    let result = Alex.Traversal.Values.value nodeId 0
+    let! allocation = pAlloca result bytes (TInt(IntWidth 8)) (Some alignment)
+    return [allocation], TRValue { SSA = result; Type = TMemRefStatic(bytes, TInt(IntWidth 8)) }
+}
+
+/// The graph supplies the selected case and destination. Only the active
+/// payload is recalled; semantic branching belongs to Baker's copy recipe.
+let pBuildDUInitialize (nodeId: NodeId) (destinationId: NodeId) (caseName: string) (caseIndex: int) (payloadId: NodeId option) : PSGParser<MLIROp list * TransferResult> = parser {
+    let! state = getUserState
+    let! destinationNode =
+        match state.Graph.Nodes.TryFind destinationId with
+        | Some node -> preturn node
+        | None -> fail (Message "DU initialization has no destination node")
+    let! destination, destinationType = pRecallNode destinationId
+    let! cases, bytes =
+        match settledLayout state.Graph destinationNode.Type with
+        | Some(SettledLayout.Union(cases, _, Some bytes, Some alignment)) when bytes > 0 && alignment > 0 -> preturn (cases, bytes)
+        | _ -> fail (Message "DU initialization requires a complete destination layout")
+    do! ensure (destinationType = TMemRefStatic(bytes, TInt(IntWidth 8))) "DU destination disagrees with its settled byte carrier"
+    do! ensure (caseIndex >= 0 && caseIndex < cases.Length) "DU initialization has no declared case"
+    let expectedName, payloadSlot = cases[caseIndex]
+    do! ensure (caseName = expectedName && payloadSlot.IsSome = payloadId.IsSome) "DU initialization disagrees with its selected case payload"
+    let! adaptations, payload =
+        match payloadId with
+        | None -> preturn ([], [])
+        | Some id -> parser {
+            let! raw, rawType = pRecallNode id
+            let! operations, value, valueType = pAdapt nodeId id raw rawType
+            do! ensure (payloadSlot |> Option.bind settledScalarType = Some valueType) "DU initialization payload lacks the selected case's settled scalar carrier"
+            return operations, [{ SSA = value; Type = valueType }]
+          }
+    let! writes, result = pDUCaseAt nodeId { SSA = destination; Type = destinationType } destinationNode.Type (int64 caseIndex) payload
+    return adaptations @ writes, result
+}
 
 // ═══════════════════════════════════════════════════════════
 // DU CONSTRUCT — Codata-dependent elision

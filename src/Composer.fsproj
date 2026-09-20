@@ -92,6 +92,7 @@
       <Compile Include="MiddleEnd/Alex/Patterns/ControlFlowPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/LiteralPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ContinuationPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/EnvironmentPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/StringPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ApplicationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
@@ -107,6 +108,7 @@
       <Compile Include="MiddleEnd/Alex/Witnesses/FunctionPointerWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/LazyWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/SeqWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/EnvironmentWitness.fs" />
       <!-- PRD-13a: Core Collections Witnesses -->
       <Compile Include="MiddleEnd/Alex/Witnesses/ListWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/MapWitness.fs" />

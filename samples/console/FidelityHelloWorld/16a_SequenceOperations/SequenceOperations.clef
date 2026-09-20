@@ -1,0 +1,145 @@
+/// Native C-07 composition over the settled sequence representation.
+module SequenceOperations
+
+[<Measure>] type m
+[<Measure>] type s
+
+let mutable constructed = 0
+let makeInput digit value =
+    constructed <- constructed * 10 + digit
+    seq { yield value }
+
+let makeCount () =
+    constructed <- constructed * 10 + 3
+    1
+
+[<EntryPoint>]
+let main _ =
+    let mutable trace = 0
+    let left = seq {
+        trace <- (trace * 10 + 1) % 100000
+        yield 1
+        trace <- (trace * 10 + 2) % 100000
+        yield 2
+        trace <- (trace * 10 + 3) % 100000
+    }
+    let right = seq {
+        trace <- (trace * 10 + 4) % 100000
+        yield 3
+        trace <- (trace * 10 + 5) % 100000
+    }
+    let combined = Seq.append left right
+    let cold = trace = 0
+    let mutable values = 0
+    for value in combined do
+        values <- values * 10 + value
+    let first = cold && values = 123 && trace = 12345
+    trace <- 0
+    values <- 0
+    for value in combined do
+        values <- values * 10 + value
+    let restarted = values = 123 && trace = 12345
+
+    let eager = Seq.append (makeInput 1 7) (makeInput 2 8)
+    let formed = constructed = 12
+    let mutable eagerValues = 0
+    for value in eager do
+        eagerValues <- eagerValues * 10 + value
+    let eagerInputs = formed && constructed = 12 && eagerValues = 78
+
+    let mutable emptyEffects = 0
+    let emptyPrefix = seq { emptyEffects <- (emptyEffects * 10 + 1) % 100; if false then yield 0 }
+    let emptySuffix = seq { emptyEffects <- (emptyEffects * 10 + 2) % 100; if false then yield 0 }
+    let throughEmpty = Seq.append emptyPrefix (Seq.append (seq { yield 9 }) emptySuffix)
+    let emptyCold = emptyEffects = 0
+    let mutable throughValue = 0
+    for value in throughEmpty do
+        throughValue <- value
+    let emptyOrder = emptyCold && emptyEffects = 12 && throughValue = 9
+
+    let mutable iterated = 0
+    Seq.iter (fun value -> iterated <- (iterated * 10 + value) % 1000) (seq { yield 1; yield 2; yield 3 })
+    let iterOrdered = iterated = 123
+    let folded = Seq.fold (fun state value -> (state * 10 + value) % 1000) 0 (seq { yield 1; yield 2; yield 3 })
+    let independentState = Seq.fold (fun state value -> state && value > 0) true (seq { yield 1; yield 2; yield 3 })
+    let emptyState = Seq.fold (fun state value -> state && value > 0) true (seq { if false then yield 1 })
+    let sum = Seq.fold (fun state value -> state + value) 0 (seq { for value in 1..10 do yield value })
+    let product = Seq.fold (fun state value -> state * value) 1 (seq { yield 1; yield 2; yield 3; yield 4; yield 5 })
+    let measuredState = Seq.fold (fun (state: float<1/s>) (_: int<m>) -> state + 0.25<1/s>) 0.0<1/s> (seq { yield 1<m>; yield 2<m> })
+
+    let mutable tested = 0
+    let mutable predicatePulls = 0
+    let predicateInput = seq {
+        predicatePulls <- (predicatePulls + 1) % 100
+        yield 1
+        predicatePulls <- (predicatePulls + 1) % 100
+        yield 2
+        predicatePulls <- (predicatePulls + 1) % 100
+        yield 3
+        predicatePulls <- (predicatePulls + 10) % 100
+    }
+    let some = Seq.exists (fun value -> tested <- (tested + 1) % 100; value = 2) predicateInput
+    let existsStopped = some && tested = 2 && predicatePulls = 2
+    tested <- 0
+    predicatePulls <- 0
+    let all = Seq.forall (fun value -> tested <- (tested + 1) % 100; value < 2) predicateInput
+    let forallStopped = not all && tested = 2 && predicatePulls = 2
+    let empty = seq { if false then yield 1 }
+    let emptyExists = Seq.exists (fun _ -> tested <- 99; true) empty
+    let emptyForall = Seq.forall (fun _ -> tested <- 99; false) empty
+    let emptyPredicates = not emptyExists && emptyForall && tested = 2
+    let none = Seq.exists (fun value -> value > 3) (seq { yield 1; yield 2; yield 3 })
+    let every = Seq.forall (fun value -> value > 0) (seq { yield 1; yield 2; yield 3 })
+
+    let mutable demanded = 0
+    let input = seq {
+        demanded <- (demanded + 1) % 100
+        yield 4
+        demanded <- (demanded + 1) % 100
+        yield 5
+        demanded <- (demanded + 1) % 100
+        yield 6
+    }
+    let limited = Seq.take 2 input
+    let takeCold = demanded = 0
+    let mutable taken = 0
+    for value in limited do
+        taken <- taken * 10 + value
+    let boundedDemand = takeCold && taken = 45 && demanded = 2
+    for value in Seq.take 0 input do
+        taken <- 99
+    for value in Seq.take -2 input do
+        taken <- 99
+    let noDemand = taken = 45 && demanded = 2
+    taken <- 0
+    for value in limited do
+        taken <- taken * 10 + value
+    let takeRestarted = taken = 45 && demanded = 4
+    let mutable shortInput = 0
+    for value in Seq.take 5 (seq { yield 7; yield 8 }) do
+        shortInput <- shortInput * 10 + value
+    constructed <- 0
+    let eagerTake = Seq.take (makeCount ()) (makeInput 4 9)
+    let takeFormed = constructed = 34
+    let mutable eagerTaken = 0
+    for value in eagerTake do
+        eagerTaken <- value
+    let takeInputs = takeFormed && constructed = 34 && eagerTaken = 9
+
+    if not first then 91
+    elif not restarted then 92
+    elif not eagerInputs || not emptyOrder then 93
+    elif not iterOrdered then 94
+    elif folded <> 123 || not independentState || not emptyState || sum <> 55 || product <> 120 || measuredState <> 0.5<1/s> then 95
+    elif not boundedDemand || not noDemand || not takeRestarted || shortInput <> 78 || not takeInputs then 96
+    elif not existsStopped || not forallStopped || not emptyPredicates || none || not every then 97
+    else
+        Console.writeln "=== Sequence operations Test ==="
+        Console.writeln "Append preserves deferred input order: pass"
+        Console.writeln "Repeated append enumeration restarts state: pass"
+        Console.writeln "Append forms input arguments once in source order: pass"
+        Console.writeln "Iter and fold preserve ordered consumption: pass"
+        Console.writeln "Fold retains independent accumulator types and empty state: pass"
+        Console.writeln "Take respects demand limits, exhaustion and fresh enumeration: pass"
+        Console.writeln "Exists and forall stop at the first deciding predicate: pass"
+        0

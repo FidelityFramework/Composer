@@ -1,0 +1,8 @@
+=== Sequence additive state Test ===
+Triangular state crosses each suspension: pass
+Repeated enumeration restarts additive state: pass
+Negative deltas preserve signed state: pass
+Mixed deltas preserve every intermediate value: pass
+Zero iterations preserve the initial state: pass
+Positive non-unit steps retain a finite trip bound: pass
+Descending non-unit steps retain a finite trip bound: pass

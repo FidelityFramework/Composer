@@ -117,6 +117,16 @@ let pStoreMutableVariable (nodeId: int) (memrefSSA: SSA) (valueSSA: SSA) (elemTy
 let slotElementType (arch: Architecture) (ty: MLIRType) : MLIRType =
     physicalStorageType arch ty
 
+/// Observe the exact startup/storage relation. The source binding's
+/// immutability never grants permission to write an immutable image region.
+let pProgramValueAuthority (bindingId: NodeId) : PSGParser<unit> =
+    parser {
+        let! state = getUserState
+        let admitted = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.tryValueAuthority state.Graph bindingId |> Option.isSome
+        do! ensure admitted $"Program value {NodeId.value bindingId} lacks its settled startup and writable-space authority"
+        return ()
+    }
+
 /// Initialize a module-level value slot: declare the one-element memref.global (queued for
 /// module-scope placement), take its address, store the initial value.
 ///
@@ -129,6 +139,7 @@ let slotElementType (arch: Architecture) (ty: MLIRType) : MLIRType =
 /// Returns: the slot as a mutable cell (TMemRef elem) — references reload through pGlobalSlotLoad.
 let pGlobalSlotInit (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
+        do! pProgramValueAuthority nodeId
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 2) $"pGlobalSlotInit: Expected at least 2 SSAs, got {ssas.Length}"
         let! state = getUserState
@@ -144,8 +155,9 @@ let pGlobalSlotInit (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (value
 /// Reload a module-level value from its slot. Valid in any function: the slot is a global.
 ///
 /// SSA layout (3 SSAs): [0] = slotSSA, [1] = zeroSSA, [2] = valueSSA
-let pGlobalSlotLoad (nodeId: NodeId) (globalName: string) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+let pGlobalSlotLoad (bindingId: NodeId) (nodeId: NodeId) (globalName: string) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
+        do! pProgramValueAuthority bindingId
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 3) $"pGlobalSlotLoad: Expected at least 3 SSAs, got {ssas.Length}"
         let! state = getUserState
@@ -161,8 +173,9 @@ let pGlobalSlotLoad (nodeId: NodeId) (globalName: string) (valueTy: MLIRType) : 
 /// Store into a module-level value slot (`Module.value <- v` on a mutable module-level binding).
 ///
 /// SSA layout (2 SSAs): [0] = slotSSA, [1] = zeroSSA
-let pGlobalSlotStore (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+let pGlobalSlotStore (bindingId: NodeId) (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (valueTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
+        do! pProgramValueAuthority bindingId
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 2) $"pGlobalSlotStore: Expected at least 2 SSAs, got {ssas.Length}"
         let! state = getUserState

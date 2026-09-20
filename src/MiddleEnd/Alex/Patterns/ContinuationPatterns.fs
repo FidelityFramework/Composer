@@ -35,6 +35,14 @@ let private pSlotType (slot: ContinuationSlot) : PSGParser<MLIRType> = parser {
     | CaptureSlotKind.CellView payload ->
         do! ensure (slot.Field.Slot = SettledSlot.Pointer 5) $"Continuation cell {NodeId.value slot.Source} requires a complete descriptor field"
         return TMemRefStatic(1, mapped payload)
+    | CaptureSlotKind.InlineValue native ->
+        match settledLayout state.Graph native with
+        | Some(SettledLayout.Union(_, _, Some bytes, Some alignment)) when bytes > 0 && alignment > 0 ->
+            let consistent = not slot.IsCapture && slot.Field.Slot = SettledSlot.InlineBytes(bytes, alignment)
+                             && slot.Field.Size = Some bytes && slot.Field.Align = Some alignment
+            do! ensure consistent $"Continuation aggregate {NodeId.value slot.Source} disagrees with its owned union region"
+            return TMemRefStatic(bytes, TInt(IntWidth 8))
+        | _ -> return! fail (Message $"Continuation aggregate {NodeId.value slot.Source} has no settled union layout")
     | CaptureSlotKind.ValueView native ->
         do! ensure (slot.Field.Slot = SettledSlot.Pointer 5) $"Continuation value {NodeId.value slot.Source} requires a complete descriptor field"
         let carrier =
@@ -51,13 +59,19 @@ let private pSlotType (slot: ContinuationSlot) : PSGParser<MLIRType> = parser {
         match ty with
         | TMemRef _ | TMemRefStatic _ | TStruct(_, Some _) -> return ty
         | _ -> return! fail (Message $"Continuation value {NodeId.value slot.Source} has no settled descriptor carrier")
+    | CaptureSlotKind.EnvironmentView owner ->
+        do! ensure (slot.Field.Slot = SettledSlot.Pointer 5) $"Environment capture {NodeId.value slot.Source} requires a complete descriptor field"
+        match state.Graph.Codata.Value.EnvironmentLayouts |> Map.tryFind owner with
+        | Some layout when layout.Bytes >= 0 && layout.Alignment > 0 ->
+            return TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
+        | _ -> return! fail (Message $"Environment capture {NodeId.value slot.Source} has no settled layout {NodeId.value owner}")
     | _ -> return! fail (Message $"Continuation slot {NodeId.value slot.Source} requires a scalar or complete descriptor representation")
 }
 
 let private pSlotPlacement bytes (slot: ContinuationSlot) = parser {
     let! offset =
         match slot.Field.Offset, slot.Field.Size, slot.Field.Align with
-        | Some offset, Some size, Some alignment when offset >= 0 && size > 0 && alignment > 0 && offset + size <= bytes -> preturn offset
+        | Some offset, Some size, Some alignment when offset >= 0 && offset <= bytes && size > 0 && alignment > 0 && offset % alignment = 0 && size <= bytes - offset -> preturn offset
         | _ -> fail (Message $"Continuation slot {NodeId.value slot.Source} has no complete placement within its {bytes}-byte frame")
     let! fieldType = pSlotType slot
     return offset, fieldType
@@ -76,7 +90,14 @@ let pReadContinuationSlot nodeId frameId bytes (slot: ContinuationSlot) : PSGPar
     let! frameSSA, frameType, offset, fieldType = pPlacedSlot frameId bytes slot
     let s = Values.value nodeId
     let descriptor = match slot.Holds with CaptureSlotKind.CellView _ -> s 1 | _ -> s 0
-    let! load = pTypedExtractView descriptor frameSSA offset (s 2) (s 3) (s 4) fieldType frameType
+    let! load =
+        match slot.Holds with
+        | CaptureSlotKind.InlineValue _ -> parser {
+            let! index = pConstI (s 2) (int64 offset) TIndex
+            let! view = pMemRefView descriptor frameSSA (s 2) frameType fieldType
+            return [index; view]
+          }
+        | _ -> pTypedExtractView descriptor frameSSA offset (s 2) (s 3) (s 4) fieldType frameType
     let! operations, valueType =
         match slot.Holds, fieldType with
         | CaptureSlotKind.CellView _, TMemRefStatic(1, payloadType) -> parser {
@@ -116,8 +137,10 @@ let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot)
     let! adaptations, value, valueType = pAdapt nodeId valueId rawValue rawType
     let s = Values.value nodeId
     match slot.Holds, fieldType with
+    | CaptureSlotKind.InlineValue _, _ ->
+        return! fail (Message $"Continuation aggregate {NodeId.value slot.Source} requires Baker's explicit selected-case copy")
     | CaptureSlotKind.CellView _, TMemRefStatic(1, payloadType) ->
-        do! ensure (valueType = payloadType) $"Continuation cell {NodeId.value slot.Source} write lacks its settled operand representation"
+        do! ensure (valueType = payloadType) $"Continuation cell {NodeId.value slot.Source} write lacks its settled operand representation: actual {valueType}, expected {payloadType}"
         let! descriptor = pTypedExtractView (s 1) frameSSA offset (s 2) (s 3) (s 4) fieldType frameType
         let! zero = pConstI (s 5) 0L TIndex
         let! write = pStore value (s 1) [s 5] payloadType fieldType
@@ -130,7 +153,7 @@ let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot)
                 return [cast], s 6
               }
             | _ when valueType = fieldType -> preturn ([], value)
-            | _ -> fail (Message $"Continuation slot {NodeId.value slot.Source} write lacks its settled operand representation")
+            | _ -> fail (Message $"Continuation slot {NodeId.value slot.Source} write lacks its settled operand representation: actual {valueType}, expected {fieldType}")
         let! write = pTypedInsertView frameSSA stored offset (s 2) (s 3) (s 4) fieldType frameType
         return adaptations @ viewOps @ write, TRVoid
 }
@@ -232,30 +255,21 @@ let private pInitializeState nodeId frameSSA frameType (frame: ContinuationFrame
     return zero :: store
 }
 
-/// Initial capture values are supplied in the graph's original evaluation
-/// order. CellView copies the existing cell descriptor, never its payload.
-let pConstructSequence nodeId (frame: ContinuationFrame) (initializers: (NodeId * NodeId) list) : PSGParser<MLIROp list * TransferResult> = parser {
+/// Initialize an exact, ordered set of settled fields. Sequence and ordinary
+/// closure environments share the same scalar/descriptor store contract.
+let pInitializeEnvironmentSlots nodeId frameSSA frameType bytes (slots: ContinuationSlot list) initializers = parser {
     let! state = getUserState
-    let captures = frame.Slots |> List.filter _.IsCapture |> List.map _.Source |> Set.ofList
-    let initialized = initializers |> List.map fst
-    do! ensure (Set.ofList initialized = captures && initialized.Length = captures.Count) $"Sequence constructor {NodeId.value nodeId} does not initialize its exact settled capture set"
-    let! allocations, frameSSA, frameType =
-        match state.Graph.Codata.Value.SequenceDestinations |> Map.tryFind nodeId with
-        | Some destination -> parser {
-            let! expected = pFrameType frame
-            let! value, actual = pRecallContinuationValue destination
-            do! ensure (actual = expected) $"Sequence destination {NodeId.value destination} lacks its settled frame carrier"
-            return [], value, expected
-          }
-        | None -> pAllocateFrame nodeId frame
-    let! initialState = pInitializeState nodeId frameSSA frameType frame
-    let! captureOps =
+    let supplied = initializers |> List.map fst
+    let expected = slots |> List.map _.Source
+    do! ensure (Set.ofList supplied = Set.ofList expected && supplied.Length = expected.Length
+                && (Set.ofList expected).Count = expected.Length) $"Environment {NodeId.value nodeId} requires its exact unique initializer set"
+    let! operations =
         initializers |> List.mapi (fun ordinal (slotId, sourceId) -> parser {
             let! slot =
-                match frame.Slots |> List.tryFind (fun slot -> slot.Source = slotId && slot.IsCapture) with
+                match slots |> List.tryFind (fun slot -> slot.Source = slotId) with
                 | Some slot -> preturn slot
                 | None -> fail (Message $"Continuation initializer {NodeId.value sourceId} names an absent capture slot {NodeId.value slotId}")
-            let! offset, expected = pSlotPlacement frame.Bytes slot
+            let! offset, expected = pSlotPlacement bytes slot
             let! value, recalled = pRecallContinuationValue sourceId
             // Mutable bindings expose a semantic dynamic view, while their
             // allocating operation records the exact bounded cell descriptor.
@@ -273,7 +287,28 @@ let pConstructSequence nodeId (frame: ContinuationFrame) (initializers: (NodeId 
             let! store = pTypedInsertView frameSSA stored offset (s 0) (s 1) (s 2) expected frameType
             return adaptations @ viewOps @ store
         }) |> Alex.XParsec.Extensions.sequence
-    return allocations @ initialState @ List.concat captureOps, TRValue { SSA = frameSSA; Type = frameType }
+    return List.concat operations
+}
+
+/// Initial capture values are supplied in the graph's original evaluation
+/// order. CellView copies the existing cell descriptor, never its payload.
+let pConstructSequence nodeId (frame: ContinuationFrame) (initializers: (NodeId * NodeId) list) : PSGParser<MLIROp list * TransferResult> = parser {
+    let! state = getUserState
+    let captures = frame.Slots |> List.filter _.IsCapture |> List.map _.Source |> Set.ofList
+    let initialized = initializers |> List.map fst
+    do! ensure (Set.ofList initialized = captures && initialized.Length = captures.Count) $"Sequence constructor {NodeId.value nodeId} does not initialize its exact settled capture set"
+    let! allocations, frameSSA, frameType =
+        match state.Graph.Codata.Value.SequenceDestinations |> Map.tryFind nodeId with
+        | Some destination -> parser {
+            let! expected = pFrameType frame
+            let! value, actual = pRecallContinuationValue destination
+            do! ensure (actual = expected) $"Sequence destination {NodeId.value destination} lacks its settled frame carrier"
+            return [], value, expected
+          }
+        | None -> pAllocateFrame nodeId frame
+    let! initialState = pInitializeState nodeId frameSSA frameType frame
+    let! captureOps = pInitializeEnvironmentSlots nodeId frameSSA frameType frame.Bytes (frame.Slots |> List.filter _.IsCapture) initializers
+    return allocations @ initialState @ captureOps, TRValue { SSA = frameSSA; Type = frameType }
 }
 
 /// Each enumeration owns fresh iteration state. Only capture fields are copied

@@ -35,7 +35,7 @@ open Alex.CodeGeneration.TypeMapping
 /// UNIFIED STATE ARCHITECTURE (January 2026):
 /// State unification enables pure compositional flow through all three layers.
 /// Everything needed for pattern matching and MLIR emission flows through a single
-/// state structure - no manual parameter passing, no helper functions.
+/// state structure for Elements, Patterns and Witnesses.
 ///
 /// The Four Pillars (see four_pillars_of_transfer memory):
 /// - Pillar A (Coeffects): Pre-computed mise-en-place (SSA, Platform, Mutability, etc.)
@@ -43,7 +43,7 @@ open Alex.CodeGeneration.TypeMapping
 /// - Pillar C (Zipper): Bidirectional navigation with focus
 /// - Pillar D (Templates): Reusable patterns that elide boilerplate
 ///
-/// NO HELPER FUNCTIONS - Only composition:
+/// Layer composition:
 /// - Elements compose into Patterns
 /// - Patterns compose into Witnesses
 /// - All composition via `parser { }` CE, `let!` binding, `<|>` choice
@@ -865,7 +865,7 @@ let pForEach : PSGParser<string * NodeId * NodeId> =
 /// PSG parsers don't consume characters - they navigate graph structure.
 ///
 /// State unification (January 2026): Coeffects and Accumulator flow through
-/// PSGParserState, enabling pure compositional patterns with no helper functions.
+/// PSGParserState for parser composition and settled-value recall.
 let runParser (parser: PSGParser<'T>) (graph: SemanticGraph) (node: SemanticNode) (zipper: PSGZipper) (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (accumulator: Alex.Traversal.TransferTypes.MLIRAccumulator) =
     let state = {
         Graph = graph
@@ -984,31 +984,17 @@ let tryMatchWithTrace (parser: PSGParser<'T>) (graph: SemanticGraph) (node: Sema
         Result.Error (err, trace)
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NOTE: Sub-graph witnessing infrastructure needed for control flow
+// CHILD REGION COMPOSITION
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// ARCHITECTURAL GAP: Control flow witnesses (IfThenElse, WhileLoop, ForLoop) need
-// infrastructure to recursively witness branch sub-graphs and collect their operations
-// for structured control flow regions.
+// The registered witness fixed point supplies region witnessing at the
+// Traversal/Witness boundary. Patterns compose the supplied operations into
+// structured regions; they do not infer source evaluation or continuation order.
+// Baker owns those semantic contracts.
 //
-// This combinator cannot be implemented here because:
-// 1. PSGCombinators is at the XParsec layer
-// 2. Witnessing requires WitnessContext/WitnessOutput from Traversal layer
-// 3. This would create a circular dependency
-//
-// SOLUTION: This infrastructure needs to live in:
-// - Option A: A new module in Traversal/ that provides sub-graph witnessing
-// - Option B: As a helper in NanopassArchitecture.fs where it can access witness types
-// - Option C: In each control flow witness itself as witness-specific logic
-//
-// The infrastructure needs to:
-// - Navigate to a sub-graph root using child edges
-// - Recursively witness all nodes in that sub-graph
-// - Collect all operations into a flat list
-// - Return that list for composition into control flow structures (SCF.If, SCF.While, etc.)
-//
-// Until this is resolved, ControlFlowWitness, LambdaWitness, and similar witnesses
-// that need sub-graph witnessing remain stubbed.
+// ControlFlowWitness and MatchWitness currently use visitAllNodes and mutable
+// scope collection. That existing driver is a separate architectural migration;
+// this parser module must not add a recursive subtree-emission path.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PSG STRUCTURAL TRAVERSAL UTILITIES

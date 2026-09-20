@@ -20,6 +20,10 @@ let write (name: string) (text: string) =
     File.WriteAllText(file, text)
     file
 
+let programLifetimeChecks () =
+    ProgramLifetimeProjection.run (Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "../Fixtures/ProgramLifetime")))
+        (Path.Combine(root, "program-lifetime"))
+
 let inputFileChecks () =
     let commonSources = [ "declarations/sources/Common.clef"; "declarations/sources/Alternate.clef" ]
     let common = write commonSources[0] "module Common\nlet value = 1\n"
@@ -355,6 +359,140 @@ let main _ =
         equal capture.Range (reference.Definition |> get)
     printfn "PASS source callable signatures and capture origins for direct captures, captureless control and returned functions"
 
+let closureEnvironmentChecks () =
+    let project = write "closure-environments/Editor.fidproj" """[package]
+name = "editor-closure-environments"
+[compilation]
+target = "library"
+[build]
+sources = ["Main.clef"]
+output_kind = "library"
+"""
+    let source = """module ClosureEnvironments
+[<Measure>] type m
+[<Measure>] type s
+[<EntryPoint>]
+let main _ =
+    let bias = 2<m>
+    let mutable offset = 7<m>
+    let mapper = fun (value: int<m>) -> value + offset + bias
+    let mapped = Seq.map mapper (seq { yield 1<m> })
+    let mutable total = 0<m>
+    for value in mapped do total <- total + value
+    if total = 10<m> then 0 else 1
+"""
+    let file = write "closure-environments/Main.clef" source
+    let session = EditorSession(project)
+    let lines = source.Split('\n')
+    let at (snapshot: EditorSnapshot) (marker: string) (name: string) =
+        let line = lines |> Array.findIndex (fun text -> text.Contains(marker, StringComparison.Ordinal))
+        let column = lines[line].LastIndexOf(name, StringComparison.Ordinal)
+        session.TryHover(snapshot.Revision, file, line, column) |> get
+    let checkedSnapshot inputs =
+        let snapshot = session.CheckAsync(inputs).Result |> get
+        check snapshot.Failure.IsNone $"Closure environment fixture failed: {snapshot.Failure}"
+        check snapshot.ParseFailures.IsEmpty $"Closure environment fixture did not parse: {snapshot.ParseFailures}"
+        check (snapshot.Diagnostics |> List.forall (fun diagnostic -> diagnostic.EffectiveSeverity <> "Error"))
+            $"Closure environment fixture has errors: {snapshot.Diagnostics}"
+        snapshot
+    let checkProjection snapshot =
+        let mapper = at snapshot "let mapper" "mapper"
+        let reference = at snapshot "let mapped" "mapper"
+        equal "int<m> -> int<m>" mapper.Type
+        equal mapper.Type reference.Type
+        equal mapper.Range (reference.Definition |> get)
+        equal "seq<int<m>>" (at snapshot "let mapped" "mapped").Type
+        for name in ["offset"; "bias"] do
+            let declaration = at snapshot (if name = "offset" then "let mutable offset" else "let bias") name
+            let captured = at snapshot "let mapper" name
+            equal "EnvironmentRead" captured.Kind
+            equal (Some name) captured.Name
+            equal "int<m>" captured.Type
+            equal declaration.Range (captured.Definition |> get)
+    let first = checkedSnapshot Map.empty
+    checkProjection first
+    let retained = sprintf "%A" first
+    let changed = source.Replace("offset = 7<m>", "offset = 7<s>")
+    let invalid = session.CheckAsync(Map.ofList [file, changed]).Result |> get
+    check invalid.Failure.IsNone $"Dimensional edit failed to produce a source snapshot: {invalid.Failure}"
+    check (invalid.Diagnostics |> List.exists (fun diagnostic ->
+        diagnostic.Code = "CCS8040" && diagnostic.EffectiveSeverity = "Error" &&
+        (diagnostic.Range |> Option.exists (fun range -> range.FilePath = file && range.StartLine = 7))))
+        $"Captured dimension mismatch lost its source diagnostic: {invalid.Diagnostics}"
+    let repaired = checkedSnapshot Map.empty
+    checkProjection repaired
+    check (repaired.Revision > invalid.Revision) "Repair did not produce a fresh closure projection."
+    equal retained (sprintf "%A" first)
+    equal source (File.ReadAllText file)
+    printfn "PASS materialized callback signatures, captured declaration identities and dimensional edit/repair"
+
+let loopObligationChecks () =
+    let project = write "loop-obligations/Editor.fidproj" """[package]
+name = "editor-loop-obligations"
+[compilation]
+target = "library"
+[build]
+sources = ["Main.clef"]
+output_kind = "library"
+"""
+    let source = """module LoopObligations
+let observed = seq {
+    let mutable total = 0
+    let mutable i = 1
+    while i <= 6 do
+        total <- total + i
+        yield total
+        i <- i + 1
+}
+[<EntryPoint>]
+let main _ = ignore observed; 0
+"""
+    let file = write "loop-obligations/Main.clef" source
+    let session = EditorSession(project)
+    let checkedSnapshot text =
+        let snapshot = session.CheckAsync(Map.ofList [file, text]).Result |> get
+        check snapshot.Failure.IsNone $"Loop projection failed: {snapshot.Failure}"
+        check snapshot.ParseFailures.IsEmpty $"Loop projection did not parse: {snapshot.ParseFailures}"
+        check (snapshot.Diagnostics |> List.forall (fun diagnostic -> diagnostic.EffectiveSeverity <> "Error"))
+            $"Loop projection has errors: {snapshot.Diagnostics}"
+        snapshot
+    let loops (snapshot: EditorSnapshot) =
+        snapshot.Obligations |> List.filter (fun obligation ->
+            obligation.Kind = "finite-loop-trip" || obligation.Kind = "additive-loop-invariant")
+    let checkEvidence upper snapshot =
+        let obligations = loops snapshot
+        equal 2 obligations.Length
+        let total = session.TryHover(snapshot.Revision, file, 2, 16) |> get
+        equal (Some $"[0, {upper}]") total.ValueRange
+        for obligation in obligations do
+            equal (Some total.Range) obligation.Range
+            check (List.contains obligation.Id total.ObligationIds) "The cell hover lost its obligation anchor."
+            let hasPremise kind line =
+                obligation.Premises |> List.exists (fun premise ->
+                    premise.Kind = kind && premise.Range |> Option.exists (fun span -> span.FilePath = file && span.StartLine = line))
+            check (hasPremise "Binding" 2 && hasPremise "Binding" 3 && hasPremise "WhileLoop" 4 && hasPremise "Set" 5 && hasPremise "Set" 7)
+                $"The recurrence lost source premise navigation: {obligation.Premises}"
+            let verdict = ProofDispatch.checkAsync "cvc5" obligation CancellationToken.None |> fun task -> task.GetAwaiter().GetResult()
+            equal "proved" verdict.State
+        obligations
+    let first = checkedSnapshot source
+    let originalEvidence = checkEvidence 36 first
+    let retained = sprintf "%A" first
+    let narrowed = checkedSnapshot (source.Replace("i <= 6", "i <= 3"))
+    let changedEvidence = checkEvidence 9 narrowed
+    check (narrowed.Revision > first.Revision) "The bound edit retained the old revision."
+    check ((originalEvidence |> List.find (fun item -> item.Kind = "additive-loop-invariant")).QueryHash <>
+           (changedEvidence |> List.find (fun item -> item.Kind = "additive-loop-invariant")).QueryHash)
+        "The bound edit retained the old recurrence query."
+    let retracted = checkedSnapshot (source.Replace("total <- total + i", "total <- total * i"))
+    check (List.isEmpty (loops retracted)) "A non-additive edit retained an obsolete recurrence obligation."
+    check (session.TryHover(first.Revision, file, 2, 16).IsNone) "A stale recurrence hover remained current."
+    let repaired = checkedSnapshot source
+    checkEvidence 36 repaired |> ignore
+    equal retained (sprintf "%A" first)
+    equal source (File.ReadAllText file)
+    printfn "PASS loop proof premises, source navigation, solver dispatch and unsaved bound/retraction/repair"
+
 let callEffectRangeChecks () =
     let project = write "call-effects/Editor.fidproj" """[package]
 name = "editor-call-effects"
@@ -530,7 +668,10 @@ let main _ = if message = "proof fixture" then 0 else 1
     importVisibilityChecks ()
     integerLiteralChecks ()
     directCaptureChecks ()
+    closureEnvironmentChecks ()
+    loopObligationChecks ()
     callEffectRangeChecks ()
+    programLifetimeChecks ()
 
 let inspectSample project =
     let session = EditorSession(project)
@@ -559,9 +700,12 @@ let main args =
             match args with
             | [| "--sample"; project |] -> inspectSample project
             | [| "--direct-captures" |] -> directCaptureChecks ()
+            | [| "--closure-environments" |] -> closureEnvironmentChecks ()
+            | [| "--loop-obligations" |] -> loopObligationChecks ()
             | [| "--call-effects" |] -> callEffectRangeChecks ()
+            | [| "--program-lifetime" |] -> programLifetimeChecks ()
             | [||] -> checks ()
-            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --call-effects]"
+            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --loop-obligations | --call-effects | --program-lifetime]"
             0
         with error -> eprintfn "%O" error; 1
     finally if Directory.Exists root then Directory.Delete(root, true)

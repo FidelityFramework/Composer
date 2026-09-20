@@ -89,6 +89,75 @@ let private scope (ob: ObligationInfo) : MLIROp list =
 
     let ops =
         match ob.Body with
+        | ObligationBody.FiniteLoopTrip model ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let output = v ()
+                statements.Add(smt (SMTBigIntConstant(output, value)))
+                output
+            let cmp pred left right =
+                let output = v ()
+                statements.Add(smt (SMTIntCmp(output, pred, left, right)))
+                output
+            let start, limit = constant model.InitialLower, constant model.LimitUpper
+            let step, count, zero = constant model.MinimumStep, constant model.MaximumIterations, constant 0I
+            let distance, ending = v (), v ()
+            statements.Add(smt (SMTIntMul(distance, count, step)))
+            statements.Add(smt (SMTIntAdd(ending, start, distance)))
+            let clauses = [cmp SmtGt step zero; cmp SmtGe count zero
+                           cmp (if model.Inclusive then SmtGt else SmtGe) ending limit]
+            let conclusion = v ()
+            statements.Add(smt (SMTAnd(conclusion, clauses)))
+            anchor conclusion (List.ofSeq statements)
+        | ObligationBody.AdditiveLoopInvariant model ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let output = v ()
+                statements.Add(smt (SMTBigIntConstant(output, value)))
+                output
+            let declare name =
+                let output = v ()
+                statements.Add(smt (SMTDeclareFun(output, name, SMTInt)))
+                output
+            let binary make left right =
+                let output = v ()
+                statements.Add(smt (make (output, left, right)))
+                output
+            let cmp pred left right =
+                let output = v ()
+                statements.Add(smt (SMTIntCmp(output, pred, left, right)))
+                output
+            let conjunction clauses =
+                let output = v ()
+                statements.Add(smt (SMTAnd(output, clauses)))
+                output
+            let implies premise conclusion =
+                let negated, output = v (), v ()
+                statements.Add(smt (SMTNot(negated, premise)))
+                statements.Add(smt (SMTOr(output, [negated; conclusion])))
+                output
+            let lo, hi = constant model.InitialLower, constant model.InitialUpper
+            let dlo, dhi = constant model.DeltaLower, constant model.DeltaUpper
+            let lower, upper = constant model.Lower, constant model.Upper
+            let count, zero, one = constant model.MaximumIterations, constant 0I, constant 1I
+            let down, up = constant (min 0I model.DeltaLower), constant (max 0I model.DeltaUpper)
+            let k, value, delta = declare "recurrence_k", declare "recurrence_value", declare "recurrence_delta"
+            let envelope seed slope iteration = binary SMTIntAdd seed (binary SMTIntMul iteration slope)
+            let lowAtK, highAtK = envelope lo down k, envelope hi up k
+            let domain = conjunction [cmp SmtLe zero k; cmp SmtLe k count]
+            let enclosed = conjunction [cmp SmtLe lower lowAtK; cmp SmtLe highAtK upper]
+            let stepDomain = conjunction [cmp SmtLe zero k; cmp SmtLt k count
+                                          cmp SmtLe lowAtK value; cmp SmtLe value highAtK
+                                          cmp SmtLe dlo delta; cmp SmtLe delta dhi]
+            let nextK, nextValue = binary SMTIntAdd k one, binary SMTIntAdd value delta
+            let preserved = conjunction [cmp SmtLe (envelope lo down nextK) nextValue
+                                         cmp SmtLe nextValue (envelope hi up nextK)]
+            // Numeric consistency is part of the conclusion. Global assertions
+            // here would hide malformed models behind an empty premise domain.
+            let conclusion = conjunction [cmp SmtGe count zero; cmp SmtLe lo hi; cmp SmtLe dlo dhi
+                                          cmp SmtLe lower upper; cmp SmtLe lower lo; cmp SmtLe hi upper
+                                          implies domain enclosed; implies stepDomain preserved]
+            anchor conclusion (List.ofSeq statements)
         | ObligationBody.MappedElementSpan model ->
             let statements = ResizeArray<MLIROp>()
             let declare name =

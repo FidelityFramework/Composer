@@ -1,0 +1,114 @@
+/// Optional elements remain values after later pulls and independent enumeration.
+module SequenceOptions
+
+[<Measure>] type s
+
+[<EntryPoint>]
+let main _ =
+    let values = seq { yield Some 11; yield None; yield Some 22 }
+    let mutable first: int option = None
+    let mutable position = 0
+    let mutable retained = true
+    for value in values do
+        position <- position + 1
+        if position = 1 then
+            first <- value
+        elif position = 2 then
+            retained <- retained && (match value with None -> true | Some _ -> false)
+            retained <- retained && (match first with Some saved -> saved = 11 | None -> false)
+        else
+            retained <- retained && (match value with Some current -> current = 22 | None -> false)
+            retained <- retained && (match first with Some saved -> saved = 11 | None -> false)
+    let afterExhaustion = position = 3 && retained && (match first with Some saved -> saved = 11 | None -> false)
+
+    let repeated = seq {
+        for index in 1 .. 3 do
+            yield Some index
+    }
+    let mutable loopFirst: int option = None
+    let mutable loopPosition = 0
+    let mutable loopValues = true
+    for value in repeated do
+        loopPosition <- loopPosition + 1
+        if loopPosition = 1 then loopFirst <- value
+        loopValues <- loopValues && (match value with Some current -> current = loopPosition | None -> false)
+        loopValues <- loopValues && (match loopFirst with Some saved -> saved = 1 | None -> false)
+    let oneConstructionSite = loopPosition = 3 && loopValues && (match loopFirst with Some saved -> saved = 1 | None -> false)
+
+    let mutable pairs = 0
+    let mutable pairSum = 0
+    let mutable independent = true
+    for row in values do
+        let expectedRow = match row with Some value -> value | None -> 0
+        for column in values do
+            pairs <- pairs + 1
+            pairSum <- pairSum + (match column with Some value -> value | None -> 0)
+            independent <- independent && (match row with Some value -> value = expectedRow | None -> expectedRow = 0)
+    let mutable againCount = 0
+    let mutable againSum = 0
+    for value in values do
+        againCount <- againCount + 1
+        againSum <- againSum + (match value with Some current -> current | None -> 0)
+    let freshEnumerations = independent && pairs = 9 && pairSum = 99 && againCount = 3 && againSum = 33
+
+    let delegated = seq {
+        yield Some 5
+        yield! values
+        yield None
+    }
+    let mutable delegatedPosition = 0
+    let mutable delegatedOrder = true
+    let mutable delegatedFirst: int option = None
+    for value in delegated do
+        delegatedPosition <- delegatedPosition + 1
+        if delegatedPosition = 1 then
+            delegatedFirst <- value
+            delegatedOrder <- delegatedOrder && (match value with Some current -> current = 5 | None -> false)
+        elif delegatedPosition = 2 then
+            delegatedOrder <- delegatedOrder && (match value with Some current -> current = 11 | None -> false)
+        elif delegatedPosition = 4 then
+            delegatedOrder <- delegatedOrder && (match value with Some current -> current = 22 | None -> false)
+        else
+            delegatedOrder <- delegatedOrder && (match value with None -> true | Some _ -> false)
+        delegatedOrder <- delegatedOrder && (match delegatedFirst with Some saved -> saved = 5 | None -> false)
+    let delegatedValues = delegatedPosition = 5 && delegatedOrder
+
+    let flags = seq { yield Some false; yield None; yield Some true }
+    let mutable flagPosition = 0
+    let mutable flagOrder = true
+    for value in flags do
+        flagPosition <- flagPosition + 1
+        if flagPosition = 1 then
+            flagOrder <- flagOrder && (match value with Some current -> not current | None -> false)
+        elif flagPosition = 2 then
+            flagOrder <- flagOrder && (match value with None -> true | Some _ -> false)
+        else
+            flagOrder <- flagOrder && (match value with Some current -> current | None -> false)
+    let rates = seq { yield Some 0.5<1/s>; yield None; yield Some -0.25<1/s> }
+    let mutable ratePosition = 0
+    let mutable rateOrder = true
+    let mutable firstRate: float<1/s> option = None
+    for value in rates do
+        ratePosition <- ratePosition + 1
+        if ratePosition = 1 then
+            firstRate <- value
+            rateOrder <- rateOrder && (match value with Some current -> current = 0.5<1/s> | None -> false)
+        elif ratePosition = 2 then
+            rateOrder <- rateOrder && (match value with None -> true | Some _ -> false)
+        else
+            rateOrder <- rateOrder && (match value with Some current -> current = -0.25<1/s> | None -> false)
+    let scalarPayloads = flagPosition = 3 && flagOrder && ratePosition = 3 && rateOrder && (match firstRate with Some saved -> saved = 0.5<1/s> | None -> false)
+
+    if not afterExhaustion then 191
+    elif not oneConstructionSite then 192
+    elif not freshEnumerations then 193
+    elif not delegatedValues then 194
+    elif not scalarPayloads then 195
+    else
+        Console.writeln "=== Sequence Option elements Test ==="
+        Console.writeln "Retained Option values survive later pulls and exhaustion: pass"
+        Console.writeln "Repeated construction at one loop site preserves prior values: pass"
+        Console.writeln "Independent enumerators and re-enumeration retain values: pass"
+        Console.writeln "Delegation preserves Some and None ordering: pass"
+        Console.writeln "Boolean and inverse measured real payloads preserve values: pass"
+        0

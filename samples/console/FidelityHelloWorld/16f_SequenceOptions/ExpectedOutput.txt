@@ -1,0 +1,6 @@
+=== Sequence Option elements Test ===
+Retained Option values survive later pulls and exhaustion: pass
+Repeated construction at one loop site preserves prior values: pass
+Independent enumerators and re-enumeration retain values: pass
+Delegation preserves Some and None ordering: pass
+Boolean and inverse measured real payloads preserve values: pass

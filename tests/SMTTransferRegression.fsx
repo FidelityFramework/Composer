@@ -98,6 +98,43 @@ for index, (body, expected) in List.indexed integerCases do
     if source <> expected || native <> expected then
         failwithf "Integer %d: expected %s, source=%s native=%s" index expected source native
 printfn "PASS %d integer source/native parity cases" integerCases.Length
+let trip : FiniteLoopTripModel =
+    { InitialLower = 1I; LimitUpper = 6I; MinimumStep = 1I; Inclusive = true; MaximumIterations = 6I }
+let recurrence : AdditiveLoopInvariantModel =
+    { MaximumIterations = 6I; InitialLower = 0I; InitialUpper = 0I
+      DeltaLower = 1I; DeltaUpper = 6I; Lower = 0I; Upper = 36I }
+let loopCases = [
+    ObligationBody.FiniteLoopTrip trip, "unsat"
+    ObligationBody.FiniteLoopTrip { trip with Inclusive = false; MaximumIterations = 5I }, "unsat"
+    ObligationBody.FiniteLoopTrip { trip with InitialLower = 7I; MaximumIterations = 0I }, "unsat"
+    ObligationBody.FiniteLoopTrip { trip with InitialLower = -6I; LimitUpper = -1I }, "unsat"
+    ObligationBody.FiniteLoopTrip { trip with LimitUpper = unsigned64Max; MaximumIterations = unsigned64Max }, "unsat"
+    ObligationBody.FiniteLoopTrip { trip with MaximumIterations = 5I }, "sat"
+    ObligationBody.FiniteLoopTrip { trip with MinimumStep = 0I }, "sat"
+    ObligationBody.FiniteLoopTrip { trip with InitialLower = 100I; MaximumIterations = -1I }, "sat"
+    ObligationBody.AdditiveLoopInvariant recurrence, "unsat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with DeltaLower = -6I; DeltaUpper = -1I; Lower = -36I; Upper = 0I }, "unsat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with DeltaLower = -2I; DeltaUpper = 3I; Lower = -12I; Upper = 18I }, "unsat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with MaximumIterations = 0I; InitialLower = 4I; InitialUpper = 7I; Lower = 4I; Upper = 7I }, "unsat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with MaximumIterations = unsigned64Max; DeltaUpper = 1I; Upper = unsigned64Max }, "unsat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with MaximumIterations = -1I }, "sat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with InitialLower = 1I; InitialUpper = 0I }, "sat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with DeltaLower = 7I; DeltaUpper = 6I }, "sat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with Lower = 37I; Upper = 36I }, "sat"
+    ObligationBody.AdditiveLoopInvariant { recurrence with Lower = 1I }, "sat" // Initial value excluded.
+    ObligationBody.AdditiveLoopInvariant { recurrence with Upper = 35I }, "sat" // Final prefix excluded.
+    ObligationBody.AdditiveLoopInvariant { recurrence with DeltaLower = -2I; DeltaUpper = 3I; Lower = -11I; Upper = 18I }, "sat"
+]
+for index, (body, expected) in List.indexed loopCases do
+    let ob = { Id = sprintf "loop_check_%d" index; Kind = "loop-range-regression"; Logic = "QF_LIA"
+               Statement = "finite additive enclosure"; Source = "test"; Refs = []; Body = body }
+    let source = run "cvc5" "--lang=smt2" (Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob])
+    let smt = run "mlir-translate" "--export-smtlib" (Alex.Traversal.SMTTransfer.transfer [ob])
+    if not (smt.Contains(ob.Id)) then failwithf "Loop anchor %s did not survive transfer" ob.Id
+    let native = run "cvc5" "--lang=smt2" smt
+    if source <> expected || native <> expected then
+        failwithf "Loop %d: expected %s, source=%s native=%s for %A" index expected source native body
+printfn "PASS %d loop-range source/native parity cases" loopCases.Length
 let applicationCases = [
     ["argument", Some m, Some m; "result", Some (quotient m s), Some (quotient m s)], "unsat"
     [("argument", Some m, Some s)], "sat"

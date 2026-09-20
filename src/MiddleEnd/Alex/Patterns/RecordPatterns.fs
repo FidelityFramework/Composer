@@ -21,7 +21,7 @@ open Alex.Patterns.MemoryPatterns
 open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPERS
+// SETTLED FIELD OFFSET AND NAME LOOKUPS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// The byte offset of a field within a struct: a read of the settled layout the struct carries

@@ -1,0 +1,131 @@
+/// Search consumes exactly the demanded prefix, retaining native Option values.
+module SequenceSearch
+
+[<Measure>] type m
+[<Measure>] type s
+
+let mutable formation = 0
+let mutable formationError = false
+
+let chooserFactory () =
+    if formation <> 0 then formationError <- true
+    formation <- 1
+    fun (value: int<m>) ->
+        if formation <> 3 then formationError <- true
+        formation <- 4
+        Some (value > 0<m>)
+
+let inputFactory () =
+    if formation <> 1 then formationError <- true
+    formation <- 2
+    seq {
+        if formation <> 2 then formationError <- true
+        formation <- 3
+        yield 1<m>
+        formation <- 5
+    }
+
+[<EntryPoint>]
+let main _ =
+    let mutable headStage = 0
+    let headInput = seq {
+        headStage <- 1
+        yield 7<m>
+        headStage <- 2
+        yield 8<m>
+        headStage <- 3
+    }
+    let head = Seq.tryHead headInput
+    let firstOnly =
+        match head with
+        | Some value -> value = 7<m> && headStage = 1
+        | None -> false
+    let mutable emptyRan = false
+    let empty: seq<int<m>> = seq { emptyRan <- true }
+    let missing = Seq.tryHead empty
+    let emptyObserved = match missing with None -> emptyRan | Some _ -> false
+
+    let mutable pickStage = 0
+    let mutable seenOne = false
+    let mutable seenTwo = false
+    let mutable duplicate = false
+    let mutable unexpected = false
+    let searchInput = seq {
+        pickStage <- 1
+        yield 1<m>
+        pickStage <- 2
+        yield 2<m>
+        pickStage <- 3
+        yield 3<m>
+        pickStage <- 4
+    }
+    let selected =
+        Seq.tryPick
+            (fun value ->
+                if value = 1<m> then
+                    if seenOne then duplicate <- true
+                    seenOne <- true
+                    None
+                elif value = 2<m> then
+                    if seenTwo then duplicate <- true
+                    seenTwo <- true
+                    Some 0.5<1/s>
+                else
+                    unexpected <- true
+                    None
+            )
+            searchInput
+    let firstMatch =
+        match selected with
+        | Some value -> value = 0.5<1/s> && pickStage = 2 && seenOne && seenTwo && not duplicate && not unexpected
+        | None -> false
+
+    let mutable absentStage = 0
+    let mutable seenTrue = false
+    let mutable seenFalse = false
+    let mutable repeated = false
+    let absentInput = seq {
+        absentStage <- 1
+        yield true
+        absentStage <- 2
+        yield false
+        absentStage <- 3
+    }
+    let absent: bool option =
+        Seq.tryPick
+            (fun value ->
+                if value then
+                    if seenTrue then repeated <- true
+                    seenTrue <- true
+                else
+                    if seenFalse then repeated <- true
+                    seenFalse <- true
+                None
+            )
+            absentInput
+    let exhausted = match absent with None -> absentStage = 3 && seenTrue && seenFalse && not repeated | Some _ -> false
+
+    let eager = Seq.tryPick (chooserFactory ()) (inputFactory ())
+    let formedOnce = match eager with Some value -> value && formation = 4 && not formationError | None -> false
+
+    let mutable nestedAdvanced = false
+    let nested = Seq.tryHead (seq {
+        yield (None: int<m> option)
+        nestedAdvanced <- true
+        yield Some 9<m>
+    })
+    let nestedSelected = match nested with Some None -> not nestedAdvanced | _ -> false
+
+    if not firstOnly || not emptyObserved then 181
+    elif not firstMatch then 182
+    elif not exhausted then 183
+    elif not formedOnce then 184
+    elif not nestedSelected then 185
+    else
+        Console.writeln "=== Sequence search Test ==="
+        Console.writeln "TryHead stops after one value and observes empty effects: pass"
+        Console.writeln "TryPick selects the first independently measured result once: pass"
+        Console.writeln "Absent search exhausts input and visits each current once: pass"
+        Console.writeln "Chooser and input factories form once in source order: pass"
+        Console.writeln "Nested Option selection preserves Some None: pass"
+        0

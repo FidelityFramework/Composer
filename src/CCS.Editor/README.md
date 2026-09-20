@@ -30,6 +30,21 @@ dotnet run --project tests/CCS.Editor.Tests/CCS.Editor.Tests.fsproj
 
 The tests check ordered two-file inference, shadowed references, unsaved dimensional errors and import removal/restoration, retained snapshots, UTF-16/CRLF positions, invalidation, parser failures, generated obligations, and real cvc5 verdict/cancellation boundaries. They do not build Composer's native backend.
 
+`--loop-obligations` checks the finite additive recurrence projection: both
+obligation kinds retain navigation to the initial cells, loop and exact stores.
+An unsaved bound change refreshes their queries; replacing the additive update
+retracts those obligations, and repair restores them without changing an earlier
+snapshot. This checks revision behavior of the current whole-project service;
+it does not claim dependency-directed incremental recomputation.
+
+`--program-lifetime` checks selected-platform storage designations and startup
+graph projections, including declaration locations, unsaved repairs, ordered
+initializer identities and pending native prerequisites. `EditorSnapshot`
+publishes these immutable PSG observations; the Lattice server exposes them via
+the versioned, read-only `clef/programInitialization` query. Storage intent and
+proved writable authority are separate fields. Shared fixtures live in
+[`tests/Fixtures/ProgramLifetime`](../../tests/Fixtures/ProgramLifetime/README.md).
+
 To check the GUI sample and dispatch its source obligations:
 
 ```sh

@@ -1,0 +1,15 @@
+[package]
+name = "SequenceApplications"
+version = "0.1.0"
+description = "C-07 direct, pipeline, stored and partial source application contracts"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceApplications.clef"]
+output = "sequence-applications"
+output_kind = "console"

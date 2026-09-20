@@ -1,0 +1,15 @@
+[package]
+name = "SequenceOptions"
+version = "0.1.0"
+description = "Native scalar-payload Option sequence transport acceptance"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceOptions.clef"]
+output = "sequence-options"
+output_kind = "console"

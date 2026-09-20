@@ -1,7 +1,11 @@
 # Closure Architecture
 
 > **MLKit-style flat closures with CCS-computed captures.**
-> See [C-01 PRD](PRDs/C-01-Closures.md) for the full specification.
+> See [C-01 PRD](PRDs/C-01-Closures.md) for the original roadmap.
+> **C-07 update:** [Closure values as data](Closure_As_Data.md) records the implemented
+> materialized callback path. The older layout/coeffect sketches below are not
+> an alternative contract for that path; unused code-pointer-in-environment and
+> global-arena prototypes have been removed.
 
 ## 1. Executive Summary
 
@@ -134,10 +138,9 @@ Alex/Witnesses/LambdaWitness
     ▼
 Alex/Patterns/ClosurePatterns
     │
-    ├─ pFlatClosure: struct construction
-    ├─ pClosureCall: extract + indirect call
-    ├─ pExtractCaptures: env extraction at function entry
-    ├─ pAllocateInArena: arena bump allocation
+    ├─ pExtractCaptures: legacy env extraction at function entry
+    ├─ EnvironmentPatterns: materialized environment allocation/access
+    ├─ ApplicationPatterns: graph-established call operands
     │
     ▼
 Alex/Elements (MLIRAtomics, MemRefElements, FuncElements)

@@ -130,7 +130,7 @@ let pClosureCall (nodeId: NodeId) (closureSSA: SSA) (args: (SSA * MLIRType) list
 // These patterns wrap arithmetic Elements to maintain Element/Pattern/Witness firewall.
 // Witnesses call patterns (not Elements directly), patterns extract SSAs monadically.
 
-/// Helper: dispatch FPGA combinational arithmetic operation
+/// Select the FPGA combinational Element for the requested arithmetic operation.
 let private pFpgaCombOp (operation: string) (resultSSA: SSA) (lhs: SSA) (rhs: SSA) (opTy: MLIRType) =
     match operation with
     | "add" -> pCombAdd resultSSA lhs rhs opTy
@@ -182,7 +182,7 @@ let private pExtendBySign (ssa: SSA) (value: SSA) (fromTy: MLIRType) (opTy: MLIR
                 else MLIROp.ArithOp (ArithOp.ExtSI (ssa, value, fromTy, opTy)))
     }
 
-/// Helper: dispatch a core's arith operation in the form the join's sign selects
+/// Select the core arithmetic Element after the settled join selects its signed form.
 let private pCoreArithOp (operation: string) (resultSSA: SSA) (lhs: SSA) (rhs: SSA) (opTy: MLIRType) =
     match operation with
     | "add" -> pAddI resultSSA lhs rhs opTy

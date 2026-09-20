@@ -63,10 +63,11 @@ module Description =
     }
     let descriptor: PlatformDescription = {
         Id = "fixture-%s"; DisplayName = "Build-only fixture"; Substrate = "mcu"; Core = Some core
-        Spaces = [| flash; ram |]; Surfaces = [||]; Buffers = [||]; Transports = [||]; Notes = [||]; Limits = [||]
+        Spaces = [| flash; ram |]; ProgramLifetime = Some { Immutable = "%s"; Mutable = Some "%s" }
+        Surfaces = [||]; Buffers = [||]; Transports = [||]; Notes = [||]; Limits = [||]
         Lifecycle = { Clocks = [||]; Resets = [||]; Entry = "Reset_Handler"; Teardown = ""; Persistence = "volatile" }
     }
-        """ arch triple cpu flash flashBytes flashBase ram ramBytes vectors (vectorCount * 4) vectorCount flash ram vectors vectorAlignment part part idAddress optionAddress cpu
+        """ arch triple cpu flash flashBytes flashBase ram ramBytes vectors (vectorCount * 4) vectorCount flash ram vectors vectorAlignment part part idAddress optionAddress cpu flash ram
 
 let startup m7 =
     let profile = if m7 then CortexMProfile.Stm32H747HardFloat else CortexMProfile.CortexM33SoftFloat

@@ -1,0 +1,15 @@
+[package]
+name = "SequenceAdditive"
+version = "0.1.0"
+description = "Finite additive loop evidence and persistent sequence state"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceAdditive.clef"]
+output = "sequence-additive"
+output_kind = "console"

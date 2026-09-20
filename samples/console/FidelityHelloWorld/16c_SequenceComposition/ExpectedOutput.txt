@@ -1,0 +1,8 @@
+=== Sequence composition Test ===
+Uncaptured mapping preserves doubled and squared values: pass
+Map/filter order preserves stage counts and even-square sum 220: pass
+First three doubled evens stop upstream demand exactly: pass
+Multiple immutable callback captures retain their values: pass
+Empty, singleton and rejected inputs preserve callback and exhaustion laws: pass
+Five-stage composition yields sum 400 with exact pull and callback counts: pass
+Repeated deep enumeration restarts progress and preserves shared counters: pass

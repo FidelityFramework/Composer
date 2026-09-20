@@ -7,6 +7,262 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-07 sequence operations — implementation waypoint, acceptance open, 2026-09-20
+
+**Coordinated implementation waypoint; C-07 exit gates remain open.** This entry
+records the assembled work and actual gates so continuation does not rely on
+conversation history. The [C-07 PRD](PRDs/C-07-SeqOperations.md) retains the full
+exit criteria; companion revisions are recorded below.
+
+Latest consolidated gates on CCS
+`da1f5790bd5d1aaec12a28fb09401907704bc157951957ca616dd52a10300c8f`:
+
+| Gate | Result |
+|---|---|
+| CCS | **987/987**, `/tmp/clef-c07-unit-activation-full-tests.log`. Module tests now assert ordered reference membership and lexical identity without executable children; the empty-sequence oracle explicitly demands both owners. |
+| Alex | **90/90**, `/tmp/composer-c07-final-alex-tests.log` |
+| SMT transfer | **85/85**, including real `mlir-translate`/cvc5 dispatch and source/native loop parity: `/tmp/composer-c07-final-smt-transfer.log` |
+| Native 16a–f | All six pass fresh compilation, stock MLIR verification, exact output and exit 0. Evidence suffixes under `/tmp/composer-native-sequences-…`: `5d753990fc6b45ff9fc900708b8c1f5f`, `e8a5cb6c935b4bd397d78ef815d9f738`, `ed5d00fc292e4f7cb816f7c7ddfce666`, `be58181ceea640049a85a96e02504c58`, `15acc441f7ac4264a0a8558dde2ebdad`, `0df583f172dd4e568981fd03806a36e0` |
+| Native controls | 15a and 15d pass the same gates: `/tmp/composer-native-sequences-fa046022410b4b15b8764ecb5e9a1d3d`, `/tmp/composer-native-sequences-c872553ccb2545729ecdf8498d466a1a` |
+| Editor / analyzer projection | Shared final projection passes: `/tmp/composer-program-lifetime-owned-editor-tests.log`. Analyzer executable passed the identical linked gate on preceding `344c4583`: `/tmp/lattice-program-lifetime-99a71908a26e48f395b53a37ad27281d/evidence.json`; its duplicate run was not repeated after unit activation. |
+| Live LSP | Final selected-platform error/repair and source-only startup/pending projections pass: `/tmp/lattice-program-lifetime-lsp-9jk9Hi/evidence.json`, `/tmp/lattice-program-lifetime-lsp-chLebG/evidence.json` |
+| BAREWire | **580/580**, `/tmp/barewire-program-lifetime-tests.log`; descriptor implementation unchanged since this run |
+
+The full-profile compilation-unit boundary is now explicit: executable-owned
+files seed eager startup; executable value/function demand activates dependency
+implementation units and all their observable eager initializers to a fixed
+point. Type/declaration imports alone do not activate runtime effects.
+`ProgramUnitActivation` retains exact activation participants in F. Startup runs
+before source main, while lexical module membership remains a reference relation.
+This removes Alex's initializer scanning and preserves design-time visibility.
+
+The final focused correction uses CCS
+`9fe00834eda63cc9a4b91253b983d5e2aaf2e49fb4ba536fb3b271ae1f709e0f`.
+Suspension liveness now consumes the exact writable program-cell authority for
+scalar external cells, retaining its participants in the suspension relation.
+It does not establish the backing lifetime of a descriptor or aggregate.
+Continuation evidence passes **18/18**, including four new authority cases
+(`/tmp/clef-c07-program-cell-liveness-tests.log`); related Alex components pass
+**13/13** (`/tmp/composer-c07-program-cell-alex-tests.log`). Native 16a and 16f
+remain green on this artifact:
+`/tmp/composer-native-sequences-05728d81b98f4605a5ff9195e0aed2ec`,
+`/tmp/composer-native-sequences-5286f211d8b0432d812bb60cbd726125`.
+The unchanged full-profile **16g passes** stock MLIR, exact output and exit 0:
+`/tmp/composer-native-sequences-177d299383c0462c8cfbb2925dfa8b8b`.
+It exercises two files, multiple modules, unused observable initialization,
+once-only formation, deferred pulls, and repeated main/named-function use.
+The broader suite and tooling records above retain their actual preceding hash;
+they were not all repeated for this scalar residence correction.
+
+**Acceptance remains open:**
+
+- Original16 now reaches its actual factory/capture boundaries and reports 68
+  CCS8403 diagnostics, chiefly returned captured environments, forwarded factory
+  origins and their dependent residence failures. The original executable source
+  and output are retained. `/tmp/composer-native-sequences-5d26f74e5bb74498bf3f0527060ca5b3`.
+- New16h exposes missing staged elaboration for stored/bare Seq operation values.
+  Their retained sequence and callable captures need C-01/C-02 admission; alias
+  substitution must not replay already supplied effects. This also prevents
+  complete-use classification of callbacks shared with those unresolved uses.
+  `/tmp/composer-native-sequences-5de3f2e3cb2d49d2b7aae19b560f9cd6` records the
+  rejection on `344c4583`; subsequent changes concern unit activation, not partial
+  application. The oracle is unchanged and has not passed.
+
+The PRD index distinguishes tested core implementation from full acceptance and
+records the next dependency work. No hardware deployment, complete argv adapter,
+new dialect family, or incremental graph repair is claimed by this waypoint.
+
+### Companion revisions
+
+Use the containing Composer commit with these peer revisions. The staged scope
+excludes unrelated roadmap, platform-format, branding and sample-removal edits.
+
+| Repository | Revision | Scope |
+|---|---|---|
+| Composer | This waypoint's containing commit | Alex integration, native oracles, Editor/LSP query and PRD status index |
+| BAREWire | `7b9de43700b7` | Explicit immutable/mutable program-space designation |
+| Fidelity.Platform | `5a6c2860e826` | Existing profile spaces named without invented fallback |
+| clef | `bf9632a05062` | Sequence, closure, startup and proof-incidence implementation |
+| clef-lang-spec | `18e889419830` | Native composition, startup and successor contracts |
+| lattice-analyzers | `2d476000275b` | Shared CCS projection and exact rejection/repair gates |
+| lattice-vscode | `6c3fad5a75f0` | Live sequence/platform/startup protocol gates |
+| ClefAutoComplete (`fidelity`) | `21930abd9a98` (unchanged) | Active semantic authority remains CCS; no separate platform/intrinsic catalogue was introduced |
+| Fidelity.UI | `b7ef6f90e86e` (unchanged) | Design triangulation reference; no new UI syntax conformance claimed |
+
+The original16 expected-output file intentionally retains trailing spaces from
+the source oracle. They are observable output, not whitespace cleanup targets.
+
+### Implementation trail
+
+The following records earlier artifacts and the defects they exposed. The gates
+and unresolved acceptance conditions above supersede their interim status.
+
+Baker's producer and consumer recipes compose the shared iterator ingredient.
+`take` checks demand before pulling; `iter`, `fold`, `exists` and `forall` retain
+ordered eager operands and exact current-read certificates. Fold state uses its
+own checked NTU type. Pull-effect relations retain exact possible generator
+bodies for range invalidation; missing or mixed origins stay unresolved.
+Generated integer literals use the NTU kind of their declared type, allowing
+platform and range settlement to determine their storage width.
+
+Captured callbacks now have explicit callable, environment and formal identities.
+Baker materializes capture reads/writes and complete applications; Alex reads
+placed environment slots and the actual environment occurrence. Mutable captures
+retain the original cell. The bounded admission covers scalar immutable captures
+and scalar cells within a proven covering activation. Returned child sequences
+now retain eager immutable capture initializers and explicit borrowed-cell
+incidence, with the full constructor path and covering allocation as premises.
+Opaque and aggregate environments still need their residence/representation
+contracts. [Closure values as data](Closure_As_Data.md) records the detailed seam.
+
+| Gate | Evidence so far |
+|---|---|
+| CCS | 877/878 in the full run; the final Collect assertion was updated for the explicit environment argument and then passed unchanged in production: all 878 have passing evidence. `/tmp/clef-c07-full-tests.log`, `/tmp/clef-c07-collect-test.log` |
+| Alex | 77/77, including six environment construction/recall and missing-premise cases; `/tmp/composer-c07-alex-tests.log`, before the two latest native corrections |
+| Native 16a | Fresh compile, stock MLIR verification, exact output and exit 0: `/tmp/composer-native-sequences-2001ea0935c74f32b670175e8dfe5084` |
+| Native 16b | The same gates for aliases, composed demand, repeated formation and shared mutable cells: `/tmp/composer-native-sequences-5cbcfcc2aa0c4859be0455b3e4cde5b1` |
+| Native 16c | The same gates for both map/filter orders, multiple captures, empty/singleton inputs, deep composition and repeated enumeration: `/tmp/composer-native-sequences-187a041210b94fb9b89851a1bee6704a` |
+| Native 16d | The same gates for captured returned children, shared mutable effects, variable/empty inner sequences, repeated enumeration and taking within a child: `/tmp/composer-native-sequences-f75e09e7b1bb4509a29ad2e4b6d3cf6c` |
+| CCS child/match relations | Closure environments 11/11, factory results 9/9 and nested matches 9/9 on the 16d artifact; `/tmp/clef-c07-child-environment-final-tests.log` and `/tmp/clef-c07-child-environment-nested-match-tests.log` retain the runs and corrected concrete-type fixtures |
+| CCS.Editor | Focused source signature/capture definition, dimensional error/repair and retained snapshot gate passes: `/tmp/composer-c07-closure-editor-tests.log`, on the earlier artifact |
+
+16a, 16b and 16c used CCS SHA-256
+`feb4d22032d202f2d161e76eb294387f95a2531c1dc49a03a33366139b912562`.
+The earlier Alex and Editor gates used
+`f554c883dda000e597d51b962adfee988cacbf4904041016321aa1b2e8d85d62`.
+Later uncommitted source edits are not covered by those results.
+
+Preparing caller-owned sequence storage prepends a destination parameter.
+Environment identity now follows its retained `EnvironmentFormal` relation
+through that transformation, including exact actual arity and environment owner,
+instead of assuming argument zero. The isolated Collect probe passes fresh
+compilation, stock MLIR verification and native exit 0 on CCS
+`769c53b3737254bff8e4106c3bbf4ca88bef8e10234a6a588734e813b85732b0`:
+`/tmp/clef-c07-collect-probe/compile-formal.log` and `verified.mlir`.
+
+16d and the focused child/match cases used CCS SHA-256
+`1c71c4455a551205244c312bf364dd8bdfeaa5f1a1e3f11a1fdc993181ff5b85`.
+The earlier returned-child failure is resolved by the resident capture,
+initializer, formal and allocation relationships; no Alex source scan supplies
+them. Nested constructor matches retain branch-local extraction and exact
+fallback paths. Tuple/record payload patterns remain a separate admission gap.
+
+Search consumers share guarded iteration; the earlier 12 source/graph cases
+passed in `/tmp/clef-c07-search-tests.log` and
+`/tmp/clef-c07-search-protocol-tests.log`. Native investigation exposed generated
+Option intrinsics left unsaturated. A shared native Option ingredient now
+constructs their complete DU structure; its stronger 29-case Option/search gate
+is recorded below. The permanent 16e fixture retains its Option-valued element
+case. The temporary scalar-only probe is diagnostic evidence, not a replacement
+acceptance fixture.
+
+The original 16 fixture now uses the full default profile and its original
+executable statements and expected output. `/tmp/composer-native-sequences-78aaf168d4e74080abffbb45cec8ed40`
+records 172 CCS8403 diagnostics, principally missing module-initialization
+activation and returned storage. Ordered startup ownership must move into Baker
+before reachability, with complete initialization/use coverage and explicit
+storage authority. Alex's former module-initializer prologue scan supplied no
+such proof; the startup graph replacement and its gates are recorded below.
+
+Finite additive loop work constructs joint induction/accumulation relations and
+source/build obligation projections. It binds the admitted guard, initial values,
+step, stores and exact update expressions; arbitrary-width range settlement
+precedes physical carrier selection. On CCS SHA-256
+`90f079076d5878fad73d534f2878eb3bd1b1024925e453c89be8659747579d87`:
+
+| Gate | Evidence |
+|---|---|
+| CCS loop relations | 15/15, including control/effect/privacy negatives and evidence replacement: `/tmp/clef-c07-loop-range-tests.log` |
+| Shared Option/search | 29/29 (17 Option and 12 search), requiring complete typed DU structure rather than dormant Option intrinsics: `/tmp/clef-c07-options-selection-tests.log` |
+| SMT transfer | 85/85, including 20 new source/native loop parity cases and false numeric claims: `/tmp/composer-c07-loop-smt-parity.log` |
+| Native 15d | Fresh compile, stock MLIR verification, exact eight output lines and exit 0: `/tmp/composer-native-sequences-fb0caeada794416a8c9ee17572ead115`. Triangular/repeated enumeration, negative/mixed deltas, zero trips and non-unit ascending/descending steps |
+| Editor loop proof | Source-cell/store navigation, bound edit `[0,36]` → `[0,9]`, actual cvc5 dispatch, retraction, repair and retained snapshots: `/tmp/composer-c07-loop-editor-tests.log` |
+| Analyzer projection | 52 accepted groups and 57 exact diagnostic rejections, capture identity and snapshot repair: `/tmp/lattice-ccs-surface-3bd0baf316b54ff984553df8f04326c1/evidence.json`. The captured producer read now expects `EnvironmentRead`, preserving its exact original declaration span |
+| Actual LSP | 61 diagnostic edits/repairs plus sequence signatures and capture definitions: `/tmp/lattice-surface-waypoint-KZhjb8/result.json`, Node 22.23.2, server using the same CCS artifact |
+
+The original 15 compile at `/tmp/composer-original15-additive-lw25qz_7/compile.log`
+has eight errors. Its triangular recurrence no longer has a settlement error;
+Fibonacci and power fields remain unresolved, alongside six module-template
+activation failures. Coupled/multiplicative recurrence evidence must include
+ordered intermediate values and final stores, not just yielded values; the
+additive certificate does not establish a matrix/power enclosure.
+
+Continuation scratch now distinguishes actual control-owned declarations and
+captures from external assignment targets. A `Set` no longer silently creates a
+private copy of an external cell. All 14 continuation-evidence cases pass, and
+the scalar search probe passes fresh compilation, stock MLIR verification,
+exact output and native exit 0 on CCS `309bd46f…add64de`:
+`/tmp/clef-c07-search-scalar-8ef53a111bc2453bb658c89dfc5d76ee`.
+
+Scalar-payload Option sequence values now have owned byte regions, explicit
+selected-case initialization, and consumer snapshots. Seven core aggregate
+cases pass on CCS `993291d5…172511`, including retained-snapshot evaluation and
+rejecting missing current/use/residence evidence. Ten new Alex component cases
+pass in `/tmp/composer-c07-aggregate-pattern-tests.log`; Some and None operations
+also pass stock MLIR verification and LLVM lowering. The preceding 77 Alex
+cases passed on the same production artifact. This does not admit aggregate
+captures or infer lifetime from a descriptor copy.
+
+Permanent 16f adds retained Option values, repeated constructor sites, independent
+enumerators, delegation and Boolean/measured-real payloads. Both 16e and 16f now
+reach Alex. Native gates exposed missing facts in the copy operations constructed
+after range analysis: Option tag bounds are corrected at ingredient construction;
+selected payload range/carrier transport remains open. Latest retained failures:
+`/tmp/composer-native-sequences-df0716b307ce456f87d08c8484172431`
+and `/tmp/composer-native-sequences-238ee1853ed84e90b51b7cb3c7d6bab7`.
+Component success is not recorded as native conformance. On CCS
+`74269f55…ab31b16`, both native fixtures reach stock MLIR verification, which
+rejects a copy destination established only inside the Some arm. 16e also exposes
+a nested-match fallback shared across exclusive regions. The subsequent
+batch sequences the destination before case selection and creates distinct
+branch occurrences with explicit source incidence. Recipe fold-in now carries
+new hyperedges through the same simultaneous replacement map as the nodes.
+On CCS `feed086b…103b`, the startup structure cohort passes 9/9, nested matches
+and branch occurrences 12/12, and aggregate/FoldIn cases 14/14. The final batch
+also guards cyclic declaration aliases and projects executable entry bindings
+before reachability, keeping lexical descriptor membership out of startup demand.
+
+Program initialization is moving into Baker before first reachability. The
+working implementation separates a generated startup activation from callable
+source `main`, preserves lexical module membership without treating it as
+execution containment, and records ordered initialization, slot intent, writable
+authority and complete-call lifetime dependencies separately. The two-module-per-
+file order reversal is corrected. New native 16g retains unused observable
+initializers and checks repeated sequence use from main and a named function.
+Its native gate and the final combined graph cohort remain pending. Composer
+builds against CCS `bedea1f6…b7f26`; Alex's module-initializer scan is removed and
+the generated entry uses the ordinary function witness. Three component cases
+on the preceding `feed086b…103b` artifact pass real MLIR verification and refuse
+missing/mismatched writable authority before constructing a slot.
+
+Startup must also be inspectable during source editing. Its initializer order,
+source identities, slot intent, storage authority and pending prerequisites belong
+to the same PSG consumed by CAC and Lattice. The peered gate is adding a direct
+projection of those relations; it does not infer execution from module order in
+the client. Hardware bring-up and numeric selection remain governed by the
+selected platform's declarations and graph obligations. The hosted entry's
+pre-existing source `argv` conversion gap is not closed by the startup wrapper;
+these native oracles ignore that argument.
+
+The companion storage declaration is explicit across BAREWire, Fidelity.Platform,
+CCS and Composer target projections. `ProgramLifetime` names existing immutable
+and optional mutable spaces; absent authority supplies no placement fallback.
+Read-only image authority does not permit runtime initialization writes. BAREWire
+passes 580 checks (`/tmp/barewire-program-lifetime-tests.log`), and 16 new CCS
+authority cases plus four existing string-layout cases pass on `74269f55…ab31b16`
+(`/tmp/clef-program-lifetime-tests.log`). Named-space and proof-incidence tests
+include exact declaration errors, aliases, missing/ambiguous spaces and rejected
+runtime descriptor factories. Slot layout/capacity is distinct from role authority.
+Affected Editor/analyzer/LSP projection and repair gates are being added; earlier
+sequence tooling passes do not establish these newer contracts.
+
+Cleanup removes duplicated recipe node constructors in favor of Ingredients and
+three unused Alex prototypes: code-address-in-environment construction,
+capture-prepending invocation and fixed-width global arena allocation. The active
+legacy lazy representation and mutable traversal/scope driver remain separate
+architectural work; removing unused prototypes does not establish their migration.
+Search consumer retooling and peered analyzer/LSP validation are still in progress.
+
 ## C-06 native continuation settlement — 2026-09-20
 
 **Native continuation implementation waypoint; aggregate C-06 regression gate

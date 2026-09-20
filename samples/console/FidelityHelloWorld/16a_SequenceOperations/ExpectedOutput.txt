@@ -1,0 +1,8 @@
+=== Sequence operations Test ===
+Append preserves deferred input order: pass
+Repeated append enumeration restarts state: pass
+Append forms input arguments once in source order: pass
+Iter and fold preserve ordered consumption: pass
+Fold retains independent accumulator types and empty state: pass
+Take respects demand limits, exhaustion and fresh enumeration: pass
+Exists and forall stop at the first deciding predicate: pass

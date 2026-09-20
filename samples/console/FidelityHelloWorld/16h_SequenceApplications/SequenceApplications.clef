@@ -1,0 +1,86 @@
+/// C-07 application forms preserve source signatures and supplied values.
+module SequenceApplications
+
+[<Measure>] type m
+[<Measure>] type s
+
+[<EntryPoint>]
+let main _ =
+    let offset = 10
+    let callback = fun value -> value + offset
+    let callbackAlias = callback
+    let direct = Seq.map callbackAlias (seq { yield 1; yield 2 })
+    let piped = seq { yield 1; yield 2 } |> Seq.map callbackAlias
+    let directValue = Seq.fold (fun state value -> state * 100 + value) 0 direct
+    let pipeValue = piped |> Seq.fold (fun state value -> state * 100 + value) 0
+
+    let mutable formations = 0
+    let storedMap = Seq.map (formations <- (formations + 1) % 10; callbackAlias)
+    let storedFilter = Seq.filter (fun value -> value % 2 = 0)
+    let storedTake = Seq.take 2
+    let formedOnce = formations = 1
+    let composed = seq { for value in 1..6 do yield value } |> storedMap |> storedFilter |> storedTake
+    let mutable collected = 0
+    let action = fun value -> collected <- (collected * 100 + value) % 100000
+    let storedIter = Seq.iter action
+    storedIter composed
+    let first = collected = 1214 && formations = 1
+    collected <- 0
+    composed |> storedIter
+    let restarted = collected = 1214 && formations = 1
+
+    let folder = fun (state: float<1/s>) (_: int<m>) -> state + 0.25<1/s>
+    let folderAlias = folder
+    let afterFolder = Seq.fold folderAlias
+    let afterState = afterFolder 1.0<1/s>
+    let folded = afterState (seq { yield 1<m>; yield 2<m> })
+    let emptyFolded = seq { if false then yield 1<m> } |> afterState
+
+    let mutable existsCalls = 0
+    let mutable forallCalls = 0
+    let storedExists = Seq.exists (fun value -> existsCalls <- (existsCalls + 1) % 10; value = 2)
+    let storedForall = Seq.forall (fun value -> forallCalls <- (forallCalls + 1) % 10; value < 2)
+    let predicateInput = seq { yield 1; yield 2; yield 3 }
+    let found = storedExists predicateInput
+    let all = predicateInput |> storedForall
+    let empty: seq<int> = seq { if false then yield 0 }
+    let absent = storedExists empty
+    let vacuous = empty |> storedForall
+
+    let prefix = seq { yield 9 }
+    let storedAppend = Seq.append prefix
+    let expansion = fun value -> seq { yield value; yield value + 1 }
+    let storedCollect = Seq.collect expansion
+    let expanded = (seq { yield 1; yield 3 } |> storedCollect) |> storedAppend
+    let packed = Seq.fold (fun state value -> state * 10 + value) 0 expanded
+
+    let mapOperation = Seq.map
+    let bareMapped = mapOperation callbackAlias (seq { yield 3 })
+    let headOperation = Seq.tryHead
+    let selectedHead = headOperation bareMapped
+    let headOk = match selectedHead with Some value -> value = 13 | None -> false
+    let emptyHead = headOperation empty
+    let emptyHeadOk = match emptyHead with None -> true | Some _ -> false
+
+    let chooser = fun (value: int<m>) -> if value = 2<m> then Some 0.5<1/s> else None
+    let storedPick = Seq.tryPick chooser
+    let chosen = seq { yield 1<m>; yield 2<m>; yield 3<m> } |> storedPick
+    let pickOk = match chosen with Some value -> value = 0.5<1/s> | None -> false
+
+    if directValue <> 1112 || pipeValue <> 1112 then 211
+    elif not formedOnce || not first || not restarted then 212
+    elif folded <> 1.5<1/s> || emptyFolded <> 1.0<1/s> then 213
+    elif not found || all || absent || not vacuous || existsCalls <> 2 || forallCalls <> 2 then 214
+    elif packed <> 91234 then 215
+    elif not headOk || not emptyHeadOk then 216
+    elif not pickOk then 217
+    else
+        Console.writeln "=== Sequence application forms Test ==="
+        Console.writeln "Direct and pipeline callbacks retain their captured alias: pass"
+        Console.writeln "Stored producer and iter partials preserve formation and restart: pass"
+        Console.writeln "Both fold partial frontiers retain independent measured state: pass"
+        Console.writeln "Predicate partials preserve short circuit and empty results: pass"
+        Console.writeln "Append and collect partials retain ordered child values: pass"
+        Console.writeln "Bare operation aliases preserve mapped and optional results: pass"
+        Console.writeln "TryPick partial retains independent result dimensions: pass"
+        0

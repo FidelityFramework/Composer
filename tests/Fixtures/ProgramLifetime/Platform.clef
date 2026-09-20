@@ -1,0 +1,9 @@
+module StorageAuthority
+open StorageNames
+type MemorySpace = { Name: string; Kind: string; Capacity: int; Alignment: int; Granularity: int; Growth: string; Access: string; Base: int option }
+type ProgramLifetimeSpaces = { Immutable: string; Mutable: string option }
+type PlatformDescription = { Id: string; Spaces: MemorySpace array; ProgramLifetime: ProgramLifetimeSpaces option }
+let image = { Name = immutableName; Kind = "rodata"; Capacity = 1024; Alignment = 16; Granularity = 16; Growth = "fixed"; Access = "r"; Base = None }
+let state = { Name = mutableName; Kind = "data"; Capacity = 1024; Alignment = 16; Granularity = 16; Growth = "fixed"; Access = "rw"; Base = None }
+let makeRoles () = Some { Immutable = immutableName; Mutable = Some mutableName }
+let description = { Id = "storage-projection"; Spaces = [| image; state |]; ProgramLifetime = Some { Immutable = immutableName; Mutable = Some mutableName } }

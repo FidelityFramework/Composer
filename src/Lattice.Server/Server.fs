@@ -21,6 +21,9 @@ module private Wire =
         {| start = {| line = span.StartLine; character = span.StartCharacter |}
            ``end`` = {| line = span.EndLine; character = span.EndCharacter |} |}
     let location (span: SourceSpan) = box {| uri = uri span.FilePath; range = range span |}
+    let node (value: NodeView) =
+        {| nodeId = value.NodeId; name = value.Name |> Option.toObj; kind = value.Kind; ``type`` = value.Type
+           location = value.Range |> Option.map location |> Option.defaultValue null |}
     let error code message = LocalRpcException(message, ErrorCode = code)
     let changed () = error -32801 "The checked project changed; request current results."
 
@@ -261,6 +264,30 @@ type Server(rpc: JsonRpc, configuredProject: string, solver: string) =
             if stamp <> generation then raise (Wire.changed())
             session |> Option.bind (fun s -> s.TryHover(snapshot.Revision, file, Wire.number "line" position, Wire.number "character" position))
             |> Option.bind (fun h -> h.Definition) |> Option.map Wire.location |> Option.defaultValue null)
+    }
+
+    /// Read-only startup projection; all order, source identity and pending
+    /// facts were constructed in CCS. The transport performs no selection.
+    [<JsonRpcMethod("clef/programInitialization", UseSingleObjectParameterDeserialization = true)>]
+    member _.ProgramInitialization(parameters: JsonElement) = task {
+        let document = Wire.field "textDocument" parameters
+        let uri = Wire.text "uri" document
+        let file = Wire.path uri
+        let version = Wire.number "version" document
+        let! stamp, snapshot = current file (Some version)
+        return lock gate (fun () ->
+            if generation <> stamp || Map.tryFind file versions <> Some version then raise (Wire.changed())
+            let plan = snapshot.ProgramInitialization |> Option.map (fun value ->
+                box {| entry = Wire.node value.Entry; sourceEntry = Wire.node value.SourceEntry
+                       spineNodeId = value.SpineNodeId; entryCallNodeId = value.EntryCallNodeId
+                       initializers = value.Initializers |> List.map (fun row ->
+                           {| ordinal = row.Ordinal; ``module`` = Wire.node row.Module
+                              binding = Wire.node row.Binding; value = Wire.node row.Value
+                              requiresProgramStorage = row.RequiresProgramStorage; hasProgramAuthority = row.HasProgramAuthority |}) |})
+            box {| textDocument = {| uri = uri; version = version |}; checkGeneration = string stamp
+                   compilerIdentity = snapshot.CompilerIdentity; plan = plan |> Option.defaultValue null
+                   pending = snapshot.ProgramInitializationPending |> List.map (fun value ->
+                       {| site = Wire.node value.Site; sources = value.Sources |> List.map Wire.node; reason = value.Reason |}) |})
     }
 
     [<JsonRpcMethod("clef/proofs", UseSingleObjectParameterDeserialization = true)>]

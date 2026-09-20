@@ -13,6 +13,9 @@
     <Compile Include="UnitResultTests.fs" />
     <Compile Include="IndexSwitchTests.fs" />
     <Compile Include="ContinuationPatternTests.fs" />
+    <Compile Include="EnvironmentPatternTests.fs" />
+    <Compile Include="AggregatePatternTests.fs" />
+    <Compile Include="ProgramValuePatternTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
     <Compile Include="CallableSymbolTests.fs" />
     <Compile Include="SequenceBoundaryTests.fs" />

@@ -24,7 +24,7 @@ open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ControlFlowPatterns
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BRANCH SCOPE HELPER (inlined from ControlFlowWitness pattern)
+// BRANCH REGION COLLECTION THROUGH THE SCOPE TRAVERSAL DRIVER
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Witness a branch scope and collect operations.

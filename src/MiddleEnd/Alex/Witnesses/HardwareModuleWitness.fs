@@ -300,7 +300,7 @@ let private witnessHardwareModule
 
         // ── 3. Walk the Step function Lambda via combinator ──
         // This triggers LambdaWitness to generate hw.module for the step function
-        // and transitively all helper functions called from the step body.
+        // and transitively the function declarations called from the step body.
         let combinator = getCombinator()
         match resolveStepBindingTarget ctx.Graph stepNodeId with
         | Some stepBindingNode ->

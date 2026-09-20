@@ -21,10 +21,6 @@ open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Core.Types.Dialects                        // TargetPlatform (codata-dependent elision)
 
 // ═══════════════════════════════════════════════════════════
-// XPARSEC HELPERS
-// ═══════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════
 // STRUCTURED CONTROL FLOW (SCF)
 // ═══════════════════════════════════════════════════════════
 

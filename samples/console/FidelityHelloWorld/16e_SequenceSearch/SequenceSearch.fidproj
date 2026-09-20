@@ -1,0 +1,15 @@
+[package]
+name = "SequenceSearch"
+version = "0.1.0"
+description = "C-07 optional sequence search and exact demand acceptance"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["SequenceSearch.clef"]
+output = "sequence-search"
+output_kind = "console"

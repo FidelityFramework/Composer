@@ -1,0 +1,28 @@
+/// Project file order and declaration order are observable startup contracts.
+namespace SequenceStartup.First
+
+module ZState =
+    let mutable stage = 0
+    let mutable invalidOrder = false
+    let mutable initializations = 0
+    let mutable formations = 0
+    let mutable pulls = 0
+    let mutable calls = 0
+
+    let advance expected next =
+        if stage <> expected then invalidOrder <- true
+        stage <- next
+        initializations <- (initializations + 1) % 100
+
+    let initialized =
+        advance 0 1
+        11
+
+namespace SequenceStartup.Second
+
+module AUnreferenced =
+    // No source reference uses this binding. Its initializer must still run.
+    let unused =
+        SequenceStartup.First.ZState.advance 1 2
+        Console.writeln "Unreferenced startup initializer executes in source order: pass"
+        22

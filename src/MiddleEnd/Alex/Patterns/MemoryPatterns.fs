@@ -263,38 +263,44 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
 /// CRITICAL: This is the foundation for all collection patterns (Option, List, Map, Set, Result)
 /// SSA layout: [0] = undefSSA, [1] = tagSSA, [2] = tagOffsetSSA, [3] = tagResultSSA,
 ///             then for each payload: [4+3*i] = offsetSSA, [5+3*i] = viewSSA, [6+3*i] = zeroSSA
-let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+let pDUCaseAt (nodeId: NodeId) (destination: Val) (nativeType: NativeType) (tag: int64) (payload: Val list) : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! ssas = getNodeSSAs nodeId
-        let ssaCount = 4 + 3 * payload.Length
-        do! ensure (ssas.Length >= ssaCount) $"pDUCase: Expected at least {ssaCount} SSAs, got {ssas.Length}"
-
-        // Allocate byte-level memref (stack or heap based on escape analysis)
-        let! allocOp = pAllocValue nodeId ssas.[0] ty
+        let s = Alex.Traversal.Values.value nodeId
+        let ty = destination.Type
 
         // Insert tag at byte offset 0 via reinterpret_cast (same element type: i8→i8)
         let tagTy = TInt (IntWidth 8)  // DU tags are always i8
-        let! tagConstOp = pConstI ssas.[1] tag tagTy
-        let! insertTagOps = pTypedInsert ssas.[0] ssas.[1] 0 ssas.[2] ssas.[3] tagTy ty
+        let! tagConstOp = pConstI (s 1) tag tagTy
+        let! insertTagOps = pTypedInsert destination.SSA (s 1) 0 (s 2) (s 3) tagTy ty
 
         // Insert payload fields at the settled payload offset (after the tag) via memref.view
         // (different element type: byte buffer → typed payload)
         let! state = getUserState
-        let payloadByteOffset = unionPayloadOffset state.Graph state.Current.Type
+        let payloadByteOffset = unionPayloadOffset state.Graph nativeType
         let! payloadOpLists =
             payload
             |> List.mapi (fun i field ->
                 parser {
-                    let offsetSSA = ssas.[4 + 3*i]
-                    let viewSSA = ssas.[5 + 3*i]
-                    let zeroSSA = ssas.[6 + 3*i]
-                    return! pTypedInsertView ssas.[0] field.SSA payloadByteOffset offsetSSA viewSSA zeroSSA field.Type ty
+                    let offsetSSA = s (4 + 3*i)
+                    let viewSSA = s (5 + 3*i)
+                    let zeroSSA = s (6 + 3*i)
+                    return! pTypedInsertView destination.SSA field.SSA payloadByteOffset offsetSSA viewSSA zeroSSA field.Type ty
                 })
             |> sequence
 
         let payloadOps = List.concat payloadOpLists
-        // Result is the allocated memref (stores are in-place)
-        return (allocOp :: tagConstOp :: (insertTagOps @ payloadOps), TRValue { SSA = ssas.[0]; Type = ty })
+        return (tagConstOp :: (insertTagOps @ payloadOps), TRVoid)
+    }
+
+/// Construct into newly allocated storage using the same settled tag/payload
+/// insertion as an explicit Baker destination. Inactive payloads are untouched.
+let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! state = getUserState
+        let! result = getNodeSSA nodeId
+        let! allocation = pAllocValue nodeId result ty
+        let! writes, _ = pDUCaseAt nodeId { SSA = result; Type = ty } state.Current.Type tag payload
+        return allocation :: writes, TRValue { SSA = result; Type = ty }
     }
 
 // ═══════════════════════════════════════════════════════════

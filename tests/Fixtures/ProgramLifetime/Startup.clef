@@ -1,0 +1,7 @@
+module StartupProjection
+let mutable state = false
+let initialize () = state <- true
+let unused = initialize ()
+let stored = true
+[<EntryPoint>]
+let main _ = if state && stored then 0 else 1
