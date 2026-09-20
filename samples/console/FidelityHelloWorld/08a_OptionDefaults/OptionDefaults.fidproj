@@ -1,0 +1,15 @@
+[package]
+name = "OptionDefaults"
+version = "0.1.0"
+description = "Option.defaultValue evaluation, stored fallbacks, nested options and measured payloads"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["OptionDefaults.clef"]
+output = "optiondefaults"
+output_kind = "console"

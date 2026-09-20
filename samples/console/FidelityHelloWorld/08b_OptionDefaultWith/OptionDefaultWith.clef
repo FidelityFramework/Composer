@@ -1,0 +1,87 @@
+/// Sample 08b: deferred defaults preserve evaluation, captures and NTU payloads.
+module OptionDefaultWithSample
+
+[<Measure>]
+type distance
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeFallback () =
+    record 1
+    fun () ->
+        record 3
+        calls <- calls + 1
+        11
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let choose = Option.defaultWith
+
+[<EntryPoint>]
+let main _ =
+    trace <- 0
+    calls <- 0
+    let present = Option.defaultWith (makeFallback ()) (argument true)
+    let presentOk = present = 7 && trace = 12 && calls = 0
+    trace <- 0
+    let missing = argument false |> Option.defaultWith (makeFallback ())
+    let deferredOk = presentOk && missing = 11 && trace = 213 && calls = 1
+
+    trace <- 0
+    calls <- 0
+    let stored = Option.defaultWith (makeFallback ())
+    let formedOnce = trace = 1 && calls = 0
+    let first = stored None
+    let skipped = stored (Some 5)
+    let second = stored None
+    let storedOk = formedOnce && first = 11 && skipped = 5 && second = 11
+                   && trace = 133 && calls = 2
+
+    let mutable seed: int = 4
+    let delayed = Option.defaultWith (fun () -> seed)
+    let mutable thunk = fun () -> 5
+    let snapshot = Option.defaultWith thunk
+    seed <- 9
+    thunk <- fun () -> 19
+    let capturesOk = delayed None = 9 && snapshot None = 5 && thunk () = 19
+
+    let nested: int option option -> int option = Option.defaultWith (fun () -> Some 8)
+    let nestedOk = Option.get (nested None) = 8 && Option.isNone (nested (Some None))
+    let mutable shift: int = 1
+    let selectFunction = Option.defaultWith (fun () -> fun value -> value + shift)
+    let selected = selectFunction None
+    let supplied = selectFunction (Some (fun value -> value + 20))
+    shift <- 3
+    let payloadsOk = nestedOk && selected 2 = 5 && supplied 2 = 22
+
+    calls <- 0
+    let unitDefault = Option.defaultWith (fun () -> calls <- calls + 1)
+    unitDefault (Some ())
+    let skippedUnit = calls = 0
+    unitDefault None
+    let unitOk = skippedUnit && calls = 1
+
+    let length = choose (fun () -> 2<distance>) None
+    let realLength = choose (fun () -> 0.25<distance>) (Some 0.75<distance>)
+    let measuredOk = length = 2<distance> && realLength = 0.75<distance>
+                     && choose (fun () -> false) (Some true)
+
+    if not deferredOk then 1
+    elif not storedOk then 2
+    elif not capturesOk then 3
+    elif not payloadsOk then 4
+    elif not unitOk then 5
+    elif not measuredOk then 6
+    else
+        Console.writeln "=== Option.defaultWith Test ==="
+        Console.writeln "Deferred fallback: pass"
+        Console.writeln "Stored thunks: pass"
+        Console.writeln "Capture identity: pass"
+        Console.writeln "Nested and function payloads: pass"
+        Console.writeln "Unit effects: pass"
+        Console.writeln "Measured values: pass"
+        0

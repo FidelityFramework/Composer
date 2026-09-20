@@ -1,9 +1,9 @@
 /// BindingWitness - Witness binding nodes (let bindings)
 ///
-/// Bindings don't emit MLIR - they forward the bound value's SSA.
+/// Immutable bindings forward the bound value's SSA; mutable bindings own a cell.
 /// The binding name is tracked in the accumulator for VarRef lookup.
 ///
-/// FUNCTION BINDINGS: Bindings whose child is a Lambda (function) are SKIPPED.
+/// FUNCTION BINDINGS: Immutable Lambda bindings forward a closure value when present.
 /// LambdaWitness handles generating FuncDefs for module-level functions.
 ///
 /// NANOPASS: This witness handles ONLY Binding nodes.
@@ -36,9 +36,10 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                 // Post-order ensures child is already witnessed
                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }
             else
-                // Check if the child is a Lambda (function binding)
+                // Only immutable Lambda bindings forward the function value directly.
+                // A mutable binding stores that value in the ordinary mutable cell.
                 match SemanticGraph.tryGetNode valueId ctx.Graph with
-                | Some valueNode when valueNode.Kind.ToString().StartsWith("Lambda") ->
+                | Some { Kind = SemanticKind.Lambda _ } when not isMut ->
                     // Function binding - Lambda child already generated FuncDef (post-order)
                     // Check if Lambda produced a closure value (escaping lambda with captures)
                     match MLIRAccumulator.recallNode valueId ctx.Accumulator with

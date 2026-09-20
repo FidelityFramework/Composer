@@ -1,0 +1,101 @@
+/// Sample 08a: Option.defaultValue across evaluation, capture and payload forms.
+/// Exit codes 1-5 identify the first failed group; successful groups print fixed lines.
+module OptionDefaultsSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+
+let private record digit = trace <- trace * 10 + digit
+
+let private fallback () =
+    record 1
+    11
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let choose = Option.defaultValue
+
+let invoke (work: 'a -> 'b) (value: 'a) : 'b = work value
+
+[<EntryPoint>]
+let main _ =
+    // A fallback is evaluated eagerly even when the option contains a value.
+    trace <- 0
+    let directSome = Option.defaultValue (fallback ()) (argument true)
+    let directSomeOk = directSome = 7 && trace = 12
+    trace <- 0
+    let directNone = Option.defaultValue (fallback ()) (argument false)
+    let directNoneOk = directNone = 11 && trace = 12
+    trace <- 0
+    let forward = argument true |> Option.defaultValue (fallback ())
+    let forwardOk = forward = 7 && trace = 21
+    trace <- 0
+    let backward = Option.defaultValue (fallback ()) <| argument false
+    let eagerOk = directSomeOk && directNoneOk && forwardOk && backward = 11 && trace = 12
+
+    // Forming a partial evaluates its fallback once and snapshots its value.
+    trace <- 0
+    let stored = Option.defaultValue (fallback ())
+    let formedOnce = trace = 1
+    let absent = invoke stored None
+    let present = stored (Some 5)
+    let mutable seed: int = 4
+    let snapshot = Option.defaultValue seed
+    seed <- 9
+    let storedOk = formedOnce && trace = 1 && absent = 11 && present = 5
+                   && snapshot None = 4 && snapshot (Some seed) = 9
+
+    // None as the fallback is distinct from the consumed outer option.
+    let nested: int option option -> int option = Option.defaultValue None
+    let nestedAbsent = nested None
+    let nestedEmpty = nested (Some None)
+    let nestedPresent = nested (Some (Some 8))
+    let nestedOk = Option.isNone nestedAbsent && Option.isNone nestedEmpty
+                   && (match nestedPresent with Some value -> value = 8 | None -> false)
+
+    // Selecting a callable preserves its captures and does not invoke it.
+    let mutable shift: int = 1
+    let fallbackFunction = fun value ->
+        calls <- calls + 1
+        value + shift
+    let otherFunction = fun value ->
+        calls <- calls + 1
+        value + 20
+    calls <- 0
+    let selectFunction = Option.defaultValue fallbackFunction
+    let missingFunction = selectFunction None
+    let presentFunction = selectFunction (Some otherFunction)
+    let selectionOnly = calls = 0
+    shift <- 3
+    let missingResult = missingFunction 2
+    let presentResult = invoke presentFunction 2
+    let functionsOk = selectionOnly && missingResult = 5 && presentResult = 22 && calls = 2
+
+    // The same operation specializes independently while preserving dimensions.
+    let length = choose 2<distance> None
+    let elapsed = choose 3<duration> (Some 5<duration>)
+    let explicitLength = Option.defaultValue<int<distance>> 4<distance> None
+    let measuredOk = length = 2<distance> && elapsed = 5<duration>
+                     && explicitLength = 4<distance> && choose false (Some true)
+
+    if not eagerOk then 1
+    elif not storedOk then 2
+    elif not nestedOk then 3
+    elif not functionsOk then 4
+    elif not measuredOk then 5
+    else
+        Console.writeln "=== Option.defaultValue Test ==="
+        Console.writeln "Eager fallback: pass"
+        Console.writeln "Stored defaults: pass"
+        Console.writeln "Nested options: pass"
+        Console.writeln "Function selection: pass"
+        Console.writeln "Measured values: pass"
+        0

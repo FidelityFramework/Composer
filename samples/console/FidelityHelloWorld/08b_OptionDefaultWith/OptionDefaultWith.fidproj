@@ -1,0 +1,15 @@
+[package]
+name = "OptionDefaultWith"
+version = "0.1.0"
+description = "Deferred Option defaults, captures, unit effects and measured payloads"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["OptionDefaultWith.clef"]
+output = "optiondefaultwith"
+output_kind = "console"

@@ -1,0 +1,194 @@
+module OptionDefaultWith
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Defaults = { Enabled: bool; Offset: int }
+type Resolver<'a> = { Resolve: 'a option -> 'a }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+
+let private record digit = trace <- trace * 10 + digit
+
+let private makeFallback () =
+    record 1
+    fun () ->
+        record 3
+        calls <- calls + 1
+        11
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let private makeFunctionFallback () =
+    record 1
+    fun () ->
+        record 3
+        fun value ->
+            record 5
+            value + 10
+
+let private functionArgument present =
+    record 2
+    if present then
+        Some (fun value ->
+            record 6
+            value + 20)
+    else None
+
+let private extraArgument () =
+    record 4
+    2
+
+let private makeStagedFallback () =
+    record 1
+    fun () ->
+        record 3
+        fun first ->
+            record 5
+            fun second ->
+                record 7
+                first + second
+
+let private stagedArgument present =
+    record 2
+    if present then
+        Some (fun first ->
+            record 8
+            fun second ->
+                record 9
+                first + second)
+    else None
+
+let private lastArgument () =
+    record 6
+    3
+
+let choose = Option.defaultWith
+let invoke (work: 'a -> 'b) (value: 'a) : 'b = work value
+
+[<EntryPoint>]
+let main _ =
+    // Form both inputs eagerly; invoke the fallback only for None.
+    trace <- 0
+    calls <- 0
+    let directSome = Option.defaultWith (makeFallback ()) (argument true)
+    let directSomeOk = directSome = 7 && trace = 12 && calls = 0
+    trace <- 0
+    let directNone = Option.defaultWith (makeFallback ()) (argument false)
+    let directNoneOk = directNone = 11 && trace = 123 && calls = 1
+
+    trace <- 0
+    calls <- 0
+    let forwardSome = argument true |> Option.defaultWith (makeFallback ())
+    let forwardSomeOk = forwardSome = 7 && trace = 21 && calls = 0
+    trace <- 0
+    let forwardNone = argument false |> Option.defaultWith (makeFallback ())
+    let forwardNoneOk = forwardNone = 11 && trace = 213 && calls = 1
+    trace <- 0
+    let backward = Option.defaultWith (makeFallback ()) <| argument false
+    let backwardOk = backward = 11 && trace = 123 && calls = 2
+
+    // A stored partial snapshots the thunk once, but does not memoize its result.
+    trace <- 0
+    calls <- 0
+    let stored = Option.defaultWith (makeFallback ())
+    let formationOk = trace = 1 && calls = 0
+    let first = invoke stored None
+    let present = stored (Some 5)
+    let second = stored None
+    let partialOk = formationOk && first = 11 && present = 5 && second = 11
+                    && trace = 133 && calls = 2
+
+    let mutable seed: int = 4
+    let delayed = Option.defaultWith (fun () -> seed)
+    seed <- 9
+    let delayedOk = delayed None = 9 && delayed (Some 2) = 2
+    let mutable selectedThunk = fun () -> 5
+    let snapshot = Option.defaultWith selectedThunk
+    selectedThunk <- fun () -> 19
+    let snapshotOk = snapshot None = 5 && snapshot (Some 3) = 3 && selectedThunk () = 19
+
+    let enabled = choose (fun () -> false) (Some true)
+    let length = choose (fun () -> 2<distance>) None
+    let elapsed = choose (fun () -> 3<duration>) (Some 5<duration>)
+    let explicitLength = Option.defaultWith<int<distance>> (fun () -> 4<distance>) None
+    let measuredOk = enabled && length = 2<distance> && elapsed = 5<duration>
+                     && explicitLength = 4<distance>
+
+    let nested: int option option -> int option = Option.defaultWith (fun () -> Some 8)
+    let nestedAbsent = nested None
+    let nestedEmpty = nested (Some None)
+    let nestedPresent = nested (Some (Some 6))
+    let nestedOk = Option.get nestedAbsent = 8 && Option.isNone nestedEmpty
+                   && Option.get nestedPresent = 6
+
+    let config = { Enabled = true; Offset = 6 }
+    let configDefault = Option.defaultWith (fun () -> config)
+    let selected = configDefault None
+    let replacement = configDefault (Some { Enabled = false; Offset = 10 })
+    let surface = { Resolve = Option.defaultWith (fun () -> 13) }
+    let aggregateOk = selected.Enabled && selected.Offset = 6 && not replacement.Enabled
+                      && replacement.Offset = 10 && surface.Resolve None = 13
+                      && surface.Resolve (Some 2) = 2
+
+    // All supplied operands run before the operation invokes a None fallback.
+    trace <- 0
+    let overNone = Option.defaultWith (makeFunctionFallback ()) (functionArgument false) (extraArgument ())
+    let overNoneOk = overNone = 12 && trace = 12435
+    trace <- 0
+    let overSome = Option.defaultWith (makeFunctionFallback ()) (functionArgument true) (extraArgument ())
+    let overSomeOk = overSome = 22 && trace = 1246
+
+    let mutable shift: int = 1
+    let functionDefault = Option.defaultWith (fun () ->
+        calls <- calls + 1
+        fun value -> value + config.Offset + shift)
+    calls <- 0
+    let selectedFunction = functionDefault None
+    let presentFunction = functionDefault (Some (fun value -> value + 20))
+    let selectionOk = calls = 1
+    shift <- 3
+    let functionsOk = selectionOk && selectedFunction 2 = 11 && invoke presentFunction 2 = 22
+
+    calls <- 0
+    let unitDefault = Option.defaultWith (fun () -> calls <- calls + 1)
+    unitDefault (Some ())
+    let unitSomeOk = calls = 0
+    unitDefault None
+    let unitOk = unitSomeOk && calls = 1
+    let realDefault = choose (fun () -> 0.25<distance>) None
+    let realSome = choose (fun () -> 0.5<distance>) (Some 0.75<distance>)
+    let realOk = realDefault = 0.25<distance> && realSome = 0.75<distance>
+
+    trace <- 0
+    let stagedNone = Option.defaultWith (makeStagedFallback ()) (stagedArgument false) (extraArgument ()) (lastArgument ())
+    let stagedNoneOk = stagedNone = 5 && trace = 1246357
+    trace <- 0
+    let stagedSome = Option.defaultWith (makeStagedFallback ()) (stagedArgument true) (extraArgument ()) (lastArgument ())
+    let stagedSomeOk = stagedSome = 5 && trace = 124689
+
+    if not directSomeOk then 201
+    elif not directNoneOk then 202
+    elif not forwardSomeOk then 203
+    elif not forwardNoneOk then 204
+    elif not backwardOk then 205
+    elif not partialOk then 206
+    elif not delayedOk then 207
+    elif not snapshotOk then 208
+    elif not measuredOk then 209
+    elif not nestedOk then 210
+    elif not aggregateOk then 211
+    elif not overNoneOk then 212
+    elif not overSomeOk then 213
+    elif not functionsOk then 214
+    elif not unitOk then 215
+    elif not realOk then 216
+    elif not stagedNoneOk then 217
+    elif not stagedSomeOk then 218
+    else 0

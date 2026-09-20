@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Fixtures.fs" />
+    <Compile Include="ZipperTests.fs" />
+    <Compile Include="IndexPatternTests.fs" />
+    <Compile Include="MlirComponentTests.fs" />
+    <Compile Include="MutableClosureTests.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="10.1.401" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" PrivateAssets="all" />
+    <ProjectReference Include="../../src/Composer.fsproj" />
+  </ItemGroup>
+</Project>

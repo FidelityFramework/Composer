@@ -9,7 +9,7 @@
     <Compile Include="ProofDispatch.fs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="FSharp.Core" Version="10.1.400" />
+    <PackageReference Include="FSharp.Core" Version="10.1.401" />
     <ProjectReference Include="$(ClefCompilerServiceProject)" />
   </ItemGroup>
 </Project>

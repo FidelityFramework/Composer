@@ -20,6 +20,8 @@ The `console/FidelityHelloWorld/` directory contains a carefully designed progre
 | | 06 | AddNumbersInteractive | String parsing, arithmetic | — | ✓ |
 | | 07 | BitsTest | Byte order, bit casting intrinsics | — | ✓ |
 | | 08 | Option | Option type, Some/None | — | ✓ |
+| | 08a | [OptionDefaults](console/FidelityHelloWorld/08a_OptionDefaults/) | Eager defaults and NTU payloads | [C-04](../docs/PRDs/C-04-CoreCollections.md) | [Native gate](../docs/Language_Coverage_Waypoints.md) |
+| | 08b | [OptionDefaultWith](console/FidelityHelloWorld/08b_OptionDefaultWith/) | Deferred defaults, captures and unit effects | [C-04](../docs/PRDs/C-04-CoreCollections.md) | [Native gate](../docs/Language_Coverage_Waypoints.md) |
 | | 09 | Result | Result type, Ok/Error | — | ✓ |
 | | 10 | Records | Record types, copy-update, nesting | — | ✓ |
 | **B: Functional** | 11 | Closures | Lambdas, capture analysis, mutable state | [PRD-11](docs/WREN_Stack_PRDs/PRD-11-Closures.md) | ✓ |

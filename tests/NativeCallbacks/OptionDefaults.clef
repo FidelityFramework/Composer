@@ -1,0 +1,117 @@
+module OptionDefaults
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Defaults = { Enabled: bool; Offset: int }
+type Resolver<'a> = { Resolve: 'a option -> 'a }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+
+let private record digit = trace <- trace * 10 + digit
+
+let private fallback () =
+    record 1
+    11
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let choose = Option.defaultValue
+
+let invoke (work: 'a -> 'b) (value: 'a) : 'b = work value
+
+[<EntryPoint>]
+let main _ =
+    // Both arguments evaluate once, even when Some selects its payload.
+    trace <- 0
+    let directSome = Option.defaultValue (fallback ()) (argument true)
+    let directSomeOk = directSome = 7 && trace = 12
+    trace <- 0
+    let directNone = Option.defaultValue (fallback ()) (argument false)
+    let directNoneOk = directNone = 11 && trace = 12
+
+    // Forward pipe evaluates its input before the fallback expression.
+    trace <- 0
+    let pipeSome = argument true |> Option.defaultValue (fallback ())
+    let pipeSomeOk = pipeSome = 7 && trace = 21
+    trace <- 0
+    let pipeNone = argument false |> Option.defaultValue (fallback ())
+    let pipeNoneOk = pipeNone = 11 && trace = 21
+    trace <- 0
+    let backward = Option.defaultValue (fallback ()) <| argument true
+    let backwardOk = backward = 7 && trace = 12
+
+    // A partial snapshots its fallback when formed, not on each invocation.
+    trace <- 0
+    let withFallback = Option.defaultValue (fallback ())
+    let formationOk = trace = 1
+    let partialNone = invoke withFallback None
+    let partialSome = withFallback (Some 5)
+    let partialOk = formationOk && trace = 1 && partialNone = 11 && partialSome = 5
+    let mutable seed: int = 4
+    let snapshot = Option.defaultValue seed
+    seed <- 9
+    let snapshotOk = snapshot None = 4 && snapshot (Some seed) = 9
+
+    // One bare operation specializes independently, preserving dimensions.
+    let boolValue = choose false (Some true)
+    let length = choose 2<distance> None
+    let elapsed = choose 3<duration> (Some 5<duration>)
+    let explicitValue = Option.defaultValue<int<distance>> 4<distance> None
+    let measuredOk = boolValue && length = 2<distance> && elapsed = 5<duration> && explicitValue = 4<distance>
+
+    // The fallback can itself be None; it is not the consumed option argument.
+    let nestedDefault: int option option -> int option = Option.defaultValue None
+    let nestedAbsent = nestedDefault None
+    let nestedPresent = nestedDefault (Some (Some 8))
+    let nestedEmpty = nestedDefault (Some None)
+    let nestedOk = Option.isNone nestedAbsent && Option.isNone nestedEmpty && Option.get nestedPresent = 8
+
+    // Aggregate payloads and stored residual functions retain their identities.
+    let config = { Enabled = true; Offset = 6 }
+    let configDefault = Option.defaultValue config
+    let selected = configDefault None
+    let replacement = configDefault (Some { Enabled = false; Offset = 10 })
+    let stored = { Resolve = Option.defaultValue 13 }
+    let aggregateOk = selected.Enabled && selected.Offset = 6 && not replacement.Enabled
+                      && replacement.Offset = 10 && stored.Resolve None = 13 && stored.Resolve (Some 2) = 2
+
+    // Selecting a function does not invoke it. Its captured mutable cell stays shared.
+    let mutable shift: int = 1
+    let fallbackFunction = fun value ->
+        calls <- calls + 1
+        value + config.Offset + shift
+    let selectedFunction = fun value ->
+        calls <- calls + 1
+        value + 20
+    calls <- 0
+    let resolveFunction = Option.defaultValue fallbackFunction
+    let missingFunction = resolveFunction None
+    let presentFunction = resolveFunction (Some selectedFunction)
+    let selectionOk = calls = 0
+    shift <- 3
+    let missingResult = missingFunction 2
+    let presentResult = invoke presentFunction 2
+    let directFunction = Option.defaultValue fallbackFunction None 3
+    let selectedDirect = Option.defaultValue fallbackFunction (Some selectedFunction) 3
+    let functionOk = selectionOk && missingResult = 11 && presentResult = 22
+                     && directFunction = 12 && selectedDirect = 23 && calls = 4
+
+    if not directSomeOk then 181
+    elif not directNoneOk then 182
+    elif not pipeSomeOk then 183
+    elif not pipeNoneOk then 184
+    elif not backwardOk then 185
+    elif not partialOk then 186
+    elif not snapshotOk then 187
+    elif not measuredOk then 188
+    elif not nestedOk then 189
+    elif not aggregateOk then 190
+    elif not functionOk then 191
+    else 0

@@ -2,6 +2,23 @@
 
 2026-09-13. Design analysis for the language work coordinated in Composer.
 
+**2026-09-19 review:** The [roadmap reconciliation and evidence record](Clef_Language_Completion_Review_2026-09-19.md)
+adds the requested negative/fractional admission and standard-MLIR-dialect scope,
+full-document supersession findings and fresh implementation checks. Composer
+remains the canonical implementation roadmap; §14 supplies the dependency
+baseline, with completion and coverage governing revisions to order or design.
+The [coverage waypoints](Language_Coverage_Waypoints.md) record synchronized
+compiler, tooling and oracle revisions, their actual gates and remaining gaps.
+New lettered FidelityHello variants are part of that coverage. Semantic changes honor Baker's ingredients/patterns/recipes and
+nanopass fan-out/fold-in elaboration and saturation, with Alex's positional Huet
+zipper and pull witnesses consuming the settled graph. Imperative emission
+and recursive subtree emitters are not implementation alternatives. The original scope and
+unmeasured status below describe the September 13 analysis. The subsequent
+[nanopass and incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
+records the topological recompilation frontier, provenance/retraction, Lattice
+explanations and extensible witness requirements. Its formal protocol remains
+deferred while the pipeline develops.
+
 This analysis concerns Clef expression, CCS elaboration and saturation, PSG joint resolution, automatic proof dispatch, and the contract Composer and Alex must consume. It uses the language specification, Clef and Composer design documents, and the Clef site's design writings. WrenHello supplies a documented application example. Preprints and the negative/fractional-type extension are excluded. Concurrent platform and client projects are context, not work assigned by this plan.
 
 No implementation source was inspected for this analysis. No compiler behavior was freshly measured. Dated implementation reports are evidence of their recorded slices, not a substitute for the design and not a claim about the present checkout. This document adds an analysis; it does not amend language semantics or supersede its cited sources.
@@ -340,6 +357,18 @@ The first hardware gate is an explicitly reserved persistent region and the exac
 | 7. Broaden profile and proof coverage | Additional target realizations and checked reusable domain/relational laws using the same graph/evidence interfaces. | Each added profile or law states its assumptions and passes its own conformance and preservation gates; no extrapolation from another slice. |
 
 Numeric, lifetime, foreign-boundary, and proof-service work proceeds alongside these stages where it supplies prerequisites. In particular, closure layout cannot be declared complete while captured types or lifetime premises remain guessed; suspension cannot be declared complete from synchronous examples; and a dynamic net driver cannot be declared complete from static normalization alone.
+
+**September 19 direction:** Native `Incremental<'T>` is an explicit language
+completion target under R-04/R-05/R-06, with ordinary functional composition
+available before its CE facade. Its local stabilization work need not wait for
+the whole actor stack. Subsequent use inside Composer must establish the
+topological recompilation boundary and compiler-specific proof/dependency
+contracts, with REPL, build and CI comparisons against fresh checks. The
+[native and bootstrap investigation](Nanopass_Incremental_Contract_Direction.md#9-native-incremental-and-bootstrap-investigations)
+records the gates and the reviewed Incremental.NET/IcedTasks candidates.
+Incremental.NET remains a reference after observed propagation failures;
+IcedTasks is an optional host proof-worker experiment. Neither is an adopted
+dependency or the semantic definition of Clef incremental computation.
 
 Each implementation slice should produce four reviewable artifacts: the source cases and their required behavior, the inspectable graph with origins and obligations, the witnessed/realized artifact with correspondence, and the actual gate results for that revision. Existing regression, dimensional, BAREWire, HelloProof, callback, and target acceptance records provide reusable gates. Their historical counts must be refreshed on the final binaries for the actual change rather than copied into an as-built. [Dimensional handoff](../../clef/docs/fidelity/phg/Dimensional_Handoff.md), [closure retooling gates](../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md).
 

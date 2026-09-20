@@ -2,6 +2,47 @@
 
 2026-09-13. Companion to [Clef language completion: design and architecture analysis](Clef_Language_Completion_Analysis.md).
 
+## September 19 implementation waypoints
+
+The current language work uses Composer's roadmap, Baker nanopass
+elaboration/saturation and Alex's Huet-zipper pull architecture. Roadmap order is
+revisable: completion, semantic prerequisites and demonstrated coverage govern
+the next slice. The owner has
+identified the following complementary checks. The historical scope and first
+work window described later in this document remain dated records.
+
+| Project | Role in language completion | Comparison or gate |
+|---|---|---|
+| FidelityHello series | Source-to-artifact behavior oracles for the functional foundation | Compile and verify the emitted MLIR, lower it, run the executable and check both exit status and expected output; add lettered variants for distinct use cases, alongside CCS and Alex unit coverage |
+| Fidelity.UI | Triangulation for a quiet, compositional display API | Ordinary functions/pipes/lists and optional CE construction must preserve the same semantic operations, cold activation, typed bindings, owned state, identity and retirement across admitted display profiles |
+| HelloWayland | Paired imperative/reference and expanded FP realizations | Keep the current form available; compare equivalent input/event streams, model transitions, rendered output, parallel work and resource lifetime against the new form; record known discrepancies explicitly |
+| WrenHello | Application and native/WebView boundary exercise | Functional protocol/model composition, callbacks, owned reactive behavior and the actual bundled/embedded artifact |
+| HelloProof | Proof-dispatch and artifact-correspondence exercise | Applicable graph obligations, participant/provenance identity, actual solver results and preservation through the realized artifact |
+| HelloArty and HelloDISCO | Board deployment and execution checks as syntax expands | Source and artifact checks first; separately record connected-device programming, execution and relevant display/I/O observations |
+
+Fidelity.UI is more than an output oracle: its
+[component model](../../Fidelity.UI/docs/02_component_model.md) and
+[reconsideration](../../Fidelity.UI/docs/08_ui_model_reconsideration.md) test
+whether the language features compose into a usable API. Its semantic/control
+tree, reactive dependency graph, spatial/damage structure and execution ownership
+remain distinct. A visual area does not imply an actor or thread. Resource
+acquisition, reactive binding and async waiting retain their separate meanings
+under any CE facade. Display capability/placement obligations travel through the
+same program identities; one accepted host does not establish every device's
+realization.
+
+The board checks require connected hardware and are not inferred from successful
+host compilation. Existing applications remain the reference while richer source
+forms are introduced alongside them. These waypoints exercise the existing
+roadmap and reveal where its coverage or proposed ordering needs revision.
+
+Each implementation waypoint includes CCS, Alex, CCS.Editor/Lattice, the analyzer
+corpus, CAC's query handoff and affected clients/grammar. The
+[coverage record](Language_Coverage_Waypoints.md) binds their revisions and gates;
+an explicitly reviewed inactive dependency is distinguished from an untested tool.
+
+## Original September 13 framing
+
 This review extends the language analysis with the authorized recent Clef writings, BAREWire documentation, Fidelity.Platform's MCU/MMIO and board documentation, and the MBS storage specification and companions. It is framing for language and compiler work. It does not implement storage, drivers, radio services, client applications or another project's platform. Implementation reports below describe their documented snapshots; no implementation source, build, hardware or external service was inspected or exercised here. Preprints and the negative/fractional-type extension remain excluded.
 
 The conclusion is that functional completion must support whole workloads whose data, arithmetic, resources, effects and recovery rules compose. MBS is a particularly strong exercise because its modest public surface already requires generic records, opaque handles, higher-order predicates, bounded memory, cryptographic computation and durable state transitions. BAREWire supplies the structural contracts through which those workloads meet memory, devices, other processes and remote endpoints.

@@ -8,6 +8,38 @@ fields followed by later allocations. `IgnoreValues` checks that discarding
 ordinary and optional opaque-handle values preserves evaluation effects and
 produces a usable Clef unit value.
 
+To select cases, pass the compiler executable followed by exact case names:
+
+```sh
+dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj -- src/bin/Debug/net10.0/Composer OptionDefaults OptionPartials
+```
+
+Unknown names fail before compilation. With no names, the runner selects all
+cases. A selected passing subset does not establish the remaining cases. Each
+retained MLIR module must also pass `mlir-opt --verify-each`; missing tooling is
+a failed gate. The evidence records the executable and compiler assembly hashes.
+
+`OptionDefaults` checks eager fallback evaluation for Some and None, direct and
+piped evaluation order, partial-formation snapshots, independent measured
+specialization, nested options, record payloads and stored function fields.
+Function selection does not invoke the payload; subsequent invocation observes
+the selected closure's captures. Extra source arguments apply that selected
+function after the operation consumes its fallback and option. Exit codes
+181–191 distinguish the eleven groups. The harness checks retained `scf.if` and
+`func.call_indirect` operations as well as the fresh executable's exit status.
+
+`OptionDefaultWith` checks eager thunk construction and deferred invocation:
+Some skips the thunk, None invokes it once per call, and stored partials retain
+the original thunk value while sharing its mutable captures. It covers forward
+and backward pipes, independently specialized measured values, nested options,
+records, stored function fields, unit-returning effects and measured reals.
+Function payloads and staged overapplications check that all supplied operands
+evaluate before invocation, with ordered traces across each returned function.
+Exit codes 201–218 identify its eighteen groups. The retained MLIR must contain
+`scf.if` and `func.call_indirect`; native execution establishes the branch effects
+and evaluation order. This gate does not establish complete closure proof
+discharge or eliminate the interim closure representation.
+
 `OptionCallbacks` is a language acceptance gate for `Option.map`, `bind`,
 `filter`, `exists`, and `forall`. Each operation checks None without invoking
 its callback and Some with exactly one callback invocation, recording the count

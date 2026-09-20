@@ -137,6 +137,41 @@ Done!
 """
 
 # =============================================================================
+# Sample 08a: OptionDefaults
+# Eager fallback evaluation, partial snapshots, nested/function/measured payloads
+# =============================================================================
+[[samples]]
+name = "08a_OptionDefaults"
+project = "OptionDefaults.fidproj"
+binary = "targets/optiondefaults"
+expected_output = """
+=== Option.defaultValue Test ===
+Eager fallback: pass
+Stored defaults: pass
+Nested options: pass
+Function selection: pass
+Measured values: pass
+"""
+
+# =============================================================================
+# Sample 08b: OptionDefaultWith
+# Deferred invocation, stored thunks, capture identity and unit/measured payloads
+# =============================================================================
+[[samples]]
+name = "08b_OptionDefaultWith"
+project = "OptionDefaultWith.fidproj"
+binary = "targets/optiondefaultwith"
+expected_output = """
+=== Option.defaultWith Test ===
+Deferred fallback: pass
+Stored thunks: pass
+Capture identity: pass
+Nested and function payloads: pass
+Unit effects: pass
+Measured values: pass
+"""
+
+# =============================================================================
 # Sample 09: Result
 # Result type, error handling
 # =============================================================================

@@ -1,6 +1,6 @@
 /// VarRefWitness - Witness variable reference nodes
 ///
-/// Variable references don't emit MLIR - they forward the binding's SSA.
+/// Variable references forward immutable values or load mutable binding cells.
 /// The binding SSA is looked up from the accumulator (bindings witnessed first in post-order).
 ///
 /// FUNCTION REFERENCES: VarRef nodes pointing to function bindings (Lambda nodes) build
@@ -65,15 +65,16 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         | None -> WitnessOutput.error $"VarRef '{name}': PatternBinding has no SSA in coeffects"
 
                 | SemanticKind.Binding (_, isMut, _, _) ->
-                    // Check if binding's child is a Lambda (function binding)
+                    // Immutable Lambda bindings forward their function value. A mutable
+                    // binding's initializer does not change the cell-load contract.
                     let isFunctionBinding =
                         bindingNode.Children
                         |> List.tryHead
                         |> Option.bind (fun childId -> SemanticGraph.tryGetNode childId ctx.Graph)
-                        |> Option.map (fun childNode -> childNode.Kind.ToString().StartsWith("Lambda"))
+                        |> Option.map (fun childNode -> match childNode.Kind with SemanticKind.Lambda _ -> true | _ -> false)
                         |> Option.defaultValue false
 
-                    if isFunctionBinding then
+                    if not isMut && isFunctionBinding then
                         // Function reference - check if the binding holds a closure value
                         match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
                         | Some (closureSSA, closureTy) ->
