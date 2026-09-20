@@ -1,5 +1,7 @@
 # WebView Desktop Build Integration
 
+> **Status — September 15, 2026:** Historical orchestration proposal. The `composer build` commands, `[desktop]` schema and integrated phases below are proposed interfaces, not the current implementation. WrenHello currently runs F# / Partas.Solid → Fable → JSX → Solid through Vite → single-file HTML → `scripts/weld.js`, then invokes Composer to compile the native host. Follow [WrenHello’s build instructions](../../WrenHello/README.md#the-weld) for executable commands and [JSX and the WREN frontend toolchain](javascript-targeting/10_jsx_and_webview_toolchain.md) for the current design, including the proposed Clef JSX producer.
+
 > **Related Documents**:
 > - [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) - Overall architecture
 > - [Architecture_Canonical.md](./Architecture_Canonical.md) - Composer pipeline overview
@@ -8,7 +10,7 @@
 
 ## Overview
 
-This document describes how Composer orchestrates the complete build of a WebView-based desktop application. The key insight is that Composer serves as a **unified build coordinator**, similar to how `dotnet` coordinates SAFE Stack builds or how `cargo` coordinates Rust workspaces.
+This document proposes how Composer could orchestrate the complete build of a WebView-based desktop application. The key insight is that Composer serves as a **unified build coordinator**, similar to how `dotnet` coordinates SAFE Stack builds or how `cargo` coordinates Rust workspaces.
 
 A single command:
 ```bash
@@ -34,7 +36,7 @@ If you're familiar with .NET multi-project solutions, here's the mental model:
 | NuGet packages | Fidelity.Platform library + npm packages |
 | `dotnet publish` | `composer build --target <platform>` |
 
-The difference: Composer also orchestrates **Fable** (Clef → JS) and **Vite** (bundling), producing a truly unified build.
+The proposal would coordinate **Fable** (F# → JSX), **Solid** (JSX → DOM/reactive JavaScript through Babel), and **Vite** (frontend build and bundling). A future Clef JSX producer would use Composer lowering before the same downstream stages.
 
 ---
 
@@ -45,7 +47,7 @@ If you're coming from web development with npm/vite, here's what changes:
 **Before (typical web dev):**
 ```bash
 # Manual multi-step process
-npm run fable          # Compile Clef to JS
+npm run fable          # Compile F# to JSX
 npm run build          # Vite bundles to dist/
 # Then somehow integrate with backend...
 ```
@@ -83,7 +85,7 @@ frontend = "src/Frontend"       # Path to Partas.Solid project
 backend = "src/Backend"         # Path to native Clef project
 embed_assets = true             # Embed HTML/JS/CSS in binary
 
-# Fable configuration (Clef → JavaScript)
+# Fable configuration (F# → JSX)
 [desktop.fable]
 output = "build/fable"          # Fable output directory
 extension = ".fs.jsx"           # Output file extension
@@ -113,7 +115,7 @@ output_kind = "desktop"         # Triggers desktop build pipeline
 
 | Section | Field | Description |
 |---------|-------|-------------|
-| `[desktop]` | `frontend` | Path to Clef project with Partas.Solid components |
+| `[desktop]` | `frontend` | Path to F# project with Partas.Solid components |
 | | `backend` | Path to Clef project with native application code |
 | | `embed_assets` | If true, HTML bundle is embedded in binary |
 | `[desktop.fable]` | `output` | Where Fable writes compiled JavaScript |
@@ -130,7 +132,7 @@ output_kind = "desktop"         # Triggers desktop build pipeline
 
 ### Phase 1: Frontend Compilation (Fable)
 
-Composer invokes Fable to compile Clef to JavaScript:
+The proposed coordinator invokes Fable to compile F# to JSX:
 
 ```bash
 # What Composer runs internally
@@ -266,7 +268,7 @@ composer build --target macos-x64
 composer build --target macos-arm64
 ```
 
-The frontend compilation (Fable + Vite) is platform-agnostic - JavaScript works everywhere. Only the native backend compilation differs per target.
+Frontend source can be shared, but its emitted JavaScript, DOM features and native bridge must satisfy each selected WebView profile. The current WrenHello configuration targets modern JavaScript; cross-platform acceptance is a separate gate.
 
 ### Build Matrix Example
 
@@ -490,7 +492,7 @@ All errors propagate with context about which phase failed.
 
 ## Future: Incremental Builds
 
-Currently, `composer build` runs all phases. Future optimizations may include:
+The proposed `composer build` would run all phases. Further optimizations could include:
 
 - **Dependency tracking**: Skip phases if inputs unchanged
 - **Parallel phases**: Run Fable and backend parsing concurrently

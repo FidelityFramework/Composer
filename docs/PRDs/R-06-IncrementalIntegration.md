@@ -1,14 +1,16 @@
 # R-06: Incremental Integration
 
+> **Delivery order:** Follow the [Reactive family priority](README.md#reactive-r-xx---reactive-extensions): after Async and Threading, lead with Incremental while developing Observable and their shared integration gates together. The PRD numbers do not require Observable completion before starting the incremental core.
+
 > **Sample**: `37_IncrementalIntegration` (Future) | **Status**: Planned | **Category**: Reactive
 
 ## 1. Executive Summary
 
 This PRD defines how `Incremental<'T>` integrates with the rest of the concurrent model and how it lowers across hardware targets. Three integrations are specified: the structural correspondence between an incremental node and an Olivier actor, demand registration through Prospero, and fusion with `Observable<'T>` (R-01 through R-03). The PRD then specifies target lowering, where the same incremental abstraction reaches CPU, NPU, and GPU through the shared middle-end.
 
-This is the first PRD in which the heterogeneous-target story is a core concern. The applicative core (R-04) and dynamism (R-05) are specified against CPU. Here the measure-typed hardware variant enters, dependency edges cross device boundaries through BAREWire, and stabilization maps onto tile activation waves and wavefront dispatch. CPU lowering is demonstrated; NPU and GPU lowering are architectural and described as design intent.
+This is the first PRD in which the heterogeneous-target story is a core concern. The applicative core (R-04) and dynamism (R-05) are specified against CPU. Here the measure-typed hardware variant enters, dependency edges cross device boundaries through BAREWire, and stabilization maps onto tile activation waves and wavefront dispatch. CPU is the planned baseline; NPU and GPU lowering are architectural design intent. The lowering sketches do not establish end-to-end acceptance of this planned integration.
 
-**Key Insight**: An incremental node and an actor are the same structure viewed two ways. The cached value is actor state, the recompute function is the receive handler, dependency edges are message channels, and demand is supervision.
+**Key Insight**: Actors can own and supervise incremental graphs, with many nodes stabilizing locally in one actor. The structural analogy does not require an actor or mailbox per node. Local dependency consistency and cross-actor delivery remain distinct contracts.
 
 Normative specification: clef-lang-spec `spec/incremental-computation.md`, sections 1.2, 6.3, 8, and 11.
 
@@ -21,14 +23,14 @@ Normative specification: clef-lang-spec `spec/incremental-computation.md`, secti
 | Incremental Concept | Actor Concept |
 |---|---|
 | Cached value | Actor state in arena memory |
-| Recompute function | Actor receive handler |
-| Dependency edges | Message channels (BAREWire) |
-| Staleness flag | Incoming message differs from last processed |
+| Recompute function | Computation within an actor turn |
+| Dependency edges | Local dependencies; BAREWire channels across admitted actor boundaries |
+| Staleness flag | Invalidated actor-owned cached state |
 | Cutoff predicate | Structural comparison on output |
-| Demand registration | Prospero supervision |
-| Stabilization order | Actor scheduling waves |
+| Demand registration | Local observation demand, integrated with Prospero for actor-owned nodes |
+| Stabilization order | Dependency-ordered local work within actor dispatch |
 
-An incremental node's lifetime is the enclosing actor's lifetime. When Prospero retires an actor, the node, its cached value, and its dependency edges are freed with the arena. No garbage collection participates.
+A node's lifetime is bounded by its owning actor or region; it need not last until actor retirement. Retiring the actor disposes its remaining graph and reclaims native arena storage. Earlier reclamation of replaced child subgraphs needs its own lifetime rules. Mailbox order and coalescing alone do not provide coherent multi-input stabilization, and this PRD does not specify a distributed stabilization protocol.
 
 ### 2.2 Incremental ↔ Observable
 
@@ -54,9 +56,9 @@ Dependency edges between nodes on different hardware targets use BAREWire descri
 
 ### 3.1 Demand and Prospero, By Contrast
 
-A node that no consumer observes does not stabilize, even when its inputs are stale. Demand is the transitive closure of observers in the dependency direction, the dual of the variables' reachability. Prospero manages demand for actor-based nodes; for non-actor contexts the compiler tracks demand statically through the PSG.
+A node that no consumer observes does not stabilize, even when its inputs are stale. Demand is the transitive closure of observers in the dependency direction, the dual of the variables' reachability. Prospero manages demand for actor-based nodes; non-actor demand follows the PSG plan, with runtime state where observation depends on dynamic instances or lifetimes.
 
-This is where a structural design replaces the machinery a runtime library needs. The OCaml Incremental reached the same place over several versions: explicit observers to track the demanded part, quiescing the unobserved part to stop nested-bind garbage, and finally an invariant that no pointer crosses from the observed world to the unobserved world so that finalizers could be retired. Here that invariant holds by construction. Demand gating stops undemanded nodes from stabilizing, and arena lifetime frees detached subgraphs deterministically, so there are no sentinels, finalizers, or reference counts.
+Demand gating avoids undemanded computation; it does not itself prove reclamation of detached subgraphs. A bump arena reclaimed only at actor retirement can accumulate repeated replacements. The admitted child-scope reclamation, pending-work and lifetime-ordering rules remain open, as recorded in clef-lang-spec `incremental-computation.md` §3.2. No reference-liveness invariant is established merely by making the reactive plan compiler-visible.
 
 ### 3.2 Observable Fusion
 
@@ -87,7 +89,7 @@ The target measure survives through the PSG to code generation without erasure. 
 
 | Target | Status | Node maps to | Cutoff becomes |
 |--------|--------|--------------|----------------|
-| CPU | Demonstrated | Arena struct, inline stabilization | `structural_eq` branch |
+| CPU | Planned baseline | Arena struct, inline stabilization | `structural_eq` branch |
 | NPU (MLIR-AIE) | Architectural | AIE tile with local SRAM | ObjectFIFO not written |
 | GPU (RDNA) | Architectural | CU wavefront group | Ballot/vote across lanes |
 
@@ -107,7 +109,7 @@ Height 1 tiles: activated when height 0 outputs land in ObjectFIFO
 Height h tiles: activated when height h-1 outputs land in ObjectFIFO
 ```
 
-Cutoff at a tile means its output ObjectFIFO is not written, so downstream tiles see no new input and stay idle. This is the height-ordered stabilization of R-04 expressed as a tile activation wave.
+Cutoff suppresses that tile's output update. A downstream join may still need to run because another input changed, using the cached value or equivalent availability information on the unchanged path. An unwritten ObjectFIFO alone cannot establish that the join stays idle. Target synchronization must preserve R-04's independent invalidations; the detailed mechanism remains open.
 
 ### 4.2 GPU (RDNA), Architectural
 
@@ -125,7 +127,7 @@ let router =
     }
 ```
 
-When a downstream consumer subscribes, Prospero records demand and the node participates in stabilization. When demand drops, the node quiesces and is freed with the actor's arena.
+When a downstream consumer subscribes, Prospero records demand and the node participates in stabilization. When demand drops, the node quiesces. Disposal and storage reclamation follow the owning lifetime and outstanding-use rules, rather than being implied by absence of demand alone.
 
 ---
 
@@ -195,13 +197,14 @@ let visionFeatures : Incremental<FeatureMap, npu_tile> =
 
 ## 9. Validation Criteria
 
-- [ ] An incremental node hosted by an actor is freed with the actor's arena
+- [ ] An actor can own several locally stabilizing nodes without a mailbox per node
+- [ ] Actor retirement disposes its remaining graph; child-scope disposal follows defined outstanding-use rules
 - [ ] An undemanded node does not stabilize even when inputs are stale
 - [ ] An Observable feeding an Incremental is fused into the invalidation trigger
 - [ ] `Incremental.toObservable` emits only on post-cutoff changes
 - [ ] The target measure survives to code generation without erasure
 - [ ] CPU integration with Observable and actors is demonstrated end to end
-- [ ] (Architectural) NPU lowering maps cutoff to an unwritten ObjectFIFO
+- [ ] (Architectural) NPU cutoff preserves changed-input joins and makes unchanged cached inputs available
 - [ ] (Architectural) GPU lowering skips dispatch for unchanged input buffers
 - [ ] Cross-target dependency edges generate BAREWire DMA descriptors
 

@@ -1,5 +1,7 @@
 # R-04: Incremental Foundations
 
+> **Delivery order:** Follow the [Reactive family priority](README.md#reactive-r-xx---reactive-extensions): after Async and Threading, lead with Incremental while developing Observable and their shared integration gates together. The PRD numbers do not require Observable completion before starting the incremental core.
+
 > **Sample**: `35_IncrementalFoundations` (Future) | **Status**: Planned | **Category**: Reactive
 
 ## 1. Executive Summary
@@ -8,9 +10,9 @@ This PRD introduces `Incremental<'T>` as a compiler-known intrinsic for dependen
 
 `Incremental<'T>` is the demand-driven dual of `Observable<'T>` (R-01). Observable pushes values forward as they arrive; Incremental pulls values on demand, caches them, tracks which inputs produced them, and recomputes only the affected part of the graph when an input changes. The two are complementary points on the evaluation-strategy spectrum the compiler understands natively.
 
-Unlike Jane Street's library-level `Incremental` for OCaml, `Incremental<'T>` is not a runtime abstraction built on the garbage collector. It is a compile-time annotation the PSG preserves through lowering, so Firefly reasons about the dependency graph directly and emits selective recomputation per target. The seven-version runtime history that the OCaml library worked through (sentinels and finalizers for collection, timestamp topological sort for ordering, observer tracking for demand) reduces to compile-time structure plus arena lifetime here.
+`Incremental<'T>` preserves a compiler-visible reactive plan through lowering, allowing specialization of proven static dependencies and target-specific recomputation. Runtime instances still need cached values, invalidation state and lifetime management. Native arena placement does not by itself settle demand or reclamation of detached dynamic subgraphs; those obligations extend into R-05 and R-06.
 
-**Key Insight**: The dependency graph is the Program Semantic Graph. Incremental does not build a second graph at runtime; it annotates the one the compiler already has.
+**Key Insight**: The PSG carries the dependency plan; target lowering realizes its instances. This static-core PRD can specialize topology without claiming that runtime state or multiple instances disappear. Tracked reads and effects establish dependencies; lexical closure captures alone are insufficient.
 
 Normative specification: clef-lang-spec `spec/incremental-computation.md`.
 
@@ -62,7 +64,7 @@ Each node carries PSG annotations that lower differently per target:
 | Field | Type | Semantics |
 |-------|------|-----------|
 | `value` | `'T` | Cached result of the most recent computation |
-| `stale` | `bool` | Whether any dependency changed since last computation |
+| `stale` | `bool` | Whether the cache needs validation after possible input change |
 | `height` | `int` | Topological depth in the DAG; sets evaluation order |
 | `dependencies` | `NodeId list` | PSG nodes this node reads from |
 | `dependents` | `NodeId list` | PSG nodes that read from this node |
@@ -140,17 +142,15 @@ type NativeType =
 
 ### 4.1 Height-Ordered Stabilization
 
-Stabilization brings demanded nodes up to date in a single pass that supports cutoff. This is the endpoint of the algorithm the OCaml library reached in its later versions, taken here as the normative procedure:
+Stabilization validates the demanded stale fragment in dependency order, following the corrected algorithm in clef-lang-spec `incremental-computation.md` §6.1:
 
-1. Collect all stale nodes whose outputs are demanded.
-2. Sort by height, ascending (a topological order over the DAG).
-3. For each node in height order:
-   a. Recompute the value from current dependencies.
-   b. Compare the new value against the cached value with the cutoff predicate.
-   c. If the cutoff returns `true` (unchanged): clear the stale flag, keep the cached value, remove dependents from the stale set.
-   d. If the cutoff returns `false` (changed): store the new value, clear the stale flag, leave dependents stale for processing at their height.
+1. Collect demanded stale nodes and the dependencies needed to validate them.
+2. Process this static DAG in ascending height order.
+3. Reuse an existing cache only after all relevant inputs are validated unchanged and no independent invalidation requires recomputation. Otherwise recompute from current dependencies and apply cutoff; an uninitialized node requires computation.
+4. On unchanged output, retain the cache and clear this node's stale state. Suppress propagation from this output only; preserve other nodes' independent invalidations.
+5. On changed output, update the cache, clear this node's stale state and preserve affected dependents for validation.
 
-Step 3c is the bound: when a node's output is unchanged despite a changed input, the downstream subgraph is skipped. A height array of node lists replaces a priority heap, so selecting the next node is constant-time.
+For `A = X % 2`, `B = Y`, `C = A + B`, batching `X: 0 → 2` and `Y: 0 → 1` must still update `C`: cutoff at `A` cannot erase the change through `B`. Input versions, invalidation causes or equivalent bookkeeping must establish when downstream reuse is valid. Height buckets are a candidate worklist representation, not a proof of constant-time selection or bounded total work.
 
 ### 4.2 Staleness and Cutoff
 
@@ -179,6 +179,8 @@ incremental {
 Each `let!` desugars to a dependency edge in the PSG. When sequential `let!` bindings carry no data dependency between them, the compiler classifies the subgraph as applicative: `a` and `b` share a height and may execute concurrently, and `combine` sits one height above. The builder methods relevant to the applicative subset are `Return`, `ReturnFrom`, `Combine`, and `Zero`; `Bind` with dynamic structure is R-05.
 
 ### 4.4 CPU MLIR
+
+This sketch shows one selected node's recompute/cutoff step. It omits the dependency-validation bookkeeping required by §4.1 and does not establish a complete stabilization implementation.
 
 ```mlir
 // Stabilization check for one node
@@ -269,7 +271,7 @@ let sameTenth (a: float<fahrenheit>) (b: float<fahrenheit>) =
 | LVGL MCU | Partial | Static applicative graphs only, fixed arena |
 | Unikernel | Optional | Derived network/state computation |
 
-CPU lowering is the demonstrated baseline for this PRD. NPU and GPU lowering are architectural and specified in R-06.
+CPU lowering is the planned baseline for this PRD; the sketch above does not establish end-to-end acceptance. NPU and GPU lowering are architectural and specified in R-06.
 
 ---
 
@@ -294,6 +296,7 @@ CPU lowering is the demonstrated baseline for this PRD. NPU and GPU lowering are
 - [ ] Height is computed at compile time for an applicative graph
 - [ ] Stabilization processes nodes in ascending height order
 - [ ] Structural cutoff stops propagation when an output is unchanged
+- [ ] Cutoff on one input path preserves an independent invalidation of a shared dependent
 - [ ] A recombinant (fan-out then fan-in) graph recomputes each node once
 - [ ] Cached values reside in arena memory, freed with the arena
 - [ ] A cutoff comparing incompatible units is a compile-time error

@@ -1,56 +1,60 @@
 # Composer Sample Suite
 
-This directory contains sample projects demonstrating Composer's capabilities for compiling Clef to hardware. The samples serve as both documentation and regression tests for the compiler, progressing toward the **WREN Stack Alpha** capstone.
+This directory contains compiler examples and regression inputs. The
+[regression manifest](../tests/regression/Manifest.toml) identifies the selected
+console cases and expected output. Hardware acceptance belongs with each
+platform and application's evidence.
 
 > **WREN** = **W**ebView + **R**eactive + **E**mbedded + **N**ative
 
 ## The Sample Progression
 
-The `console/FidelityHelloWorld/` directory contains a carefully designed progression. Each sample builds on the previous, proving specific compiler capabilities. The same output can require dramatically different compilation complexity: Sample 01 and Sample 04 both print "Hello, World!" but Sample 04 requires closure creation, capture analysis, and escape analysis.
+The [console progression](console/FidelityHelloWorld/) exercises language and
+compiler features. The table links those topics to their current PRD locations.
+It is a design index. Sample availability and execution results come from the
+manifest and the corresponding run report.
 
-### Complete Roadmap (Samples 01-31)
+### Sample topics and design references
 
-| Phase | # | Sample | Key Features | PRD | Status |
-|-------|---|--------|--------------|-----|--------|
-| **A: Foundations** | 01 | HelloWorldDirect | Static strings, direct calls | — | ✓ |
-| | 02 | HelloWorldSaturated | Arena allocation, byref | — | ✓ |
-| | 03 | HelloWorldHalfCurried | Pipe operator, forward refs | — | ✓ |
-| | 04 | HelloWorldFullCurried | Full currying, partial application | — | ✓ |
-| | 05 | AddNumbers | Discriminated unions, pattern matching | — | ✓ |
-| | 06 | AddNumbersInteractive | String parsing, arithmetic | — | ✓ |
-| | 07 | BitsTest | Byte order, bit casting intrinsics | — | ✓ |
-| | 08 | Option | Option type, Some/None | — | ✓ |
-| | 08a | [OptionDefaults](console/FidelityHelloWorld/08a_OptionDefaults/) | Eager defaults and NTU payloads | [C-04](../docs/PRDs/C-04-CoreCollections.md) | [Native gate](../docs/Language_Coverage_Waypoints.md) |
-| | 08b | [OptionDefaultWith](console/FidelityHelloWorld/08b_OptionDefaultWith/) | Deferred defaults, captures and unit effects | [C-04](../docs/PRDs/C-04-CoreCollections.md) | [Native gate](../docs/Language_Coverage_Waypoints.md) |
-| | 09 | Result | Result type, Ok/Error | — | ✓ |
-| | 10 | Records | Record types, copy-update, nesting | — | ✓ |
-| **B: Functional** | 11 | Closures | Lambdas, capture analysis, mutable state | [PRD-11](docs/WREN_Stack_PRDs/PRD-11-Closures.md) | ✓ |
-| | 12 | HigherOrderFunctions | Functions as values, composition | [PRD-12](docs/WREN_Stack_PRDs/PRD-12-HigherOrderFunctions.md) | ✓ |
-| | 13 | Recursion | Tail recursion, mutual recursion | [PRD-13](docs/WREN_Stack_PRDs/PRD-13-Recursion.md) | ✓ |
-| **C: Lazy/Seq** | 14 | Lazy | `lazy { }`, `Lazy.force`, flat closures | [PRD-14](docs/WREN_Stack_PRDs/PRD-14-Lazy.md) | ✓ |
-| | 15 | SimpleSeq | `seq { }`, `yield`, state machines | [PRD-15](docs/WREN_Stack_PRDs/PRD-15-SimpleSeq.md) | ✓ |
-| | 16 | SeqOperations | Seq.map, filter, fold, collect | [PRD-16](docs/WREN_Stack_PRDs/PRD-16-SeqOperations.md) | ✓ |
-| **D: Async** | 17 | BasicAsync | `async { return }`, LLVM coroutines | [PRD-17](docs/WREN_Stack_PRDs/PRD-17-BasicAsync.md) | · |
-| | 18 | AsyncAwait | `let!`, suspension coeffects | [PRD-18](docs/WREN_Stack_PRDs/PRD-18-AsyncAwait.md) | · |
-| | 19 | AsyncParallel | `Async.Parallel` composition | [PRD-19](docs/WREN_Stack_PRDs/PRD-19-AsyncParallel.md) | · |
-| **E: Regions** | 20 | BasicRegion | Region alloc/dispose, `NeedsCleanup` | [PRD-20](docs/WREN_Stack_PRDs/PRD-20-BasicRegion.md) | · |
-| | 21 | RegionPassing | Region parameters, `BorrowedRegion` | [PRD-21](docs/WREN_Stack_PRDs/PRD-21-RegionPassing.md) | · |
-| | 22 | RegionEscape | Escape analysis, `CopyOut` | [PRD-22](docs/WREN_Stack_PRDs/PRD-22-RegionEscape.md) | · |
-| **F: Networking** | 23 | SocketBasics | TCP via `Sys.*` intrinsics | [PRD-23](docs/WREN_Stack_PRDs/PRD-23-SocketBasics.md) | · |
-| | 24 | WebSocketEcho | WebSocket protocol | [PRD-24](docs/WREN_Stack_PRDs/PRD-24-WebSocketEcho.md) | · |
-| **G: Desktop** | 25 | GTKWindow | GTK FFI, `ExternCall` | [PRD-25](docs/WREN_Stack_PRDs/PRD-25-GTKWindow.md) | · |
-| | 26 | WebViewBasic | WebKitGTK WebView | [PRD-26](docs/WREN_Stack_PRDs/PRD-26-WebViewBasic.md) | · |
-| **H: Threading** | 27 | BasicThread | `Thread.create`/`join` | [PRD-27](docs/WREN_Stack_PRDs/PRD-27-BasicThread.md) | · |
-| | 28 | MutexSync | Mutex, `SyncPrimitive` | [PRD-28](docs/WREN_Stack_PRDs/PRD-28-MutexSync.md) | · |
-| **I: Capstone** | 29 | BasicActor | `MailboxProcessor.Start` | [PRD-29](docs/WREN_Stack_PRDs/PRD-29-BasicActor.md) | · |
-| | 30 | ActorReply | `PostAndReply` pattern | [PRD-30](docs/WREN_Stack_PRDs/PRD-30-ActorReply.md) | · |
-| | 31 | ParallelActors | Multi-actor with regions | [PRD-31](docs/WREN_Stack_PRDs/PRD-31-ParallelActors.md) | · |
+| Phase | # | Sample | Key Features | PRD |
+|-------|---|--------|--------------|-----|
+| **A: Foundations** | 01 | HelloWorldDirect | Static strings, direct calls | [F-01](../docs/PRDs/F-01-HelloWorldDirect.md) |
+| | 02 | HelloWorldSaturated | Saturated calls, console input and greeting | [F-02](../docs/PRDs/F-02-ArenaAllocation.md) |
+| | 03 | HelloWorldHalfCurried | Forward pipe, named greeting function | [F-03](../docs/PRDs/F-03-PipeOperators.md) |
+| | 04 | HelloWorldFullCurried | Full currying, partial application | [F-04](../docs/PRDs/F-04-CurryingLambdas.md) |
+| | 05 | AddNumbers | Discriminated unions, pattern matching | [F-05](../docs/PRDs/F-05-DiscriminatedUnions.md) |
+| | 06 | AddNumbersInteractive | String parsing, arithmetic | [F-06](../docs/PRDs/F-06-InteractiveParsing.md) |
+| | 07 | BitsTest | Bitwise operations, shifts, comparisons and Boolean operators | [F-07](../docs/PRDs/F-07-BitwiseOperators.md) |
+| | 08 | Option | Option type, Some/None | [F-08](../docs/PRDs/F-08-OptionType.md) |
+| | 08a | [OptionDefaults](console/FidelityHelloWorld/08a_OptionDefaults/) | Eager fallback, stored defaults, nested/function/measured payloads | [C-04](../docs/PRDs/C-04-CoreCollections.md) |
+| | 08b | [OptionDefaultWith](console/FidelityHelloWorld/08b_OptionDefaultWith/) | Deferred defaults, thunk snapshots, mutable captures and unit effects | [C-04](../docs/PRDs/C-04-CoreCollections.md) |
+| | 09 | Result | Result type, Ok/Error | [F-09](../docs/PRDs/F-09-ResultType.md) |
+| | 10 | Records | Record types, copy-update, nesting | [F-10](../docs/PRDs/F-10-RecordTypes.md) |
+| **B: Functional** | 11 | Closures | Lambdas, capture analysis, mutable state | [C-01](../docs/PRDs/C-01-Closures.md) |
+| | 12 | HigherOrderFunctions | Functions as values, composition | [C-02](../docs/PRDs/C-02-HigherOrderFunctions.md) |
+| | 13 | Recursion | Tail recursion, mutual recursion | [C-03](../docs/PRDs/C-03-Recursion.md) |
+| **C: Lazy/Seq** | 14 | Lazy | `lazy { }`, `Lazy.force`, flat closures | [C-05](../docs/PRDs/C-05-Lazy.md) |
+| | 15 | SimpleSeq | `seq { }`, `yield`, state machines | [C-06](../docs/PRDs/C-06-SimpleSeq.md) |
+| | 16 | SeqOperations | Seq.map, filter, fold, collect | [C-07](../docs/PRDs/C-07-SeqOperations.md) |
+| **D: Async** | 17 | BasicAsync | Deferred execution and completion | [A-01](../docs/PRDs/A-01-BasicAsync.md) |
+| | 18 | AsyncAwait | `let!`, suspension coeffects | [A-02](../docs/PRDs/A-02-AsyncAwait.md) |
+| | 19 | AsyncParallel | `Async.Parallel` composition | [A-03](../docs/PRDs/A-03-AsyncParallel.md) |
+| **E: Regions** | 20 | BasicRegion | Region alloc/dispose, `NeedsCleanup` | [A-04](../docs/PRDs/A-04-BasicRegion.md) |
+| | 21 | RegionPassing | Region parameters, `BorrowedRegion` | [A-05](../docs/PRDs/A-05-RegionPassing.md) |
+| | 22 | RegionEscape | Escape analysis, `CopyOut` | [A-06](../docs/PRDs/A-06-RegionEscape.md) |
+| **F: Networking** | 23 | SocketBasics | TCP via `Sys.*` intrinsics | [I-01](../docs/PRDs/I-01-SocketBasics.md) |
+| | 24 | WebSocketEcho | WebSocket protocol | [I-02](../docs/PRDs/I-02-WebSocketEcho.md) |
+| **G: Desktop** | 25 | GTKWindow | GTK FFI, `ExternCall` | [D-01](../docs/PRDs/D-01-GTKWindow.md) |
+| | 26 | WebViewBasic | WebKitGTK WebView | [D-02](../docs/PRDs/D-02-WebViewBasic.md) |
+| **H: Threading** | 27 | BasicThread | `Thread.create`/`join` | [T-01](../docs/PRDs/T-01-BasicThread.md) |
+| | 28 | MutexSync | Mutex, `SyncPrimitive` | [T-02](../docs/PRDs/T-02-MutexSync.md) |
+| **I: Capstone** | 29 | BasicActor | Actor creation and message delivery | [T-03](../docs/PRDs/T-03-BasicActor.md) |
+| | 30 | ActorReply | Request/reply behavior | [T-04](../docs/PRDs/T-04-ActorReply.md) |
+| | 31 | ParallelActors | Multi-actor with regions | [T-05](../docs/PRDs/T-05-ParallelActors.md) |
 
-**Legend**: ✓ = Implemented · = Planned
-
-### The Capstone: MailboxProcessor
-
-Samples 29-31 synthesize all prior capabilities: async (message loop), closures (behavior functions), threading (parallelism), regions (worker memory), and records/DUs (message types). With Sample 31 complete, the WREN Stack Alpha becomes possible.
+The [threading and actor PRDs](../docs/PRDs/README.md#threading-t-xx---concurrency)
+record the corresponding design work. Their presence does not establish that
+an application or target implements every operation.
 
 ## Building and Running
 
@@ -67,7 +71,7 @@ composer compile HelloWorld.fidproj
 ```bash
 composer compile HelloWorld.fidproj -k
 ls targets/intermediates/
-# fncs_phase_*.json, alex_coeffects.json, *.mlir, *.ll
+# Inspect the artifacts produced by this compiler build
 ```
 
 ### Interactive Samples
@@ -80,7 +84,7 @@ Samples 02-04 and 06 require input. Each has a `.stdin` file:
 
 ## Regression Test Suite
 
-The test harness lives in `tests/regression/`.
+The test harness is [Runner.fsx](../tests/regression/Runner.fsx).
 
 ```bash
 cd tests/regression
@@ -88,37 +92,34 @@ cd tests/regression
 # Full suite
 dotnet fsi Runner.fsx
 
-# Parallel execution
-dotnet fsi Runner.fsx -- --parallel
-
 # Specific samples
 dotnet fsi Runner.fsx -- --sample 11_Closures --sample 14_Lazy
 ```
 
-Test definitions are in `Manifest.toml`. The runner reports compilation and execution status for each sample.
+Test definitions are in [Manifest.toml](../tests/regression/Manifest.toml). The runner reports compilation and execution status for each sample.
 
 ## Directory Structure
 
 ```
 samples/
 ├── console/
-│   ├── FidelityHelloWorld/     # Canonical progression (01-31)
+│   ├── FidelityHelloWorld/     # Console progression and feature cases
 │   ├── TimeLoop/               # Platform time operations
 │   └── SignalTest/             # Reactive signals
 ├── embedded/                   # ARM microcontroller targets
 │   ├── common/                 # Startup and linker scripts
 │   ├── stm32l5-blinky/         # NUCLEO-L552ZE-Q
 │   └── stm32l5-uart/           # Serial communication
-├── sbc/                        # Single-board computers
-│   └── sweet-potato-blinky/    # Libre Sweet Potato (ARM64)
+├── sbc/                        # SBC port plan; no executable sample
+│   └── README.md               # AML-S905X-CC-V2 KeyStation references
 ├── templates/                  # Platform configurations
 └── samples.json                # Sample catalog
 ```
 
 ## Related Documentation
 
-- [WRENStack_Roadmap.md](docs/WRENStack_Roadmap.md) - Architecture and milestones
-- [WREN_Stack_PRDs/](docs/WREN_Stack_PRDs/) - PRD index and all feature specs
+- [WRENStack_Roadmap.md](../docs/WRENStack_Roadmap.md) - Architecture and milestones
+- [Compiler PRDs](../docs/PRDs/README.md) - Feature design index
 - [Learning to Walk](https://speakez.com/blog/learning-to-walk/) - PSG traversal via samples
 - [Gaining Closure](https://speakez.com/blog/gaining-closure/) - Flat closure architecture
 - [Why Lazy Is Hard](https://speakez.com/blog/why-lazy-is-hard/) - Lazy evaluation

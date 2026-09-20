@@ -4,6 +4,35 @@
 
 Clef-native binding generation and dependency recovery need a traceable connection between the declared contract, accepted implementation, graph obligations, emitted JavaScript and selected host. Different JavaScript output is permitted; the required behavior and the evidence supporting it must survive.
 
+## Retain a versioned package graph
+
+Every version of the Clef library system must retain an inspectable snapshot of the complete dependency graph of its pinned source packages under the recorded resolution profiles. Package mapping is established independently of which SDK operations or application bodies are currently used. Capture the package graph before either offline SDK demand analysis or application reachability selects executable behavior. An unused package or edge remains in that version's record; its absence from an application artifact is a separate finding.
+
+Bun supplies concrete precedents through its committed [lockfile](https://bun.com/docs/pm/lockfile) and [`bun why`](https://bun.com/docs/pm/cli/why), which explains dependency paths with versions, requested ranges and dependency roles. The [Bun source review](02_jsir_tooling.md#bun-internal-structure-and-the-ingestion-seam) complements that package mapping with module and binding relationships before tree shaking and generation. A Bun integration and the persistent Clef package mapping described here remain implementation work; the reviewed parser records alone do not supply a complete package-resolution snapshot.
+
+| Retained information | Required identity and relationships |
+|---|---|
+| Library-system version | Snapshot identity, source package roots, owned Clef library versions and the predecessor snapshot when one exists. Accepted snapshots are immutable; an update creates a successor, retaining earlier snapshots for comparison. |
+| Package instance | Package name, exact resolved version or source revision, source location, payload integrity/hash and resolution context. Distinct versions, payloads or peer environments must remain distinguishable even when names coincide. |
+| Dependency edge | The requesting package instance, declared dependency name or alias and version request, and the exact resolved provider instance. Preserve direct and transitive paths, shared providers and cycles; a deduplicated name list loses the dependency structure. |
+| Dependency role | Preserve regular, development, optional and peer declarations, including the selected peer provider. Record omitted optional dependencies, unsatisfied requests and the reasons or conditions for each unresolved or inactive edge. Keep build/deployment and runtime roles identifiable. |
+| Resolution profile | Manifest and lockfile inputs, resolver version/settings, relevant platform and peer context, and module export conditions. Relate the package instance to its selected declaration and executable entry points without merging those identities. |
+| Clef correspondence | Links from package instances and dependency edges to declaration owners, runtime modules and maintained Clef libraries. Record replaced behavior, retained foreign behavior and behavior not yet translated. |
+
+The persisted form must retain the literal dependency tree or graph, with exact nodes and edges. A tree view may repeat shared nodes, but the underlying identities must expose sharing and cycles. Known omissions and unresolved relationships remain visible; they cannot be represented as a complete resolved closure. The design does not require resolving every possible platform configuration: each snapshot records the profiles it covers and their exclusions.
+
+The source package graph underpins the three related graphs below. A behavioral demand graph selects bodies, initialization, captures and calls requiring recovery. Later application reachability selects from the maintained Clef implementation graph. Both selections refer back to the retained package graph; neither replaces it. Thus a package can remain part of the library system's provenance while contributing no executable code to a particular artifact. Keeping its mapping also does not require translating or type-checking all its bodies before a partial program can enter elaboration.
+
+### Evaluate and track pin changes
+
+A proposed pin change produces a candidate resolution snapshot and a before/after graph comparison. Record added or removed package instances and edges, version or payload changes, changed alias/peer providers, optional-dependency decisions and declaration/export resolution changes. Follow transitive changes even when a root package name or version is unchanged. Keep the old and proposed identities, the reason for the update and its assessment with the library-system version that accepts or defers it.
+
+Cloudflare's Agents repository provides an existing upstream precedent. At the linked revision, its [install action](https://github.com/cloudflare/agents/blob/46760e635ce9599add0abbfe6c1a34af0d5d44f1/.github/actions/install/action.yml) uses a frozen lockfile, while its [AI SDK compatibility workflow](https://github.com/cloudflare/agents/blob/46760e635ce9599add0abbfe6c1a34af0d5d44f1/.github/workflows/ai-sdk-compat.yml) exercises majors 6 and 7, re-resolving the v6 dependencies before type-checking Think and running its Workers tests. These upstream resolutions and checks can supply a baseline for Clef's input capture and change assessment. Consumers still need the graph resolved for their own package roots and peer context; the upstream lockfile does not define every consumer installation.
+
+Trace each change through the declaration, runtime-module and owned-library relationships to the affected source correspondence, pending constraints, assumptions and validation evidence. A package-level change identifies work to assess; it does not by itself establish that every converted function changed. Use finer source and obligation dependencies where available to preserve valid evidence and identify what requires reanalysis. If those relationships cannot justify a narrow impact assessment, widen it and record the reason. A change to currently unused behavior still appears in the package history, even when it does not require a new application artifact or immediate translation.
+
+This assessment follows the [incremental library lifecycle](05_supply_chain_and_transcribe.md#incremental-library-lifecycle). Reconcile affected upstream declarations and bodies with maintained Clef source, retain developer refinements, and invalidate evidence whose premises no longer hold. Rerun the affected correspondence and oracle checks before carrying their support claims into the updated version. A pin change does not automatically overwrite curated source or restart conversion of the entire library system. Acceptance records connect the resulting source, graph snapshot and evidence; unresolved effects of the update remain explicit.
+
 ## Preserve three related graphs
 
 | Graph | Facts to retain |
@@ -15,6 +44,26 @@ Clef-native binding generation and dependency recovery need a traceable connecti
 One declaration can be reached through several public imports with different runtime implementations. Deduplicating its type must not erase those paths. Equal member lists do not establish a common declaration owner. A valid JavaScript import graph can coexist with an invalid generated-library ownership cycle.
 
 Record established relationships and unresolved linkage constraints during ingestion; ordinary semantic enrichment resolves them as context accumulates. Alex consumes the facts settled for the required computation. It does not infer ownership from a symbol spelling, choose a constructor from the first interface-shaped edge or repair generic constraints at emission.
+
+### Gauge implementation demand from bindings
+
+The bindings' runtime import specifiers and exported-value identities provide roots for measuring the implementation they bring into a program. Type provenance and `.d.ts` references alone do not establish which implementation functions call which dependencies. Use a synthetic entry that retains the selected public exports, or an actual Fable consumer, and bundle it with pinned packages, tool version, export conditions and host externals. Record which of those two entry scopes was measured. Bun's [`metafile: true`](https://bun.com/docs/bundler#metafile) supplies input files and imports, output exports and per-input `bytesInOutput`; [esbuild's metafile](https://esbuild.github.io/api/#metafile) exposes corresponding measurements.
+
+```text
+Binding runtime imports/exports → selected-export entry or actual consumer
+    → pinned bundle and module metadata
+    → package-snapshot annotations and roots for implementation analysis
+```
+
+Report modules and package instances encountered separately from those contributing output bytes. This gauges the retained implementation for that entry and configuration; a metafile does not provide a precise function-call graph, runtime coverage or a minimal Clef replacement size. Refine body-level calls, captures and effects through the frontend analysis, retaining required module initialization and explicit unresolved dynamic imports or dispatch. Excluded host operations remain named boundaries. Attach the entry, settings, artifact and measurements to the same versioned package snapshot. These annotations guide recovery and comparison without deleting the full dependency tree or treating unobserved behavior as absent.
+
+Build a directed dependency graph rooted at each SDK's public executable exports. Package edges retain exact versions, declared roles and resolution instances. Module edges identify the importing source file, import specifier, selected export condition and resolved provider. Symbol and function relationships refine those edges with the dependency implementation brought into the SDK. Preserve shared libraries, transitive paths, initialization and unresolved dynamic imports. This dependency mapping is a static source-analysis task.
+
+Each library's percentage needs an explicit whole-library denominator. Inventory all implementation functions in the selected published distribution, including files absent from the SDK's import graph. Record distribution rules for parallel ESM/CommonJS, browser/Node and source/generated copies. Keep declarations and native/Wasm payloads separately identified. Merge repeated installations by exact package version, relative source path and verified content. Prebundled dependency code remains attributed to its containing file until source correspondence establishes its upstream owner.
+
+The machine report contains every dependency in every SDK's pinned graph. Each SDK/library occurrence has a tuple `(SDK name and version, dependency name and version, mapped functions, total library functions, mapped percentage)`, with immediate importers and complete dependency paths. If the same library maps 2% into one SDK and 98% into another, retain both rows. Keep the denominator consistent for the same library distribution, and preserve worker, browser and tooling contexts on the supporting edges. Retain dependencies with no mapped implementation as rows with their resolution status.
+
+An initial bundler-based implementation can map emitted source positions back to dependency function intervals and report statically retained functions. Label that measurement precisely: CommonJS, class members and dynamic dispatch can retain more functions than an exact call graph would select. Unknown imports remain explicit graph boundaries. On a pin change, compare package and import edges, regenerate affected function mappings and denominators, and retain the old and new graph snapshots with the library-system version.
 
 ## Concrete lessons from Xantham and CloudEdge
 
@@ -71,15 +120,17 @@ The build toolchain and deployment tooling have separate closures. Host/runtime 
 
 This sequence records acceptance of a concrete artifact; it is not a requirement that every fact be resolved before a partial program joins the PSG.
 
-1. **Inventory and environment.** Identify selected public entry points, package contents, declaration providers, export conditions, host configuration and exact tool payloads. Record exclusions and unresolved imports.
-2. **Resolution and correspondence.** Authenticate declaration owners and runtime exports. Relate lifted bodies to their declarations and retain unknown or lossy mappings.
+1. **Inventory and environment.** Identify the library-system version and retained package-graph snapshot, selected public entry points, package contents, declaration providers, export conditions, host configuration and exact tool payloads. Record exclusions and unresolved imports. Keep the full package mapping distinct from the behavior selected for this artifact.
+2. **Resolution and correspondence.** Authenticate declaration owners and runtime exports against their package instances. Relate lifted bodies to their declarations and retain unknown or lossy mappings. For changed pins, record the graph comparison, affected correspondence and disposition of invalidated or pending evidence.
 3. **Clef contract.** Review candidate source, assumptions, supported witnessing rules and outstanding constraints. Elaborate actual producer and consumer libraries together through ordinary CCS/PSG, retaining unresolved constraints until the relevant commitment.
 4. **Lowering.** Check the selected JSHIR route structurally and establish or re-check semantic correspondence for affected operations. Retain source/obligation provenance.
 5. **Behavior.** Execute representative application and boundary cases: values, errors, absence, nested Options, returned and partial callbacks, aliasing and ordering. For codecs, include byte vectors, invalid extents and encoding failures.
-6. **Host operation.** Load the artifact under its selected Cloudflare profile. Exercise required exports, imports, callback conventions, instance isolation and applicable suspension/recovery behavior. Service tests need controlled setup and cleanup.
-7. **Artifact closure.** Bind evidence to emitted bytes, owned and retained dependencies, target policy and tool revisions. Claim only the supported behavior actually covered.
+6. **Host operation.** Load the artifact under its selected host profile. For Cloudflare, exercise required exports, imports, callback conventions, instance isolation and applicable suspension/recovery behavior. For a Solid/WebView profile, exercise the final embedded page's reactive updates, event dispatch, subscription disposal and native bridge shutdown. Service tests need controlled setup and cleanup.
+7. **Artifact closure.** Bind evidence to emitted bytes, owned and retained dependencies, target policy, tool revisions and the retained library-system snapshot. Relate the artifact's executable closure to that snapshot without deleting unused package relationships from it. Claim only the supported behavior actually covered.
 
 JSHIR round trips and differential execution against Fable or vendor output are useful checks. They must compare the declared observables rather than assume one implementation is universally correct. Normalization requires a justified relation; equal normalized IR is not itself a general semantic-equivalence proof. Mutation cases such as wrong offsets, endian reversal, dropped rejection handling or changed callback arity should demonstrate that relevant checks detect a broken correspondence.
+
+For [JSX/Solid output](10_jsx_and_webview_toolchain.md#proofs-and-the-final-artifact), include the framework transform, bundler and embedding steps in the preservation chain. Evidence concerns the final assets and shipped dependency closure, with their tool/configuration and source/obligation identities. JSX parsing, source maps and hashes do not establish reactive behavior. Compare admitted structure before Solid compilation and execution after it; a shared Solid transform is a shared assumption in the Fable/Clef comparison. WrenHello's existing native UI gate is a bounded reference, not a completed Clef frontend proof.
 
 ### F#/Fable as an executable oracle
 

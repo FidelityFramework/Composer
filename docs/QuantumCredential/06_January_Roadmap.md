@@ -1,8 +1,13 @@
 # Demo Day Roadmap: January 2025 (6 Weeks)
 
-This document provides a comprehensive assessment of the Fidelity ecosystem and a realistic roadmap for the late January demo day.
+This is the archived December 2024 assessment and six-week plan for the January
+2025 demo. Its compiler status, implementation sketches and estimates are
+historical, not a statement of current support. Hardware references have since
+been corrected; current system requirements are described in the
+[QuantumCredential overview](README.md) and the
+[KeyStation native port plan](../../../Fidelity.Platform/docs/SWEET_POTATO_UI_PORT.md).
 
-## Current State Assessment
+## Historical State Assessment
 
 ### Composer Compiler (Core)
 
@@ -158,22 +163,14 @@ Based on the Hardware Showcase Roadmap and current state:
 
 **Risk Assessment:** HIGH - Many unknowns in embedded toolchain
 
-### Secondary Demo: Keystation (Sweet Potato Linux App)
+### Secondary Demo: KeyStation on AML-S905X-CC-V2
 
-**Goal:** Linux application with touchscreen UI for credential management
-
-**Required Work:**
-
-| Task | Complexity | Dependencies |
-|------|------------|--------------|
-| AArch64 Linux target | Low | Already close to x86_64 |
-| External ADC driver | Medium | I2C/SPI bindings |
-| PQC library bindings | High | Same as QuantumCredential |
-| LVGL or GTK4 UI | High | Farscape GIR or manual |
-| IR reception | Medium | GPIO/protocol |
-| Credential display | Medium | UI framework |
-
-**Risk Assessment:** MEDIUM - Linux environment more familiar
+The board is Libre Computer Sweet Potato with Amlogic S905X and DDR4. The
+[native port plan](../../../Fidelity.Platform/docs/SWEET_POTATO_UI_PORT.md)
+defines the Clef unikernel objective and the separate Linux AArch64 route.
+Graphics acceptance starts with CPU rendering, native HDMI and USB touch,
+followed by restricted Mali-450 drawing. Service and credential operations have
+separate integration requirements.
 
 ### Fallback Demo: Desktop Console Applications
 
@@ -252,8 +249,8 @@ Based on the Hardware Showcase Roadmap and current state:
 - [ ] Implement receive path
 
 **Sweet Potato:**
-- [ ] Set up AArch64 Linux target
-- [ ] Port console samples to ARM Linux
+- [ ] Establish the S905X firmware handoff and native serial/timer sample
+- [ ] Establish the Linux AArch64 reference image and panel/input inventory
 - [ ] Test external ADC over I2C/SPI
 - [ ] Basic GPIO for IR
 
@@ -266,7 +263,7 @@ Based on the Hardware Showcase Roadmap and current state:
 - [ ] Test credential exchange over IR
 
 **UI (Stretch):**
-- [ ] Evaluate LVGL vs GTK4 feasibility
+- [ ] Exercise Fidelity.UI reactive areas through the CPU reference renderer
 - [ ] If feasible: basic credential display
 - [ ] If not: console-based status output
 
@@ -314,7 +311,7 @@ If any of these fail, fall back to:
 
 ### Medium Priority (Enhanced Demo)
 
-6. Sweet Potato Linux port
+6. Sweet Potato native port and Linux reference
 7. Credential format and exchange
 8. Error handling
 

@@ -7,6 +7,74 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## PRD status and repository synchronization — 2026-09-20
+
+The [PRD index](PRDs/README.md) now uses only Planned, In-Progress and Complete,
+with a separate Note in every category. Foundation completion follows the
+recorded native evidence: F-00–F-04 and F-07–F-10 are Complete at their stated
+scope; F-05/F-06 are reopened for the recorded formatter/parsing regressions.
+C-01–C-07 remain In-Progress. Later sequence composition has exposed additional
+closure, callable storage and residence requirements in the earlier areas.
+
+Numbering guides the work; current dependencies determine the sequence. Async
+and Threading precede Reactive. Within Reactive, Incremental leads from the
+closure/lazy/thunk basis while Observable is developed alongside it, including
+shared invalidation, cutoff, effect order and ownership gates. HelloWayland's
+recorded Ariel CPU and typed-carrier acceptance informs A/T formalization without
+closing those PRDs. Its September 9 acceptance record is historical evidence,
+not a fresh hardware or native run in this synchronization batch.
+
+This batch publishes the previously pending design records, corrects stale
+server/tooling status, aligns sample/library manifests with the existing
+platform profile/environment taxonomy, and retires the misidentified
+Allwinner-H6 Sweet Potato sample. It adds no compiler implementation. The C-07
+compiler and proof results below retain their original revisions and limits.
+
+| Repository | Revision | Synchronization scope |
+|---|---|---|
+| Composer | This entry's containing commit | PRD status, incremental and JavaScript/WebView design, credential roadmap, sample catalog and obsolete SBC retirement |
+| clef-lang-spec | `d04574a` | Credential custody, authenticated sealing, durable commit and recovery requirements |
+| ClefAutoComplete (`fidelity`) | `1f347d78` | Reference fork and active CCS/Lattice boundary reconciled |
+| lattice-vscode (`fidelity`) | `390d5b2` | Active client status and root development launch configuration |
+| lattice-vscode-helpers (`master`) | `3cb2979` | Inherited bindings solution path, branding and scope; not an active-client dependency |
+| Fidelity.Data | `213918a` | Previously committed hosted-source filename/project alignment |
+| Fidelity.Desktop | `1e36556` | Wayland platform environment dependency |
+| Fidelity.Image | `7ef6765` | Image binding platform environment dependencies |
+| HelloArty | `e3c0b15` | Platform profile/product distinction |
+| HelloNappy | `6e90f59` | Linux profile and environment bindings |
+| HelloWayland (`pre-light-mode`) | `adc4cf6` | Platform profiles/environment paths, including Ariel gates; also publishes prior acceptance record `81fa3c0` |
+| WrenHello | `cd6f307` | Existing Fable/JSX/Solid and embedded WebView build documentation |
+| Fidelity.CloudEdge (`agents`) | `340d9b7` | Xantham pathway and current ambient-module evidence; Fable reference work, not Clef semantic widening |
+
+The unchanged clef, BAREWire, Fidelity.Platform, Fidelity.UI and analyzer
+implementation revisions remain those recorded in the C-07 table below.
+Validation here consists of PRD status/Note checks, local documentation targets,
+JSON/TOML and project dependency paths, solution/project source paths, and diff
+checks. Root VSCode launch configuration received static checks; the prior real
+F5 gate belongs to the client workspace. The documentation drift script still
+reports six findings outside the edited tooling READMEs
+(`/tmp/lattice-readme-sync-drift.log`); no clean global drift gate is claimed.
+
+Explicitly pending local work:
+
+- Fidelity.Platform's `Format.clef` migration and `tests/Format/native/` remain
+  unpublished. Its existing 22-case native gate was rerun and still fails stock
+  MLIR verification: the first `Format.int` call expects `memref<?xi8>` while the
+  callee returns `memref<?xi64>`. No native boundary assertion ran.
+  `/tmp/platform-format-native-xv9_k_me/compile.log`; Composer assembly SHA-256
+  `0121c21407e8a15fb8e9fd3803c1384f82e56e04d55c0262afa1a61d5a81fb43`, CCS
+  `9fe00834eda63cc9a4b91253b983d5e2aaf2e49fb4ba536fb3b271ae1f709e0f`.
+  This is a compiler/storage-contract blocker, not an approval gate.
+- Fidelity.Font's matching FreeType dependency-path change is committed locally
+  as `79f022a`; the repository has no configured remote or upstream. Its SSH
+  publication destination has been requested.
+- Fidelity.Signal retains an older, unvalidated runtime-table/native-pointer
+  prototype and generated `target/` artifacts. It has no remote. Its README
+  distinguishes that prototype from the planned Incremental/Observable contract;
+  these edits are not admitted reactive implementation or part of this push.
+- Fidelity.WebView's untracked `.serena/` and FsNativeAutoComplete's modified
+  `.serena/project.yml` are local tooling configuration, outside this sync.
+
 ## C-07 sequence operations — implementation waypoint, acceptance open, 2026-09-20
 
 **Coordinated implementation waypoint; C-07 exit gates remain open.** This entry
@@ -74,12 +142,14 @@ new dialect family, or incremental graph repair is claimed by this waypoint.
 
 ### Companion revisions
 
-Use the containing Composer commit with these peer revisions. The staged scope
-excludes unrelated roadmap, platform-format, branding and sample-removal edits.
+Use Composer `d3365e1e7566` with these peer revisions for this implementation
+waypoint. That commit excludes the then-pending roadmap, platform-format,
+branding and sample-removal edits; the synchronization entry above tracks their
+subsequent disposition.
 
 | Repository | Revision | Scope |
 |---|---|---|
-| Composer | This waypoint's containing commit | Alex integration, native oracles, Editor/LSP query and PRD status index |
+| Composer | `d3365e1e7566` | Alex integration, native oracles, Editor/LSP query and initial PRD status index |
 | BAREWire | `7b9de43700b7` | Explicit immutable/mutable program-space designation |
 | Fidelity.Platform | `5a6c2860e826` | Existing profile spaces named without invented fallback |
 | clef | `bf9632a05062` | Sequence, closure, startup and proof-incidence implementation |

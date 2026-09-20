@@ -1,522 +1,162 @@
-# Stretch Goals: Enhanced Demo Experience
+# QuantumCredential interaction and transport experiments
 
-> **Status**: Stretch goals beyond core demo functionality
->
-> **Visual Impact**: Two embedded devices with touchscreen UIs exchanging quantum-safe credentials makes a powerful investor demo
+These experiments extend the credential workflow with local touch interaction,
+activity visualization and additional transfer methods. Each experiment needs
+its own device integration and recorded result. The
+[project overview](README.md) identifies the current framework and hardware
+references.
 
----
+## Hardware roles
 
-## The Hardware Symmetry Insight
+YoshiPi and KeyStation can share application behavior while using different
+boards and device drivers. YoshiPi has carrier ADC connections. KeyStation uses
+Libre Computer AML-S905X-CC-V2 with the selected Waveshare HDMI/USB display.
+An external ADC, avalanche source, camera or infrared transceiver is an
+additional hardware selection for KeyStation.
 
-Both the YoshiPi (Credential Generator) and the Sweet Potato (Keystation) share the **same analog front end**:
+Bidirectional credential exchange requires supported transmit and receive paths
+on both devices. A common protocol can preserve message meaning across those
+paths. Matching application roles do not establish matching circuit boards,
+analog front ends or peripheral wiring.
 
-| Component | YoshiPi | Sweet Potato | Purpose |
-|-----------|---------|--------------|---------|
-| **Avalanche Circuit** | Yes | Yes | True random entropy |
-| **IR Transmitter** | Yes | Yes | Credential transmission |
-| **IR Receiver** | Yes | Yes | Credential reception |
-| **ADC Input** | Yes | Yes | Entropy sampling |
-| **Touchscreen** | Yes | Yes | User interaction |
+## Authority-management interface
 
-**The role distinction (Generator vs Keystation) is purely software-defined.**
+The UI can expose credential inspection, transfer status and authorized signing
+operations through the service contract. Root-key generation and certificate
+issuance depend on the selected authority design, provisioning and key-storage
+implementation. Attaching an entropy circuit alone does not establish a usable
+certificate authority.
 
-This enables:
-- **Same PCB design** - One hardware platform, two software roles
-- **Bidirectional communication** - Either device can TX or RX
-- **Mutual authentication** - Both generate credentials, both verify
-- **Role reversal** - The Keystation could generate, the Generator could receive
-- **Peer-to-peer exchange** - Two "peers" exchanging credentials
+Keep the KeyStation panel's interaction model separate from root-of-trust and
+Renesas HUK integration. A synthetic service can exercise the UI while those
+systems are developed. The
+[cryptographic design](Validation/V-05-PostQuantum-Architecture.md) holds the
+credential-processing research.
 
-### The "Dirty Little Secret": Self-Sovereign CA
+## Stretch Goal 1: Sweet Potato KeyStation
 
-Here's the profound implication: **Any QuantumCredential device can serve as its own Certificate Authority.**
+The selected board is Libre Computer **AML-S905X-CC-V2**, using the Amlogic
+S905X, four Cortex-A53 cores, Mali-450 graphics and DDR4. The
+[Fidelity.Platform board entry](../../../Fidelity.Platform/Hardware/Products/LibreComputer/AML_S905X_CC_V2/README.md)
+owns the product definition and its primary sources.
 
-The device has:
-- **Hardware entropy** (avalanche circuit) - True randomness, not PRNG
-- **PQC key generation** (ML-KEM, ML-DSA) - Quantum-resistant cryptography
-- **Signing capability** - Can sign any credential
+The primary target is a Clef unikernel. A Linux AArch64 application remains a
+separate deployment option and a hardware reference. The
+[native port plan](../../../Fidelity.Platform/docs/SWEET_POTATO_UI_PORT.md)
+assigns boot, Meson HDMI, USB touch and Mali driver work. An AArch64 target
+triple alone does not provide the ABI, device drivers or display integration.
 
-This means a QuantumCredential device can:
-1. Generate its own root key pair (self-signed)
-2. Sign credentials for OTHER devices
-3. Create a trust hierarchy rooted in quantum-derived randomness
+### Rack display and touch
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Trust Hierarchy                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│              ┌─────────────────────┐                            │
-│              │  Root CA Device     │                            │
-│              │  (any QC device)    │                            │
-│              │                     │                            │
-│              │  Avalanche → Root   │                            │
-│              │  Entropy     Key    │                            │
-│              └──────────┬──────────┘                            │
-│                         │ Signs                                  │
-│            ┌────────────┼────────────┐                          │
-│            ▼            ▼            ▼                          │
-│     ┌───────────┐ ┌───────────┐ ┌───────────┐                   │
-│     │ Device A  │ │ Device B  │ │ Device C  │                   │
-│     │ (signed)  │ │ (signed)  │ │ (signed)  │                   │
-│     └───────────┘ └───────────┘ └───────────┘                   │
-│                                                                 │
-│     Any device with the analog front end can BE the root CA     │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+KeyStation uses the Waveshare 7.9inch HDMI LCD, SKU 17916 (ASIN B087CNJYB4),
+mounted horizontally in a 19-inch rack panel. The
+[panel entry](../../../Fidelity.Platform/Hardware/Products/Waveshare/7_9inch_HDMI_LCD/README.md)
+records its identifiers and 400 × 1280 physical matrix. HDMI carries the
+image and USB carries touch. Physical scanout orientation,
+logical layout and input coordinates must use compatible transforms.
 
-**UI Model: Air-Gapped vs Connected**
+### Shared UI behavior
 
-| Mode | Device | UI | Focus |
-|------|--------|-----|-------|
-| **Air-gapped** | YoshiPi/Sweet Potato (touchscreen) | Visual, touch-friendly | Generate, receive, verify |
-| **Connected** | Desktop/mobile app | Full feature set | CA management, signing, advanced ops |
+[Fidelity.UI's KeyStation design](../../../Fidelity.UI/docs/09_sweet_potato_keystation.md)
+uses cold functional components and owned reactive areas. The native path starts
+with CPU rendering and adds restricted Mali acceleration. The hosted Linux path
+can use Mesa and DRM/KMS or Wayland. WREN remains a browser/WebView realization
+of the admitted component semantics.
 
-The touchscreen Keystation keeps the **visual demo impact** - tap to accept, swipe through credentials, watch entropy flow. The CA capability is there but stays tucked away for advanced users accessing via the connected desktop/mobile app.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Demo Experience                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Air-Gapped (Visual Demo)              Connected (Power User)   │
-│  ┌─────────────────────┐               ┌─────────────────────┐ │
-│  │  Touchscreen UI     │               │  Desktop/Mobile App │ │
-│  │                     │               │                     │ │
-│  │  • Entropy viz      │               │  • CA management    │ │
-│  │  • Tap to generate  │     USB/BT    │  • Sign other devs  │ │
-│  │  • Swipe to accept  │◄─────────────►│  • Trust hierarchy  │ │
-│  │  • Visual verify    │               │  • Batch operations │ │
-│  │                     │               │  • Export/backup    │ │
-│  └─────────────────────┘               └─────────────────────┘ │
-│                                                                 │
-│  Investor sees the touchscreen magic.                           │
-│  Power users unlock the CA via connected app.                   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Demo narrative enhancement**:
-> "What you're seeing is the visual experience - tap to generate, beam to transfer, swipe to accept. But there's hidden power here: connect this device to the desktop app and it becomes a full certificate authority. It can sign credentials for any device in your network. The trust root is quantum randomness, not some corporate CA. Self-sovereign identity in your pocket."
-
-This transforms the demo from "credential generator" to "decentralized PKI infrastructure" - with the advanced features appropriately hidden behind the connected interface.
-
-```
-┌─────────────────────┐                  ┌─────────────────────┐
-│  Device A           │                  │  Device B           │
-│  (any role)         │                  │  (any role)         │
-│                     │                  │                     │
-│  Avalanche ──► PQC  │  ◄── IR TX ───►  │  Avalanche ──► PQC  │
-│  IR TX/RX           │  ◄── IR RX ───►  │  IR TX/RX           │
-│  Touch UI           │                  │  Touch UI           │
-└─────────────────────┘                  └─────────────────────┘
-
-        Same hardware. Same code. Role is just configuration.
-```
+Credential lists, selection, command status and activity history can share
+behavior across those hosts. Each renderer must establish layout, text, input
+and disposal behavior. A responsive CSS layout alone does not implement the
+native surface or its resource ownership.
 
 ---
 
-## Overview: The Full Vision
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     QuantumCredential Demo (Full Vision)                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────┐         ┌─────────────────────────────────┐   │
-│  │  YoshiPi                │         │  Libre Sweet Potato             │   │
-│  │  (Credential Generator) │         │  (Keystation)                   │   │
-│  │                         │         │                                 │   │
-│  │  ┌───────────────────┐  │         │  ┌───────────────────────────┐ │   │
-│  │  │  Touchscreen UI   │  │  ─────► │  │  Ultra-Wide Touchscreen   │ │   │
-│  │  │  • Entropy viz    │  │   USB   │  │  • Credential display     │ │   │
-│  │  │  • Status display │  │   IR    │  │  • Verification status    │ │   │
-│  │  │  • Touch to gen   │  │   QR    │  │  • Touch to accept        │ │   │
-│  │  └───────────────────┘  │         │  └───────────────────────────┘ │   │
-│  │                         │         │                                 │   │
-│  │  Avalanche ──► PQC      │         │  Verify ──► Store              │   │
-│  │  Circuit       Keygen   │         │                                 │   │
-│  └─────────────────────────┘         └─────────────────────────────────┘   │
-│                                                                             │
-│  Both devices: Linux + WebKitGTK + Composer-compiled Clef + Same UI code      │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Stretch Goal 1: Libre Sweet Potato Keystation
-
-### Hardware: Libre Computer Sweet Potato
-
-| Specification | Value |
-|---------------|-------|
-| **SoC** | Amlogic S905X (quad-core Cortex-A53) |
-| **Memory** | 2GB DDR3 |
-| **OS** | Linux (Debian/Ubuntu) |
-| **Display** | HDMI or DSI panel support |
-| **USB** | USB 2.0 host ports |
-| **GPIO** | 40-pin header (Pi-compatible) |
-
-**Why Sweet Potato for Keystation:**
-- More RAM (2GB vs 512MB) - comfortable for WebKitGTK
-- Same Linux/ARM64 target as YoshiPi
-- Same native Clef APIs, same WebView UI
-- Can drive an ultra-wide touchscreen via DSI or USB
-
-### Ultra-Wide Touchscreen
-
-Options for dramatic visual impact:
-
-| Display | Resolution | Interface | Touch |
-|---------|------------|-----------|-------|
-| Waveshare 7.9" Ultra-Wide | 1280x400 | HDMI + USB | Capacitive |
-| Waveshare 11.9" Ultra-Wide | 320x1480 | HDMI + USB | Capacitive |
-| Custom DSI panel | Various | DSI | I2C touch |
-
-The ultra-wide format is ideal for:
-- Credential list display (vertical scroll)
-- Status bar with entropy visualization
-- Touch-friendly large buttons
-
-### Software Stack (Identical to YoshiPi)
-
-```fsharp
-// Keystation main - runs on Sweet Potato
-let main () =
-    let w = Webview.create true
-    Webview.setTitle w "Keystation"
-    Webview.setSize w 1280 400  // Ultra-wide
-    Webview.setHtml w EmbeddedAssets.KeystationHtml
-    Webview.run w
-    0
-```
-
-**The entire UI codebase is shared** - Partas.Solid components work identically on:
-- YoshiPi (480x320 touchscreen)
-- Sweet Potato (1280x400 ultra-wide)
-- Desktop (any resolution)
-
-Only the CSS layout adapts to screen dimensions.
-
----
-
-## Stretch Goal 2: Touch Interaction
-
-### Linux Touch Input Stack
-
-Touch input on Linux comes through:
-
-```
-/dev/input/eventN        # Raw touch events
-    ↓
-libinput                 # Input processing
-    ↓
-Wayland/X11              # Window system
-    ↓
-WebKitGTK                # Browser engine
-    ↓
-JavaScript touch events  # Your Partas.Solid handlers
-```
-
-**Good news**: WebKitGTK handles touch automatically. Touch events appear as standard browser touch/pointer events in your SolidJS code.
-
-### Touch in Partas.Solid
-
-```fsharp
-[<SolidComponent>]
-let GenerateButton () =
-    let generating, setGenerating = createSignal false
-
-    button(
-        class' = "generate-btn",
-        // Standard DOM events - work with touch!
-        onClick = fun _ ->
-            setGenerating true
-            generateCredential () |> ignore
-        // Optional: explicit touch handling
-        onTouchStart = fun e ->
-            e.preventDefault()  // Prevent scroll
-            setGenerating true
-    ) {
-        if generating() then "Generating..." else "Generate Credential"
-    }
-```
-
-### Platform.Bindings for Direct Touch (Optional)
-
-If you need raw touch data (e.g., for entropy from touch timing):
-
-```fsharp
-module Platform.Bindings =
-    /// Open input device for raw events
-    let openInputDevice (path: nativeint) : int =
-        Unchecked.defaultof<int>
-
-    /// Read input event (struct input_event)
-    let readInputEvent (fd: int) (event: nativeint) : int =
-        Unchecked.defaultof<int>
-
-module Touch =
-    open Platform.Bindings
-
-    [<Struct; StructLayout(LayoutKind.Sequential)>]
-    type InputEvent =
-        val mutable tv_sec: int64
-        val mutable tv_usec: int64
-        val mutable type_: uint16
-        val mutable code: uint16
-        val mutable value: int32
-
-    // Event types
-    let EV_ABS = 0x03us
-    let ABS_MT_POSITION_X = 0x35us
-    let ABS_MT_POSITION_Y = 0x36us
-
-    /// Read touch position (for entropy mixing)
-    let readTouchEvent (fd: int) : (int * int) option =
-        let event = NativeArray.stackalloc<InputEvent> 1
-        let bytesRead = readInputEvent fd event
-        if bytesRead = sizeof<InputEvent> then
-            if event.[0].type_ = EV_ABS then
-                Some (int event.[0].code, event.[0].value)
-            else None
-        else None
-```
-
-### Touch Interaction Model
-
-| Device | Touch Capability | Primary Interactions |
-|--------|------------------|---------------------|
-| **YoshiPi** | Small touchscreen | • "Generate" button<br>• Status tap to expand<br>• Simple gestures |
-| **Sweet Potato** | Ultra-wide touch | • Credential list scroll<br>• Accept/reject swipe<br>• Detail expansion |
-
----
-
-## Stretch Goal 3: Alternative Transfer Methods
-
-### Current: USB Serial (Primary)
-
-USB gadget mode remains the primary transfer method - reliable, fast, and already designed.
-
-### Alternative 1: QR Code Transfer
-
-**Visual impact**: Credential appears as QR code on YoshiPi, Sweet Potato camera scans it.
-
-```
-YoshiPi                          Sweet Potato
-┌─────────────┐                  ┌─────────────────┐
-│  ┌───────┐  │                  │  ┌───────────┐  │
-│  │ ▓▓▓▓▓ │  │  ────────────►   │  │  Camera   │  │
-│  │ ▓   ▓ │  │   Camera scan    │  │   View    │  │
-│  │ ▓▓▓▓▓ │  │                  │  └───────────┘  │
-│  └───────┘  │                  │                 │
-│   QR Code   │                  │  "Scanning..."  │
-└─────────────┘                  └─────────────────┘
-```
-
-**Implementation considerations:**
-- QR generation: Pure Clef (no external lib needed for basic QR)
-- QR scanning: Requires camera + decoding library (zbar or similar)
-- Credential size: ML-KEM public keys are ~1KB - need multiple QR codes or compression
-- Adds hardware requirement: USB camera on Sweet Potato
-
-**Verdict**: High visual impact, but adds complexity. Consider as stretch-stretch goal.
-
-### Alternative 2: IR Transceiver (Bidirectional)
-
-**Visual impact**: Devices "beam" credentials via infrared - **in both directions**.
-
-Since both devices have the same analog front end (IR TX + IR RX), communication is inherently bidirectional:
-
-```
-Device A                              Device B
-┌─────────────────┐                  ┌─────────────────┐
-│                 │                  │                 │
-│    ◉ IR TX  ────┼──────────────────┼───► ◉ IR RX    │
-│                 │   Credential     │                 │
-│    ◉ IR RX  ◄───┼──────────────────┼──── ◉ IR TX    │
-│                 │   Acknowledgment │                 │
-└─────────────────┘                  └─────────────────┘
-
-        Either device can initiate. Either can respond.
-```
-
-**Hardware (same on both devices):**
-- IR LED + driver on GPIO (TX)
-- IR receiver module on GPIO (RX)
-- Modulation/demodulation in software
-
-**Protocol options:**
-- IrDA-style framing (standard, but complex)
-- Custom simple protocol (easier to implement)
-- LIRC kernel module for standard IR
-
-```fsharp
-module IR =
-    /// Transceiver config (identical on both devices)
-    type TransceiverConfig = {
-        TxGpio: int      // IR LED GPIO line
-        RxGpio: int      // IR receiver GPIO line
-        CarrierHz: int   // Typically 38000
-    }
-
-    /// Send byte via IR (bit-banged on GPIO)
-    let sendByte (cfg: TransceiverConfig) (b: byte) : unit =
-        for bit in 7 .. -1 .. 0 do
-            let value = (b >>> bit) &&& 1uy
-            GPIO.setValue cfg.TxGpio (int value) |> ignore
-            // 38kHz carrier modulation...
-            busyWait pulseWidth
-
-    /// Receive byte (decode pulse timing)
-    let receiveByte (cfg: TransceiverConfig) : byte option =
-        // Sample RX GPIO, decode pulse widths
-        // ...
-        None
-```
-
-**Demo flow** (leveraging hardware symmetry):
-1. Device A generates credential, beams via IR
-2. Device B receives, verifies signature
-3. Device B beams acknowledgment back
-4. Both touchscreens show success
-
-**Verdict**: With symmetric hardware, IR becomes more compelling. Good stretch goal - visually dramatic "beaming" between devices.
-
-### Alternative 3: BLE (Bluetooth Low Energy)
-
-**Both devices have BLE** (Pi Zero 2 W and most ARM SBCs).
-
-```fsharp
-module Platform.Bindings =
-    /// Open Bluetooth HCI device
-    let openBluetooth () : int =
-        Unchecked.defaultof<int>
-
-    /// BLE GATT operations...
-```
-
-**Verdict**: Standard and reliable, but less visually dramatic than QR/IR. Good fallback.
-
----
-
-## Stretch Goal 4: Enhanced Entropy Visualization
-
-### Real-Time Avalanche Display
-
-Show the raw entropy on the YoshiPi screen:
-
-```
-┌─────────────────────────────────────────┐
-│  QuantumCredential Generator            │
-├─────────────────────────────────────────┤
-│                                         │
-│  Entropy Source: ████████████ HEALTHY   │
-│                                         │
-│  ┌─────────────────────────────────┐    │
-│  │ ▁▃▅▇█▆▄▂▁▃▅▇█▆▄▂▁▃▅▇█▆▄▂▁▃▅▇█▆ │    │  ← Live waveform
-│  │ ▂▄▆█▇▅▃▁▂▄▆█▇▅▃▁▂▄▆█▇▅▃▁▂▄▆█▇▅ │    │
-│  └─────────────────────────────────┘    │
-│                                         │
-│  Samples: 1,024,576  Entropy: 7.98 b/B  │
-│                                         │
-│         [ GENERATE CREDENTIAL ]         │
-│                                         │
-└─────────────────────────────────────────┘
-```
-
-**Implementation**:
-- Sample ADC continuously in background
-- Send samples to WebView via IPC
-- Canvas or SVG visualization in Partas.Solid
-- Calculate entropy estimate (bits per byte)
-
-```fsharp
-[<SolidComponent>]
-let EntropyWaveform (samples: Accessor<uint16 array>) =
-    canvas(
-        id = "entropy-canvas",
-        width = 320,
-        height = 100,
-        ref = fun el ->
-            createEffect (fun () ->
-                drawWaveform el (samples())
-            )
-    ) { }
-```
-
----
-
-## Priority and Dependencies
-
-### Core Demo (Must Have)
-
-| Component | Status | Risk |
-|-----------|--------|------|
-| YoshiPi entropy sampling | Design complete | LOW |
-| PQC key generation | Algorithm selected | MEDIUM |
-| USB credential transfer | Standard Linux | LOW |
-| Basic WebView UI | Architecture ready | LOW |
-
-### Stretch Goal Priority
-
-| Goal | Visual Impact | Effort | Dependencies |
-|------|---------------|--------|--------------|
-| **1. Touch on YoshiPi** | Medium | LOW | WebKitGTK handles it |
-| **2. Sweet Potato Keystation** | HIGH | MEDIUM | Same code, different screen |
-| **3. Entropy visualization** | HIGH | MEDIUM | Canvas + IPC |
-| **4. Touch on Sweet Potato** | Medium | LOW | Same as YoshiPi |
-| **5. QR code transfer** | HIGH | HIGH | QR gen + camera + decode |
-| **6. IR transfer** | HIGH | HIGH | GPIO + modulation |
-
-**Recommended order**: 1 → 2 → 3 → 4 → (5 or 6 if time)
-
----
-
-## Hardware Shopping List
-
-### Core Demo
-
-| Item | Purpose | Approx Cost |
-|------|---------|-------------|
-| YoshiPi carrier board | Credential generator platform | ~$40 |
-| Raspberry Pi Zero 2 W | Compute module | ~$15 |
-| Avalanche diodes (5x) | True random entropy | ~$10 |
-| USB cable | Credential transfer | ~$5 |
-
-### Stretch Goals
-
-| Item | Purpose | Approx Cost |
-|------|---------|-------------|
-| Libre Sweet Potato | Keystation platform | ~$35 |
-| Ultra-wide touchscreen | Dramatic display | ~$60-100 |
-| USB camera (optional) | QR scanning | ~$20 |
-| IR LED + receiver (optional) | IR transfer | ~$5 |
-
----
-
-## Demo Narrative
-
-### With Stretch Goals
-
-> "Watch as the YoshiPi samples quantum noise from its avalanche circuit - you can see the entropy flowing in real-time on the display. When I tap 'Generate', it uses this true randomness to create a post-quantum credential.
->
-> The credential appears as a QR code. The Keystation scans it with its camera... verified! The ML-DSA signature checks out. This credential is now stored and ready to use.
->
-> Both of these devices are running the same Clef code, compiled to native ARM binaries by Composer. No runtime, no garbage collection, no security vulnerabilities from managed code. Just pure, verified, post-quantum security."
-
-### Without Stretch Goals (Core Demo)
-
-> "The YoshiPi generates credentials from hardware entropy. They transfer via USB to the desktop Keystation. Same principle, simpler setup - but the code is identical. When we add the embedded Keystation hardware, it's just a recompile to ARM."
-
----
-
-## Cross-References
-
-- [01_YoshiPi_Demo_Strategy](./01_YoshiPi_Demo_Strategy.md) - Core demo strategy
-- [02_YoshiPi_Architecture](./02_YoshiPi_Architecture.md) - YoshiPi hardware details
-- [03_MLIR_Dialect_Strategy](./03_MLIR_Dialect_Strategy.md) - Compilation path and parallel execution
-- [04_Linux_Hardware_Bindings](./04_Linux_Hardware_Bindings.md) - Platform bindings
-- [05_PostQuantum_Architecture](./05_PostQuantum_Architecture.md) - PQC algorithms
+## Touch interaction
+
+Controls need stable identity, focus, hit testing and consistent press/release
+behavior. The selected Waveshare panel reports touch through USB. The native
+S905X path must implement host enumeration and report handling, then transform
+physical coordinates into the horizontal logical layout.
+
+The Linux route obtains events through its selected input interface. A WebView
+can handle browser events once the host delivers input to it. Neither route
+establishes native touch support merely by constructing a component.
+
+Exercise list selection, scrolling, editing and confirmation with the same
+application actions on native and WREN hosts. Define gesture cancellation and
+input-device disconnect behavior. A hardware report can contain multiple
+contacts even when the first application only admits one active gesture.
+
+## Entropy and activity visualization
+
+The service owns acquisition, health checks and any retained sample history.
+A visual area observes a bounded projection. Closing the plot releases visual
+demand without implicitly stopping the acquisition service.
+
+Use separate representations for latest status, ordered events and sampled
+history. Limit plot updates to a useful display rate and keep acquisition timing
+independent of painting. A waveform represents observed samples. Entropy quality
+requires the selected validation method and its recorded evidence.
+
+The native renderer can cache geometry or pixels within its budget. Browser
+realization can use DOM or canvas facilities that preserve the admitted behavior.
+The shared contract concerns state, events and lifetime, with rendering provided
+by each backend.
+
+## QR transfer
+
+A QR route needs encoding, camera acquisition and decoding on the selected hosts.
+Define payload size, framing and incomplete-transfer handling before displaying
+multi-frame sequences. Record whether a transfer is pending, complete or rejected.
+Credential verification belongs to the receiving service after reconstruction.
+
+A USB camera on KeyStation adds device, power and bandwidth requirements. Its
+support is separate from the accepted HDMI and touch path. UI responsiveness
+must be measured while acquisition and decoding are active.
+
+## Infrared transfer
+
+Select the emitter, receiver and board connections before defining a driver.
+Carrier generation and receive timing need device-specific timer, GPIO or other
+peripheral support. The protocol needs framing, ordering, integrity checks and
+a recovery policy for interrupted transfers.
+
+A Clef-native driver owns those operations through the platform's MMIO contract.
+A hosted implementation uses its selected Linux interfaces. Farscape can bind an
+existing implementation where appropriate. Function declarations alone do not
+provide infrared transmission or reception.
+
+## Implementation sequence
+
+| Step | Evidence needed |
+| --- | --- |
+| Service projection | Bounded snapshots, ordered command results and explicit ownership |
+| Local controls | Selection, editing, focus and disposal with synthetic state |
+| Native panel | Accepted S905X mode, render/input rotation and USB touch reports |
+| Activity display | Bounded history, selective redraw and measured acquisition interference |
+| USB credential transfer | Framing, receiving-side verification and failure reporting |
+| QR or infrared extension | Selected hardware, protocol implementation and interrupted-transfer recovery |
+
+Use the [native graphics acceptance ladder](../../../Fidelity.Platform/docs/SWEET_POTATO_UI_PORT.md#acceptance-ladder)
+for KeyStation display work. Admission of fades and eased transitions follows
+measured rendering and resource budgets. Live status updates remain application
+behavior even when decorative motion is omitted.
+
+## Demonstration flow
+
+A completed demonstration should show acquisition status, credential generation,
+transfer and receiving-side verification. Display the actual outcome of each
+operation, including rejected or incomplete transfers. Keep the hardware,
+firmware, compiler and library versions with the evidence.
+
+USB transfer to a desktop client is a bounded first integration. QR scanning and
+infrared transport add their own hardware, framing and recovery work. A native
+Sweet Potato panel additionally depends on the S905X boot, display and input
+implementation.
+
+## Cross-references
+
+- [Demo strategy](Demo/D-01-Demo-Strategy.md): YoshiPi and desktop Linux experiment.
+- [YoshiPi hardware](Hardware/H-01-YoshiPi-Platform.md): Carrier and peripheral design.
+- [Parallel compilation](Compilation/C-01-SCF-Parallel-Pattern.md): Sample-processing design.
+- [Linux hardware bindings](Phase1-YoshiPi/PH1-02-Linux-Hardware-Bindings.md): Hosted device-access plan.
+- [Post-quantum architecture](Validation/V-05-PostQuantum-Architecture.md): Credential-processing research.

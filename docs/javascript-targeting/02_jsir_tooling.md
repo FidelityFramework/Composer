@@ -27,18 +27,18 @@ The resulting pipeline preserves its architectural ownership: CCS elaborates sem
 
 ## Pin the reviewed JSIR tool
 
-The September [site review](../../../clef-lang-site/hugo/content/docs/design/javascript-targeting/jsir-javascript-as-mlir-backend.md) records upstream revision `1488d9bd408ec9163ac7051252dfe80e40a4e26a`. This document carries that review's tooling facts; it does not claim a newly built or integrated Composer toolchain.
+The September 15 source review inspected upstream revision [`d5322bda6e1311357ead5e20376e28461c8cbc2a`](https://github.com/google/jsir/tree/d5322bda6e1311357ead5e20376e28461c8cbc2a), independently of the older local fork. The [site review](../../../clef-lang-site/hugo/content/docs/design/javascript-targeting/jsir-javascript-as-mlir-backend.md) uses the same pin. This is a source review, not a newly built or integrated Composer toolchain.
 
-At that revision, `jsir_gen` exposes these conversion sequences:
+At that revision, `jsir_gen` names these representation conversions:
 
 | Direction | Pass sequence | Role |
 |---|---|---|
 | JavaScript source to high-level IR | `source2ast,ast2jsir` | Parse through Babel AST and produce JSHIR for analysis. |
 | High-level IR to JavaScript source | `jsir2ast,ast2source` | Convert JSHIR through Babel AST and print JavaScript. |
 
-Commands, accepted inputs and output formats must come from the pinned tool revision. Integration must record the actual invocation and tool payload. A pass-name table is not a build receipt.
+The CLI initializes input as JavaScript source. The reverse sequence is available when JSHIR already exists in the representation pipeline; a reverse-only invocation with an MLIR input file is not an established command. Composer needs the conversion APIs or a JSHIR-input driver. See the [driver and extension details](10_jsx_and_webview_toolchain.md#the-upstream-jsir-gap). Integration must record the actual invocation, accepted input and tool payload. A pass-name table is not a build receipt.
 
-Babel is the AST substrate. JSHIR supplies region-based high-level structure; the repository also defines JSIR operations. The existence of both dialects does not establish a separately supported low-level route to source generation. Supported operation and conversion coverage must be characterized for the selected revision. JSX handling, if required by a source frontend, is upstream of this JavaScript representation.
+Babel is the AST substrate, using Babel AST rather than strict ESTree. JSHIR supplies region-based high-level structure; the repository also defines JSIR operations. The existence of both dialects does not establish a separately supported low-level route to source generation. Supported operation and conversion coverage must be characterized for the selected revision. Babel already parses and prints JSX, but JSIR's native AST/IR bridge lacks its representation. The proposed [JSX extension](10_jsx_and_webview_toolchain.md) would preserve it for downstream Solid compilation; accepting already transformed ordinary JavaScript remains a separate route with its own coverage.
 
 ## The worked frontend analysis route
 
@@ -126,6 +126,8 @@ Portable witnessed operations + retained PSG/codata
     -> Babel AST
     -> JavaScript module
 ```
+
+For the proposed Solid profile, extend the target representation and bridge to print JSX, then invoke Solid compilation and bundling. Preserve view intent and reactive reads through this path; the [toolchain guide](10_jsx_and_webview_toolchain.md#lowering-and-reactive-semantics) specifies the additional obligations. JSX is a framework handoff alongside general JavaScript emission.
 
 Alex does not emit JSHIR. It witnesses settled graph structure through the five portable dialects. The JavaScript backend realizes those operations under [Backend Lowering Architecture §4.5](../../../clef-lang-spec/spec/backend-lowering-architecture.md#45-carrier-realization-on-pathways-without-linear-memory).
 

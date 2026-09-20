@@ -32,6 +32,8 @@ Partas.Solid through Fable is the existing frontend path. A Clef reactive surfac
 
 The WREN stack combines a Composer-compiled native host with a WebView frontend. Existing exemplars use F#/Fable on the frontend. A future Clef JavaScript frontend would use the same backend contract as other JavaScript applications, with WebView-specific host and IPC boundaries.
 
+WrenHello concretely emits `.fs.jsx` from Fable, invokes Solid's Babel-based compiler through Vite, bundles one HTML file and welds it into native source. The proposed Clef frontend can reuse that downstream toolchain by emitting Solid-compatible JSX. [JSX and the WREN frontend toolchain](10_jsx_and_webview_toolchain.md) describes the JSIR extension, retained reactive intent and final-artifact acceptance. Source pages may share one persistent document; future multiple entry documents or floating native WebViews require explicit asset resolution, state and lifetime contracts.
+
 The native host and frontend have distinct resource lifetimes and representations. A shared declaration can support both endpoints, but does not itself prove codec agreement or make a JavaScript object a native memory block. Embedding a frontend bundle in a native artifact also does not change its dependency ownership.
 
 ## BAREWire across the contexts

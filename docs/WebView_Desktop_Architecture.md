@@ -2,11 +2,13 @@
 
 > **Working Title**: Fidelity WebView-Based Desktop UI
 >
-> **Status**: Architectural design phase
+> **Status**: Historical architectural proposal; current toolchain framing reviewed September 15, 2026.
+>
+> WrenHello demonstrates an F# / Partas.Solid frontend compiled by Fable to JSX, then Solid through Vite to embedded HTML, and a Composer-compiled native host. Unified `composer build` orchestration and the Clef frontend remain proposed work. See [the current toolchain guide](javascript-targeting/10_jsx_and_webview_toolchain.md) and [WrenHello build instructions](../../WrenHello/README.md#the-weld). Examples below illustrate the earlier proposal rather than a verified current API.
 >
 > **Related Documents**:
 > - [Architecture_Canonical.md](./Architecture_Canonical.md) - Layer separation principle
-> - [Demo_UI_Stretch_Goal.md](./Demo_UI_Stretch_Goal.md) - FidelityUI long-term vision
+> - `Demo_UI_Stretch_Goal.md` (retired proposal) - FidelityUI long-term vision
 
 ---
 
@@ -50,7 +52,7 @@ The UI layer uses [SolidJS](https://www.solidjs.com/), a reactive JavaScript fra
 
 SolidJS is faster because it doesn't diff - it knows exactly what changed and updates only that.
 
-### Partas.Solid: Clef Syntax for SolidJS
+### Partas.Solid: The Existing F# Surface for SolidJS
 
 Instead of writing JSX in JavaScript:
 
@@ -63,10 +65,10 @@ function Button(props) {
 }
 ```
 
-You write the equivalent in Clef using Partas.Solid:
+The existing F# / Partas.Solid surface expresses this as follows:
 
 ```fsharp
-// Clef/Partas.Solid
+// F# / Partas.Solid
 [<SolidTypeComponent>]
 type Button() =
     inherit button()
@@ -80,7 +82,7 @@ type Button() =
         }
 ```
 
-Fable compiles this Clef code to the JavaScript you'd write by hand. The output is idiomatic SolidJS.
+Fable and the Partas.Solid plugin produce JSX for Solid's compiler. The Solid transform then produces DOM/reactive JavaScript. A Clef counterpart needs its own library contracts and Composer lowering.
 
 ### The "Backend" Is Native Code
 
@@ -245,7 +247,7 @@ The compiler's internal structure mirrors the patterns it compiles.
 
 ## For SolidJS Developers: Partas.Solid Patterns
 
-If you're familiar with SolidJS, Partas.Solid provides the same reactive primitives with Clef syntax.
+If you're familiar with SolidJS, Partas.Solid exposes reactive primitives to F#. A Clef counterpart is a proposed library and lowering design.
 
 ### Component Definitions
 
@@ -305,7 +307,7 @@ The Fable compilation produces JavaScript files. You can inspect them to verify 
 
 ## The Stack Model
 
-This architecture follows the same conceptual model as other Clef full-stack solutions:
+This architecture follows the same conceptual model as other full-stack solutions:
 
 | Stack | Frontend | Backend | Transport |
 |-------|----------|---------|-----------|
@@ -405,7 +407,7 @@ This separation enables:
 │  ┌────────────────────────┐       │  ┌────────────────────────┐ │
 │  │                        │       │  │                        │ │
 │  │  Partas.Solid          │       │  │  Application Logic     │ │
-│  │  (Clef → Fable → JS)     │       │  │  (Clef → Composer → MLIR) │ │
+│  │  (F# → Fable → JSX)     │       │  │  (Clef → Composer → MLIR) │ │
 │  │                        │       │  │                        │ │
 │  │  SolidJS Reactivity    │◄─────►│  │  Platform.Bindings     │ │
 │  │  (fine-grained DOM)    │  IPC  │  │  (webview conduits)    │ │
@@ -445,10 +447,10 @@ composer build MyApp.fidproj
     ├─► Phase 1: Frontend Compilation
     │   │
     │   ├─► dotnet fable src/Frontend -o build/fable
-    │   │   (Partas.Solid Clef → SolidJS JavaScript)
+    │   │   (F# / Partas.Solid → JSX)
     │   │
     │   └─► npm run build (Vite)
-    │       (Bundle → build/dist/index.html with inlined JS/CSS)
+    │       (Solid transform + bundle → build/dist/index.html)
     │
     ├─► Phase 2: Asset Embedding
     │   │
@@ -553,7 +555,7 @@ This provides:
 
 ## Relationship to FidelityUI
 
-This webview-based approach is a **pragmatic interim solution** for desktop applications. The long-term vision described in [Demo_UI_Stretch_Goal.md](./Demo_UI_Stretch_Goal.md) includes:
+This webview-based approach is a **pragmatic interim solution** for desktop applications. The long-term vision described in `Demo_UI_Stretch_Goal.md` (retired proposal) includes:
 
 - **FidelityUI**: Native widget toolkit using LVGL (embedded) and GTK4/Skia (desktop)
 - **Compile-time widget transformation**: Clef UI definitions compiled directly to native rendering
@@ -574,7 +576,7 @@ Both approaches share the architectural principles:
 ## Cross-References
 
 - **[Architecture_Canonical.md](./Architecture_Canonical.md)** - Layer separation principle, the split model
-- **[Demo_UI_Stretch_Goal.md](./Demo_UI_Stretch_Goal.md)** - FidelityUI long-term vision
+- **`Demo_UI_Stretch_Goal.md` (retired proposal)** - FidelityUI long-term vision
 - **[WebView_Build_Integration.md](./WebView_Build_Integration.md)** - Build system details
 
 ---
@@ -587,8 +589,8 @@ Both approaches share the architectural principles:
 | **Alex** | Composer's multi-dimensional targeting layer - generates platform-specific MLIR |
 | **Conduit** | A Platform.Bindings function where Alex provides the implementation |
 | **DCont** | Delimited continuations MLIR dialect |
-| **Fable** | Clef to JavaScript compiler |
-| **Partas.Solid** | Clef DSL for SolidJS components |
+| **Fable** | F# compiler, producing JSX for this frontend path |
+| **Partas.Solid** | F# DSL and Fable plugin for SolidJS components |
 | **Platform.Bindings** | Module convention for platform-provided functions |
 | **PSG** | Program Semantic Graph - Composer's intermediate representation |
 | **Quotation** | Clef feature: `<@ code @>` captures code as inspectable data |

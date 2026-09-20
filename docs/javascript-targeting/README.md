@@ -26,6 +26,8 @@ The [JavaScript Boundary Semantics](../../../clef-lang-spec/spec/javascript-boun
 
 The intended destination is a set of Clef-native SDKs and supporting Clef libraries whose reachable implementations participate in the same semantic graph as application code. Xantham supplies the declaration and ownership analysis; the JavaScript frontend extends the ingestion to the dependency behavior those SDKs actually call. Original package payloads remain pinned inputs for provenance, comparison and regeneration.
 
+The design requires each version of the Clef library system to retain a [complete package dependency graph](07_dependency_identity_and_validation.md#retain-a-versioned-package-graph) under its recorded resolution profiles, independently of SDK or application usage. Exact package instances and dependency edges underpin the mapping into maintained Clef libraries. Later reachability selects executable behavior; pin changes receive a recorded graph comparison and an assessment of affected source and evidence.
+
 | Input or facility | Place in the Clef ecosystem |
 |---|---|
 | TypeScript SDK declarations and executable entry points | Clef SDK declarations and implementations, with the required host boundaries. |
@@ -46,6 +48,7 @@ The converted libraries and their accumulated correspondence, constraints and va
 | BAREWire JavaScript | Working Fable codecs and selected byte, framing and rejection tests. This does not establish Composer's JavaScript lowering. |
 | FSharp.CloudEdge | September 13 selected delivery accepted; exact scope and limits are in its [acceptance record](../../../FSharp.CloudEdge/docs/SDK-DELIVERY-ACCEPTANCE-20260913.md). |
 | Clef to JSHIR/JSIR | Design and implementation work. The JavaScript Substrate profile explicitly has no conforming implementation yet. |
+| WREN JSX toolchain | WrenHello already exercises F#/Partas.Solid → Fable → JSX → Solid/Vite → embedded HTML → Composer native host. Clef would supply an additional JSX producer; JSIR's native JSX representation and bridge are proposed extensions. |
 | Clef-native foreign ingestion and dependency replacement | Design direction: analysis, deferred inference, developer curation and supported witnessing rules. No general automatic JavaScript-to-Clef recovery is claimed. |
 | Atelier interaction | [Transcribe/Transpose design](../../../Atelier/docs/10_transcribe.md); the editor presents analysis and diagnostics rather than computing independent semantic facts. |
 
@@ -57,9 +60,10 @@ The converted libraries and their accumulated correspondence, constraints and va
 4. [From foreign declarations to Clef-native bindings](04_sdk_describes_runtime.md): contract recovery, annotations, rule coverage and compiler ownership.
 5. [Dependency replacement through deferred inference](05_supply_chain_and_transcribe.md): the interactive recovery loop and an artifact without third-party JavaScript dependencies.
 6. [Opaque values and absence](06_obj_and_null_at_the_boundary.md): what can stay unknown, what must be checked, and what the backend can emit.
-7. [Identity, preservation and acceptance](07_dependency_identity_and_validation.md): dependency provenance, proof scope and executable acceptance.
+7. [Identity, preservation and acceptance](07_dependency_identity_and_validation.md): versioned package graphs, pin-change assessment, dependency provenance, proof scope and executable acceptance.
 8. [Numeric selection and precision across strata](08_numeric_selection_and_precision.md): representation, arithmetic construction, transfer fidelity and design-time diagnostics through the JavaScript pathway.
 9. [JavaScript frontend and deferred dependency translation](09_contract_directed_dependency_recovery.md): a worked TypeScript/JSHIR-to-Clef example, partial elaboration, offline and application reachability, and the owned SDK dependency edge.
+10. [JSX and the WREN frontend toolchain](10_jsx_and_webview_toolchain.md): the structured Solid handoff, Babel/Bazel roles, JSIR extension and driver seams, proof scope through final bundles, and future page/window hosting.
 
 ## Design rationale
 
