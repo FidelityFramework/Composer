@@ -4,6 +4,12 @@
 
 > **Sample**: `13a_Collections` | **Status**: Planned | **Depends On**: C-01 (Closures), C-03 (Recursion)
 
+> **September 2026 scope:** the current bounded Option increments are tracked in
+> [Language Coverage Waypoints](../Language_Coverage_Waypoints.md), including
+> native FidelityHello variants and peered tooling revisions. The January status
+> table below is historical; its broad completion labels do not establish current
+> native coverage of the collection families.
+
 **Foundation for Eager Collections and Idiomatic Clef Syntax**: This PRD establishes the core collection types and range expressions that BAREWire and most Clef programs require. Unlike Seq (lazy, pull-based), these are eager, fully-materialized data structures.
 
 ## 1. Executive Summary
@@ -392,6 +398,11 @@ Option already exists but needs these operations:
 | `Option.bind` | `('T -> Option<'U>) -> Option<'T> -> Option<'U>` | Flatmap |
 | `Option.defaultValue` | `'T -> Option<'T> -> 'T` | Get with default |
 | `Option.defaultWith` | `(unit -> 'T) -> Option<'T> -> 'T` | Get with lazy default |
+| `Option.orElse` | `Option<'T> -> Option<'T> -> Option<'T>` | Retain Some or select eager optional fallback |
+| `Option.orElseWith` | `(unit -> Option<'T>) -> Option<'T> -> Option<'T>` | Invoke optional fallback producer only for None |
+| `Option.filter` | `('T -> bool) -> Option<'T> -> Option<'T>` | Retain Some when the predicate holds |
+| `Option.exists` | `('T -> bool) -> Option<'T> -> bool` | False for None; test Some |
+| `Option.forall` | `('T -> bool) -> Option<'T> -> bool` | True for None; test Some |
 | `Option.isSome` | `Option<'T> -> bool` | Check if Some |
 | `Option.isNone` | `Option<'T> -> bool` | Check if None |
 | `Option.get` | `Option<'T> -> 'T` | Unwrap (fails on None) |

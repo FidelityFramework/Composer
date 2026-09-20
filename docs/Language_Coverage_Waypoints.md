@@ -7,6 +7,53 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-04 optional alternatives and temporal range facts — 2026-09-20
+
+Clef `f5fdbc966` adds `Option.orElse` and `Option.orElseWith` through fresh native
+schemes and the existing Baker Option recipes. They preserve the selected option,
+including None. Both operands are evaluated eagerly; the deferred producer runs
+only when the input is None. Stored partials preserve their initial fallback or
+producer value while retaining shared captured storage. Bare aliases specialize
+independently, including measured payloads. No new Alex intrinsic path is needed.
+
+Native testing exposed two existing range defects that this increment also fixes:
+
+- A closure wrote `300` into a cell initially containing `1`, but a subsequent
+  read retained the pre-call `state < 10` refinement. Its `[1,9]` range caused an
+  incorrect sixteen-to-eight-bit truncation. CCS now computes finite may-write
+  summaries across direct, transitive, recursive and value calls, invalidating
+  affected facts in operand evaluation order. Earlier snapshots, pure calls and
+  unrelated bindings retain their valid refinements.
+- Combining saved Boolean checks replayed their earlier observations as facts
+  about current mutable storage. The Option oracle observed the correct trace
+  `1246` but incorrectly narrowed it to eight bits in the final conjunction.
+  Saved predicates no longer reinstate those mutable-definition bounds. Effectful
+  comparison operands and predicate calls also preserve observation timing.
+
+The original native expectations were retained. Alex continues to consume settled
+ranges; neither defect was repaired by changing its casts or traversal. The
+may-write calculation is currently an internal finite analysis, not a claim of
+incremental effect-ledger support or completion of the mutable-cell representation.
+
+| Gate | Fresh result |
+|---|---|
+| CCS | **395/395**, including 43 Option-alternative cases (22 exact negatives) and 18 temporal range cases |
+| Native / MLIR | **4/4** fresh executables: CallEffects (13 groups), OptionAlternatives (25 groups), DirectCaptures and OptionDefaultWith; all retained modules pass `mlir-opt --verify-each`. `/tmp/composer-callbacks-fsharp-60dbfbb289b9450b8da165fc2575a883/` |
+| FidelityHello | **08c_OptionAlternatives** passes compilation, native exit and exact output; `/tmp/composer-option-effects-fidelityhello.log` |
+| CCS.Editor | **15 groups**, including `[1,300]` post-write ranges, unsaved `[1,700]` updates, stale-hover rejection and immutable earlier snapshots; `/tmp/ccs-editor-final-effects-full.log` |
+| Analyzer-facing projection | **12 accepted / 14 exact rejections**, plus direct-capture signatures and origins; `/tmp/lattice-ccs-surface-b8c386aa62b54f63acef5d128860d8f0/evidence.json` |
+| LSP | **18 diagnostic edits and repairs**, eight optional-result/partial hovers and retained capture projections; `/tmp/lattice-surface-waypoint-hI8Wxm/result.json` |
+| Proof/artifact controls | **50 SMT transfer / 10 static-storage correspondence** cases; `/tmp/composer-option-effects-smt.log`, `/tmp/composer-option-effects-storage.log` |
+
+Companion revisions: lattice-vscode `68d3cc1`, lattice-analyzers `83256f6`, and
+ClefAutoComplete `971e5e93`. The two external projection gates independently load
+CCS SHA-256 `06eb3c1b7d6a3ecc8f9e1692e299ff6492e9d925c1d9a4be7bca08798bb2acd0`.
+Alex source and client protocol/grammar are unchanged in this increment; the
+earlier component and transport revisions remain applicable. Source and native
+fixtures retain the failed behaviors as regressions. Complete closure residence,
+fractional dimensional-exponent admission and remaining collection families are
+still separate work.
+
 ## C-01 immutable direct captures — 2026-09-19
 
 Clef `cdbaf8636` moves eligible named-function capture passing into Baker

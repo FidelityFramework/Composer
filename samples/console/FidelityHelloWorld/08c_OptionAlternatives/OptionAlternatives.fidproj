@@ -1,0 +1,15 @@
+[package]
+name = "OptionAlternatives"
+version = "0.1.0"
+description = "Optional alternatives, deferred invocation, captures and NTU payloads"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["OptionAlternatives.clef"]
+output = "optionalternatives"
+output_kind = "console"

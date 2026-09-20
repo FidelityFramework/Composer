@@ -355,6 +355,74 @@ let main _ =
         equal capture.Range (reference.Definition |> get)
     printfn "PASS source callable signatures and capture origins for direct captures, captureless control and returned functions"
 
+let callEffectRangeChecks () =
+    let project = write "call-effects/Editor.fidproj" """[package]
+name = "editor-call-effects"
+[compilation]
+target = "library"
+[build]
+sources = ["Main.clef"]
+output_kind = "library"
+"""
+    let source = """module CallEffects
+let callChangesState () =
+    let mutable state: int = 1
+    let change = fun () -> state <- 300
+    if state < 10 then
+        change ()
+        let observedAfterCall = state
+        observedAfterCall
+    else state
+let storedPredicate () =
+    let mutable state: int = 1
+    let wasSmall = state < 10
+    state <- 300
+    if wasSmall then
+        let observedAfterPredicate = state
+        observedAfterPredicate
+    else state
+[<EntryPoint>]
+let main _ =
+    if callChangesState () = 300 && storedPredicate () = 300 then 0 else 1
+"""
+    let file = write "call-effects/Main.clef" source
+    let session = EditorSession(project)
+    let validate (snapshot: EditorSnapshot) =
+        check snapshot.Failure.IsNone $"Call effect fixture failed: {snapshot.Failure}"
+        check snapshot.ParseFailures.IsEmpty $"Call effect fixture did not parse: {snapshot.ParseFailures}"
+        check (snapshot.Diagnostics |> List.forall (fun diagnostic -> diagnostic.EffectiveSeverity <> "Error"))
+            $"Call effect fixture has errors: {snapshot.Diagnostics}"
+    let at (text: string) (marker: string) =
+        let lines = text.Split('\n')
+        let line = lines |> Array.findIndex (fun value -> value.Contains(marker, StringComparison.Ordinal))
+        line, lines[line].LastIndexOf("state", StringComparison.Ordinal)
+    let read (snapshot: EditorSnapshot) text marker =
+        let line, column = at text marker
+        let hover = session.TryHover(snapshot.Revision, file, line, column) |> get
+        equal "VarRef" hover.Kind
+        equal (Some "state") hover.Name
+        equal "int" hover.Type
+        hover
+    let markers = ["let observedAfterCall"; "let observedAfterPredicate"]
+    let first = session.CheckAsync(Map.empty).Result |> get
+    validate first
+    let reads = markers |> List.map (read first source)
+    for hover in reads do equal (Some "[1, 300]") hover.ValueRange
+    let retained = System.Text.Json.JsonSerializer.Serialize {| snapshot = first; reads = reads |}
+    let changedSource = source.Replace("300", "700")
+    let changedTask = session.CheckAsync(Map.ofList [file, changedSource])
+    let line, column = at source markers.Head
+    check (session.TryHover(first.Revision, file, line, column).IsNone)
+        "A pending effect edit served a stale range."
+    let changed = changedTask.Result |> get
+    validate changed
+    check (changed.Revision > first.Revision) "Effect edit did not advance the snapshot revision."
+    for marker in markers do
+        equal (Some "[1, 700]") (read changed changedSource marker).ValueRange
+    equal retained (System.Text.Json.JsonSerializer.Serialize {| snapshot = first; reads = reads |})
+    equal source (File.ReadAllText file)
+    printfn "PASS call-write and stored-predicate range invalidation, fresh hover and retained immutable snapshot"
+
 let checks () =
     Directory.CreateDirectory(root) |> ignore
     let project = write "Editor.fidproj" """[package]
@@ -462,6 +530,7 @@ let main _ = if message = "proof fixture" then 0 else 1
     importVisibilityChecks ()
     integerLiteralChecks ()
     directCaptureChecks ()
+    callEffectRangeChecks ()
 
 let inspectSample project =
     let session = EditorSession(project)
@@ -490,8 +559,9 @@ let main args =
             match args with
             | [| "--sample"; project |] -> inspectSample project
             | [| "--direct-captures" |] -> directCaptureChecks ()
+            | [| "--call-effects" |] -> callEffectRangeChecks ()
             | [||] -> checks ()
-            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures]"
+            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --call-effects]"
             0
         with error -> eprintfn "%O" error; 1
     finally if Directory.Exists root then Directory.Delete(root, true)

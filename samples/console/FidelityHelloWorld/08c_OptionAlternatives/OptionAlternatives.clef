@@ -1,0 +1,125 @@
+/// Sample 08c: alternatives preserve optional results, effects and NTU payloads.
+module OptionAlternativesSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Config = { Enabled: bool; Offset: int }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private fallback () =
+    record 1
+    Some 11
+
+let private makeFallback () =
+    record 1
+    fun () ->
+        record 3
+        calls <- calls + 1
+        Some 11
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let choose = Option.orElse
+let chooseWith = Option.orElseWith
+
+[<EntryPoint>]
+let main _ =
+    trace <- 0
+    let eagerSome = Option.orElse (fallback ()) (argument true)
+    let eagerSomeOk = Option.get eagerSome = 7 && trace = 12
+    trace <- 0
+    let eagerNone = argument false |> Option.orElse (fallback ())
+    let eagerForwardOk = Option.get eagerNone = 11 && trace = 21
+    trace <- 0
+    let eagerBackward = Option.orElse (fallback ()) <| argument false
+    let eagerOk = eagerSomeOk && eagerForwardOk && Option.get eagerBackward = 11 && trace = 12
+
+    trace <- 0
+    calls <- 0
+    let deferredSome = Option.orElseWith (makeFallback ()) (argument true)
+    let deferredSomeOk = Option.get deferredSome = 7 && trace = 12 && calls = 0
+    trace <- 0
+    let deferredNone = argument false |> Option.orElseWith (makeFallback ())
+    let deferredForwardOk = Option.get deferredNone = 11 && trace = 213 && calls = 1
+    trace <- 0
+    let deferredBackward = Option.orElseWith (makeFallback ()) <| argument false
+    let deferredOk = deferredSomeOk && deferredForwardOk && Option.get deferredBackward = 11
+                     && trace = 123 && calls = 2
+
+    trace <- 0
+    calls <- 0
+    let stored = Option.orElseWith (makeFallback ())
+    let formedOnce = trace = 1 && calls = 0
+    let first = stored None
+    let skipped = stored (Some 5)
+    let second = stored None
+    let repeatedOk = formedOnce && Option.get first = 11 && Option.get skipped = 5
+                     && Option.get second = 11 && trace = 133 && calls = 2
+    let mutable seed: int = 4
+    let snapshot = Option.orElse (Some seed)
+    let delayed = Option.orElseWith (fun () -> Some seed)
+    let mutable thunk = fun () -> Some 5
+    let thunkSnapshot = Option.orElseWith thunk
+    seed <- 9
+    thunk <- fun () -> Some 19
+    let storedOk = repeatedOk && Option.get (snapshot None) = 4 && Option.get (delayed None) = 9
+                   && Option.get (thunkSnapshot None) = 5 && Option.get (thunk ()) = 19
+
+    let absent: int option = choose None None
+    let absentWith: int option = chooseWith (fun () -> None) None
+    let nested: int option option -> int option option = Option.orElse (Some None)
+    let nestedWith: int option option -> int option option = Option.orElseWith (fun () -> Some (Some 8))
+    let optionalOk = Option.isNone absent && Option.isNone absentWith
+                     && Option.isNone (Option.get (nested None))
+                     && Option.get (Option.get (nested (Some (Some 6)))) = 6
+                     && Option.isNone (Option.get (nestedWith (Some None)))
+                     && Option.get (Option.get (nestedWith None)) = 8
+
+    let config = { Enabled = true; Offset = 6 }
+    let selectedConfig = Option.get (Option.orElse (Some config) None)
+    let replacement = Option.get (Option.orElseWith (fun () -> Some config) (Some { Enabled = false; Offset = 10 }))
+    let mutable shift: int = 1
+    let fallbackFunction = fun value -> value + selectedConfig.Offset + shift
+    let eagerFunction = Option.get (Option.orElse (Some fallbackFunction) None)
+    calls <- 0
+    let functionWith = Option.orElseWith (fun () -> calls <- calls + 1; Some fallbackFunction)
+    let deferredFunction = Option.get (functionWith None)
+    let suppliedFunction = Option.get (functionWith (Some (fun value -> value + 20)))
+    shift <- 3
+    let payloadsOk = selectedConfig.Enabled && selectedConfig.Offset = 6 && not replacement.Enabled
+                     && replacement.Offset = 10 && calls = 1 && eagerFunction 2 = 11
+                     && deferredFunction 2 = 11 && suppliedFunction 2 = 22
+
+    let length = choose (Some 2<distance>) None
+    let time = chooseWith (fun () -> Some 3<duration>) (Some 5<duration>)
+    let inverse = choose (Some 0.25<1/duration>) None
+    let inverseWith = chooseWith (fun () -> Some 0.5<1/duration>) (Some 0.75<1/duration>)
+    let measuredOk = Option.get length = 2<distance> && Option.get time = 5<duration>
+                     && Option.get inverse = 0.25<1/duration> && Option.get inverseWith = 0.75<1/duration>
+                     && Option.get (choose (Some false) (Some true))
+                     && Option.get (chooseWith (fun () -> Some true) None)
+
+    if not eagerOk then 1
+    elif not deferredOk then 2
+    elif not storedOk then 3
+    elif not optionalOk then 4
+    elif not payloadsOk then 5
+    elif not measuredOk then 6
+    else
+        Console.writeln "=== Option Alternatives Test ==="
+        Console.writeln "Eager alternatives: pass"
+        Console.writeln "Deferred alternatives: pass"
+        Console.writeln "Stored alternatives and captures: pass"
+        Console.writeln "Optional and nested results: pass"
+        Console.writeln "Record and function payloads: pass"
+        Console.writeln "Measured and inverse values: pass"
+        0

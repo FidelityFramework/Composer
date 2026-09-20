@@ -95,10 +95,12 @@ be emitted again. Fold-in must remap these references and proof participants.
   already passes typed operands. [Mutable load/store patterns](../src/MiddleEnd/Alex/Patterns/MemRefPatterns.fs#L58)
   already compose the memory Elements. New cell observation must reuse those
   operations, retaining the exact `memref<1xT>` view, without casts or witness inference.
-- [Assignment collection](../../clef/src/Compiler/PSGSaturation/SemanticGraph/RangeAnalysis.fs#L899)
-  and [guard invalidation](../../clef/src/Compiler/PSGSaturation/SemanticGraph/RangeAnalysis.fs#L610)
-  currently recognize `Set` through `VarRef`; cell aliases and call effects must
-  participate before this representation is admitted.
+- [Range analysis](../../clef/src/Compiler/PSGSaturation/SemanticGraph/RangeAnalysis.fs)
+  now computes finite may-write summaries for existing calls and invalidates
+  affected guard facts in operand evaluation order. Saved Boolean observations
+  cannot reinstate stale mutable bounds. Assignment collection still recognizes
+  `Set` through `VarRef`; future cell aliases must join through their canonical
+  origins and participate in those same effect summaries before admission.
 
 The first slice is direct, fully accounted, nonescaping calls over scalar mutable
 cells whose uses remain within the originating storage lifetime. Preserve the

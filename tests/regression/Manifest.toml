@@ -172,6 +172,24 @@ Measured values: pass
 """
 
 # =============================================================================
+# Sample 08c: OptionAlternatives
+# Optional fallback values, deferred alternatives, snapshots and NTU payloads
+# =============================================================================
+[[samples]]
+name = "08c_OptionAlternatives"
+project = "OptionAlternatives.fidproj"
+binary = "targets/optionalternatives"
+expected_output = """
+=== Option Alternatives Test ===
+Eager alternatives: pass
+Deferred alternatives: pass
+Stored alternatives and captures: pass
+Optional and nested results: pass
+Record and function payloads: pass
+Measured and inverse values: pass
+"""
+
+# =============================================================================
 # Sample 09: Result
 # Result type, error handling
 # =============================================================================

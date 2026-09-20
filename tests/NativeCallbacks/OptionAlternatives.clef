@@ -1,0 +1,270 @@
+module OptionAlternatives
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Defaults = { Enabled: bool; Offset: int }
+type Resolver<'a> = { Resolve: 'a option -> 'a option }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let mutable private invoked: int = 0
+
+let private record digit = trace <- trace * 10 + digit
+
+let private fallback () =
+    record 1
+    calls <- calls + 1
+    Some 11
+
+let private makeFallback () =
+    record 1
+    fun () ->
+        record 3
+        calls <- calls + 1
+        Some 11
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let private functionFallback () =
+    record 1
+    Some (fun value ->
+        record 5
+        value + 10)
+
+let private makeFunctionFallback () =
+    record 1
+    fun () ->
+        record 3
+        Some (fun value ->
+            record 5
+            value + 10)
+
+let private functionArgument present =
+    record 2
+    if present then
+        Some (fun value ->
+            record 6
+            value + 20)
+    else None
+
+let private extraArgument () =
+    record 4
+    2
+
+let choose = Option.orElse
+let chooseWith = Option.orElseWith
+let invoke (work: 'a -> 'b) (value: 'a) : 'b = work value
+
+[<EntryPoint>]
+let main _ =
+    // Both optional operands are formed once, including the unused fallback.
+    trace <- 0
+    calls <- 0
+    let eagerSome = Option.orElse (fallback ()) (argument true)
+    let eagerSomeOk = Option.get eagerSome = 7 && trace = 12 && calls = 1
+    trace <- 0
+    calls <- 0
+    let eagerNone = Option.orElse (fallback ()) (argument false)
+    let eagerNoneOk = Option.get eagerNone = 11 && trace = 12 && calls = 1
+    let emptyEager: int option = Option.orElse None None
+    let emptyFallbackOk = Option.isNone emptyEager && Option.get (Option.orElse None (Some 7)) = 7
+
+    // The thunk factory runs for either branch; its returned thunk runs only on None.
+    trace <- 0
+    calls <- 0
+    let deferredSome = Option.orElseWith (makeFallback ()) (argument true)
+    let deferredSomeOk = Option.get deferredSome = 7 && trace = 12 && calls = 0
+    trace <- 0
+    calls <- 0
+    let deferredNone = Option.orElseWith (makeFallback ()) (argument false)
+    let deferredNoneOk = Option.get deferredNone = 11 && trace = 123 && calls = 1
+    calls <- 0
+    let emptyThunk = fun () -> calls <- calls + 1; None
+    let emptyDeferred: int option = Option.orElseWith emptyThunk None
+    let presentDeferred = Option.orElseWith emptyThunk (Some 4)
+    let emptyDeferredOk = Option.isNone emptyDeferred && Option.get presentDeferred = 4 && calls = 1
+
+    trace <- 0
+    let eagerForwardSome = argument true |> Option.orElse (fallback ())
+    let eagerForwardSomeOk = Option.get eagerForwardSome = 7 && trace = 21
+    trace <- 0
+    let eagerForwardNone = argument false |> Option.orElse (fallback ())
+    let eagerForwardNoneOk = Option.get eagerForwardNone = 11 && trace = 21
+    trace <- 0
+    let eagerBackwardSome = Option.orElse (fallback ()) <| argument true
+    let eagerBackwardSomeOk = Option.get eagerBackwardSome = 7 && trace = 12
+    trace <- 0
+    let eagerBackwardNone = Option.orElse (fallback ()) <| argument false
+    let eagerBackwardNoneOk = Option.get eagerBackwardNone = 11 && trace = 12
+
+    trace <- 0
+    calls <- 0
+    let deferredForwardSome = argument true |> Option.orElseWith (makeFallback ())
+    let deferredForwardSomeOk = Option.get deferredForwardSome = 7 && trace = 21 && calls = 0
+    trace <- 0
+    let deferredForwardNone = argument false |> Option.orElseWith (makeFallback ())
+    let deferredForwardNoneOk = Option.get deferredForwardNone = 11 && trace = 213 && calls = 1
+    trace <- 0
+    calls <- 0
+    let deferredBackwardSome = Option.orElseWith (makeFallback ()) <| argument true
+    let deferredBackwardSomeOk = Option.get deferredBackwardSome = 7 && trace = 12 && calls = 0
+    trace <- 0
+    let deferredBackwardNone = Option.orElseWith (makeFallback ()) <| argument false
+    let deferredBackwardNoneOk = Option.get deferredBackwardNone = 11 && trace = 123 && calls = 1
+
+    trace <- 0
+    calls <- 0
+    let eagerPartial = Option.orElse (fallback ())
+    let eagerFormationOk = trace = 1 && calls = 1
+    let eagerFirst = invoke eagerPartial None
+    let eagerPresent = eagerPartial (Some 5)
+    let eagerSecond = eagerPartial None
+    let eagerPartialOk = eagerFormationOk && Option.get eagerFirst = 11 && Option.get eagerPresent = 5
+                         && Option.get eagerSecond = 11 && trace = 1 && calls = 1
+
+    trace <- 0
+    calls <- 0
+    let deferredPartial = Option.orElseWith (makeFallback ())
+    let deferredFormationOk = trace = 1 && calls = 0
+    let deferredFirst = invoke deferredPartial None
+    let deferredPresent = deferredPartial (Some 5)
+    let deferredSecond = deferredPartial None
+    let deferredPartialOk = deferredFormationOk && Option.get deferredFirst = 11 && Option.get deferredPresent = 5
+                            && Option.get deferredSecond = 11 && trace = 133 && calls = 2
+
+    // Anonymous function values exercise the existing shared-cell capture path.
+    // Named local functions capturing mutable bindings belong to the separate capture gate.
+    let mutable seed: int = 4
+    let delayed = Option.orElseWith (fun () -> Some seed)
+    let advance = Option.orElseWith (fun () -> seed <- seed + 1; Some seed)
+    seed <- 9
+    let before = delayed None
+    let advanced = advance None
+    let after = delayed None
+    let sharedOk = Option.get before = 9 && Option.get advanced = 10 && Option.get after = 10
+                   && Option.get (delayed (Some 2)) = 2 && seed = 10
+
+    let mutable selectedOption = Some 4
+    let optionSnapshot = Option.orElse selectedOption
+    selectedOption <- Some 9
+    let mutable selectedThunk = fun () -> Some 5
+    let thunkSnapshot = Option.orElseWith selectedThunk
+    selectedThunk <- fun () -> Some 19
+    let snapshotsOk = Option.get (optionSnapshot None) = 4 && Option.get (optionSnapshot selectedOption) = 9
+                      && Option.get (thunkSnapshot None) = 5 && Option.get (thunkSnapshot (Some 3)) = 3
+                      && Option.get (selectedThunk ()) = 19
+
+    // Bare operation values specialize independently, including explicit measured payloads.
+    let eagerBool = choose (Some false) (Some true)
+    let eagerLength = choose (Some 2<distance>) None
+    let eagerTime = choose (Some 3<duration>) (Some 5<duration>)
+    let lazyBool = chooseWith (fun () -> Some true) None
+    let lazyLength = chooseWith (fun () -> Some 4<distance>) (Some 6<distance>)
+    let lazyTime = chooseWith (fun () -> Some 7<duration>) None
+    let explicitLength = Option.orElse<int<distance>> (Some 8<distance>) None
+    let explicitTime = Option.orElseWith<int<duration>> (fun () -> Some 9<duration>) None
+    let measuredOk = Option.get eagerBool && Option.get eagerLength = 2<distance> && Option.get eagerTime = 5<duration>
+                     && Option.get lazyBool && Option.get lazyLength = 6<distance> && Option.get lazyTime = 7<duration>
+                     && Option.get explicitLength = 8<distance> && Option.get explicitTime = 9<duration>
+    let inverseEager = choose (Some 0.25<1/duration>) None
+    let inversePresent = choose (Some 0.5<1/duration>) (Some 0.75<1/duration>)
+    let inverseDeferred = chooseWith (fun () -> Some 0.125<1/duration>) None
+    let inverseSome = chooseWith (fun () -> Some 0.5<1/duration>) (Some 0.875<1/duration>)
+    let inverseOk = Option.get inverseEager = 0.25<1/duration> && Option.get inversePresent = 0.75<1/duration>
+                    && Option.get inverseDeferred = 0.125<1/duration> && Option.get inverseSome = 0.875<1/duration>
+
+    let nested: int option option -> int option option = Option.orElse (Some None)
+    let nestedWith: int option option -> int option option = Option.orElseWith (fun () -> Some (Some 8))
+    let nestedOk = Option.isNone (Option.get (nested None)) && Option.isNone (Option.get (nested (Some None)))
+                   && Option.get (Option.get (nested (Some (Some 6)))) = 6
+                   && Option.get (Option.get (nestedWith None)) = 8
+                   && Option.isNone (Option.get (nestedWith (Some None)))
+                   && Option.get (Option.get (nestedWith (Some (Some 3)))) = 3
+
+    let config = { Enabled = true; Offset = 6 }
+    let alternative = { Enabled = false; Offset = 10 }
+    let configDefault = Option.orElse (Some config)
+    let configWith = Option.orElseWith (fun () -> Some config)
+    let selected = Option.get (configDefault None)
+    let replacement = Option.get (configDefault (Some alternative))
+    let selectedWith = Option.get (configWith None)
+    let replacementWith = Option.get (configWith (Some alternative))
+    let eagerSurface = { Resolve = Option.orElse (Some 13) }
+    let deferredSurface = { Resolve = Option.orElseWith (fun () -> Some 17) }
+    let recordsOk = selected.Enabled && selected.Offset = 6 && not replacement.Enabled && replacement.Offset = 10
+                    && selectedWith.Enabled && selectedWith.Offset = 6 && not replacementWith.Enabled && replacementWith.Offset = 10
+                    && Option.get (eagerSurface.Resolve None) = 13 && Option.get (eagerSurface.Resolve (Some 2)) = 2
+                    && Option.get (deferredSurface.Resolve None) = 17 && Option.get (deferredSurface.Resolve (Some 3)) = 3
+
+    let mutable shift: int = 1
+    let fallbackFunction = fun value -> invoked <- invoked + 1; value + config.Offset + shift
+    let presentFunction = fun value -> invoked <- invoked + 1; value + 20
+    invoked <- 0
+    let functionDefault = Option.orElse (Some fallbackFunction)
+    let missingFunction = Option.get (functionDefault None)
+    let selectedFunction = Option.get (functionDefault (Some presentFunction))
+    let eagerSelectionOk = invoked = 0
+    shift <- 3
+    let missingResult = missingFunction 2
+    let presentResult = invoke selectedFunction 2
+    let eagerFunctionsOk = eagerSelectionOk && missingResult = 11 && presentResult = 22 && invoked = 2
+
+    calls <- 0
+    invoked <- 0
+    let functionWith = Option.orElseWith (fun () -> calls <- calls + 1; Some fallbackFunction)
+    let missingWith = Option.get (functionWith None)
+    let presentWith = Option.get (functionWith (Some presentFunction))
+    let deferredSelectionOk = calls = 1 && invoked = 0
+    shift <- 5
+    let missingWithResult = missingWith 2
+    let presentWithResult = invoke presentWith 2
+    let deferredFunctionsOk = deferredSelectionOk && missingWithResult = 13 && presentWithResult = 22
+                              && calls = 1 && invoked = 2
+
+    // Selection completes before the outer invocation forms its argument.
+    trace <- 0
+    let orderedEagerNone = invoke (Option.get (Option.orElse (functionFallback ()) (functionArgument false))) (extraArgument ())
+    let orderedEagerNoneOk = orderedEagerNone = 12 && trace = 1245
+    trace <- 0
+    let orderedEagerSome = invoke (Option.get (Option.orElse (functionFallback ()) (functionArgument true))) (extraArgument ())
+    let orderedEagerSomeOk = orderedEagerSome = 22 && trace = 1246
+    trace <- 0
+    let orderedDeferredNone = invoke (Option.get (Option.orElseWith (makeFunctionFallback ()) (functionArgument false))) (extraArgument ())
+    let orderedDeferredNoneOk = orderedDeferredNone = 12 && trace = 12345
+    trace <- 0
+    let orderedDeferredSome = invoke (Option.get (Option.orElseWith (makeFunctionFallback ()) (functionArgument true))) (extraArgument ())
+    let orderedOk = orderedEagerNoneOk && orderedEagerSomeOk && orderedDeferredNoneOk
+                    && orderedDeferredSome = 22 && trace = 1246
+
+    if not eagerSomeOk then 231
+    elif not eagerNoneOk then 232
+    elif not emptyFallbackOk then 233
+    elif not deferredSomeOk then 234
+    elif not deferredNoneOk then 235
+    elif not emptyDeferredOk then 236
+    elif not eagerForwardSomeOk then 237
+    elif not eagerForwardNoneOk then 238
+    elif not eagerBackwardSomeOk then 239
+    elif not eagerBackwardNoneOk then 240
+    elif not deferredForwardSomeOk then 241
+    elif not deferredForwardNoneOk then 242
+    elif not deferredBackwardSomeOk then 243
+    elif not deferredBackwardNoneOk then 244
+    elif not eagerPartialOk then 245
+    elif not deferredPartialOk then 246
+    elif not sharedOk then 247
+    elif not snapshotsOk then 248
+    elif not measuredOk then 249
+    elif not inverseOk then 250
+    elif not nestedOk then 251
+    elif not recordsOk then 252
+    elif not eagerFunctionsOk then 253
+    elif not deferredFunctionsOk then 254
+    elif not orderedOk then 255
+    else 0

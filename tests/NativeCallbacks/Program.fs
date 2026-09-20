@@ -6,6 +6,8 @@ open System.Security.Cryptography
 open System.Text.Json
 
 let cases = [
+    "CallEffects", "CallEffects.clef", "call-effects", ["func.call_indirect";"scf.if"]
+    "OptionAlternatives", "OptionAlternatives.clef", "option-alternatives", ["scf.if";"func.call_indirect"]
     "DirectCaptures", "DirectCaptures.clef", "direct-captures", ["func.call";"func.call_indirect";"scf.if"]
     "OptionDefaultWith", "OptionDefaultWith.clef", "option-default-with", ["scf.if";"func.call_indirect"]
     "OptionDefaults", "OptionDefaults.clef", "option-defaults", ["scf.if";"func.call_indirect"]

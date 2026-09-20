@@ -1,0 +1,121 @@
+module CallEffects
+
+let mutable private moduleState = 1
+let private writeModule () = moduleState <- 300
+let private relay () = writeModule ()
+let rec private recursiveWrite count =
+    if count = 0 then relay () else recursiveWrite (count - 1)
+let private smallAfterWrite observed =
+    moduleState <- 300
+    observed < 10
+
+let invoke (action: unit -> unit) = action ()
+let after (_: unit) value = value
+let before value (_: unit) = value
+
+let localCall () =
+    let mutable state = 1
+    let change = fun () -> state <- 300
+    if state < 10 then
+        change ()
+        state = 300
+    else false
+
+let higherOrderCall () =
+    let mutable state = 1
+    let change = fun () -> state <- 300
+    if state < 10 then
+        invoke change
+        state = 300
+    else false
+
+let laterArgument () =
+    let mutable state = 1
+    let change = fun () -> state <- 300
+    if state < 10 then after (change ()) state = 300 else false
+
+let earlierArgument () =
+    let mutable state = 1
+    let change = fun () -> state <- 300
+    if state < 10 then
+        let saved = before state (change ())
+        saved = 1 && state = 300
+    else false
+
+let negativeWrite () =
+    let mutable state = -1
+    let change = fun () -> state <- -300
+    if state > -10 then
+        change ()
+        state = -300
+    else false
+
+let historicalPredicate () =
+    let mutable state = 1
+    let wasSmall = state < 10
+    state <- 300
+    wasSmall && state = 300
+
+let historicalComplement () =
+    let mutable state = 1
+    let wasLarge = state >= 10
+    state <- 300
+    not wasLarge && state = 300
+
+let historicalAlias () =
+    let mutable state = 1
+    let observation = state < 10
+    let savedObservation = observation
+    state <- 300
+    savedObservation && state = 300
+
+let guardOperand () =
+    let mutable state = 1
+    let limit = fun () -> state <- 300; 10
+    if state < limit () then state = 300 else false
+
+let arithmeticGuard () =
+    let mutable state = 1
+    let change = fun () -> state <- 300; 0
+    if state + change () < 10 then state = 300 else false
+
+let repeatedCall () =
+    let mutable state = 1
+    let mutable iteration = 0
+    let mutable correct = true
+    let change = fun () -> state <- 300
+    if state < 10 then
+        while iteration < 2 do
+            if iteration = 0 then
+                if state <> 1 then correct <- false
+            else
+                if state <> 300 then correct <- false
+            change ()
+            iteration <- iteration + 1
+        correct && state = 300
+    else false
+
+[<EntryPoint>]
+let main _ =
+    moduleState <- 1
+    let moduleOk =
+        if moduleState < 10 then
+            recursiveWrite 2
+            moduleState = 300
+        else false
+    moduleState <- 1
+    let predicateOk = if smallAfterWrite moduleState then moduleState = 300 else false
+    if not (localCall ()) then 1
+    elif not (higherOrderCall ()) then 2
+    elif not (laterArgument ()) then 3
+    elif not (earlierArgument ()) then 4
+    elif not (negativeWrite ()) then 5
+    elif not (historicalPredicate ()) then 6
+    elif not (historicalComplement ()) then 7
+    elif not (historicalAlias ()) then 8
+    elif not (repeatedCall ()) then 9
+    elif not moduleOk then 10
+    elif not (guardOperand ()) then 11
+    elif not (arithmeticGuard ()) then 12
+    elif not predicateOk then 13
+    else 0

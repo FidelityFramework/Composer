@@ -29,6 +29,21 @@ capture frontiers and named functions used as values remain outside this recipe'
 admission; this gate does not establish complete closure residence obligations
 or retire the interim representation used by returned function values.
 
+`CallEffects` checks range preservation after local, higher-order, transitive and
+recursive writes, including negative values, loop iterations and ordered argument
+evaluation. Earlier value snapshots survive later writes. Saved Boolean predicates
+retain their historical observations and cannot constrain the current value of
+mutable storage. Effectful guard operands and predicate calls cannot turn an old
+observation into a bound on the new value. Exit codes 1–13 distinguish the groups.
+
+`OptionAlternatives` checks `orElse` and `orElseWith`, which retain the optional
+result. Its 25 groups (exit codes 231–255) cover both branches, empty alternatives,
+eager operand formation, deferred invocation, both pipe directions, partial
+snapshots, shared mutable captures, independently specialized bare aliases,
+measured and inverse-dimensional values, nested options, records and function
+payloads. Selection preserves callable identity without invoking the payload;
+ordered effects distinguish selection from later application.
+
 `OptionDefaults` checks eager fallback evaluation for Some and None, direct and
 piped evaluation order, partial-formation snapshots, independent measured
 specialization, nested options, record payloads and stored function fields.
