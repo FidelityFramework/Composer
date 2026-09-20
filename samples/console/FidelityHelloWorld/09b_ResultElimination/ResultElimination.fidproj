@@ -1,0 +1,15 @@
+[package]
+name = "ResultElimination"
+version = "0.1.0"
+description = "Typed Result defaults, error-payload recovery and unit actions on success"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["ResultElimination.clef"]
+output = "resultelimination"
+output_kind = "console"

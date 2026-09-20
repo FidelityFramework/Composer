@@ -1,0 +1,104 @@
+/// Sample 09b: typed Result defaults, error recovery and unit actions.
+module ResultEliminationSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let mutable private total: int = 0
+let private record digit = trace <- trace * 10 + digit
+let private fallback () = record 1; 11
+
+let private makeFallback () =
+    record 1
+    fun error -> record 3; error + 10
+
+let private makeAction () =
+    record 1
+    fun value -> record 3; total <- total + value
+
+let private argument successful : Result<int, int> =
+    record 2
+    if successful then Ok 7 else Error 9
+
+let private consumeUnit (_value: unit) = record 4
+let choose = Result.defaultValue
+let recover = Result.defaultWith
+let visit = Result.iter
+
+[<EntryPoint>]
+let main _ =
+    calls <- 0
+    let handler = fun error -> calls <- calls + 1; error + 10
+    let kept = Result.defaultValue 11 (Ok 7: Result<int, int>)
+    let defaulted = Result.defaultValue 11 (Error 9: Result<int, int>)
+    let skipped = Result.defaultWith handler (Ok 7: Result<int, int>)
+    let recovered = Result.defaultWith handler (Error 9: Result<int, int>)
+    let casesOk = kept = 7 && defaulted = 11 && skipped = 7 && recovered = 19 && calls = 1
+
+    trace <- 0
+    let eager = Result.defaultValue (fallback ()) (argument true)
+    let eagerOk = eager = 7 && trace = 12
+    trace <- 0
+    let forward = argument false |> Result.defaultWith (makeFallback ())
+    let forwardOk = forward = 19 && trace = 213
+    trace <- 0
+    let backward = Result.defaultWith (makeFallback ()) <| argument true
+    let backwardOk = backward = 7 && trace = 12
+    trace <- 0
+    argument true |> Result.iter (makeAction ())
+    let orderOk = eagerOk && forwardOk && backwardOk && trace = 213
+
+    let mutable supplied: int = 11
+    let storedDefault = Result.defaultValue supplied
+    supplied <- 99
+    let mutable scale: int = 2
+    let mutable selected = fun error -> error + scale
+    let storedRecovery = Result.defaultWith selected
+    selected <- fun error -> error + 100
+    scale <- 3
+    let storedValue = storedDefault (Error 9: Result<int, int>)
+    let storedRecovered = storedRecovery (Error 2: Result<int, int>)
+    let storedOk = storedValue = 11 && supplied = 99 && storedRecovered = 5 && selected 2 = 102
+
+    let length = choose 2<distance> (Error 3<duration>: Result<int<distance>, int<duration>>)
+    let rate = recover (fun error -> if error = 3<duration> then 0.25<1/duration> else 0.5<1/duration>) (Error 3<duration>: Result<float<1/duration>, int<duration>>)
+    let mutable observed = 0<distance>
+    visit (fun value -> observed <- value) (Ok 5<distance>: Result<int<distance>, int<duration>>)
+    visit (fun value -> observed <- value) (Error 3<duration>: Result<int<distance>, int<duration>>)
+    let measuredOk = length = 2<distance> && rate = 0.25<1/duration> && observed = 5<distance>
+
+    trace <- 0
+    calls <- 0
+    total <- 0
+    let failed: Result<int, int> =
+        (Ok 2: Result<int, int>)
+        |> Result.bind (fun value -> record 1; Error (value + 5))
+    Result.iter (fun value -> record 3; total <- total + value) failed
+    let failureValue = Result.defaultWith (fun error -> record 4; error + 10) failed
+    let failureOk = failureValue = 17 && trace = 14 && total = 0
+    trace <- 0
+    let returned: unit = Result.iter (fun () -> calls <- calls + 1) (Ok (): Result<unit, int>)
+    consumeUnit returned
+    consumeUnit (Result.iter (fun () -> calls <- calls + 1) (Error 9: Result<unit, int>))
+    ignore (Result.iter (fun value -> total <- total + value) (Ok 3: Result<int, int>))
+    Result.iter (fun value -> total <- total + value) (Ok 2: Result<int, int>)
+    let actionsOk = failureOk && calls = 1 && total = 5 && trace = 44
+
+    if not casesOk then 1
+    elif not orderOk then 2
+    elif not storedOk then 3
+    elif not measuredOk then 4
+    elif not actionsOk then 5
+    else
+        Console.writeln "=== Result elimination Test ==="
+        Console.writeln "Success values and error recovery: pass"
+        Console.writeln "Factory and pipe order: pass"
+        Console.writeln "Stored defaults and shared captures: pass"
+        Console.writeln "Independent measured cases: pass"
+        Console.writeln "Unit actions and failure propagation: pass"
+        0

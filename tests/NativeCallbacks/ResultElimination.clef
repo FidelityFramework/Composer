@@ -1,0 +1,227 @@
+module ResultElimination
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Failure = { Code: int; Recoverable: bool }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let mutable private total: int = 0
+let private record digit = trace <- trace * 10 + digit
+let private fallback () = record 1; 11
+
+let private makeFallback () =
+    record 1
+    fun error -> record 3; calls <- calls + 1; error + 10
+
+let private makeAction () =
+    record 1
+    fun value -> record 3; calls <- calls + 1; total <- total + value
+
+let private argument successful : Result<int, int> =
+    record 2
+    if successful then Ok 7 else Error 9
+
+let private consumeUnit (_value: unit) = record 4
+
+let private functionFallback () =
+    record 1
+    fun value -> record 5; value + 10
+
+let private makeFunctionFallback () =
+    record 1
+    fun error -> record 3; fun value -> record 5; error + value + 10
+
+let private functionArgument successful : Result<int -> int, int> =
+    record 2
+    if successful then Ok (fun value -> record 6; value + 20)
+    else Error 9
+
+let private extraArgument () = record 4; 2
+let choose = Result.defaultValue
+let recover = Result.defaultWith
+let visit = Result.iter
+
+[<EntryPoint>]
+let main _ =
+    let ordinaryOk = Result.defaultValue 11 (Ok 7: Result<int, int>)
+    let ordinaryError = Result.defaultValue 11 (Error 9: Result<int, int>)
+    let defaultsOk = ordinaryOk = 7 && ordinaryError = 11
+
+    trace <- 0
+    let eagerSuccess = Result.defaultValue (fallback ()) (argument true)
+    let eagerSuccessOk = eagerSuccess = 7 && trace = 12
+    trace <- 0
+    let eagerError = Result.defaultValue (fallback ()) (argument false)
+    let eagerOk = eagerSuccessOk && eagerError = 11 && trace = 12
+
+    trace <- 0
+    calls <- 0
+    let deferredSuccess = Result.defaultWith (makeFallback ()) (argument true)
+    let deferredSuccessOk = deferredSuccess = 7 && trace = 12 && calls = 0
+    trace <- 0
+    let deferredError = Result.defaultWith (makeFallback ()) (argument false)
+    let deferredOk = deferredSuccessOk && deferredError = 19 && trace = 123 && calls = 1
+
+    trace <- 0
+    calls <- 0
+    total <- 0
+    consumeUnit (Result.iter (makeAction ()) (argument true))
+    let actionSuccessOk = trace = 1234 && calls = 1 && total = 7
+    trace <- 0
+    let skipped: unit = Result.iter (makeAction ()) (argument false)
+    consumeUnit skipped
+    let actionOk = actionSuccessOk && trace = 124 && calls = 1 && total = 7
+
+    trace <- 0
+    let forwardDefault = argument false |> Result.defaultValue (fallback ())
+    let forwardDefaultOk = forwardDefault = 11 && trace = 21
+    trace <- 0
+    let backwardDefault = Result.defaultValue (fallback ()) <| argument true
+    let backwardDefaultOk = backwardDefault = 7 && trace = 12
+    trace <- 0
+    let forwardDeferred = argument false |> Result.defaultWith (makeFallback ())
+    let forwardDeferredOk = forwardDeferred = 19 && trace = 213
+    trace <- 0
+    let backwardDeferred = Result.defaultWith (makeFallback ()) <| argument true
+    let backwardDeferredOk = backwardDeferred = 7 && trace = 12
+    trace <- 0
+    argument true |> Result.iter (makeAction ())
+    let forwardActionOk = trace = 213
+    trace <- 0
+    Result.iter (makeAction ()) <| argument false
+    let pipesOk = forwardDefaultOk && backwardDefaultOk && forwardDeferredOk && backwardDeferredOk && forwardActionOk && trace = 12
+
+    // Partial formation evaluates its supplied operand once; Error recovery is not memoized.
+    trace <- 0
+    calls <- 0
+    let storedDefault = Result.defaultValue (fallback ())
+    let defaultFormed = trace = 1
+    let storedDefaultValue = storedDefault (Error 9: Result<int, int>)
+    let defaultFormationOk = defaultFormed && storedDefaultValue = 11 && trace = 1
+    trace <- 0
+    let storedFallback = Result.defaultWith (makeFallback ())
+    let fallbackFormed = trace = 1 && calls = 0
+    let recoveredFirst = storedFallback (Error 2: Result<int, int>)
+    let recoveredPresent = storedFallback (Ok 5)
+    let recoveredSecond = storedFallback (Error 3)
+    let partialOk = defaultFormationOk && fallbackFormed && recoveredFirst = 12 && recoveredPresent = 5 && recoveredSecond = 13 && trace = 133 && calls = 2
+
+    // Supplied values are snapshots; independent captured cells remain shared.
+    let mutable supplied: int = 11
+    let frozenDefault = Result.defaultValue supplied
+    supplied <- 99
+    let mutable scale: int = 2
+    let mutable selected = fun error -> error + scale
+    let frozenFallback = Result.defaultWith selected
+    selected <- fun error -> error + 100
+    let mutable observed: int = 0
+    let mutable selectedAction = fun value -> observed <- observed + value * scale
+    let frozenAction = Result.iter selectedAction
+    selectedAction <- fun value -> observed <- observed + value * 100
+    scale <- 3
+    let frozenValue = frozenDefault (Error 4: Result<int, int>)
+    let frozenRecovered = frozenFallback (Error 2: Result<int, int>)
+    frozenAction (Ok 2: Result<int, int>)
+    frozenAction (Error 7)
+    let snapshotsOk = frozenValue = 11 && supplied = 99 && frozenRecovered = 5 && selected 2 = 102 && observed = 6
+
+    let length = choose 2<distance> (Error 3<duration>: Result<int<distance>, int<duration>>)
+    let elapsed = choose 3<duration> (Ok 4<duration>: Result<int<duration>, bool>)
+    let recoveredLength = recover (fun error -> if error = 3<duration> then 2<distance> else 4<distance>) (Error 3<duration>: Result<int<distance>, int<duration>>)
+    let recoveredRate = recover (fun error -> if error then 0.25<1/duration> else 0.5<1/duration>) (Error true: Result<float<1/duration>, bool>)
+    let mutable seenLength = 0<distance>
+    let mutable seenRate = 0.0<1/duration>
+    visit (fun value -> seenLength <- value) (Ok 2<distance>: Result<int<distance>, int<duration>>)
+    visit (fun value -> seenRate <- value) (Ok 0.25<1/duration>: Result<float<1/duration>, bool>)
+    let aliasesOk = length = 2<distance> && elapsed = 4<duration> && recoveredLength = 2<distance> && recoveredRate = 0.25<1/duration> && seenLength = 2<distance> && seenRate = 0.25<1/duration>
+
+    let explicitDefault = Result.defaultValue<int<distance>, int<duration>> 2<distance> (Ok 3<distance>)
+    let explicitRecovery = Result.defaultWith<int<distance>, int<duration>> (fun error -> if error = 3<duration> then 4<distance> else 0<distance>) (Error 3<duration>)
+    let mutable explicitObserved = 0<distance>
+    Result.iter<int<distance>, int<duration>> (fun value -> explicitObserved <- value) (Ok 5<distance>)
+    Result.iter<int<distance>, int<duration>> (fun value -> explicitObserved <- value) (Error 2<duration>)
+    let explicitOk = explicitDefault = 3<distance> && explicitRecovery = 4<distance> && explicitObserved = 5<distance>
+
+    // The Error payload is one typed callback argument, including functions, records and unit.
+    let mutable basis: int = 1
+    let errorFunction = fun value -> basis + value
+    let functionError: Result<int, int -> int> = Error errorFunction
+    basis <- 9
+    let fromFunction = Result.defaultWith (fun work -> work 2) functionError
+    let fromRecord = Result.defaultWith (fun (error: Failure) -> if error.Recoverable then error.Code + 1 else 0) (Error { Code = 6; Recoverable = true }: Result<int, Failure>)
+    let fromUnit = Result.defaultWith (fun () -> 7) (Error (): Result<int, unit>)
+    let errorPayloadsOk = fromFunction = 11 && fromRecord = 7 && fromUnit = 7
+
+    let mutable offset: int = 2
+    let successFunction = fun value -> offset + value
+    let success: Result<int -> int, int> = Ok successFunction
+    calls <- 0
+    let selectedValue = Result.defaultValue (fun value -> value + 100) success
+    let selectedRecovery = Result.defaultWith (fun error -> calls <- calls + 1; fun value -> error + value) success
+    offset <- 3
+    let successIdentityOk = selectedValue 4 = 7 && selectedRecovery 5 = 8 && calls = 0
+
+    // Every supplied argument is evaluated before selection; only the selected function is invoked.
+    trace <- 0
+    let appliedDefaultOk = Result.defaultValue (functionFallback ()) (functionArgument true) (extraArgument ())
+    let appliedDefaultSuccessOk = appliedDefaultOk = 22 && trace = 1246
+    trace <- 0
+    let appliedDefaultError = Result.defaultValue (functionFallback ()) (functionArgument false) (extraArgument ())
+    let defaultApplicationOk = appliedDefaultSuccessOk && appliedDefaultError = 12 && trace = 1245
+    trace <- 0
+    let appliedRecoveryOk = Result.defaultWith (makeFunctionFallback ()) (functionArgument true) (extraArgument ())
+    let appliedRecoverySuccessOk = appliedRecoveryOk = 22 && trace = 1246
+    trace <- 0
+    let appliedRecoveryError = Result.defaultWith (makeFunctionFallback ()) (functionArgument false) (extraArgument ())
+    let recoveryApplicationOk = appliedRecoverySuccessOk && appliedRecoveryError = 21 && trace = 12435
+
+    trace <- 0
+    calls <- 0
+    total <- 0
+    let returned: unit = Result.iter (fun () -> calls <- calls + 1) (Ok (): Result<unit, int>)
+    consumeUnit returned
+    consumeUnit (Result.iter (fun () -> calls <- calls + 1) (Error 9: Result<unit, int>))
+    ignore (Result.iter (fun value -> total <- total + value) (Ok 2: Result<int, int>))
+    Result.iter (fun value -> total <- total + value) (Ok 3: Result<int, int>)
+    let recoveredUnit: unit = Result.defaultWith (fun error -> calls <- calls + error) (Error 2: Result<unit, int>)
+    consumeUnit recoveredUnit
+    let defaultedUnit: unit = Result.defaultValue () (Error 9: Result<unit, int>)
+    consumeUnit defaultedUnit
+    let unitsOk = calls = 3 && total = 5 && trace = 4444
+
+    trace <- 0
+    total <- 0
+    let failed =
+        (Ok 2: Result<int, int>)
+        |> Result.bind (fun value -> record 1; Error (value + 5))
+        |> Result.map (fun value -> record 2; value * 2)
+    Result.iter (fun value -> record 3; total <- total + value) failed
+    let failureValue = Result.defaultWith (fun error -> record 4; error + 10) failed
+    let failurePipelineOk = failureValue = 17 && trace = 14 && total = 0
+    trace <- 0
+    let succeeded = (Ok 2: Result<int, int>) |> Result.bind (fun value -> record 1; Ok (value + 1))
+    Result.iter (fun value -> record 3; total <- total + value) succeeded
+    let successValue = Result.defaultWith (fun error -> record 4; error + 10) succeeded
+    let pipelinesOk = failurePipelineOk && successValue = 3 && trace = 13 && total = 3
+
+    if not defaultsOk then 221
+    elif not eagerOk then 222
+    elif not deferredOk then 223
+    elif not actionOk then 224
+    elif not pipesOk then 225
+    elif not partialOk then 226
+    elif not snapshotsOk then 227
+    elif not aliasesOk then 228
+    elif not explicitOk then 229
+    elif not errorPayloadsOk then 230
+    elif not successIdentityOk then 231
+    elif not defaultApplicationOk then 232
+    elif not recoveryApplicationOk then 233
+    elif not unitsOk then 234
+    elif not pipelinesOk then 235
+    else 0

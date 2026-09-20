@@ -7,6 +7,42 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## F-09 Result defaults and iteration — 2026-09-20
+
+Specification `82cd330` adds `Result.defaultValue`, `Result.defaultWith` and
+`Result.iter`. Defaults select the Ok payload or the supplied fallback; deferred
+recovery invokes its handler only on Error, passing that actual payload. Iteration
+invokes its action only on Ok and returns unit. Independent success/error types,
+dimensions and payload identities remain in the graph.
+
+The shared Result recipe composes typed case elimination and ordinary application.
+Its direct prefix evaluates all supplied operands before selection; its residual
+prefix places local operand values before either case arm. Partials snapshot the
+supplied value while retaining shared captured storage. Defaults consume exactly
+two operands even when their result is a function: later arguments evaluate
+before selection and then apply the selected function. The 15-group native
+fixture checks this timing alongside factories/pipes, independent aliases,
+explicit type arguments, callable/record/unit payloads and failure propagation.
+The existing 12-group Result callback fixture passes after the shared recipe
+adjustment. Alex, target layout and solver-transfer implementation are unchanged.
+
+| Gate | Result |
+|---|---|
+| CCS | **586/586**, including 42 elimination cases with 17 exact negatives; both Result suites pass **88/88**; `/tmp/clef-result-elimination-full.log` |
+| Native / MLIR | **2/2** ResultElimination and ResultCallbacks; stock verification and zero exit; `/tmp/composer-callbacks-fsharp-97ac1b5c8396498b98e255d9de209abf/` |
+| FidelityHello | **09b_ResultElimination passes**, exact six-line output and zero exit; `/tmp/composer-result-elimination-fidelityhello.log` |
+| Analyzer projection | **28 accepted / 33 exact rejections**; `/tmp/lattice-ccs-surface-ea25ff3133854d0fb69813a1678c8f33/evidence.json` |
+| LSP | **37 diagnostic edits and repairs**, eight Result hovers including Error-handler partial and unit action; `/tmp/lattice-surface-waypoint-Ar2IZF/result.json` |
+
+Both final tooling gates loaded CCS SHA-256
+`0f2dda52a3dcd86dea0744ddb4a734ebfa0a1f08ce1e9146afe2fb44da5743f1`.
+CAC records the same two payload parameters and callable result boundary.
+Existing closure/DU placement and proof obligations remain applicable; no new
+allocation rule or general computation-expression support is implied.
+
+Use clef `a03222c24`, lattice-analyzers `dd7a4f1`, lattice-vscode `842bd35`
+and CAC `554e0c8f` with this Composer checkpoint.
+
 ## C-01/C-04 immutable iteration bindings — 2026-09-20
 
 Specification `25e2954` defines a fresh immutable source binding for every

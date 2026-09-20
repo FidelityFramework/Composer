@@ -19,6 +19,14 @@ cases. A selected passing subset does not establish the remaining cases. Each
 retained MLIR module must also pass `mlir-opt --verify-each`; missing tooling is
 a failed gate. The evidence records the executable and compiler assembly hashes.
 
+`ResultElimination` checks eager defaults, Error-payload recovery and Ok-only
+iteration. Fifteen groups (221–235) cover case behavior, factories and pipes,
+partial snapshots with shared captures, independently measured success/error
+types, explicit arguments, function/record/unit payloads and propagation.
+Function-valued defaults require all supplied arguments to precede selection
+and any Error handler invocation, then apply the selected function across the
+declared two-operand boundary.
+
 `ResultCallbacks` checks map/mapError/bind case selection, eager factories and
 pipes, preserved payloads, stored callback snapshots and shared captures,
 independent success/error dimensions, explicit generics, callable payload

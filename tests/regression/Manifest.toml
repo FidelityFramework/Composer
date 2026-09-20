@@ -255,6 +255,19 @@ Independent measured cases: pass
 Explicit failure propagation: pass
 """
 
+[[samples]]
+name = "09b_ResultElimination"
+project = "ResultElimination.fidproj"
+binary = "targets/resultelimination"
+expected_output = """
+=== Result elimination Test ===
+Success values and error recovery: pass
+Factory and pipe order: pass
+Stored defaults and shared captures: pass
+Independent measured cases: pass
+Unit actions and failure propagation: pass
+"""
+
 # =============================================================================
 # Sample 10: Records
 # Record types, field access, copy-update
