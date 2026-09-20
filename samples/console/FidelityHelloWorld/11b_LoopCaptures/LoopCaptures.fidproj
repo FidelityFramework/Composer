@@ -1,0 +1,15 @@
+[package]
+name = "LoopCaptures"
+version = "0.1.0"
+description = "Immutable iteration bindings, stored callbacks and shared mutable captures"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["LoopCaptures.clef"]
+output = "loopcaptures"
+output_kind = "console"

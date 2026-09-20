@@ -1,0 +1,75 @@
+/// Sample 11b: callbacks retain immutable per-iteration source bindings.
+module LoopCapturesSample
+
+let private countedSnapshots () =
+    let mutable first: unit -> int = fun () -> -100
+    let mutable second: unit -> int = fun () -> -100
+    let mutable third: unit -> int = fun () -> -100
+    for index = 1 to 3 do
+        let captured = fun () -> index
+        if index = 1 then first <- captured
+        elif index = 2 then second <- captured
+        else third <- captured
+    let ascendingOk = first () = 1 && second () = 2 && third () = 3
+    for index = 3 downto 1 do
+        let captured = fun () -> index
+        if index = 3 then first <- captured
+        elif index = 2 then second <- captured
+        else third <- captured
+    ascendingOk && first () = 3 && second () = 2 && third () = 1
+
+let private rangeSnapshots () =
+    let mutable negative: unit -> int = fun () -> -100
+    let mutable zero: unit -> int = fun () -> -100
+    let mutable positive: unit -> int = fun () -> -100
+    for index in (-1 .. 1) do
+        let captured = fun () -> index
+        if index = -1 then negative <- captured
+        elif index = 0 then zero <- captured
+        else positive <- captured
+    negative () = -1 && zero () = 0 && positive () = 1
+
+let private nestedSnapshots () =
+    let mutable first: unit -> int = fun () -> -100
+    let mutable second: unit -> int = fun () -> -100
+    let mutable third: unit -> int = fun () -> -100
+    let mutable fourth: unit -> int = fun () -> -100
+    for index = 1 to 2 do
+        let outer = fun () -> index
+        for index = 7 to 8 do
+            let captured = fun () -> outer () * 10 + index
+            if outer () = 1 then
+                if index = 7 then first <- captured
+                else second <- captured
+            else
+                if index = 7 then third <- captured
+                else fourth <- captured
+    first () = 17 && second () = 18 && third () = 27 && fourth () = 28
+
+let private directAndShared () =
+    let mutable total: int = 0
+    let mutable bias: int = 10
+    let mutable saved: unit -> int = fun () -> -100
+    for index = 1 to 3 do
+        let add value = index + value
+        total <- total + add 10
+        if index = 2 then saved <- fun () -> index + bias
+    bias <- 20
+    let first = saved ()
+    bias <- 30
+    let second = saved ()
+    total = 36 && first = 22 && second = 32
+
+[<EntryPoint>]
+let main _ =
+    if not (countedSnapshots ()) then 1
+    elif not (rangeSnapshots ()) then 2
+    elif not (nestedSnapshots ()) then 3
+    elif not (directAndShared ()) then 4
+    else
+        Console.writeln "=== Loop captures Test ==="
+        Console.writeln "Counted iteration snapshots: pass"
+        Console.writeln "Range iteration snapshots: pass"
+        Console.writeln "Nested binding identities: pass"
+        Console.writeln "Direct calls and shared captures: pass"
+        0

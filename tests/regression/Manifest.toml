@@ -367,6 +367,18 @@ Bounded array captures: pass
 Inverse dimensions: pass
 """
 
+[[samples]]
+name = "11b_LoopCaptures"
+project = "LoopCaptures.fidproj"
+binary = "targets/loopcaptures"
+expected_output = """
+=== Loop captures Test ===
+Counted iteration snapshots: pass
+Range iteration snapshots: pass
+Nested binding identities: pass
+Direct calls and shared captures: pass
+"""
+
 # =============================================================================
 # Sample 12: HigherOrderFunctions
 # Functions as values, composition

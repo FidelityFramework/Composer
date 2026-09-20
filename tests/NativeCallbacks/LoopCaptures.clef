@@ -1,0 +1,82 @@
+module LoopCaptures
+
+let private ascending () =
+    let mutable first: unit -> int = fun () -> -100
+    let mutable second: unit -> int = fun () -> -100
+    let mutable third: unit -> int = fun () -> -100
+    for index = 1 to 3 do
+        let captured = fun () -> index
+        if index = 1 then first <- captured
+        elif index = 2 then second <- captured
+        else third <- captured
+    first () = 1 && second () = 2 && third () = 3 && first () = 1
+
+let private descending () =
+    let mutable first: unit -> int = fun () -> -100
+    let mutable second: unit -> int = fun () -> -100
+    let mutable third: unit -> int = fun () -> -100
+    for index = 3 downto 1 do
+        let captured = fun () -> index
+        if index = 3 then first <- captured
+        elif index = 2 then second <- captured
+        else third <- captured
+    first () = 3 && second () = 2 && third () = 1 && first () = 3
+
+let private ranged () =
+    let mutable negative: unit -> int = fun () -> -100
+    let mutable zero: unit -> int = fun () -> -100
+    let mutable positive: unit -> int = fun () -> -100
+    for index in (-1 .. 1) do
+        let captured = fun () -> index
+        if index = -1 then negative <- captured
+        elif index = 0 then zero <- captured
+        else positive <- captured
+    negative () = -1 && zero () = 0 && positive () = 1
+
+let private localDirect () =
+    let mutable observed: int = 0
+    let mutable total: int = 0
+    for index = 1 to 3 do
+        let add value = index + value
+        observed <- observed * 10 + add 0
+        total <- total + add 10
+    observed = 123 && total = 36
+
+let private nestedNames () =
+    let mutable first: unit -> int = fun () -> -100
+    let mutable second: unit -> int = fun () -> -100
+    let mutable third: unit -> int = fun () -> -100
+    let mutable fourth: unit -> int = fun () -> -100
+    for index = 1 to 2 do
+        let outer = fun () -> index
+        for index = 7 to 8 do
+            let captured = fun () -> outer () * 10 + index
+            if outer () = 1 then
+                if index = 7 then first <- captured
+                else second <- captured
+            else
+                if index = 7 then third <- captured
+                else fourth <- captured
+    first () = 17 && second () = 18 && third () = 27 && fourth () = 28
+
+let private savedWithSharedCell () =
+    let mutable bias: int = 10
+    let mutable saved: unit -> int = fun () -> -100
+    for index = 1 to 2 do
+        saved <- fun () -> index + bias
+    bias <- 20
+    let first = saved ()
+    bias <- 30
+    let second = saved ()
+    // The source induction value stays at 2; the independently mutable bias remains shared.
+    first = 22 && second = 32
+
+[<EntryPoint>]
+let main _ =
+    if not (ascending ()) then 211
+    elif not (descending ()) then 212
+    elif not (ranged ()) then 213
+    elif not (localDirect ()) then 214
+    elif not (nestedNames ()) then 215
+    elif not (savedWithSharedCell ()) then 216
+    else 0

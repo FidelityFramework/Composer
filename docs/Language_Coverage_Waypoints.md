@@ -7,6 +7,42 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-01/C-04 immutable iteration bindings — 2026-09-20
+
+Specification `25e2954` defines a fresh immutable source binding for every
+integer loop iteration. The previous elaboration exposed its mutable counter
+directly: source assignment could alter induction, captures shared later counter
+updates, and a direct local function could fall outside immutable capture
+admission. `ControlFlow.checkFor` now establishes a distinct immutable binding
+from the hidden counter at each body entry. Source reads and capture origins
+resolve to that binding; guard and step operations resolve to the counter.
+Nested same-name loops retain separate identities. Source assignments receive
+the existing CCS8009 diagnostic at the assigned value's exact span.
+
+Eight regressions failed against the preceding compiler and now pass. They
+inspect the actual initial graph artifact and returned saturated graph, including
+counter/source separation, captures, nested identities and four located assignment
+rejections. The native baseline stopped at the local function's mutable capture
+(`/tmp/composer-loop-captures-before.log`); its unchanged fixture now passes.
+Alex has no new witness, pattern, layout or semantic repair.
+
+Companion revisions are clef `62f7eb9ce`, lattice-analyzers `c9b6cfb`,
+lattice-vscode `753cdb1` and CAC `5c8e6120`, paired with this Composer checkpoint.
+
+| Gate | Result |
+|---|---|
+| CCS | **544/544**, including eight new binding/capture/negative cases; `/tmp/clef-loop-bindings-full.log` |
+| Native / MLIR | **3/3** LoopCaptures, RangeLoops and CountedLoops, with six/four/four groups; stock verification and native exit; `/tmp/composer-callbacks-fsharp-0ab5921cbece4b1788a239b1087f6d06/` |
+| FidelityHello | **11b_LoopCaptures**, exact five-line output and zero exit; `/tmp/composer-loop-binding-fidelityhello.log` |
+| Analyzer projection | **25 accepted / 30 exact rejections**; `/tmp/lattice-ccs-surface-dbffb4810abc4370a1342b28740bde91/evidence.json` |
+| LSP | **34 diagnostic edits and repairs**, captured integer/source signature and definition at the loop identifier; `/tmp/lattice-surface-waypoint-SXt3em/result.json` |
+
+Both final tooling gates loaded CCS SHA-256
+`05caf164966447c51fb56f5c7fd4bf2b27e31e07c2415cb9bc16df869b26f5f9`.
+CAC records the same source/counter distinction. Existing closure residence and
+representation boundaries remain: native execution does not establish their
+complete proof discharge or the final two-value closure representation.
+
 ## F-09 Result callbacks and integer range loops — 2026-09-20
 
 Specification `808cb1a` records the native `Result.map`, `mapError` and `bind`

@@ -43,8 +43,15 @@ checkpoint and separate gate results.
 
 `CountedLoops` checks once-only start-before-finish evaluation for ascending,
 descending and zero-trip loops, including direct and stored unit consumption.
-Exit codes 181–184 identify the four groups. Source induction-variable
-mutability and per-iteration closure capture remain separate contracts.
+Exit codes 181–184 identify the four groups.
+
+`LoopCaptures` checks the distinct immutable source binding for each iteration.
+Six groups (211–216) retain callbacks across ascending, descending and range
+loops, exercise a direct local function, distinguish nested same-name bindings,
+and preserve shared mutable captures alongside iteration snapshots. The source
+negative gate separately rejects assignment to an iteration binding. These
+executables establish the observed behavior; closure placement and lifetime
+proof obligations remain governed by their existing contracts.
 
 `OptionFolds` covers the two callback argument orders, unchanged None state,
 eager operands and pipes, both partial frontiers, snapshots and shared captures,
