@@ -30,6 +30,10 @@ These tests cover the existing public observation boundary:
   snapshot across reassignment. Missing initializer/cell values require their
   specific diagnostics. The composed output verifies and lowers with real MLIR at
   32- and 64-bit index widths.
+- The unit-result pattern preserves ordered conditional effects and appends the
+  canonical i32 zero value. It preserves the body's missing-operand diagnostic
+  and rejects an already returned value. Its composed conditional output verifies
+  and lowers through standard MLIR without changing graph facts or operand recall.
 
 Fixtures supply already settled graph facts and previously witnessed operands.
 The current parser API requires `MLIRAccumulator` for operand recall; this suite

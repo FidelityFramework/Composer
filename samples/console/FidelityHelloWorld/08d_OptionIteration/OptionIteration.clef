@@ -1,0 +1,95 @@
+/// Sample 08d: optional actions return unit while preserving effects and captures.
+module OptionIterationSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let mutable private total: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeAction () =
+    record 1
+    fun value ->
+        record 3
+        calls <- calls + 1
+        total <- total + value
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let private consumeUnit () = record 4
+let visit = Option.iter
+
+[<EntryPoint>]
+let main _ =
+    calls <- 0
+    total <- 0
+    let action = fun value -> calls <- calls + 1; total <- total + value
+    Option.iter action (Some 7)
+    let someOk = calls = 1 && total = 7
+    Option.iter action None
+    let optionalOk = someOk && calls = 1 && total = 7
+
+    trace <- 0
+    calls <- 0
+    Option.iter (makeAction ()) (argument false)
+    let eagerFactoryOk = trace = 12 && calls = 0
+    trace <- 0
+    argument true |> Option.iter (makeAction ())
+    let forwardOk = trace = 213 && calls = 1
+    trace <- 0
+    Option.iter (makeAction ()) <| argument true
+    let backwardSomeOk = trace = 123 && calls = 2
+    trace <- 0
+    Option.iter (makeAction ()) <| argument false
+    let orderOk = eagerFactoryOk && forwardOk && backwardSomeOk && trace = 12 && calls = 2
+
+    let mutable scale: int = 2
+    let mutable observed: int = 0
+    let mutable selected = fun value -> observed <- observed + scale * value
+    let stored = Option.iter selected
+    selected <- fun value -> observed <- observed + value * 10
+    scale <- 3
+    stored (Some 4)
+    let sharedCellOk = observed = 12
+    stored None
+    selected 2
+    let storedOk = sharedCellOk && observed = 32 && scale = 3
+
+    let mutable length = 0<distance>
+    let mutable elapsed = 0<duration>
+    let mutable rate = 0.0<1/duration>
+    visit (fun value -> length <- value) (Some 2<distance>)
+    visit (fun value -> elapsed <- value) (Some 3<duration>)
+    visit (fun value -> rate <- value) (Some 0.25<1/duration>)
+    visit (fun value -> length <- value) None
+    let measuredOk = length = 2<distance> && elapsed = 3<duration> && rate = 0.25<1/duration>
+
+    trace <- 0
+    calls <- 0
+    let returned: unit = Option.iter (fun value -> calls <- calls + value) (Some 2)
+    consumeUnit returned
+    consumeUnit (Option.iter (fun value -> calls <- calls + value) None)
+    ignore (Option.iter (fun () -> calls <- calls + 1) (Some ()))
+    Option.iter (fun value -> calls <- calls + value) (Some 3)
+    let unitOk = trace = 44 && calls = 6
+
+    if not optionalOk then 1
+    elif not orderOk then 2
+    elif not storedOk then 3
+    elif not measuredOk then 4
+    elif not unitOk then 5
+    else
+        Console.writeln "=== Option.iter Test ==="
+        Console.writeln "Optional actions: pass"
+        Console.writeln "Factory and pipe order: pass"
+        Console.writeln "Stored actions and captures: pass"
+        Console.writeln "Measured payloads: pass"
+        Console.writeln "Unit results and effects: pass"
+        0

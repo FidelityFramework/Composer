@@ -7,7 +7,7 @@ open Alex.Tests.Fixtures
 
 /// Runs the real tool over text serialized from Alex operations. Missing tools
 /// fail the test; these are component gates, not language or native-run oracles.
-let private mlirOpt arguments input =
+let mlirOpt arguments input =
     let start = ProcessStartInfo("mlir-opt", UseShellExecute = false,
                                 RedirectStandardInput = true,
                                 RedirectStandardOutput = true,

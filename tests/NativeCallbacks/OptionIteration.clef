@@ -1,0 +1,129 @@
+module OptionIteration
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Config = { Enabled: bool; Offset: int }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let mutable private total: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeIterator () =
+    record 1
+    fun value ->
+        record 3
+        calls <- calls + 1
+        total <- total + value
+
+let private argument present =
+    record 2
+    if present then Some 7 else None
+
+let private consumeUnit () = record 4
+let visit = Option.iter
+
+[<EntryPoint>]
+let main _ =
+    // Form both inputs eagerly; invoke the resulting action once only for Some.
+    trace <- 0
+    calls <- 0
+    total <- 0
+    Option.iter (makeIterator ()) (argument true)
+    let directSomeOk = trace = 123 && calls = 1 && total = 7
+    trace <- 0
+    Option.iter (makeIterator ()) (argument false)
+    let directNoneOk = trace = 12 && calls = 1 && total = 7
+
+    trace <- 0
+    argument true |> Option.iter (makeIterator ())
+    let forwardSomeOk = trace = 213 && calls = 2 && total = 14
+    trace <- 0
+    argument false |> Option.iter (makeIterator ())
+    let forwardNoneOk = trace = 21 && calls = 2 && total = 14
+    trace <- 0
+    Option.iter (makeIterator ()) <| argument true
+    let backwardSomeOk = trace = 123 && calls = 3 && total = 21
+    trace <- 0
+    Option.iter (makeIterator ()) <| argument false
+    let backwardNoneOk = trace = 12 && calls = 3 && total = 21
+
+    trace <- 0
+    calls <- 0
+    total <- 0
+    let stored = Option.iter (makeIterator ())
+    let formationOk = trace = 1 && calls = 0 && total = 0
+    stored (Some 5)
+    stored None
+    stored (Some 3)
+    let partialOk = formationOk && trace = 133 && calls = 2 && total = 8
+
+    // A partial retains the selected function value across reassignment.
+    total <- 0
+    let mutable selected = fun value -> total <- total + value
+    let snapshot = Option.iter selected
+    selected <- fun value -> total <- total + value * 10
+    snapshot (Some 2)
+    snapshot None
+    selected 3
+    let snapshotOk = total = 32
+
+    // Anonymous actions share captured cells rather than snapshotting their contents.
+    let mutable scale: int = 2
+    let mutable observed: int = 0
+    let action = fun value -> observed <- observed + scale * value
+    let captured = Option.iter action
+    scale <- 3
+    captured (Some 4)
+    Option.iter action (Some 2)
+    captured None
+    let capturesOk = observed = 18 && scale = 3
+
+    // One bare alias admits distinct payloads and dimensions independently.
+    let mutable length = 0<distance>
+    let mutable elapsed = 0<duration>
+    let mutable rate = 0.0<1/duration>
+    visit (fun value -> length <- value) (Some 2<distance>)
+    visit (fun value -> elapsed <- value) (Some 3<duration>)
+    visit (fun value -> rate <- value) (Some 0.25<1/duration>)
+    visit (fun value -> length <- value) None
+    let measuredOk = length = 2<distance> && elapsed = 3<duration> && rate = 0.25<1/duration>
+
+    let mutable enabled = false
+    let mutable recordOffset: int = 0
+    let mutable functionResult: int = 0
+    visit (fun value -> enabled <- value) (Some true)
+    visit (fun (config: Config) -> recordOffset <- if config.Enabled then config.Offset else 0)
+          (Some { Enabled = true; Offset = 6 })
+    visit (fun work -> functionResult <- work 2) (Some (fun value -> value + 20))
+    let payloadsOk = enabled && recordOffset = 6 && functionResult = 22
+
+    // Unit results survive binding, consumption and discarding with the same effects.
+    trace <- 0
+    calls <- 0
+    total <- 0
+    let returned: unit = Option.iter (makeIterator ()) (argument true)
+    consumeUnit returned
+    let consumedSomeOk = trace = 1234 && calls = 1 && total = 7
+    consumeUnit (Option.iter (fun value -> total <- total + value) None)
+    ignore (Option.iter (fun value -> calls <- calls + 1; total <- total + value) (Some 2))
+    Option.iter (fun value -> calls <- calls + 1; total <- total + value) (Some 3)
+    let unitsOk = consumedSomeOk && trace = 12344 && calls = 3 && total = 12
+
+    if not directSomeOk then 41
+    elif not directNoneOk then 42
+    elif not forwardSomeOk then 43
+    elif not forwardNoneOk then 44
+    elif not backwardSomeOk then 45
+    elif not backwardNoneOk then 46
+    elif not partialOk then 47
+    elif not snapshotOk then 48
+    elif not capturesOk then 49
+    elif not measuredOk then 50
+    elif not payloadsOk then 51
+    elif not unitsOk then 52
+    else 0

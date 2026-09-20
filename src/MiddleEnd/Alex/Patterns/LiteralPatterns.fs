@@ -74,6 +74,23 @@ let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (_arch: Architecture) : PSGPar
             return! fail (Message $"Unsupported literal: {lit}")
     }
 
+/// A unit-typed expression still has a value when its control-flow operations
+/// return no SSA. Preserve those operations, then witness the sole unit value.
+/// The caller must have observed the settled unit type; this is not a fallback
+/// for an unwitnessed operand or an unresolved expression type.
+let pWithUnitResult (nodeId: NodeId) (body: PSGParser<MLIROp list * TransferResult>)
+                    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        let! operations, result = body
+        match result with
+        | TRVoid ->
+            let! ssa = getNodeSSA nodeId
+            let! state = getUserState
+            let! unitOps, unitResult = pBuildLiteral NativeLiteral.Unit ssa state.Coeffects.Platform.TargetArch
+            return operations @ unitOps, unitResult
+        | _ -> return! fail (Message "Unit result requires a witnessed void operation")
+    }
+
 // ═══════════════════════════════════════════════════════════
 // STRING PATTERNS
 // ═══════════════════════════════════════════════════════════

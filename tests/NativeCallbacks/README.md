@@ -36,6 +36,12 @@ retain their historical observations and cannot constrain the current value of
 mutable storage. Effectful guard operands and predicate calls cannot turn an old
 observation into a bound on the new value. Exit codes 1–13 distinguish the groups.
 
+`OptionIteration` checks `iter` as a unit-valued optional action. Twelve groups
+(exit codes 41–52) cover Some/None invocation, eager action factories, both pipe
+directions, stored action snapshots, shared captured cells, independently
+specialized bare aliases and measured, record and function payloads. Bound,
+consumed and discarded unit results retain the original effects.
+
 `OptionAlternatives` checks `orElse` and `orElseWith`, which retain the optional
 result. Its 25 groups (exit codes 231–255) cover both branches, empty alternatives,
 eager operand formation, deferred invocation, both pipe directions, partial

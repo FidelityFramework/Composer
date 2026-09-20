@@ -128,10 +128,8 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
             let thenValueNodeId = findLastValueNode thenId ctx.Graph
             let elseValueNodeIdOpt = elseIdOpt |> Option.map (fun elseId -> findLastValueNode elseId ctx.Graph)
 
-            let isExpressionValued =
-                match node.Type with
-                | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) -> false
-                | _ -> true
+            let isUnit = Alex.Traversal.Values.isUnitTyped node.Type
+            let isExpressionValued = not isUnit
 
             let result =
                 if isExpressionValued then
@@ -141,7 +139,11 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                     | _ -> None  // Fall back to void
                 else None
 
-            match tryMatchWithDiagnostics (pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            let conditional = pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result node.Id
+            let pattern =
+                if isUnit then Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id conditional
+                else conditional
+            match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, transferResult), _) ->
                 trace "[ControlFlowWitness] IfThenElse: Built conditional with %d ops" (List.length ops)
                 { InlineOps = ops; TopLevelOps = []; Result = transferResult }
@@ -203,4 +205,3 @@ let createNanopass (getCombinator: unit -> (WitnessContext -> SemanticNode -> Wi
     Name = "ControlFlow"
     Witness = witnessControlFlowWith getCombinator
 }
-

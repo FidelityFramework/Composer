@@ -1,0 +1,15 @@
+[package]
+name = "OptionIteration"
+version = "0.1.0"
+description = "Optional unit actions, evaluation order, captures and measured payloads"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["OptionIteration.clef"]
+output = "optioniteration"
+output_kind = "console"

@@ -7,6 +7,37 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-04 optional iteration and unit-valued conditionals — 2026-09-20
+
+Clef `1c20fad11` adds `Option.iter` through a fresh native scheme and the existing
+Baker recipe path. Both operands are eager; the action consumes the payload once
+only for Some, and both branches return unit. Direct applications, pipes, stored
+partials and independently specialized bare aliases retain that contract.
+
+The native gate exposed an Alex gap: a unit-typed conditional retained its effects
+but returned `TRVoid`, so its result could not be passed directly to another
+function. Baker's unit node and incidence were correct. The conditional witness
+now observes the settled unit type and composes a pattern that preserves the
+control-flow operations followed by the existing unit literal representation.
+Missing operands and failed patterns remain errors; no graph repair or traversal
+change is involved.
+
+| Gate | Fresh result |
+|---|---|
+| CCS | **419/419**, including 24 iteration cases (12 exact negatives); `/tmp/clef-option-iteration-full.log` |
+| Alex | **25/25**, including four unit-result component cases: effect order, missing-operand failure, rejection of a preexisting value, stock MLIR verification and LLVM lowering; `/tmp/alex-option-iteration-unit-tests.log` |
+| Native / MLIR | **2/2** fresh executables: OptionIteration (12 groups) and IgnoreValues; both retained modules pass stock `mlir-opt --verify-each`. `/tmp/composer-callbacks-fsharp-c4721c33cc594916a29fd001f98472ee/` |
+| FidelityHello | **08d_OptionIteration** passes compilation, native exit and exact six-line output; `/tmp/composer-option-iteration-unit-fidelityhello.log` |
+| Analyzer-facing projection | **15 accepted / 18 exact rejections**, plus retained capture projections; `/tmp/lattice-ccs-surface-757480766e2945459fd2527a491adb50/evidence.json` |
+| LSP | **22 diagnostic edits and repairs**, including five iteration hovers; `/tmp/lattice-surface-waypoint-dcmG9g/result.json` |
+
+Companion revisions: lattice-vscode `8a57357`, lattice-analyzers `c91f270`, and
+ClefAutoComplete `38dceb27`. Both external projections loaded CCS SHA-256
+`e3b450ba770c8bbb523e51af47fd161631561999f7b536282c7e68076a7cda91`.
+CCS.Editor, server transport, grammar and Neovim interfaces are unchanged.
+This increment establishes unit-valued conditionals; other structured unit-result
+witnesses and the remaining collection surface retain their own gates.
+
 ## C-04 optional alternatives and temporal range facts — 2026-09-20
 
 Clef `f5fdbc966` adds `Option.orElse` and `Option.orElseWith` through fresh native

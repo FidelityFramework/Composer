@@ -10,6 +10,7 @@
     <Compile Include="ZipperTests.fs" />
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
+    <Compile Include="UnitResultTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
     <Compile Include="CallableSymbolTests.fs" />
   </ItemGroup>

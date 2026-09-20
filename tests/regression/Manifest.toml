@@ -190,6 +190,23 @@ Measured and inverse values: pass
 """
 
 # =============================================================================
+# Sample 08d: OptionIteration
+# Optional unit actions, evaluation order, stored identity and measured payloads
+# =============================================================================
+[[samples]]
+name = "08d_OptionIteration"
+project = "OptionIteration.fidproj"
+binary = "targets/optioniteration"
+expected_output = """
+=== Option.iter Test ===
+Optional actions: pass
+Factory and pipe order: pass
+Stored actions and captures: pass
+Measured payloads: pass
+Unit results and effects: pass
+"""
+
+# =============================================================================
 # Sample 09: Result
 # Result type, error handling
 # =============================================================================
