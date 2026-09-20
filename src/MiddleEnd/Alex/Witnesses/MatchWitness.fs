@@ -104,11 +104,9 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
             // Step 3: Determine if expression-valued
             // TVar means CCS didn't resolve the match result type — treat as void
             // (if arms are side-effect-only, the match result type stays unresolved)
+            let isUnit = Alex.Traversal.Values.isUnitTyped node.Type
             let isExpressionValued =
-                match node.Type with
-                | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) -> false
-                | NativeType.TVar _ -> false
-                | _ -> true
+                not isUnit && (match node.Type with NativeType.TVar _ -> false | _ -> true)
 
             let result =
                 if isExpressionValued then
@@ -119,7 +117,11 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                 else None
 
             // Step 4: Delegate to pattern for elision — diagnostic error flow preserved
-            match tryMatchWithDiagnostics (pBuildMatchElimination scrutineeSSA scrutineeMLIRType scrutineeId armResults result node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            let elimination = pBuildMatchElimination scrutineeSSA scrutineeMLIRType scrutineeId armResults result node.Id
+            let pattern =
+                if isUnit then Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id elimination
+                else elimination
+            match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, transferResult), _) ->
                 { InlineOps = ops; TopLevelOps = []; Result = transferResult }
             | Result.Error diagnostic ->

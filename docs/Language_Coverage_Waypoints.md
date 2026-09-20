@@ -7,6 +7,39 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## Structured unit results and lexical math identities — 2026-09-20
+
+Alex now preserves unit results for matches and while loops as well as
+conditionals. Each witness reads the settled unit type and composes the existing
+unit-result pattern after its control-flow operations. While-region terminators
+now belong to the Pattern layer. The native fixture first reproduced missing
+unit arguments and stored bindings, then passed unchanged after the fix.
+
+Clef `40cabe767` separately preserves explicit module members and function-valued
+fields named `Math.sin` ahead of the intrinsic fallback. The math source gate
+checks dimensionless intrinsic admission, nine exact negative cases, lexical
+identity, source-level higher-order forms and existing literal evidence.
+
+| Gate | Fresh result |
+|---|---|
+| CCS | **436/436**, including 17 math source cases; `/tmp/clef-math-sine-full.log` |
+| Alex | **25/25**; `/tmp/alex-unit-expressions-tests.log` |
+| Native / MLIR | **2/2** fresh executables: UnitExpressions (six groups, direct/stored/nested match and loop values) and OptionIteration. Both retained modules pass stock verification; `/tmp/composer-callbacks-fsharp-d84826f373ca4f6d8b79c8b548c88ab5/` |
+| Analyzer-facing projection | **17 accepted / 19 exact rejections**; `/tmp/lattice-ccs-surface-3f212d31214543a8a30946acd65e66e8/evidence.json` |
+| LSP | **23 diagnostic edits and repairs**, including two lexical Math measured-result repairs; `/tmp/lattice-surface-waypoint-gzPtBT/result.json` |
+
+Companion revisions: lattice-vscode `c4a6e37`, lattice-analyzers `577ed02`.
+Both projections loaded CCS SHA-256
+`f4b6115f8ae6b4e9f3aaa2f6e558650b5192091a921c8341ff8ab89f981f1e86`.
+The active CAC handoff and unchanged transport/grammar revisions still apply.
+
+The [prospective math oracle and prerequisite record](../tests/NativeMath/README.md)
+is explicitly unregistered and has not passed native compilation. There is no
+new math witness in this checkpoint. Scalar real selection and a typed target
+provider must be settled upstream; existing `Fixed64`, record `SettledSlot.Real`
+and a link declaration alone do not constitute that call contract. The record
+pins the relevant roadmap and concrete missing facts before implementation.
+
 ## C-04 optional iteration and unit-valued conditionals — 2026-09-20
 
 Clef `1c20fad11` adds `Option.iter` through a fresh native scheme and the existing

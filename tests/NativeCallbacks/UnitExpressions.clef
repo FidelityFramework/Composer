@@ -1,0 +1,88 @@
+module UnitExpressions
+
+let mutable private trace: int = 0
+let private record digit = trace <- trace * 10 + digit
+let private consumeUnit (_value: unit) = record 9
+
+let private input present =
+    record 1
+    if present then Some 7 else None
+
+let private directMatch present =
+    trace <- 0
+    consumeUnit (
+        match input present with
+        | Some _ -> record 2
+        | None -> record 3)
+    trace = (if present then 129 else 139)
+
+let private storedMatch () =
+    trace <- 0
+    let saved: unit =
+        match 2 with
+        | 0 -> record 4
+        | 2 -> record 5
+        | _ -> record 6
+    let formedOnce = trace = 5
+    consumeUnit saved
+    consumeUnit saved
+    formedOnce && trace = 599
+
+let private nestedMatch selected =
+    trace <- 0
+    consumeUnit (
+        if selected then
+            match Some 7 with
+            | Some _ -> record 4
+            | None -> record 5
+        else
+            match None with
+            | Some (_: int) -> record 6
+            | None -> record 7)
+    trace = (if selected then 49 else 79)
+
+let private directWhile limit =
+    trace <- 0
+    let mutable iteration: int = 0
+    consumeUnit (
+        while iteration < limit do
+            record 2
+            iteration <- iteration + 1)
+    iteration = limit && trace = (if limit = 0 then 9 else 229)
+
+let private storedWhile () =
+    trace <- 0
+    let mutable iteration: int = 0
+    let saved: unit =
+        while iteration < 3 do
+            record 3
+            iteration <- iteration + 1
+    let formedOnce = iteration = 3 && trace = 333
+    consumeUnit saved
+    consumeUnit saved
+    formedOnce && iteration = 3 && trace = 33399
+
+let private nestedWhile selected =
+    trace <- 0
+    let mutable iteration: int = 0
+    consumeUnit (
+        if selected then
+            while iteration < 2 do
+                record 6
+                iteration <- iteration + 1
+        else
+            while iteration < 0 do
+                record 7
+                iteration <- iteration + 1)
+    if selected then iteration = 2 && trace = 669
+    else iteration = 0 && trace = 9
+
+[<EntryPoint>]
+let main _ =
+    if not (directMatch true && directMatch false) then 61
+    elif not (storedMatch ()) then 62
+    elif not (nestedMatch true && nestedMatch false) then 63
+    elif not (directWhile 2 && directWhile 0) then 64
+    elif not (storedWhile ()) then 65
+    elif not (nestedWhile true && nestedWhile false) then 66
+    else 0

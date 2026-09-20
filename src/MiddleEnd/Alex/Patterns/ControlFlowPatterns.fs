@@ -170,11 +170,15 @@ let pBuildConditional (condSSA: SSA)
             return ([ifOp], TRVoid)
     }
 
-/// While loop via SCF.While
-let pBuildWhileLoop (condOps: MLIROp list) (bodyOps: MLIROp list) : PSGParser<MLIROp list> =
+/// While regions with their terminators. The loop itself returns no SSA;
+/// a settled unit expression composes the canonical unit-result pattern.
+let pBuildWhileLoop (condSSA: SSA) (condOps: MLIROp list) (bodyOps: MLIROp list)
+                    : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! whileOp = pSCFWhile condOps bodyOps
-        return [whileOp]
+        let! condition = pSCFCondition condSSA []
+        let! yieldOp = pSCFYield []
+        let! whileOp = pSCFWhile (condOps @ [condition]) (bodyOps @ [yieldOp])
+        return [whileOp], TRVoid
     }
 
 /// For loop via SCF.For

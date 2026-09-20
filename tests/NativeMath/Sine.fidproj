@@ -1,0 +1,18 @@
+[package]
+name = "NativeSine"
+version = "0.1.0"
+description = "Proposed finite dimensionless math.sin native gate"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[link]
+libraries = ["m"]
+
+[build]
+sources = ["Sine.clef"]
+output = "native-sine"
+output_kind = "console"

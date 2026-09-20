@@ -1,0 +1,21 @@
+module NativeSine
+
+// Keep the operation inside a callable body for the retained MLIR gate.
+// Source numeric identity remains dimensionless float.
+let sine (value: float) : float = Math.sin value
+
+[<EntryPoint>]
+let main _ =
+    let positiveZero = sine 0.0
+    let negativeZero = sine (-0.0)
+    let positiveQuarter = sine 0.25
+    let negativeQuarter = sine (-0.25)
+    let oddResidual = positiveQuarter + negativeQuarter
+    if positiveZero <> 0.0 then 1
+    elif negativeZero <> 0.0 then 2
+    elif not (positiveQuarter > 0.2474039 && positiveQuarter < 0.2474040) then 3
+    elif not (negativeQuarter > -0.2474040 && negativeQuarter < -0.2474039) then 4
+    elif not (oddResidual > -0.0000001 && oddResidual < 0.0000001) then 5
+    else
+        Console.writeln "math.sin finite scalar: pass"
+        0

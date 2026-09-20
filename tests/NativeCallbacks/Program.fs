@@ -6,6 +6,7 @@ open System.Security.Cryptography
 open System.Text.Json
 
 let cases = [
+    "UnitExpressions", "UnitExpressions.clef", "unit-expressions", ["scf.if";"scf.while";"func.call @UnitExpressions.consumeUnit"]
     "OptionIteration", "OptionIteration.clef", "option-iteration", ["scf.if";"func.call_indirect"]
     "CallEffects", "CallEffects.clef", "call-effects", ["func.call_indirect";"scf.if"]
     "OptionAlternatives", "OptionAlternatives.clef", "option-alternatives", ["scf.if";"func.call_indirect"]

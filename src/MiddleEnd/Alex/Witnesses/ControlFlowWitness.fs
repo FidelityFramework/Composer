@@ -26,7 +26,6 @@ open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
 
 open Alex.Patterns.ControlFlowPatterns
-open Alex.Elements.SCFElements
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Y-COMBINATOR PATTERN
@@ -165,22 +164,15 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                 WitnessOutput.error "WhileLoop: Condition witnessed but no result"
             | Some (condSSA, _) ->
                 trace "[ControlFlowWitness] WhileLoop: Building scf.while with condition SSA %A" condSSA
-                // Build scf.condition and scf.yield terminators
-                match tryMatchWithDiagnostics (pSCFCondition condSSA []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Result.Ok (condTerminator, _) ->
-                    let condOpsWithTerminator = condOps @ [condTerminator]
-
-                    match tryMatchWithDiagnostics (pSCFYield []) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Result.Ok (yieldTerminator, _) ->
-                        let bodyOpsWithTerminator = bodyOps @ [yieldTerminator]
-
-                        match tryMatchWithDiagnostics (pBuildWhileLoop condOpsWithTerminator bodyOpsWithTerminator) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Result.Ok (ops, _) ->
-                            trace "[ControlFlowWitness] WhileLoop: Successfully built scf.while"
-                            { InlineOps = ops; TopLevelOps = []; Result = TRVoid }
-                        | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop: {diagnostic}"
-                    | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop yield: {diagnostic}"
-                | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop condition: {diagnostic}"
+                let loop = pBuildWhileLoop condSSA condOps bodyOps
+                let pattern =
+                    if Alex.Traversal.Values.isUnitTyped node.Type then
+                        Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id loop
+                    else loop
+                match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) ->
+                    { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic -> WitnessOutput.error $"WhileLoop: {diagnostic}"
 
         | None ->
             match tryMatch pForLoop ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

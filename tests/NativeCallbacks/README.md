@@ -42,6 +42,12 @@ directions, stored action snapshots, shared captured cells, independently
 specialized bare aliases and measured, record and function payloads. Bound,
 consumed and discarded unit results retain the original effects.
 
+`UnitExpressions` consumes unit-valued matches and while loops as direct
+arguments, stored values and nested conditional results. Six groups (exit codes
+61–66) check exact ordered effects, both match branches, empty and repeated loop
+execution, and reuse of stored unit values without repeating their effects.
+The retained MLIR must contain `scf.if`, `scf.while` and the unit-consuming call.
+
 `OptionAlternatives` checks `orElse` and `orElseWith`, which retain the optional
 result. Its 25 groups (exit codes 231–255) cover both branches, empty alternatives,
 eager operand formation, deferred invocation, both pipe directions, partial
