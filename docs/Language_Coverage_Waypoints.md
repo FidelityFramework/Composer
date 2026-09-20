@@ -7,6 +7,42 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-02/C-06 computation admission — 2026-09-20
+
+The checker previously erased unsupported computation syntax into ordinary
+applications, sequences, matches, loops or payloads. All 28 new negative cases
+were accepted before this correction. The public compiler also compiled
+`builder { return 7 }` with a plain identity function into MLIR and a native
+executable; `/tmp/composer-source-admission-c8d40278c30a44f39a48e9a4ea4b8c36/`
+retains that failing rejection gate.
+
+Unsupported builder bodies, bind/bang/return forms, unowned yields and resource
+use now produce located CCS8401 diagnostics and Error/TError graph nodes before
+their meaning can be erased. Ordinary function, lambda and lazy bodies clear
+inherited sequence context; a nested sequence establishes its own context.
+Lexically bound `seq` values resolve normally. The obsolete `match!` erasure
+helper was removed. This is an admission correction; general native builder
+dispatch and resource lifecycle elaboration remain implementation work.
+
+| Gate | Result |
+|---|---|
+| CCS | **622/622**: 28 exact negative cases and eight preserved native-seq/ordinary controls; `/tmp/clef-computation-admission-full.log` |
+| Public Composer | **8/8 SourceAdmission cases**: seven exact file/line/code/message rejections, each with no MLIR or native executable; ordinary FP control verifies with stock MLIR and executes with exact output. `/tmp/composer-source-admission-5be5c33c867b4e34adcbef88a548ae99/` |
+| FidelityHello | **11b_LoopCaptures passes** compilation, exact output and native exit; `/tmp/composer-computation-admission-fidelityhello.log` |
+| Analyzer projection | **29 accepted / 37 exact rejections**; `/tmp/lattice-ccs-surface-1d2c1bece70b432fac24e684bc8c34de/evidence.json` |
+| LSP | **41 diagnostic edits and repairs**, including four exact CE errors and repaired `seq<int<m>>`/unit views; `/tmp/lattice-surface-waypoint-zWfGY8/result.json` |
+
+CLI output exposes the diagnostic start line; CCS and LSP additionally check
+the full source span. Both final tooling gates loaded CCS SHA-256
+`57442252f6c09df482ae88ecc3341cd1832af2645e148229cc67da6820950953`.
+Alex, solver transfer and target representation are unchanged. Existing native
+sequence source admission does not establish complete element/delegation typing,
+sequence owner/frame/formal settlement or native sequence conformance. Those
+remain distinct C-06 work; no new frame or lifetime proof is claimed here.
+
+Companion revisions are clef `558f2a2ab`, lattice-analyzers `fdc7b3d`,
+lattice-vscode `75288af` and CAC `958c5176`, paired with this Composer checkpoint.
+
 ## F-09 Result defaults and iteration — 2026-09-20
 
 Specification `82cd330` adds `Result.defaultValue`, `Result.defaultWith` and

@@ -87,15 +87,16 @@ uses remain outstanding. Their existing conformance cases should be reused.
 
 ## 3. Shared environment, CEs and scheduling
 
-The CE finding in this review is an admission defect, not an implemented general
-CE facility. The parser represents CE syntax, but the current checker can erase
-its distinctions: a non-seq computation body becomes `Sequential`, return forms
-become their payload, and `do!` becomes a unit-typed sequence. Consequently a
-plain identity function can be accepted in builder position. These source
-acceptances establish no builder resolution, bind/delay semantics or suspension
-recipe. Existing special handling for `seq` is separate. The functional and
-shared-environment prerequisites in completion §14 remain in force. See
-[checker handling](../../clef/src/Compiler/NativeTypedTree/NativeService.fs).
+The review found an admission defect: non-seq computation bodies became
+`Sequential`, return forms became their payload, and `do!` became a unit-typed
+sequence. A plain identity function could therefore pass as a builder. The
+2026-09-20 [computation admission waypoint](Language_Coverage_Waypoints.md)
+closes that false acceptance with located CCS8401 errors before semantic
+erasure, including unsupported resource use and inherited yield context across
+ordinary deferred boundaries. Existing native `seq` source handling remains
+separate. General builder resolution, bind/delay semantics and suspension still
+require the functional and shared-environment prerequisites in completion §14.
+See [checker handling](../../clef/src/Compiler/NativeTypedTree/NativeService.fs).
 
 C-01 §14 and the [closure contract](../../clef-lang-spec/spec/closure-representation.md)
 already define closure environment, continuation frame and actor state as
