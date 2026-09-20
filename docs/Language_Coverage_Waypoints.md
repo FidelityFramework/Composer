@@ -7,6 +7,40 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06 sequence owner and element constraints — 2026-09-20
+
+Sequence elaboration creates the actual owner before checking its body. Each
+`yield` constrains that owner's element type; `yield!` constrains its operand to
+the owner's sequence type. Nested sequences create independent owners. Completing
+the owner preserves its identity and replaces its temporary body reference and
+children together. This replaces inference from the first descendant yield.
+
+The baseline accepted all 14 invalid element/delegation cases and inferred four
+outer sequence types from nested sequences. All 18 regressions now pass, alongside
+accepted dimensional, nested and typed-empty controls and an exact annotation
+conflict. The source fixture checks both the shared constraints and completed
+owner/child/parent relationships.
+
+| Gate | Result |
+|---|---|
+| CCS | **652/652**, including 30 sequence cases; `/tmp/clef-sequence-elements-full.log` |
+| Public Composer | Three new exact rejections with no MLIR/executable, plus ordinary FP control with stock MLIR verification and native execution. Mixed dimensions/control: `/tmp/composer-source-admission-c078a06c55c14a478711e78e15e78a59/`; scalar delegation/annotation: `/tmp/composer-source-admission-324e9f34511f4b799df3dd97b86fd9fa/` |
+| FidelityHello | **11b_LoopCaptures passes** compilation, exact output and native exit; `/tmp/composer-sequence-elements-fidelityhello.log` |
+| Analyzer projection | **30 accepted / 40 exact rejections**, revisions 1–85; `/tmp/lattice-ccs-surface-02670ff7e1ac411cb37190521d74fb74/evidence.json` |
+| LSP | **44 diagnostic edits and repairs**, including three sequence repairs and independent outer `seq<int<m>>` / inner `seq<bool>` hovers; `/tmp/lattice-surface-waypoint-KmwzZQ/result.json` |
+
+Two initial CLI expectations used a short embedded filename; project diagnostics
+carry the absolute source path. Correcting those exact expectations passed on
+the same binaries. Both tooling gates loaded CCS SHA-256
+`44f1fb2af812e9f7ea81e0ea1708198e57b8b54a14a41c5488338e8c03db3aa5`.
+
+This implements the element constraint portion of C-06. The existing MoveNext
+formal placeholder, interim frame representation, residence/lifetime obligations
+and native sequence execution remain separate work. Alex is unchanged.
+
+Companion revisions: clef `934c36365`, lattice-analyzers `3814567`,
+lattice-vscode `b4cc636`, CAC `a4da7f23`.
+
 ## C-02/C-06 computation admission — 2026-09-20
 
 The checker previously erased unsupported computation syntax into ordinary

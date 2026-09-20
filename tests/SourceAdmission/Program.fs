@@ -5,7 +5,7 @@ open System.IO
 open System.Security.Cryptography
 open System.Text.Json
 
-type Case = { Name: string; Source: string; ErrorLine: int; ErrorMessage: string }
+type Case = { Name: string; Source: string; ErrorLine: int; ErrorCode: string; ErrorMessage: string }
 type Evidence = {
     Name: string
     Passed: bool
@@ -22,7 +22,18 @@ let private builderCase name expression = {
     Source = source (["module Admission"; "let builder value = value"; "[<EntryPoint>]"; "let main _ ="]
                      @ expression @ ["    if answer = 7 then 0 else 1"])
     ErrorLine = 5
+    ErrorCode = "CCS8401"
     ErrorMessage = "This computation expression has no admitted native builder semantics"
+}
+
+let private sequenceCase name code line message expressions = {
+    Name = name
+    Source = source (["module Admission"; "[<Measure>] type m"; "[<Measure>] type s";
+                      "[<EntryPoint>]"; "let main _ ="]
+                     @ expressions @ ["    ignore wrong"; "    0"])
+    ErrorLine = line
+    ErrorCode = code
+    ErrorMessage = message
 }
 
 let cases = [
@@ -39,7 +50,7 @@ let cases = [
         "        return 7"
         "    }"
     ]
-    { Name = "shadowed-seq"; ErrorLine = 5
+    { Name = "shadowed-seq"; ErrorLine = 5; ErrorCode = "CCS8401"
       ErrorMessage = "This computation expression has no admitted native builder semantics"; Source = source [
         "module Admission"
         "let seq value = value"
@@ -49,21 +60,30 @@ let cases = [
         "    ignore answer"
         "    0"
     ] }
-    { Name = "unowned-return"; ErrorLine = 4
+    { Name = "unowned-return"; ErrorLine = 4; ErrorCode = "CCS8401"
       ErrorMessage = "The 'return' form has no admitted native computation owner"; Source = source [
         "module Admission"; "[<EntryPoint>]"; "let main _ ="; "    return 7"
     ] }
-    { Name = "unowned-yield"; ErrorLine = 4
+    { Name = "unowned-yield"; ErrorLine = 4; ErrorCode = "CCS8401"
       ErrorMessage = "The 'yield' form requires an enclosing native seq expression"; Source = source [
         "module Admission"; "[<EntryPoint>]"; "let main _ ="; "    yield 7"
     ] }
-    { Name = "unowned-resource-use"; ErrorLine = 4
+    { Name = "unowned-resource-use"; ErrorLine = 4; ErrorCode = "CCS8401"
       ErrorMessage = "Resource-use bindings require an admitted native resource lifecycle"; Source = source [
         "module Admission"; "[<EntryPoint>]"; "let main _ ="
         "    use value = 7"
         "    if value = 7 then 0 else 1"
     ] }
-    { Name = "ordinary-control"; ErrorLine = 0; ErrorMessage = ""; Source = source [
+    sequenceCase "sequence-mixed-dimensions" "CCS8040" 6
+        "Measure mismatch: 'm' vs 's'; the residual 'm / s' is not 1"
+        ["    let wrong = seq { yield 1<m>; yield 2<s> }"]
+    sequenceCase "sequence-scalar-delegation" "CCS8003" 6
+        "Type mismatch at {source}(6,31): expected 'seq<int>', got 'int'"
+        ["    let wrong = seq { yield 1; yield! 42 }"]
+    sequenceCase "sequence-delegation-annotation" "CCS8003" 7
+        "Type mismatch at {source}(7,27): expected 'int', got 'bool'"
+        ["    let ints = seq { yield 1 }"; "    let wrong: seq<bool> = seq { yield! ints }"]
+    { Name = "ordinary-control"; ErrorLine = 0; ErrorCode = ""; ErrorMessage = ""; Source = source [
         "module Admission"
         "let increment value = value + 1"
         "[<EntryPoint>]"
@@ -82,7 +102,8 @@ let cases = [
 let private check compiler platform work (test: Case) =
     let directory = Path.Combine(work, test.Name)
     Directory.CreateDirectory directory |> ignore
-    File.WriteAllText(Path.Combine(directory, "Main.clef"), test.Source)
+    let sourceFile = Path.Combine(directory, "Main.clef")
+    File.WriteAllText(sourceFile, test.Source)
     let project = Path.Combine(directory, "Admission.fidproj")
     File.WriteAllText(project, source [
         "[package]"; "name = \"Admission\""; "version = \"0.1.0\""
@@ -90,7 +111,10 @@ let private check compiler platform work (test: Case) =
         "[dependencies]"; "platform = { path = " + JsonSerializer.Serialize(platform: string) + " }"
         "[build]"; "sources = [\"Main.clef\"]"; "output = \"admission\""; "output_kind = \"console\""
     ])
-    let expected = if test.ErrorLine = 0 then "" else sprintf "Main.clef:%d: error CCS8401: %s" test.ErrorLine test.ErrorMessage
+    // The CLI prefix is project-relative; a type mismatch's embedded source
+    // range retains the absolute filename passed to CCS by the project loader.
+    let message = test.ErrorMessage.Replace("{source}", sourceFile)
+    let expected = if test.ErrorLine = 0 then "" else sprintf "Main.clef:%d: error %s: %s" test.ErrorLine test.ErrorCode message
     let mutable compileExit, verifyExit, nativeExit = -1, -1, -1
     let mutable failure = ""
     try

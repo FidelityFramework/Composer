@@ -20,17 +20,23 @@ dotnet run --project tests/SourceAdmission/SourceAdmission.Tests.fsproj -- src/b
 
 Seven negative cases cover a plain function used with CE return, let! or do!, a
 lexically shadowed `seq`, return/yield outside an owning computation, and an
-ordinary `use` binding without an admitted resource lifecycle. Each
-requires exit 1, exactly one effective `CCS8401` diagnostic with its exact message
-at the expected project-relative filename and start line, the single-error source-gate summary,
+ordinary `use` binding without an admitted resource lifecycle (`CCS8401`). Three
+sequence typing cases reject incompatible yielded dimensions (`CCS8040`), a
+scalar `yield!` operand, and a yield!-only result contradicting its annotation
+(`CCS8003`). Each negative requires exit 1, exactly one effective diagnostic
+with its expected code and exact message at the expected project-relative
+filename and start line, the single-error source-gate summary,
 and absence of a native executable or witnessed MLIR. An unrelated nonzero exit
 does not pass. The CLI currently prints only the start line; complete start/end
 spans remain the responsibility of CCS and editor projection tests.
+Type-mismatch messages also embed the source path and start column; the harness
+substitutes the generated absolute source filename into that exact expectation.
 
 The positive control combines ordinary function calls, `Result.iter` and a
 counted loop. It must compile, pass stock `mlir-opt --verify-each`, exit zero and
 produce exact output. Existing intrinsic `seq` remains a separate source-only
-admission control; this gate does not claim that native sequence frames work.
+admission control; successful sequence type and graph checks live in CCS and
+editor tests. This gate does not claim that native sequence frames work.
 
 Each run retains source, projects, logs and compiler hashes in its printed
 temporary directory. `evidence.json` records every selected result, including
