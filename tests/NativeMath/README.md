@@ -141,7 +141,9 @@ rounding proof. Pending or unsupported premises must not become Alex defaults.
 - CCS admission of `Math.sin 0.25`, rejecting a measured argument such as
   `Math.sin 1.0<distance>`, integer/bool arguments, and scalar overapplication;
   preserve the public effective diagnostic code and complete source span.
-  These are proposed cases; their results and exact diagnostic spans are untested.
+  Clef `40cabe767` now gates this source boundary in `MathSineCases.fs` (17
+  cases, including nine exact negatives and lexical-name precedence). That source
+  result does not establish this fixture's native realization.
 - Missing/unresolved selection or unsupported capability must not produce a
   guessed float representation. A missing recalled operand gets a specific Alex
   component diagnostic. Existing literal evidence remains attached unchanged.

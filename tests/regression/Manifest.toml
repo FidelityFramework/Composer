@@ -207,6 +207,23 @@ Unit results and effects: pass
 """
 
 # =============================================================================
+# Sample 08e: OptionFolds
+# Independent state/payload types, fold order and retained partial operands
+# =============================================================================
+[[samples]]
+name = "08e_OptionFolds"
+project = "OptionFolds.fidproj"
+binary = "targets/optionfolds"
+expected_output = """
+=== Option folds Test ===
+Callback order and empty state: pass
+Factory and pipe order: pass
+Stored operands and shared captures: pass
+Independent measured state: pass
+Function-valued state: pass
+"""
+
+# =============================================================================
 # Sample 09: Result
 # Result type, error handling
 # =============================================================================

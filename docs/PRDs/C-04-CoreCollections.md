@@ -401,6 +401,8 @@ Option already exists but needs these operations:
 | `Option.orElse` | `Option<'T> -> Option<'T> -> Option<'T>` | Retain Some or select eager optional fallback |
 | `Option.orElseWith` | `(unit -> Option<'T>) -> Option<'T> -> Option<'T>` | Invoke optional fallback producer only for None |
 | `Option.iter` | `('T -> unit) -> Option<'T> -> unit` | Evaluate both operands eagerly; invoke the action only for Some |
+| `Option.fold` | `('State -> 'T -> 'State) -> 'State -> Option<'T> -> 'State` | Some applies folder to state then payload; None retains state |
+| `Option.foldBack` | `('T -> 'State -> 'State) -> Option<'T> -> 'State -> 'State` | Some applies folder to payload then state; None retains state |
 | `Option.filter` | `('T -> bool) -> Option<'T> -> Option<'T>` | Retain Some when the predicate holds |
 | `Option.exists` | `('T -> bool) -> Option<'T> -> bool` | False for None; test Some |
 | `Option.forall` | `('T -> bool) -> Option<'T> -> bool` | True for None; test Some |

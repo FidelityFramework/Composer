@@ -1,0 +1,64 @@
+module CountedLoops
+
+let mutable private trace: int = 0
+let mutable private values: int = 0
+let mutable private starts: int = 0
+let mutable private finishes: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private reset () =
+    trace <- 0
+    values <- 0
+    starts <- 0
+    finishes <- 0
+
+let private startBound value =
+    record 1
+    starts <- starts + 1
+    value
+
+let private finishBound value =
+    record 2
+    finishes <- finishes + 1
+    value
+
+let private visit value =
+    record 3
+    values <- values * 10 + value
+
+let private consumeUnit (_value: unit) = record 9
+
+[<EntryPoint>]
+let main _ =
+    reset ()
+    consumeUnit (
+        for value = startBound 1 to finishBound 3 do
+            visit value)
+    let upwardOk = trace = 123339 && values = 123 && starts = 1 && finishes = 1
+
+    reset ()
+    consumeUnit (
+        for value = startBound 3 to finishBound 1 do
+            visit value)
+    let emptyUpwardOk = trace = 129 && values = 0 && starts = 1 && finishes = 1
+
+    reset ()
+    let saved: unit =
+        for value = startBound 3 downto finishBound 1 do
+            visit value
+    let formedOnce = trace = 12333 && values = 321 && starts = 1 && finishes = 1
+    consumeUnit saved
+    consumeUnit saved
+    let downwardOk = formedOnce && trace = 1233399 && values = 321 && starts = 1 && finishes = 1
+
+    reset ()
+    consumeUnit (
+        for value = startBound 1 downto finishBound 3 do
+            visit value)
+    let emptyDownwardOk = trace = 129 && values = 0 && starts = 1 && finishes = 1
+
+    if not upwardOk then 181
+    elif not emptyUpwardOk then 182
+    elif not downwardOk then 183
+    elif not emptyDownwardOk then 184
+    else 0

@@ -1,0 +1,88 @@
+/// Sample 08e: optional folds preserve independent state and payload contracts.
+module OptionFoldsSample
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeFolder () =
+    record 1
+    fun state value -> record 4; state * 10 + value
+
+let private makeBackFolder () =
+    record 1
+    fun value state -> record 4; value * 10 + state
+
+let private initial () = record 2; 5
+let private argument present = record 3; if present then Some 7 else None
+let accumulate = Option.fold
+let accumulateBack = Option.foldBack
+
+[<EntryPoint>]
+let main _ =
+    calls <- 0
+    let folder = fun state value -> calls <- calls + 1; state * 10 + value
+    let backFolder = fun value state -> calls <- calls + 1; value * 10 + state
+    let some = Option.fold folder 5 (Some 7)
+    let none = Option.fold folder 5 None
+    let backSome = Option.foldBack backFolder (Some 7) 5
+    let backNone = Option.foldBack backFolder None 5
+    let optionalOk = some = 57 && none = 5 && backSome = 75 && backNone = 5 && calls = 2
+
+    trace <- 0
+    let forward = argument true |> Option.fold (makeFolder ()) (initial ())
+    let forwardOk = forward = 57 && trace = 3124
+    trace <- 0
+    let backward = Option.foldBack (makeBackFolder ()) (argument true) <| initial ()
+    let backwardOk = backward = 75 && trace = 1324
+    trace <- 0
+    let empty = Option.fold (makeFolder ()) (initial ()) (argument false)
+    let orderOk = forwardOk && backwardOk && empty = 5 && trace = 123
+
+    let mutable scale: int = 2
+    let mutable observed: int = 0
+    let mutable selected = fun state value -> observed <- observed + 1; state + scale * value
+    let mutable seed: int = 5
+    let stored = Option.fold selected seed
+    selected <- fun state value -> state + value * 10
+    seed <- 9
+    scale <- 3
+    let storedValue = stored (Some 4)
+    let storedEmpty = stored None
+    let mutable chosen = Some 7
+    let storedBack = Option.foldBack (fun value state -> value * 10 + state) chosen
+    chosen <- Some 8
+    let storedBackValue = storedBack 5
+    let storedOk = storedValue = 17 && storedEmpty = 5 && storedBackValue = 75 && observed = 1 && seed = 9
+
+    let length = accumulate (fun state value -> if value = 3<duration> then state + 2<distance> else state) 1<distance> (Some 3<duration>)
+    let elapsed = accumulate (fun state value -> if value = 2<distance> then state + 3<duration> else state) 1<duration> (Some 2<distance>)
+    let rate = accumulateBack (fun value state -> if value = 2<distance> then state + 0.25<1/duration> else state) (Some 2<distance>) 0.25<1/duration>
+    let measuredOk = length = 3<distance> && elapsed = 4<duration> && rate = 0.5<1/duration>
+
+    // A function-valued state is applied after the three-operand fold boundary.
+    calls <- 0
+    let baseState = fun value -> calls <- calls + 1; value + 10
+    let combined = Option.fold (fun state payload -> fun value -> state value + payload) baseState (Some 7) 2
+    let unchanged = Option.foldBack (fun payload state -> fun value -> state value + payload) None baseState 2
+    let functionStateOk = combined = 19 && unchanged = 12 && calls = 2
+
+    if not optionalOk then 1
+    elif not orderOk then 2
+    elif not storedOk then 3
+    elif not measuredOk then 4
+    elif not functionStateOk then 5
+    else
+        Console.writeln "=== Option folds Test ==="
+        Console.writeln "Callback order and empty state: pass"
+        Console.writeln "Factory and pipe order: pass"
+        Console.writeln "Stored operands and shared captures: pass"
+        Console.writeln "Independent measured state: pass"
+        Console.writeln "Function-valued state: pass"
+        0

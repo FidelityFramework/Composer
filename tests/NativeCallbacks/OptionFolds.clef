@@ -1,0 +1,172 @@
+module OptionFolds
+
+[<Measure>]
+type distance
+
+[<Measure>]
+type duration
+
+type Config = { Enabled: bool; Offset: int }
+
+let mutable private trace: int = 0
+let mutable private calls: int = 0
+let private record digit = trace <- trace * 10 + digit
+
+let private makeFolder () =
+    record 1
+    fun state value -> record 4; state * 10 + value
+
+let private makeBackFolder () =
+    record 1
+    fun value state -> record 4; value * 10 + state
+
+let private initial () = record 2; 5
+let private argument present = record 3; if present then Some 7 else None
+
+let private functionState () =
+    record 2
+    fun value -> record 5; value + 10
+
+let private makeFunctionFolder () =
+    record 1
+    fun state payload -> record 4; fun value -> state value + payload
+
+let private makeFunctionBackFolder () =
+    record 1
+    fun payload state -> record 4; fun value -> state value + payload
+
+let private extraArgument () = record 6; 2
+let accumulate = Option.fold
+let accumulateBack = Option.foldBack
+
+[<EntryPoint>]
+let main _ =
+    calls <- 0
+    let folder = fun state value -> calls <- calls + 1; state * 10 + value
+    let folded = Option.fold folder 5 (Some 7)
+    let emptyFold = Option.fold folder 5 None
+    let foldOk = folded = 57 && emptyFold = 5 && calls = 1
+    calls <- 0
+    let backFolder = fun value state -> calls <- calls + 1; value * 10 + state
+    let foldedBack = Option.foldBack backFolder (Some 7) 5
+    let emptyBack = Option.foldBack backFolder None 5
+    let backOk = foldedBack = 75 && emptyBack = 5 && calls = 1
+
+    trace <- 0
+    let direct = Option.fold (makeFolder ()) (initial ()) (argument true)
+    let directSomeOk = direct = 57 && trace = 1234
+    trace <- 0
+    let directEmpty = Option.fold (makeFolder ()) (initial ()) (argument false)
+    let directOk = directSomeOk && directEmpty = 5 && trace = 123
+    trace <- 0
+    let directBack = Option.foldBack (makeBackFolder ()) (argument true) (initial ())
+    let directBackSomeOk = directBack = 75 && trace = 1324
+    trace <- 0
+    let directBackEmpty = Option.foldBack (makeBackFolder ()) (argument false) (initial ())
+    let directBackOk = directBackSomeOk && directBackEmpty = 5 && trace = 132
+
+    trace <- 0
+    let forward = argument true |> Option.fold (makeFolder ()) (initial ())
+    let forwardOk = forward = 57 && trace = 3124
+    trace <- 0
+    let backward = Option.fold (makeFolder ()) (initial ()) <| argument true
+    let foldPipesOk = forwardOk && backward = 57 && trace = 1234
+    trace <- 0
+    let backForward = initial () |> Option.foldBack (makeBackFolder ()) (argument true)
+    let backForwardOk = backForward = 75 && trace = 2134
+    trace <- 0
+    let backBackward = Option.foldBack (makeBackFolder ()) (argument true) <| initial ()
+    let backPipesOk = backForwardOk && backBackward = 75 && trace = 1324
+
+    // Each partial frontier evaluates its supplied operands exactly once.
+    trace <- 0
+    let withFolder = Option.fold (makeFolder ())
+    let firstFrontierOk = trace = 1
+    let withState = withFolder (initial ())
+    let secondFrontierOk = trace = 12
+    let partialSome = withState (argument true)
+    let partialSomeOk = partialSome = 57 && trace = 1234
+    let partialEmpty = withState None
+    let partialOk = firstFrontierOk && secondFrontierOk && partialSomeOk && partialEmpty = 5 && trace = 1234
+    trace <- 0
+    let withBackFolder = Option.foldBack (makeBackFolder ())
+    let backFirstFrontierOk = trace = 1
+    let withOption = withBackFolder (argument true)
+    let backSecondFrontierOk = trace = 13
+    let partialBack = withOption (initial ())
+    let backPartialOk = backFirstFrontierOk && backSecondFrontierOk && partialBack = 75 && trace = 1324
+
+    // Snapshot function values and already supplied state/option values.
+    let mutable selected = fun state value -> state * 10 + value
+    let mutable seed: int = 5
+    let frozen = Option.fold selected seed
+    selected <- fun state value -> state + value
+    seed <- 9
+    let mutable backSelected = fun value state -> value * 10 + state
+    let mutable chosen = Some 7
+    let backFrozen = Option.foldBack backSelected chosen
+    backSelected <- fun value state -> value + state
+    chosen <- Some 8
+    let snapshotOk = frozen (Some 7) = 57 && frozen None = 5 && backFrozen 5 = 75 && seed = 9
+
+    // Captured cells stay shared after a partial retains its anonymous callback.
+    let mutable scale: int = 2
+    let mutable observed: int = 0
+    let captured = Option.fold (fun state value -> observed <- observed + 1; state + scale * value) 5
+    let backCaptured = Option.foldBack (fun value state -> observed <- observed + 1; state + scale * value) (Some 2)
+    scale <- 3
+    let capturedValue = captured (Some 4)
+    let capturedEmpty = captured None
+    let capturedBackValue = backCaptured 5
+    let capturesOk = capturedValue = 17 && capturedEmpty = 5 && capturedBackValue = 11 && observed = 2
+
+    // State and payload dimensions are independent at each bare-alias use.
+    let length = accumulate (fun state value -> if value = 3<duration> then state + 2<distance> else state) 1<distance> (Some 3<duration>)
+    let elapsed = accumulate (fun state value -> if value = 2<distance> then state + 3<duration> else state) 1<duration> (Some 2<distance>)
+    let backLength = accumulateBack (fun value state -> if value = 3<duration> then state + 2<distance> else state) (Some 3<duration>) 1<distance>
+    let backElapsed = accumulateBack (fun value state -> if value = 2<distance> then state + 3<duration> else state) (Some 2<distance>) 1<duration>
+    let dimensionsOk = length = 3<distance> && elapsed = 4<duration> && backLength = 3<distance> && backElapsed = 4<duration>
+    let realState = accumulate (fun state rate -> if rate = 0.25<1/duration> then state + 1.0<distance> else state) 2.0<distance> (Some 0.25<1/duration>)
+    let inverseState = accumulateBack (fun value state -> if value = 2<distance> then state + 0.25<1/duration> else state) (Some 2<distance>) 0.25<1/duration>
+    let realDimensionsOk = realState = 3.0<distance> && inverseState = 0.5<1/duration>
+
+    let config = { Enabled = true; Offset = 6 }
+    let fromRecord = accumulate (fun state (value: Config) -> if value.Enabled then state + value.Offset else state) 2 (Some config)
+    let fromFunction = accumulateBack (fun work state -> state + work 2) (Some (fun value -> value + 20)) 3
+    let keptRecord = accumulate (fun (state: Config) value -> { Enabled = state.Enabled; Offset = state.Offset + value }) config None
+    let payloadsOk = fromRecord = 8 && fromFunction = 25 && keptRecord.Enabled && keptRecord.Offset = 6
+    calls <- 0
+    let unitResult = accumulate (fun state () -> calls <- calls + 1; state + 1) 4 (Some ())
+    let unitEmpty = accumulateBack (fun () state -> calls <- calls + 1; state + 1) None 4
+    let unitOk = unitResult = 5 && unitEmpty = 4 && calls = 1
+
+    // Extra arguments are evaluated before the fold body; returned state is then applied.
+    trace <- 0
+    let applied = Option.fold (makeFunctionFolder ()) (functionState ()) (argument true) (extraArgument ())
+    let appliedSomeOk = applied = 19 && trace = 123645
+    trace <- 0
+    let appliedEmpty = Option.fold (makeFunctionFolder ()) (functionState ()) (argument false) (extraArgument ())
+    let appliedEmptyOk = appliedEmpty = 12 && trace = 12365
+    trace <- 0
+    let appliedBack = Option.foldBack (makeFunctionBackFolder ()) (argument true) (functionState ()) (extraArgument ())
+    let appliedBackOk = appliedBack = 19 && trace = 132645
+    trace <- 0
+    let appliedBackEmpty = Option.foldBack (makeFunctionBackFolder ()) (argument false) (functionState ()) (extraArgument ())
+    let functionStateOk = appliedSomeOk && appliedEmptyOk && appliedBackOk && appliedBackEmpty = 12 && trace = 13265
+
+    if not foldOk then 161
+    elif not backOk then 162
+    elif not directOk then 163
+    elif not directBackOk then 164
+    elif not foldPipesOk then 165
+    elif not backPipesOk then 166
+    elif not partialOk then 167
+    elif not backPartialOk then 168
+    elif not snapshotOk then 169
+    elif not capturesOk then 170
+    elif not dimensionsOk then 171
+    elif not realDimensionsOk then 172
+    elif not payloadsOk then 173
+    elif not unitOk then 174
+    elif not functionStateOk then 175
+    else 0

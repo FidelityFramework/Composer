@@ -19,6 +19,16 @@ cases. A selected passing subset does not establish the remaining cases. Each
 retained MLIR module must also pass `mlir-opt --verify-each`; missing tooling is
 a failed gate. The evidence records the executable and compiler assembly hashes.
 
+`CountedLoops` checks once-only start-before-finish evaluation for ascending,
+descending and zero-trip loops, including direct and stored unit consumption.
+Exit codes 181–184 identify the four groups. Source induction-variable
+mutability and per-iteration closure capture remain separate contracts.
+
+`OptionFolds` covers the two callback argument orders, unchanged None state,
+eager operands and pipes, both partial frontiers, snapshots and shared captures,
+independent state/payload dimensions, record/function/unit payloads, and extra
+application of function-valued state. Exit codes 161–175 identify its 15 groups.
+
 `DirectCaptures` checks Baker's immutable direct capture form: repeated calls,
 recursive forwarding, shadowed bindings, nested declarations, returned anonymous
 closures, array descriptors, records, captured function values and inverse

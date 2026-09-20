@@ -7,6 +7,42 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-04 optional folds and counted-bound order — 2026-09-20
+
+Clef `a8c5229df` implements the native fold contracts adopted in specification
+`97a8e08`. `fold` takes folder/state/option; `foldBack` takes folder/option/state.
+State and payload have independent NTU types. Both retain None state, invoke the
+folder once for Some, preserve eager operand order and snapshot both partial
+frontiers. Bare aliases specialize independently. A function-valued state remains
+separate from the operation's three-argument boundary.
+
+The first native fold gate found a missing dominance relationship in completed
+residuals: their shared state reference was first realized inside Some and then
+recalled from None. Four graph tests reproduced the defect. Baker now places the
+residual's local operands before the conditional, preserving their identities.
+The original native expectations pass unchanged; Alex needed no adjustment.
+
+A separate counted-loop oracle found finish-before-start evaluation. The graph
+now orders the start initializer before the finish initializer, as the language
+specifies. Four native groups cover ascending, descending, zero-trip and consumed
+unit results. Induction-variable mutability and per-iteration closure identity
+remain separate work; this correction establishes bound ordering only.
+
+| Gate | Fresh result |
+|---|---|
+| CCS | **482/482**: 44 fold cases (16 exact negatives, four residual-dominance regressions) and two counted-bound graph cases; `/tmp/clef-option-fold-dominance-full.log` |
+| Fold native / MLIR | **15 groups**, fresh executable and stock retained-module verification; `/tmp/composer-callbacks-fsharp-1862255ad1844f5f8e7d3d5eb365401c/` |
+| Counted-loop native / MLIR | **4 groups** passed before the isolated fold-residual correction; `/tmp/composer-callbacks-fsharp-d057c5ef1de041e7a051a6701d25ae67/CountedLoops/`. Its pre-fix reversed-order observations remain in `/tmp/clef-counted-loops-2irghu7t/` |
+| FidelityHello | **08e_OptionFolds** compilation, native exit and exact six-line output pass; `/tmp/composer-option-folds-final-fidelityhello.log` |
+| Analyzer-facing projection | **20 accepted / 22 exact rejections**; `/tmp/lattice-ccs-surface-880ec51c241f4fd2b2207023917230bb/evidence.json` |
+| LSP | **26 diagnostic edits and repairs**, six fold hovers; `/tmp/lattice-surface-waypoint-F342xg/result.json` |
+
+Companion revisions: lattice-vscode `90f1412`, lattice-analyzers `82703c7`,
+ClefAutoComplete `b16bdde8`. Final projection gates loaded CCS SHA-256
+`2e733809e905e6bdb8e0a4a8872709a665a37fb858d10151477a8831b3d04207`.
+The existing Alex, solver-transfer and transport implementations are unchanged;
+their preceding component gates remain applicable.
+
 ## Structured unit results and lexical math identities — 2026-09-20
 
 Alex now preserves unit results for matches and while loops as well as
