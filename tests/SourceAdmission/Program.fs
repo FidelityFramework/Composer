@@ -83,6 +83,12 @@ let cases = [
     sequenceCase "sequence-delegation-annotation" "CCS8003" 7
         "Type mismatch at {source}(7,27): expected 'int', got 'bool'"
         ["    let ints = seq { yield 1 }"; "    let wrong: seq<bool> = seq { yield! ints }"]
+    sequenceCase "sequence-map-dimensions" "CCS8040" 6
+        "Measure mismatch: 'm' vs 's'; the residual 'm / s' is not 1"
+        ["    let wrong = Seq.map (fun (_: int<m>) -> 1<s>) (seq { yield 2<s> })"]
+    sequenceCase "sequence-append-dimensions" "CCS8040" 6
+        "Measure mismatch: 'm' vs 's'; the residual 'm / s' is not 1"
+        ["    let wrong = Seq.append (seq { yield 1<m> }) (seq { yield 2<s> })"]
     { Name = "ordinary-control"; ErrorLine = 0; ErrorCode = ""; ErrorMessage = ""; Source = source [
         "module Admission"
         "let increment value = value + 1"

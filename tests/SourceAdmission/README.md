@@ -23,7 +23,10 @@ lexically shadowed `seq`, return/yield outside an owning computation, and an
 ordinary `use` binding without an admitted resource lifecycle (`CCS8401`). Three
 sequence typing cases reject incompatible yielded dimensions (`CCS8040`), a
 scalar `yield!` operand, and a yield!-only result contradicting its annotation
-(`CCS8003`). Each negative requires exit 1, exactly one effective diagnostic
+(`CCS8003`). Two producer cases reject a `Seq.map` callback whose input dimension
+differs from its sequence, and `Seq.append` inputs with different element
+dimensions (`CCS8040`). Their selectors are `sequence-map-dimensions` and
+`sequence-append-dimensions`. Each negative requires exit 1, exactly one effective diagnostic
 with its expected code and exact message at the expected project-relative
 filename and start line, the single-error source-gate summary,
 and absence of a native executable or witnessed MLIR. An unrelated nonzero exit

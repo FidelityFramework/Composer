@@ -7,6 +7,79 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-06/C-07 producer graph and timing contracts — 2026-09-20
+
+`Seq.map`, `filter`, `collect` and `append` now form immutable snapshots of their
+supplied operands in source argument order. Generator-local references resolve
+to those snapshots. Enumeration and callback invocation remain inside the
+deferred generator: the enumerator is bound at entry, and each current element
+is bound before callback execution. Filter's predicate and yielding branch use
+that same current value. Append captures both inputs eagerly and delegates in
+order within its generator.
+
+The shared sequence ingredient creates the same owner/generator/formal structure
+as source elaboration, preserving parent and canonical parameter relationships.
+Yield and delegation operations have unit type; their payload nodes retain their
+own element/sequence types. The three Map traversal helpers using this ingredient
+now have unit generator bodies, local tree capture references, explicit outer
+formals and tuple children. These helper checks do not establish native Map or
+sentinel representation conformance.
+
+Generated producer nodes carry point source anchors; the replacement expression
+retains the source call's full range. Existing operand ranges and captured storage
+identities remain intact. Normal fan-out/fold-in preserves both the affected
+application obligation's incidence and unrelated proof relationships.
+
+| Gate | Result |
+|---|---|
+| CCS | **697/697**, including eight direct recipe/fold-in cases, four source producer cases, four exact negative cases and three shared tree-helper cases; `/tmp/clef-seq-producers-full.log` |
+| Baseline | **12 intended failures / four passing negative controls** against the previous compiler; `/tmp/clef-seq-producers-before.log`, `/tmp/clef-seq-producers-source-before.log` |
+| Public Composer | **3/3** selected SourceAdmission cases: exact map/append dimension rejections before target artifacts, plus ordinary FP control with stock MLIR verification/native execution; `/tmp/composer-source-admission-332c69578adb4dc89a03767a5fd050c9/` |
+| FidelityHello | **11b_LoopCaptures passes**, exact output and native exit; `/tmp/composer-seq-producers-fidelityhello.log` |
+| Analyzer projection | **35 accepted / 44 exact rejections**, revisions 1–98; `/tmp/lattice-ccs-surface-0379d88e676540d8b63ed2c42d593af2/evidence.json` |
+| LSP | **48 diagnostic edits and repairs**, four producer application-result hovers and original captured-threshold definitions; `/tmp/lattice-surface-waypoint-cdMfSm/result.json` |
+
+Both tooling gates loaded CCS SHA-256
+`49a1003ff9a3606844b2f03d63f5ec6240f7ce9b9ceef3071faa40fe41b52c3a`.
+Specification `3b64906` clarifies that independent iteration state preserves
+sharing of storage captured by supplied function values. Site revisions
+`dec4d4e` and `52ca6de` remove the superseded closure-dialect section from
+"Seq'ing Simplicity" and explain liveness and initialization boundaries.
+
+This checkpoint establishes producer graph contracts. Native suspension cuts,
+live-across slot assignment, Boolean resumption construction, frame extent and
+lifetime obligations remain pending; Alex is unchanged. Next, establish cut
+ownership and graph evaluation order before frame settlement. Conditional and
+nested yields, pre/post-yield effects, delegation and empty-but-effectful bodies
+must preserve their source behavior.
+
+**Prospero/Ariel follow-up, independent of actor topology:** growth in retained
+sequence state through nesting, composition or consumption can create memory
+pressure even before a full actor topology exists. A bounded individual frame
+does not establish a bound on total live sequence storage. Memory accounting,
+monitoring and target-budget policy for that growth need consideration alongside
+later suspension work; this checkpoint introduces no accounting or scheduling
+policy and keeps the initial implementation focused on correct semantics.
+
+Stack-only working-memory profiles for small-device unikernels are a concrete
+case for that follow-up, potentially including the post-quantum credential.
+The [sequence lifetime contract](../../clef-lang-spec/spec/seq-representation.md)
+and [suspension placement contract](../../clef-lang-spec/spec/dcont-representation.md)
+already require storage whose lifetime covers every use. For a stack-backed
+suspension, resumption must remain within the lifetime of its backing storage.
+The further budget question concerns simultaneously retained sequence frames,
+captured storage and delegated/nested state alongside the target's other stack
+requirements. A literal extent for one frame does not answer that question;
+unbounded iteration alone does not imply growing retained state either. Keep
+placement/lifetime admission and aggregate memory-budget evidence explicit in
+Baker's graph contracts, with Alex passively witnessing the settled result.
+Prospero/Ariel accounting and monitoring are follow-up work, including before
+actor topology; this checkpoint establishes neither aggregate bounds nor a
+runtime monitor.
+
+Companion revisions: clef `a06997a82`, lattice-analyzers `56159c6`,
+lattice-vscode `ddda782`, CAC `a95e0313`.
+
 ## C-06 resident sequence generator formal — 2026-09-20
 
 The source sequence generator previously named `NodeId -1` as its formal. It now

@@ -6,6 +6,15 @@
 
 > **Sample**: `16_SeqOperations` | **Status**: Planned | **Depends On**: C-06 (SimpleSeq), C-05 (Lazy), C-02 (HOFs), C-01 (Closures)
 
+> **Producer graph checkpoint (2026-09-20).** The admitted `map`, `filter`,
+> `collect` and `append` recipes now establish eager operand snapshots and typed
+> generator-local capture references. Their sequence owner, generator/formal
+> relationships and unit yield operations agree with source sequences. Enumerator
+> initialization precedes the generator loop; each current value is bound before
+> callback execution. [Recorded gates](../Language_Coverage_Waypoints.md) establish
+> these graph contracts, source diagnostics and editor projections. Suspension
+> cuts, live-across frame settlement and native sequence execution remain pending.
+
 ---
 
 ## CONTEXT WINDOW RESET PROTOCOL
