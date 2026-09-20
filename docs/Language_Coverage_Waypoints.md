@@ -7,6 +7,25 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-01 fold-in reference identity — 2026-09-19
+
+Clef `70f233fcf` redirects resolved variable definitions and Lambda/Lazy/Seq
+capture sources through the same replacement map as structural references and
+hyperedges. Capture mode, type, source range and unresolved references are
+preserved; shadowed names remain distinguished by definition identity. Both
+surviving nodes and nodes introduced by another recipe follow the replacements.
+The shared `remapKindReferences` operation also supports a recipe's explicitly
+scoped substitutions.
+
+Six focused replacement cases and the full **317/317 CCS** suite pass
+(`/tmp/clef-foldin-references.log`). **13 CCS.Editor groups** pass, including
+resolved definitions and immutable snapshots (`/tmp/clef-foldin-editor.log`).
+The protocol and client interfaces are unchanged; their companion revisions
+remain those recorded below. This is a reference-preservation prerequisite,
+not completion of closure layout/lifetime obligations or a new native gate.
+The earlier note that generic fold-in omits capture-source remapping is closed
+by this waypoint; other C-01 boundaries remain.
+
 ## C-04 Option defaults and C-01 callable prerequisites — 2026-09-19
 
 `Option.defaultValue` selects an eagerly evaluated fallback. `Option.defaultWith`
