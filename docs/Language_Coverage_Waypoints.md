@@ -7,6 +7,35 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## Clef repository history migration — 2026-09-20
+
+Clef's repository maintenance establishes a new root at the February 18 CCS
+rename, retaining the subsequent Clef development sequence and removing upstream
+refs and unused files. The cleaned compiler at `c1491aa`, with completion evidence
+recorded and pushed in `e94fa90`, has a
+[migration record](../../clef/docs/handoffs/Repository_History.md) and an
+[old-to-new commit map](../../clef/docs/handoffs/commit-map.tsv). Earlier Clef
+hashes below are historical evidence references: resolve them through that map;
+do not merge old ancestry back into the maintained repository.
+
+The source cleanup passed **1,006/1,006 CCS tests**, a Composer build and the
+native formatter/UTF-8 snapshot gate with stock MLIR verification and exact
+22-line output. Native artifacts are retained at
+`/tmp/composer-platform-format-0ba710b6f8914b81b3a0e657fe850bcf`.
+The filtered tip tree matched the tested cleanup byte-for-byte before adding
+the commit map. This maintenance changes no feature acceptance status or
+source-language contract. Post-rename authorship, dates and merge structure are
+retained; removed paths are also filtered from historical snapshots.
+
+Remote publication atomically replaced `main` and deleted 209 obsolete branches
+and 143 inherited tags. A fresh SSH clone exposed only `main`, passed Git
+integrity checks and a fresh CCS build, and held 2.21 MiB of packed Git objects
+versus 415.46 MiB before maintenance. The 101 unused files removed from the
+current tree totaled 13.33 MiB. External recovery bundles and inventories live
+under `/home/hhh/repo-archives/clef-thinning-2026-09-20/`; no old-history backup
+ref remains in the maintained repository. Both existing local worktrees were
+reconciled, with the former dimensions branch now a clean detached checkout.
+
 ## Target-aware dialect planning and next-session handoff — 2026-09-20
 
 **Planning synchronized; M-01 remains Planned.** Start the next session with
