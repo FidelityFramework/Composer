@@ -488,7 +488,7 @@ let private projectScalarReference (graph: SemanticGraph) argId value ty
     }
 
 /// Project rich Clef values into call-scoped C storage. Source options retain
-/// their tags and payloads; only this adapter encodes a C null pointer. Writable
+/// their tags and payloads; this adapter encodes a C null pointer at the FFI boundary. Writable
 /// pointer output cells are copied back as source options after the native call.
 let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPairs (ssas: SSA list) : PSGParser<MLIROp list * MLIROp list * (SSA * MLIRType) list> =
     let scalarReferenceArguments = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.referenceArguments graph funcId argIds

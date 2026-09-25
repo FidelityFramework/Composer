@@ -1,5 +1,17 @@
 # Witness Boundary Audit — Composer/Alex
 
+> **Historical scope, clarified 2026-09-25.** The measurements, line numbers and
+> unresolved findings below describe the September 3 audit with its September 4
+> addendum; “the rest stands as measured” is not a claim about today's source.
+> In particular, current `TransferCoeffects` holds platform reads/target selection,
+> program facts live in the graph/codata, and `Values.fs` derives SSA names without
+> a preassignment pass. The current [Alex overview](Alex_Architecture_Overview.md),
+> [Baker contract](../../clef/docs/fidelity/Baker_Saturation_Architecture.md),
+> [M-01](PRDs/M-01-DialectAdmission.md) and
+> [coverage waypoints](Language_Coverage_Waypoints.md) govern present work.
+> This note preserves the audit as evidence; it does not declare all findings
+> resolved or M-01's admission/evidence transport implemented.
+
 > Audit of record, 2026-09-03. Measures the actual state of the Alex witness
 > boundary against the doctrine that governs it. **Resolved since (2026-09-04):**
 > `TypeSizing.fs` deleted (§4a); `cf`/`vector` dead vocabulary deleted (§5);

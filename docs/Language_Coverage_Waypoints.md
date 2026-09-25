@@ -7,6 +7,59 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## Interactive compiler workbench planning — 2026-09-25
+
+**Documentation checkpoint; WB-01 through WB-04 remain Planned.** The new
+[workbench plan](Interactive_Compiler_Workbench.md) coordinates a bounded SageFS
+bootstrap-host pilot alongside C-01–C-07, a shared versioned service for Lattice
+and MCP, responsive cvc5 dispatch, and native ORC execution. Composer owns the
+workstream; CCS/Baker own semantics, Alex retains passive ctx pull witnessing,
+and the existing proof service owns dispatch and evidence. No language PRD
+acceptance status changes.
+
+The plan requires compiler-generation identity for hot patches, isolated or
+serialized compiler state, current PSG/query correspondence, explicit rejection
+controls and fresh persisted-source replay. It records the current per-query
+solver process, generation-local cache and batch-publication limits; warm workers
+and dependency-directed reuse remain measured implementation work. The earlier
+Transcribe sequence now distinguishes this enabling work from later native
+self-hosting and notebook milestones.
+
+The selected interactive CLI name is `clefx`, matching `.clefx` script files.
+The [interactive specification](../../clef-lang-spec/spec/interactive-development.md)
+now separates native execution from FSI bootstrap hosting, removes unsupported
+interpreter/hybrid modes and invented working command surfaces, and identifies
+the pending binding, initialization, lifetime and invocation contracts. Clef
+does not carry F#'s separate `.fsi` signature files. Legitimate F# implementation
+scripts and interfaces retain their names.
+
+The [Alex overview](Alex_Architecture_Overview.md),
+[pipeline guide](Architecture_Canonical.md), README and agent guidance now follow
+current source: Baker-owned semantic settlement, positional ctx pull, derived
+SSA names, one combined witness traversal and explicit mutable emission
+bookkeeping outside the zipper. Parallel-zipper implementation/performance claims
+and migration handoffs are superseded historical records. Related Clef, Lattice,
+site, Atelier, Farscape and migration-planning documents use the same ownership
+and implementation status. Atelier's reflection proposal no longer equates
+attention with freshness or places range/escape analysis in Composer.
+
+Inspection used Composer `9d5c85266a5392da345d69ee9297a3536282b4cc` and Clef
+`e94fa905f7f13c2b8216b355e9d84b17dceef5c8`, including pre-existing Clef working-tree
+changes, which were preserved. These are source references, not a tested combined
+toolchain. This checkpoint adds no package, host installation or executable
+behavior; two source comments were clarified. No compiler, solver, native
+execution or performance tests were run. Documentation validation passed:
+changed local links/anchors, affected incoming references, and whitespace checks
+across the edited repositories. The corpus drift gate is clean; its six baseline
+findings were corrected or given accurate historical/FFI context without changing
+the gate. The non-Git `Clef_migration` originals are preserved under
+`/tmp/clef-migration-doc-baseline-4d3xju_i` for comparison.
+
+Resume with [WB-01's pilot acceptance](Interactive_Compiler_Workbench.md#pilot-acceptance):
+choose the coverage defect and ordinary baseline, pin the host, then exercise the
+same pipeline through the smallest adapter. Other milestones and existing
+language feature statuses remain unchanged.
+
 ## FPGA circuit and artifact verification planning — 2026-09-25
 
 **Documentation checkpoint; FPGA-01 through FPGA-07 remain Planned.** The new
@@ -272,7 +325,7 @@ Explicitly pending local work:
   prototype and generated `target/` artifacts. It has no remote. Its README
   distinguishes that prototype from the planned Incremental/Observable contract;
   these edits are not admitted reactive implementation or part of this push.
-- Fidelity.WebView's untracked `.serena/` and FsNativeAutoComplete's modified
+- Historical tooling state: Fidelity.WebView's untracked `.serena/` and the retired FsNativeAutoComplete repository's modified
   `.serena/project.yml` are local tooling configuration, outside this sync.
 
 ## C-07 sequence operations — implementation waypoint, acceptance open, 2026-09-20

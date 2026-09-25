@@ -1,326 +1,186 @@
 # Composer Pipeline Overview
 
-> **Memory Architecture**: For hardware targets (CMSIS, embedded), see [BAREWire platform descriptions](https://github.com/FidelityFramework/BAREWire/blob/main/docs/11%20Platform%20Description.md)
-> which describe the memory and boundary declarations consumed by CCS and Composer, including generated bindings.
->
-> **Desktop UI Stack**: For WebView-based desktop applications, see [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md)
-> which describes Partas.Solid frontend + Composer native backend with system webview rendering.
+This is the current implementation overview, reconciled with source on
+2026-09-25. The [Clef specification](../../clef-lang-spec/README.md) governs
+language semantics. [CCS Architecture](CCS_Architecture.md) and the
+[Baker contract](../../clef/docs/fidelity/Baker_Saturation_Architecture.md) describe
+compiler-owned construction; [Alex](Alex_Architecture_Overview.md) describes the
+witness boundary. [Language Coverage Waypoints](Language_Coverage_Waypoints.md)
+and the [PRD index](PRDs/README.md) record tested scopes and unfinished work.
 
 ## Current service boundary
 
-The [Clef specification](https://github.com/FidelityFramework/clef-lang-spec) governs language semantics. [CCS Architecture](CCS_Architecture.md) records the compiler facts and their current implementation status; [Lattice Integration](Lattice_Integration.md) is the shared entry point for editor tooling, the initial .NET host and its acceptance gates.
+CCS parses and checks Clef source, including project libraries and selected
+platform declarations, constructs the typed PSG, and runs Baker elaboration and
+saturation. The graph retains the executable structure, local coeffects, joint
+relationships, source provenance and graph-resident obligations used downstream.
+Composer orchestrates admission, Alex witnessing and the selected backend.
 
-The pipeline consumes source libraries and platform declarations as project inputs alongside compiler intrinsics. CCS owns the resulting type, range, layout and obligation facts. Composer witnesses those facts through lowering and must preserve or re-check affected properties; receiving a checked graph does not by itself certify every later transformation.
+FCS is not a second semantic stage between CCS and Composer. The bootstrap
+implementation is F#, but F# compiler/runtime behavior does not define Clef
+semantics. Source libraries and platform declarations remain project inputs;
+compiler intrinsic ownership does not make those inputs unnecessary.
 
-## The Pipeline Model
+[Lattice Integration](Lattice_Integration.md) coordinates the existing editor
+services. The planned [interactive workbench](Interactive_Compiler_Workbench.md)
+shares their authority and evaluates SageFS as a resident bootstrap host. Native
+execution through ORC is planned; an FSI host must not substitute F# or C behavior
+for a Clef source case.
 
-**ARCHITECTURE UPDATE (January 2026)**: Alloy absorbed into CCS. Types and operations are compiler intrinsics.
+## The current pipeline
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Clef Application Code                                    │
-│  - Uses CCS intrinsics: Console.writeln, Sys.write    │
-│  - Types provided by NTUKind: string, int, Uuid, etc.  │
-│  - Project libraries and platform declarations          │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          │ Compiled by CCS
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  CCS (Clef Compiler Services)                     │
-│  - Parses Clef source (SynExpr, SynModule)                │
-│  - Type checking with NTUKind native types              │
-│  - SRTP resolution during type checking                 │
-│  - Intrinsic modules: Sys.*, Ptr.*, Console.*      │
-│  - PSG CONSTRUCTION with intrinsic markers              │
-│                                                         │
-│  OUTPUT: PSG with native types, intrinsics marked       │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          │ PSG (correct by construction)
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  COMPOSER (Consumes PSG from CCS)                      │
-├─────────────────────────────────────────────────────────┤
-│  Lowering Nanopasses (if needed)                        │
-│  - FlattenApplications, ReducePipeOperators             │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  Alex (Compiler Targeting Layer)                        │
-│  - Consumes PSG as "correct by construction"            │
-│  - Read CCS facts; preserve or re-check properties       │
-│  - Zipper traversal + XParsec pattern matching          │
-│  - Intrinsic → MLIR mapping using NTUKind               │
-│  - Platform implementations for Sys.* intrinsics        │
-└─────────────────────────────────────────────────────────┘
+```text
+Clef source + library/platform declarations
+  -> CCS ProjectChecker / NativeService
+       -> parsing, native checking and PSG construction
+       -> intrinsic elaboration and Baker recipe fan-out/fold-in
+       -> owning saturation, placement, obligation and admission passes
+  -> Composer source-diagnostic and selected-target gates
+  -> Alex: graph + platform reads + positional Huet context
+       -> Elements / Patterns / Witnesses
+       -> admitted physical operations, preserving required graph correspondence
+       -> declaration collection and bounded correspondence validation
+  -> serialized MLIR + current backend context
+  -> selected backend realization and artifact checks
 ```
 
-**`NativePtr.*` status:** The intrinsic module listed above is compat surface, not a design commitment. Per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing, confined to the generated Layer 1/2 membrane, counted as the TCB metric, and regenerated out at the corpus-wide regeneration horizon. The finiteness argument for why it cannot remain surface is [Closure_Nanopass_Architecture.md](./Closure_Nanopass_Architecture.md) Section 4; the boundary contract it folds into is [C-01 PRD](./PRDs/C-01-Closures.md) Section 6.7.
+The [source admission gate](../tests/SourceAdmission/README.md) requires owning
+CCS errors to stop before witnessed MLIR or a native artifact. A graph that
+exists, or one for which saturation has become quiescent, is not automatically
+admitted for every operation, target or use. Receiving a checked graph likewise
+does not certify that every later transformation preserves its properties.
 
-**CCS-First Architecture:** Types and operations ARE the compiler, not library code:
-- **CCS**: Defines NTUKind types, provides intrinsic modules, builds PSG with intrinsics marked
-- **Alex**: Traverses PSG → generates MLIR → LLVM → native binary
-- **Project inputs**: Library and platform sources participate in CCS checking; compiler intrinsic ownership does not eliminate these dependencies.
+The current backend handoff is MLIR text plus configuration. General correlated
+graph-fact/proof transport and typed consumer gates are explicit **Planned**
+[M-01](PRDs/M-01-DialectAdmission.md) work. The diagram describes the governing
+boundary without claiming that work is complete.
 
-**Zipper Coherence:** Alex uses PSGZipper to traverse the PSG from CCS:
-- PSG comes from CCS with all type information attached
-- Intrinsics are marked with `SemanticKind.Intrinsic`
-- Alex maps intrinsics to platform-specific MLIR
+## Ownership by layer
 
-## Alloy: Historical Archive (Absorbed January 2026)
+| Layer | Owns | Must not substitute |
+|---|---|---|
+| CCS checking and construction | Native type/dimension semantics, source admission, symbol relationships and typed graph construction. | An FCS typed-tree overlay or CLR behavior for Clef semantics. |
+| Baker and owning CCS nanopasses | Semantic elaboration, evaluation order, capture/residence/layout relationships, range and proof premises under the selected platform. | A backend repair for missing source or graph semantics. |
+| Alex | Context-pulled observation of the settled expression and platform facts; admitted Elements/Patterns/Witnesses; physical operation and result composition. | New semantic decomposition or inferred proof premises. |
+| Backend | Realize the admitted expression for the named target and preserve/recheck required properties through rewrites and linking. | A successful verifier or link as proof of all source guarantees. |
+| Host and clients | Lifecycle, versioned source submission, scheduling, inspection and evidence presentation. | A second checker, graph mutator or emitter. |
 
-> **Note**: Alloy has been absorbed into CCS. The repository is preserved as a historical artifact.
-> See [CCS Architecture](CCS_Architecture.md) for the current intrinsic and library boundaries.
+Representation decisions can depend on declared platform information before
+Alex runs. The earlier rule that CCS/nanopasses cannot know targets was too broad.
+Alex is also target-aware: the governing selection key is expression family ×
+platform/backend profile × witness form. Profile facts and proof identities
+remain dependencies, not incidental architecture-name guesses.
 
-Alloy was a BCL-free Clef standard library that proved native compilation was possible. Its functionality is now provided by CCS intrinsic modules.
+## Baker settles; Alex witnesses
 
-### What Alloy Taught Us
+Baker Ingredients/Recipes construct executable graph structure and the exact
+participants that justify it. Fan-out and fold-in preserve source identity,
+ordered operands, multiplicity and joint relations as required by each operation.
+They do not hand Alex an F# evaluation algorithm to reinterpret.
 
-Alloy demonstrated:
-- **BCL-free Clef is possible** - No System.* dependencies needed
-- **Fat pointer types work** - NativeStr, NativeArray as (ptr, length) structs
-- **SRTP enables zero-cost abstractions** - Compile-time polymorphism
+Alex receives `WitnessContext`, containing the graph, `TransferCoeffects`, the
+Huet zipper and emission coordination state. Its zipper contains only focus,
+path and graph. Program facts are read from nodes, layouts, ranges and codata;
+`TransferCoeffects` currently carries platform reads and target selection.
+The mutable operation/operand accumulator, scopes and visited sets are separate
+from the zipper and do not authorize a mutable semantic reconstruction layer.
 
-These lessons are now embodied in CCS as NTUKind types and intrinsic modules.
+[`Values.fs`](../src/MiddleEnd/Alex/Traversal/Values.fs) derives SSA names from
+node/role ordinals and block argument positions, following structural aliases.
+No CCS pass preassigns Alex SSA numbers. Operand recall remains a separate
+physical emission concern: having a name does not prove an operand was emitted.
 
-### CCS Intrinsics (Replacement)
+The current
+[`NanopassArchitecture.fs`](../src/MiddleEnd/Alex/Traversal/NanopassArchitecture.fs)
+runs a combined witness over a shared post-order traversal, with scope-owning
+witnesses invoking the common traversal for their bodies. The registry tries
+category-selective witnesses and reports an unhandled-node failure; coverage
+validation checks missed reachable nodes. It does not run independent parallel
+witness traversals. Sharing Patterns alone establishes no concurrency guarantee.
 
-What was Alloy is now CCS:
+Witnesses compose public Patterns, which compose atomic Elements. `module
+internal` is assembly visibility, not a firewall between folders in the same
+Composer assembly. Review and the [Alex component tests](../tests/Alex.Tests/README.md)
+support the architectural boundary; no fixed Witness/Pattern line count proves it.
 
-```fsharp
-// CCS intrinsic modules - defined in CheckExpressions.fs
-// Sys.* for platform operations
-| "Sys.write" -> NativeType.TFun(intType, TFun(ptrType, TFun(intType, intType)))
-| "Sys.clock_gettime" -> NativeType.TFun(unitType, int64Type)
+## Thin MLIR and target realization
 
-// Console.* for I/O (thin wrappers over Sys.*)
-| "Console.writeln" -> NativeType.TFun(stringType, unitType)
+[Thin Middle End](Thin_Middle_End_Design.md) keeps semantic decisions in the
+saturated graph. "Flat" emission does not prohibit structured operations,
+nested regions, results or block arguments. The standard `func`/`memref`/`arith`/
+`scf`/`index` vocabulary is a baseline, not a claim that every operation in those
+dialects is implemented or every target uses identical forms. Further forms
+need the M-01 operation/profile admission and preservation contract.
 
-// Application code uses intrinsics directly
-let main() =
-    Console.writeln "Hello, World!"  // CCS intrinsic, not library call
+The current middle-end post-witness pass collects and validates function
+declarations. Static-storage correspondence is checked before serialization.
+Source-level closures, sequences and continuation semantics are not deferred
+to a second semantic MLIR pipeline. Existing target/serializer exceptions and
+incomplete information transport remain reconciliation work in M-01; they do
+not amend the doctrine or establish full support.
+
+For the implemented ELF path, [LLVM/LLD](LLVM_Backend.md) performs:
+
+```text
+MLIR -> mlir-opt -> mlir-translate -> LLVM IR
+     -> opt (target bitcode) -> ld.lld (LLVM code generation and ELF linking)
 ```
 
-**Why intrinsics?** Following ML/Rust/Triton-CPU patterns:
-- Types ARE the language (NTUKind)
-- Operations ARE the language (intrinsic modules)
-- No external library needed
+No Clang or separate `llc` is invoked by that path. Console deployment uses
+explicit native startup/runtime inputs, including libc on the supported Linux
+profile; freestanding and embedded modes have their own entry/runtime contract.
+A binary without the .NET runtime is not necessarily a binary without native
+runtime dependencies. Other target pathways retain their own admission and
+artifact/execution gates.
 
-## Alex: The Non-Dispatch Model
+## Current source map
 
-> **Key Insight: Centralization belongs at the OUTPUT (MLIR Builder), not at DISPATCH (traversal logic).**
+| Source | Responsibility |
+|---|---|
+| [`clef/Project/ProjectChecker.fs`](../../clef/src/Compiler/Project/ProjectChecker.fs) | Project inputs, dependency/platform selection and checking, including volatile source overrides. |
+| [`clef/NativeTypedTree/NativeService.fs`](../../clef/src/Compiler/NativeTypedTree/NativeService.fs) | Native checking orchestration and graph pipeline. |
+| [`clef/NativeTypedTree/NativeTypes.fs`](../../clef/src/Compiler/NativeTypedTree/NativeTypes.fs) | Native type algebra. |
+| [`clef/PSGSaturation/SemanticGraph`](../../clef/src/Compiler/PSGSaturation/SemanticGraph) | Graph structure, codata, incidence and owning graph analyses. |
+| [`clef/Baker`](../../clef/src/Compiler/Baker) and [`clef/Nanopass`](../../clef/src/Compiler/Nanopass) | Ingredients, recipes, elaboration/fold-in and owning saturation/admission passes. |
+| [`FrontEnd/ProjectLoader.fs`](../src/FrontEnd/ProjectLoader.fs) | Composer front-end entry; calls CCS `ProjectChecker`. |
+| [`Core/CompilationOrchestrator.fs`](../src/Core/CompilationOrchestrator.fs) | Diagnostics/target gates and front/middle/backend orchestration. |
+| [`MiddleEnd/MLIRGeneration.fs`](../src/MiddleEnd/MLIRGeneration.fs) | Alex ingress, operation collection, correspondence checks and serialization. |
+| [`MiddleEnd/Alex`](../src/MiddleEnd/Alex) | Traversal, context, Elements/Patterns/Witnesses and dialect serialization. |
+| [`Core/Types/Pipeline.fs`](../src/Core/Types/Pipeline.fs) | Current backend interface and configuration handoff. |
+| [`BackEnd/LLVM`](../src/BackEnd/LLVM) | LLVM realization and direct LLD linking. |
 
-Alex generates MLIR through Zipper traversal and platform Bindings. There is **NO central dispatch hub**.
+The former `Core/FCS`, `Core/PSG/Nanopass`, `Alex/Bindings`, `PSGXParsec` and
+`MLIRBuilder` paths in earlier overviews are not current implementation entry
+points. Composer no longer runs the old application-flattening/pipe-reduction
+sequence after an FCS overlay; inspect the owning CCS/Baker path instead.
 
-```
-PSG Entry Point
-    ↓
-Zipper.create(psg, entryNode)     -- provides "attention"
-    ↓
-Fold over structure (pre-order/post-order)
-    ↓
-At each node: XParsec matches locally → MLIR emission
-    ↓
-Extern primitive? → ExternDispatch.dispatch(primitive)
-    ↓
-MLIR Builder accumulates           -- correct centralization
-    ↓
-Output: Complete MLIR module
-```
+## Development and validation
 
-**Component Roles:**
+Trace a failure from source admission through graph construction/saturation,
+Alex observation and target realization. Fix the first owning stage where the
+contract breaks. Do not repair missing recipe semantics by name matching in a
+Witness or by a runtime surrogate. Native types, capture modes and selected
+representation facts must survive boundaries; raw pointers or CLR delegates
+must not replace the admitted Clef contracts.
 
-- **Zipper**: Purely navigational - provides focus with context; reads the SSA assignment coeffect and holds no counters
-- **XParsec**: Local pattern matching - composable patterns, NOT a routing table
-- **Bindings**: Platform-specific MLIR - looked up by extern entry point, are DATA not routing
-- **MLIR Builder**: Where centralization correctly occurs - the single accumulation point
+The [source gate](../tests/SourceAdmission/README.md),
+[Alex component suite](../tests/Alex.Tests/README.md),
+[regression runner](../tests/regression/README.md), and relevant proof/native
+harnesses establish different boundaries. An MLIR verifier checks the emitted
+IR, not Baker's source semantics or lifetime premises. A component fixture is
+not source-to-native coverage. Record exact revisions and evidence in the
+coverage waypoints; do not infer current results from historical sample counts.
 
-**Bindings are DATA, not routing logic:**
+## Historical and related material
 
-```fsharp
-// Syscall numbers as data
-module SyscallData =
-    let linuxSyscalls = Map [
-        "write", 1L
-        "read", 0L
-        "clock_gettime", 228L
-    ]
-    let macosSyscalls = Map [
-        "write", 0x2000004L  // BSD offset
-        "read", 0x2000003L
-    ]
+Alloy is retained as historical context for the earlier native-library design;
+current intrinsic/library ownership is recorded in CCS, not inferred from that
+archive. Earlier FCS typed-tree-overlay and parallel-witness diagrams are design
+history and do not override this pipeline or the current specification.
 
-// Bindings registered by (OS, Arch, EntryPoint)
-ExternDispatch.register Linux X86_64 "fidelity_write_bytes"
-    (fun ext -> bindWriteBytes TargetPlatform.linux_x86_64 ext)
-```
-
-**NO central dispatch match statement. Bindings are looked up by entry point.**
-
-## The Fidelity Mission
-
-Unlike Fable (AST→AST, delegates memory to target runtime), Fidelity:
-- **Preserves type fidelity**: Clef types → precise native representations
-- **Preserves memory fidelity**: Compiler-verified lifetimes, deterministic allocation
-- **PSG carries proofs**: Not just syntax, but semantic guarantees about memory, types, ownership
-
-The generated native binary has the same safety properties as the source Clef.
-
-## CCS Intrinsic Modules
-
-CCS provides intrinsic modules that Alex maps to platform-specific implementations:
-
-| Intrinsic Module | MLIR Mapping | Purpose |
-|-----------------|--------------|---------|
-| Sys.write | write syscall | Low-level I/O |
-| Sys.read | read syscall | Low-level I/O |
-| Sys.clock_gettime | clock_gettime | Wall clock time |
-| Sys.clock_monotonic | clock_gettime(MONOTONIC) | High-resolution timing |
-| Sys.tick_frequency | constant (platform-specific) | Timer resolution |
-| Sys.nanosleep | nanosleep/Sleep | Thread sleep |
-| Console.write | Sys.write wrapper | String output |
-| Console.writeln | Sys.write + newline | Line output |
-| Console.readln | Sys.read wrapper | Line input |
-
-Alex provides implementations for each `(intrinsic, platform)` pair based on target platform.
-
-> **Note**: Webview bindings call library functions (WebKitGTK, WebView2, WKWebView) rather than syscalls. See [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) for the full desktop UI stack architecture.
-
-## File Organization
-
-```
-clef/src/Compiler/Checking.Native/  # TYPES AND OPERATIONS
-├── NativeService.fs        # Public API for CCS
-├── NativeTypes.fs          # NTUKind enum - native type universe
-├── NativeGlobals.fs        # Type constructors (string, int, Uuid, etc.)
-├── CheckExpressions.fs     # Intrinsic modules (Sys.*, Console.*, etc.)
-├── SemanticGraph.fs        # PSG data structures with intrinsic markers
-├── SRTPResolution.fs       # SRTP resolution during type checking
-└── NameResolution.fs       # Compositional name resolution
-
-Composer/src/Core/PSG/Nanopass/  # LOWERING PASSES (post-CCS)
-├── FlattenApplications.fs
-├── ReducePipeOperators.fs
-└── ...
-
-Composer/src/Alex/
-├── Traversal/
-│   ├── PSGZipper.fs       # Bidirectional traversal (attention)
-│   ├── PSGXParsec.fs      # Local pattern matching combinators
-│   └── CCSTransfer.fs     # Intrinsic → MLIR mapping
-├── Bindings/
-│   ├── BindingTypes.fs    # Platform types
-│   ├── SysBindings.fs     # Sys.* platform implementations
-│   └── ...
-├── CodeGeneration/
-│   ├── MLIRBuilder.fs     # MLIR accumulation (correct centralization)
-│   └── TypeMapping.fs     # NTUKind → MLIR type mapping
-└── Pipeline/
-    └── CompilationOrchestrator.fs  # Entry point
-
-Alloy/ (HISTORICAL ARCHIVE - absorbed into CCS January 2026)
-└── README.md              # Explains absorbed status
-```
-
-**Note:** Alloy functionality absorbed into CCS as intrinsic modules.
-**Note:** PSGEmitter.fs and PSGScribe.fs were removed - they were antipatterns.
-
-## Anti-Patterns (DO NOT DO)
-
-```fsharp
-// WRONG: BCL dependencies anywhere
-open System.Runtime.InteropServices
-[<DllImport("__fidelity")>]
-extern int writeBytes(...)  // NO! BCL pollution
-
-// WRONG: Pattern matching on namespace names
-match symbolName with
-| "MyApp.Console.Write" -> ...  // NO! Use intrinsic markers
-
-// WRONG: Expecting library to provide what compiler should
-// (This was the Alloy anti-pattern - library as BCL equivalent)
-open Alloy  // NO! Types are NTUKind, operations are intrinsics
-
-// WRONG: Central dispatch hub (the "emitter" or "scribe" antipattern)
-module PSGEmitter =
-    let handlers = Dictionary<string, NodeHandler>()
-    let emit node =
-        match handlers.TryGetValue(getPrefix node) with
-        | true, h -> h node
-        | _ -> default node
-// This was removed TWICE. Centralization belongs at MLIR Builder output,
-// not at traversal dispatch.
-```
-
-**The correct model:**
-- Types defined by NTUKind in CCS
-- Operations defined as intrinsic modules in CCS
-- Alex recognizes `SemanticKind.Intrinsic` markers
-- Zipper provides attention (focus + context)
-- XParsec provides local pattern matching
-- MLIR Builder accumulates (correct centralization point)
-
-## PSG Construction: Handled by CCS
-
-**ARCHITECTURE UPDATE**: PSG construction has moved to CCS.
-
-See: `docs/PSG_Nanopass_Architecture.md` for nanopass principles.
-See: `docs/CCS_Architecture.md` for how CCS builds the PSG.
-
-CCS builds the PSG with:
-- Native types attached during type checking
-- SRTP resolved during type checking (not post-hoc)
-- Full symbol information preserved for design-time tooling
-
-Composer receives the completed PSG and applies **lowering nanopasses** if needed:
-- FlattenApplications
-- ReducePipeOperators  
-- DetectPlatformBindings
-- etc.
-
-### Why CCS Builds PSG
-
-With CCS handling PSG construction:
-- SRTP is resolved during type checking, not in a separate pass
-- Types are attached to nodes during construction, not overlaid later
-- No separate typed tree correlation needed
-- Symbol information flows directly from type checker to PSG
-
-## Validation Samples
-
-These samples must compile WITHOUT modification:
-- `01_HelloWorldDirect` - Console.write, Console.writeln (CCS intrinsics)
-- `02_HelloWorldSaturated` - Console.readln, interpolated strings
-- `03_HelloWorldHalfCurried` - Pipe operators, string formatting
-
-The samples use CCS intrinsics directly. Compilation flow:
-1. CCS: Parse, type check with NTUKind types, recognize intrinsics
-2. CCS: Build PSG with intrinsics marked, SRTP resolved
-3. Composer: Receive PSG from CCS ("correct by construction")
-4. Composer: Apply lowering nanopasses (flatten apps, reduce pipes, etc.)
-5. Alex/Zipper: Traverse PSG, map intrinsics → MLIR
-6. MLIR → LLVM → native binary
-
----
-
-## Cross-References
-
-### Core Architecture
-- [CCS_Architecture.md](./CCS_Architecture.md) - CCS and PSG construction (PRIMARY)
-- [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) - Nanopass principles
-- [BAREWire platform descriptions](https://github.com/FidelityFramework/BAREWire/blob/main/docs/11%20Platform%20Description.md) - Memory model for embedded targets
-- Note: Baker_Architecture.md is deprecated - CCS now handles type correlation
-
-### Desktop UI Stack
-- [WebView_Desktop_Architecture.md](./WebView_Desktop_Architecture.md) - Partas.Solid + webview architecture
-- [WebView_Build_Integration.md](./WebView_Build_Integration.md) - Composer as unified build orchestrator
-- [WebView_Desktop_Design.md](./WebView_Desktop_Design.md) - Implementation details (callbacks, IPC)
-
-### QuantumCredential Demo
-- [QuantumCredential/](./QuantumCredential/) - Demo documentation folder
-- [QuantumCredential demo strategy](./QuantumCredential/Demo/D-01-Demo-Strategy.md) - Integrated demo strategy (desktop + embedded)
-
-### Platform Bindings
-- See `~/repos/Farscape/docs/` for native library binding patterns (quotation-based architecture)
+- [Lattice Integration](Lattice_Integration.md): editor transport and shared authority.
+- [Interactive Compiler Workbench](Interactive_Compiler_Workbench.md): planned warm host and native REPL bridge.
+- [Proof Composition](Proof_Composition_Architecture.md): shared dispatch, composition and evidence policy.
+- [WebView Desktop Architecture](WebView_Desktop_Architecture.md): frontend/native application integration.
+- [FPGA Targeting](fpga-targeting/README.md): circuit and artifact verification roadmap.
+- [Witness Boundary Audit](Witness_Boundary_Audit.md): dated findings, not a current inventory.

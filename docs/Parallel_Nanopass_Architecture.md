@@ -1,10 +1,49 @@
-# Parallel Nanopass Architecture - Final Design
+# Parallel Nanopass Architecture — superseded January proposal
 
-**Date**: January 27, 2026
-**Status**: Implemented - Ready for Witness Integration
-**Pattern**: One Witness = One Nanopass + IcedTasks Parallel Execution
+**Original date:** January 27, 2026. **Status:** Historical proposal; current-state
+claims corrected September 25, 2026. Do not implement or migrate witnesses from
+this document. Its earlier “Implemented — Ready for Witness Integration” status
+and parallel/merge pseudocode do not describe the current compiler.
 
----
+## Current direction
+
+The [Alex overview](Alex_Architecture_Overview.md#current-traversal-and-selection)
+and [`NanopassArchitecture.fs`](../src/MiddleEnd/Alex/Traversal/NanopassArchitecture.fs)
+are the current reference. A `Nanopass` contains a category-selective witness,
+and the registry combines witnesses at each node in one post-order traversal.
+Scope-owning witnesses invoke the common traversal for their bodies. `TRSkip`
+advances to the next registered witness; if none matches, the combined witness
+produces a diagnostic.
+There is no `ParallelNanopass.fs` executor, `EnableParallel` configuration, or
+independent-per-witness accumulator overlay in the current build.
+
+`PSGZipper` is navigational. Graph facts and codata retain semantic authority;
+SSA names are derived in
+[`Values.fs`](../src/MiddleEnd/Alex/Traversal/Values.fs), not preassigned by CCS.
+Mutable emission/operand bookkeeping lives outside the zipper. Sharing Elements
+or Patterns does not prove independence, associative merging, output-order
+invariance, or safe concurrent use of process-global target/registry state.
+
+Baker owns elaboration/saturation; Alex observes through `ctx`, codata, coeffects
+and the actual Huet position. A future scheduling experiment must preserve that
+boundary, declaration/region order, operand dependencies, effects, graph identity
+and evidence correspondence, with its own equivalence and performance gates.
+An F# IcedTasks/array scheduler would be bootstrap implementation machinery,
+not a Clef async/task or actor semantic contract. No measured speedup, microsecond
+cost bound or current parallel-equivalence result is established here.
+
+The planned [workbench](Interactive_Compiler_Workbench.md) can investigate compiler
+hosting without reviving this executor design. [M-01](PRDs/M-01-DialectAdmission.md)
+and owning language/target gates remain in force.
+
+## Archived January sketch
+
+The historical proposal below records the idea and its assumptions. Code,
+checklists, estimates, “current” labels and asserted benefits inside this archive
+are not current APIs, implementation instructions or acceptance results.
+
+<details>
+<summary>January 27 proposal and migration sketch (superseded)</summary>
 
 ## Core Concept
 
@@ -280,9 +319,9 @@ tasks
 
 ## Future: Tiered Nanopasses
 
-**Current**: All nanopasses run in parallel (no dependencies).
+**January assumption, withdrawn as a current-state claim**: All nanopasses run in parallel (no dependencies).
 
-> **NOTE**: "No dependencies" means no witness-to-witness execution dependencies. Shared Elements/Patterns are parallel-safe. See [Alex_Architecture_Overview.md](Alex_Architecture_Overview.md#the-key-distinction-shared-vocabulary-vs-execution-coupling) for the critical distinction between shared vocabulary (parallel-safe) and execution coupling (creates dependencies).
+> **Superseded assumption:** sharing Elements/Patterns does not prove parallel safety. The [current traversal](Alex_Architecture_Overview.md#current-traversal-and-selection) uses a combined witness and shared emission bookkeeping; it does not implement this parallel plan.
 
 **Future** (if needed): Tier nanopasses by dependencies.
 
@@ -304,7 +343,7 @@ for tier in tiers do
 
 ## Design Decision: Full-Fat Parallel Execution
 
-**Current Strategy**: ALL registered nanopasses run in parallel, regardless of whether nodes exist for them to witness.
+**January proposed strategy, not implemented as described today**: ALL registered nanopasses run in parallel, regardless of whether nodes exist for them to witness.
 
 **Rationale**:
 - Empty nanopasses are cheap (fast skip-only traversals)
@@ -407,11 +446,11 @@ let ``LiteralNanopass handles int literals`` () =
 
 ---
 
-## Next Steps
+## January checklist — archived, not current tasks
 
 ### Immediate
 
-1. ✅ **Architecture implemented** (NanopassArchitecture.fs, ParallelNanopass.fs)
+1. **Historical implementation claim, superseded** (NanopassArchitecture.fs, ParallelNanopass.fs); this is not evidence for a current parallel executor.
 2. ✅ **WitnessOutput.skip added** (for selective witnessing)
 3. ⬜ **Create WitnessRegistry.fs** (populate global registry)
 4. ⬜ **Update witnesses** to export `nanopass` value
@@ -441,8 +480,10 @@ let ``LiteralNanopass handles int literals`` () =
 
 **Scalability**: Dozens of nanopasses run naturally in parallel
 
-**Next**: Create WitnessRegistry and migrate witnesses.
+**Historical next step, no longer applicable**: Create WitnessRegistry and migrate witnesses.
 
 ---
 
 **The standing art composes up. Parallel nanopasses scale naturally.**
+
+</details>

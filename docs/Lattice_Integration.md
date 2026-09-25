@@ -96,6 +96,35 @@ The diagram is the intended integration. The CLI currently performs its own chec
 
 Start with `.clef` files in one `.fidproj` workspace. Untitled files, `.clefx`, dependency acquisition and multiple projects need their own acceptance checks. Detect unsupported context clearly rather than silently checking a Clef document with the ordinary F# service.
 
+### Shared compiler workbench — planned
+
+The [interactive compiler workbench](Interactive_Compiler_Workbench.md#ownership)
+coordinates Composer's proposed warm shared service and native REPL bridge.
+Composer owns the initial .NET host; CCS supplies the semantic sessions and
+Baker-settled facts. Lattice clients and a possible SageFS adapter consume that
+same authority. SageFS remains an optional bootstrap integration to evaluate;
+this plan establishes neither an installed dependency nor an implemented shared
+daemon.
+
+The current server owns edit scheduling, generation-scoped proof tasks and
+publication checks. Shared hosting must extract or reuse that orchestration
+behind the transport adapters, preserving its cancellation and stale-result
+rules. Adding MCP access must not create a second compiler cache or solver queue.
+Client selection identifies a shared session; each accepted edit still produces
+an explicit input revision. Concurrent clients must agree on the source version
+they inspect or execute.
+
+The [integrity contract](Interactive_Compiler_Workbench.md#integrity-contract)
+also requires a compiler implementation epoch if in-memory patching is admitted:
+the on-disk assembly hash alone cannot identify changed compiler behavior.
+Affected graph observations, proof evidence and executable artifacts must be
+invalidated together. Lattice exposes the resulting current, pending or stale
+state through the common service. Progressive per-obligation publication and
+measured dispatch latency belong to the existing
+[proof service](Proof_Composition_Architecture.md#one-managed-proof-service);
+the [pilot gates](Interactive_Compiler_Workbench.md#pilot-acceptance) cover editor
+and agent agreement without changing language-feature acceptance.
+
 ## BAREWire and proof views
 
 [BAREWire](https://github.com/FidelityFramework/BAREWire) is the shared contract and representation layer for memory layout, IPC and network communication. [Fidelity.Platform](https://github.com/FidelityFramework/Fidelity.Platform) supplies target declarations. These are inputs to compiler reasoning: a layout or buffer declaration may participate in an obligation alongside the operation and its established range facts. Dimensions remain part of source type identity; selected representations and layouts are separately justified facts.

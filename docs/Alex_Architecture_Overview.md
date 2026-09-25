@@ -1,297 +1,165 @@
 # Alex Architecture Overview
 
-> **See `Architecture_Canonical.md` for the authoritative two-layer model.**
+This overview describes the current witness boundary, reconciled with source on
+2026-09-25. The [pipeline overview](Architecture_Canonical.md),
+[Baker contract](../../clef/docs/fidelity/Baker_Saturation_Architecture.md),
+[Thin Middle End](Thin_Middle_End_Design.md), and
+[M-01](PRDs/M-01-DialectAdmission.md) distinguish the governing architecture from
+implemented coverage. M-01's general admission and evidence transport remain
+planned; this overview does not close that work.
 
-## The "Library of Alexandria" Model
+<a id="the-three-layer-architecture-elements-patterns-witnesses"></a>
 
-Alex is Composer's **multi-dimensional hardware targeting layer**. It consumes the PSG (Program Semantic Graph) and generates platform-optimized MLIR.
+## Responsibility
 
-## Core Responsibility: The Non-Dispatch Model
+Alex receives the Baker-settled graph and witnesses its admitted computation as
+MLIR. Semantic construction, evaluation relationships, captures, layout and proof
+premises belong in their owning CCS/Baker stages. Alex must retain the graph's
+identities and read the facts needed by the selected target; it cannot reconstruct
+a missing source algorithm or manufacture evidence to make emission succeed.
 
-> **Key Insight: Centralization belongs at the OUTPUT (MLIR Builder), not at DISPATCH (traversal logic).**
+The receiving vocabulary has three layers:
 
-Alex generates MLIR through Zipper traversal and platform Bindings. There is **NO central dispatch hub**.
+| Layer | Responsibility |
+|---|---|
+| `Elements/` | Atomic MLIR operations and physical operand/type handling through XParsec state. |
+| `Patterns/` | Compose Elements into the admitted physical form, pulling its settled facts from the context. |
+| `Witnesses/` | Observe the node at its actual graph position and invoke the appropriate Pattern; return operations, a value/void result, a diagnostic, or skip. |
 
-```
-PSG Entry Point
-    ↓
-Zipper.create(psg, entryNode)     -- provides "attention"
-    ↓
-Fold over structure (pre-order/post-order)
-    ↓
-At each node: XParsec matches locally → MLIR emission
-    ↓
-Extern primitive? → ExternDispatch.dispatch(primitive)
-    ↓
-MLIR Builder accumulates           -- correct centralization
-    ↓
-Output: Complete MLIR module
-```
+These are Alex's emission layers, not Baker Ingredients/Recipes. There is no
+correctness-bearing line-count limit on a Pattern or Witness. Elements use
+`module internal`, which restricts assembly visibility. Witnesses compile in the
+same Composer assembly, so this **does not** prevent them importing Elements.
+Pattern composition is an architectural responsibility, supported by review and
+component tests, not an enforced folder-level type firewall.
 
-Platform differences are **data** (syscall numbers, register conventions), not routing logic.
+## Context pull and Huet navigation
 
-## Key Components
+[`TransferTypes.fs`](../src/MiddleEnd/Alex/Traversal/TransferTypes.fs) keeps three
+different concerns explicit:
 
-| Component | Purpose |
-|-----------|---------|
-| `Traversal/PSGZipper.fs` | Bidirectional PSG traversal ("attention") |
-| `Traversal/PSGXParsec.fs` | Local pattern matching combinators |
-| `Bindings/BindingTypes.fs` | ExternDispatch registry, platform types |
-| `Bindings/*/` | Platform bindings (data, not routing) |
-| `CodeGeneration/MLIRBuilder.fs` | MLIR accumulation (correct centralization) |
-| `Pipeline/CompilationOrchestrator.fs` | Entry point |
+- `PSGZipper` contains focus, path and graph. It is navigational, with no mutable
+  fields, SSA counter or semantic accumulator.
+- `TransferCoeffects` carries platform reads and target selection. Program facts
+  are read from graph nodes, layouts, ranges and `Graph.Codata`; they are not the
+  old fourteen-field Composer analysis bundle.
+- `MLIRAccumulator`, scope references and visited sets coordinate emitted
+  operations and operand recall. These are mutable implementation state outside
+  the zipper. Their presence does not authorize semantic analysis in Alex.
 
-**Note:** PSGEmitter.fs and PSGScribe.fs were removed - they were central dispatch antipatterns.
+`WitnessContext` carries these inputs to a witness. XParsec's
+[`PSGCombinators.fs`](../src/MiddleEnd/Alex/XParsec/PSGCombinators.fs) threads the
+corresponding parser state; the input is graph structure rather than source
+characters. Pulling a fact through `ctx` must preserve the origin and position
+on which that fact depends. Two occurrences of one shared graph node can have
+different enclosing scopes; re-rooting by node ID is not interchangeable with
+Huet navigation from the actual occurrence.
 
-## The Three-Layer Architecture: Elements, Patterns, Witnesses
+SSA names are derived in
+[`Values.fs`](../src/MiddleEnd/Alex/Traversal/Values.fs): `V(node, k)` names a
+node's emission family and `Arg i` a block argument, with explicit role families
+and structural aliases. There is no CCS SSA-preassignment pass or emission
+counter. Deriving a name alone does not establish that an operand has been
+witnessed; patterns also use the existing accumulator's operand/type recall.
 
-> **CRITICAL: Shared Infrastructure ≠ Witness Dependencies**
+<a id="the-key-distinction-shared-vocabulary-vs-execution-coupling"></a>
 
-Alex uses a three-layer architecture inspired by the "Baker" metaphor (Elements = Primitives, Patterns = Ingredients, Witnesses = Recipes):
+## Current traversal and selection
 
-```
-Elements/    (module internal)  →  Atomic MLIR operations with XParsec state threading
-Patterns/    (public)           →  Composable elision templates (~50 lines each)
-Witnesses/   (public)           →  Thin observers (~20 lines each)
-```
-
-### Layer Responsibilities
-
-| Layer | Visibility | Purpose | Line Limit |
-|-------|-----------|---------|------------|
-| **Elements/** | `module internal` | Atomic MLIR ops by tier | N/A |
-| **Patterns/** | `public` | Composable elision templates | ~50 lines |
-| **Witnesses/** | `public` | Thin observers | ~20 lines |
-
-**Type-Level Firewall**: Elements are `module internal` - witnesses physically CANNOT import them. Witnesses must delegate to Patterns, which use Elements.
-
-### The Key Distinction: Shared Vocabulary vs Execution Coupling
-
-**Parallelism is preserved when witnesses share VOCABULARY (Elements/Patterns), not when they share EXECUTION (calling each other).**
-
-#### ✅ PARALLEL-SAFE: Using Shared Elements/Patterns
-
-Multiple witnesses can use the same Element or Pattern without creating dependencies:
-
-```fsharp
-// LazyWitness.fs
-let witnessLazyForce ctx node =
-    // Uses pCondBranch from LLVMElements
-    let! branchOp = pCondBranch condSSA "then_block" "else_block"
-    ...
-
-// ControlFlowWitness.fs
-let witnessIfThenElse ctx node =
-    // Also uses pCondBranch from LLVMElements
-    let! branchOp = pCondBranch condSSA "then_block" "else_block"
-    ...
+```text
+MLIRGeneration.generateWithLinkedLibraries
+  -> MLIRTransfer.transfer
+  -> target-selected WitnessRegistry
+  -> NanopassArchitecture.executeNanopasses
+       -> graph declaration roots and classified definitions
+       -> post-order Huet traversal / scope-owned traversal
+       -> combined witness tries registered witnesses at each node
+       -> scope and operation accumulation
+       -> reachable-node coverage validation
+  -> declaration collection and bounded correspondence checks
+  -> serialization
 ```
 
-**Why this is parallel-safe**:
-- Both witnesses import `Alex.Elements.LLVMElements` (shared vocabulary)
-- NO witness-to-witness calls
-- Execution is fully independent
-- Can run in parallel via IcedTasks
+The code uses one combined witness over a shared traversal. A witness returning
+`TRSkip` lets the next registered witness observe the node; the first non-skip
+result is retained. If none handles it, compilation receives a diagnostic.
+Reachable nodes missed by traversal produce separate coverage diagnostics.
+Scope-owning witnesses use the common traversal callback for their bodies.
 
-#### ❌ CREATES DEPENDENCY: Calling Another Witness
+This is **not** one parallel traversal per witness. Old IcedTasks examples,
+`EnableParallel` pseudocode and claims that sharing Patterns proves parallel
+safety do not describe the implementation. The registry coordinates existing
+witnesses; it is not permission to add a second emitter or source-name dispatcher.
+Share physical vocabulary through Patterns rather than calling another witness
+to supply missing source semantics.
 
-```fsharp
-// LazyWitness.fs - WRONG!
-let witnessLazyForce ctx node =
-    // Calls ControlFlowWitness - creates dependency!
-    ControlFlowWitness.witnessIfThenElse ctx node
-```
+The implementation also retains process-global target selection in
+[`TypeMapping.fs`](../src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs) and a
+mutable registry. Shared editor/agent clients do not make concurrent compilation
+within one process safe. The planned
+[workbench](Interactive_Compiler_Workbench.md#integrity-contract) must serialize
+compiler work or isolate workers until a different policy is established.
 
-**Why this breaks parallelism**:
-- LazyWitness now depends on ControlFlowWitness completing first
-- Creates execution ordering constraint
-- Forces sequential execution
-- Violates the parallel nanopass architecture
+## Thin emission and target selection
 
-### Architectural Invariants for Parallelism
+Alex is target-aware. It observes the selected platform and settled graph facts
+to choose an admitted Pattern/Witness form. M-01's admission key is expression
+family × platform/backend profile × witness form. Target selection is not a
+license to infer missing layout, ownership or source evaluation semantics.
 
-For witnesses to remain truly parallel (via IcedTasks):
+"Flat" or "thin" emission means semantic decomposition is settled above the
+witness boundary. It does not prohibit nested regions, results, block arguments
+or structured `scf` operations. The standard baseline includes `func`, `memref`,
+`arith`, `scf` and `index`; further forms need the operation/profile contract in
+M-01. Target-specific realization belongs to the selected backend leg.
 
-1. **Witnesses MUST NOT call other witnesses** - This creates dependencies
-2. **Witnesses MAY share Elements** - Common vocabulary, no execution coupling
-3. **Witnesses MAY share Patterns** - Patterns compose Elements, still no coupling
-4. **Witnesses MUST return `WitnessOutput.skip`** for unhandled nodes - Other nanopasses handle them
-5. **All state is read-only coeffects** - No mutable shared state
+The current post-witness middle-end pass in
+[`MLIRNanopass.fs`](../src/MiddleEnd/Alex/Pipeline/MLIRNanopass.fs) collects and
+validates external function declarations. It is not a second closure,
+continuation or source-language lowering pipeline. Current serializers and
+target paths still have reconciliation work recorded in M-01; the doctrine is
+not a claim that every existing branch already satisfies it.
 
-### Case Study: LazyForce and Control Flow
+## Existing integrity evidence and its limits
 
-**Initial Finding**: LazyForce needs control flow (conditional branching) to check if a lazy value has been computed.
+[`SeqWitness.fs`](../src/MiddleEnd/Alex/Witnesses/SeqWitness.fs) rejects unresolved
+source suspension forms when Baker has not settled the needed frame, segments
+and resumption. It reads exact frame/slot identities and current-read admission
+facts rather than rebuilding them from a body shape. Missing semantic premises
+must continue to fail in their owning stage.
 
-**Question**: Does this create a dependency on ControlFlowWitness?
+[`StaticStorageValidation.fs`](../src/MiddleEnd/Alex/Traversal/StaticStorageValidation.fs)
+checks bounded correspondence between settled BAREWire storage and emitted
+operations before serialization. Coverage diagnostics prevent silent unhandled
+reachable nodes. Neither mechanism proves every lowering preserves all source
+properties; M-01's general correlated fact/proof transport remains planned.
 
-**Answer**: No, if implemented correctly. Three parallel-safe approaches:
+The [Alex component tests](../tests/Alex.Tests/README.md) exercise public Patterns
+and Witnesses, graph/codata/edge preservation, positional navigation, diagnostic
+behavior, real MLIR verification and standard lowering. Fixtures supply already
+settled facts. They do not establish source admission, proof discharge, capture
+lifetime or native behavior. The current array-index Pattern, for example, does
+not itself reject absent range evidence; upstream and full-pipeline gates own
+that requirement.
 
-#### Option 1: Shared Element (Cleanest)
+No architecture CI workflow or parallel-equivalence test from the earlier
+version of this overview is present as described. Those sketches were proposals,
+not installed enforcement. Current evidence belongs in owning tests and
+[Language Coverage Waypoints](Language_Coverage_Waypoints.md).
 
-Both LazyWitness and ControlFlowWitness use `pCondBranch` from LLVMElements:
+## Source map
 
-```fsharp
-// LLVMElements.fs (shared vocabulary)
-let pCondBranch (cond: SSA) (thenLabel: string) (elseLabel: string) : PSGParser<MLIROp> =
-    parser {
-        return MLIROp.LLVMOp (LLVMOp.CondBranch (cond, thenLabel, elseLabel))
-    }
+| Current file | Role |
+|---|---|
+| [`MiddleEnd/MLIRGeneration.fs`](../src/MiddleEnd/MLIRGeneration.fs) | Graph/platform ingress, witnessing, correspondence checks and serialization. |
+| [`Traversal/PSGZipper.fs`](../src/MiddleEnd/Alex/Traversal/PSGZipper.fs) | Positional Huet navigation. |
+| [`Traversal/NanopassArchitecture.fs`](../src/MiddleEnd/Alex/Traversal/NanopassArchitecture.fs) | Combined witness, scope traversal and coverage checks. |
+| [`Traversal/WitnessRegistry.fs`](../src/MiddleEnd/Alex/Traversal/WitnessRegistry.fs) | Target-selected witness registration. |
+| [`CodeGeneration/TypeMapping.fs`](../src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs) | Physical type mapping from graph and platform facts. |
+| [`Dialects/Core/Types.fs`](../src/MiddleEnd/Alex/Dialects/Core/Types.fs) and [`Serialize.fs`](../src/MiddleEnd/Alex/Dialects/Core/Serialize.fs) | Current operation vocabulary and text serialization. |
 
-// LazyWitness.fs (independent)
-let witnessLazyForce ctx node =
-    let! branchOp = pCondBranch computedSSA "return_cached" "compute_value"
-    ...
-
-// ControlFlowWitness.fs (independent)
-let witnessIfThenElse ctx node =
-    let! branchOp = pCondBranch condSSA "then_block" "else_block"
-    ...
-```
-
-**Why parallel-safe**: Shared Element, no witness-to-witness calls.
-
-#### Option 2: Shared Pattern (Compositional)
-
-Create a Pattern in ElisionPatterns.fs that both witnesses use:
-
-```fsharp
-// ElisionPatterns.fs (shared vocabulary)
-let pBuildConditionalBranch (cond: SSA) (thenOps: MLIROp list) (elseOps: MLIROp list) =
-    parser {
-        let! branchOp = pCondBranch cond "then_block" "else_block"
-        let! thenBlock = pBlock "then_block" thenOps
-        let! elseBlock = pBlock "else_block" elseOps
-        return [branchOp; thenBlock; elseBlock]
-    }
-
-// LazyWitness.fs (uses pattern)
-let witnessLazyForce ctx node =
-    let! ops = pBuildConditionalBranch computedSSA returnOps computeOps
-    ...
-
-// ControlFlowWitness.fs (uses pattern)
-let witnessIfThenElse ctx node =
-    let! ops = pBuildConditionalBranch condSSA thenOps elseOps
-    ...
-```
-
-**Why parallel-safe**: Shared Pattern, no witness-to-witness calls.
-
-#### Option 3: CCS Elaboration (Moves Logic Upstream)
-
-Have CCS elaborate `Lazy.force` into explicit control flow nodes in the PSG:
-
-```fsharp
-// CCS elaborates:
-Lazy.force x
-
-// Into PSG nodes:
-IfThenElse(
-    cond = x.computed,
-    thenBranch = x.value,
-    elseBranch = Call(x.thunk, x.env)   // thunk is the function-value half of the lazy pair
-)
-
-// ControlFlowWitness handles the IfThenElse node
-// LazyWitness only handles LazyExpr construction
-```
-
-**Why parallel-safe**: No LazyForce witness needed. ControlFlowWitness handles the PSG structure that CCS created.
-
-### Enforcement Mechanisms
-
-#### 1. Type-Level Firewall
-
-Elements are `module internal` - witnesses cannot import them:
-
-```fsharp
-// Elements/LLVMElements.fs
-module internal Alex.Elements.LLVMElements  // INTERNAL!
-
-// Witnesses/LazyWitness.fs
-open Alex.Elements.LLVMElements  // COMPILATION ERROR!
-```
-
-This forces witnesses to go through Patterns, preventing direct Element usage.
-
-#### 2. CI Validation
-
-Detect witness-to-witness imports:
-
-```bash
-#!/bin/bash
-# In .github/workflows/validate-architecture.yml
-
-if grep -r "open Alex.Witnesses" src/Alex/Witnesses/ --exclude-dir=obj; then
-    echo "FAIL: Witnesses cannot import other witnesses (creates dependencies)"
-    exit 1
-fi
-
-if grep -r "open Alex.Elements" src/Alex/Witnesses/ --exclude-dir=obj; then
-    echo "FAIL: Witnesses cannot import Elements (use Patterns instead)"
-    exit 1
-fi
-```
-
-#### 3. Nanopass Execution Test
-
-Verify parallel execution produces identical results to sequential:
-
-```fsharp
-[<Test>]
-let ``Parallel nanopass execution equals sequential execution`` () =
-    let graph = loadGraph "samples/FidelityHelloWorld/04_HelloWorldFullCurried/psg.json"
-    let coeffects = computeCoeffects graph
-
-    let seqResult = executeNanopasses { EnableParallel = false } registry graph coeffects
-    let parResult = executeNanopasses { EnableParallel = true } registry graph coeffects
-
-    Assert.AreEqual(seqResult.TopLevelOps, parResult.TopLevelOps)
-```
-
-If witnesses have hidden dependencies, parallel execution will produce different results.
-
-### The Dependency Tree is Not a Failure
-
-**Key Insight**: A dependency tree between LAYERS (Elements → Patterns → Witnesses) is correct and intentional. This is composition, not coupling.
-
-**What would be a failure**: Dependencies WITHIN a layer (Witness A → Witness B) breaks parallelism.
-
-**The architecture ensures**:
-- Elements compose into Patterns (bottom-up composition)
-- Patterns compose into Witnesses (bottom-up composition)
-- Witnesses do NOT compose into each other (flat parallelism)
-
-### Summary
-
-| Relationship | Effect on Parallelism | Example |
-|--------------|----------------------|---------|
-| Witness → Element | ✅ Parallel-safe | LazyWitness uses `pCondBranch` |
-| Witness → Pattern | ✅ Parallel-safe | LazyWitness uses `pBuildLazyStruct` |
-| Witness → Witness | ❌ Creates dependency | LazyWitness calls ControlFlowWitness |
-| Element → Element | ✅ Composition layer | `pCondBranch` uses MLIR types |
-| Pattern → Element | ✅ Composition layer | `pBuildLazyStruct` uses `pInsertValue` |
-
-**The standing art composes up. Shared vocabulary enables parallel execution.**
-
-## External Tool Integration
-
-Alex delegates to battle-tested infrastructure:
-- `mlir-opt` for dialect conversion
-- `mlir-translate` for LLVM IR generation
-- `llc` for machine code generation
-- System linker for final executable
-
-## OutputKind
-
-```fsharp
-type OutputKind =
-    | Console       // Uses libc, main entry point
-    | Freestanding  // No libc, _start wrapper, direct syscalls
-    | Embedded      // No OS, custom startup
-    | Library       // No entry point, exported symbols
-```
-
----
-
-*For detailed architecture decisions, see `Architecture_Canonical.md`.*
+The [LLVM backend](LLVM_Backend.md) owns `mlir-opt`, `mlir-translate`, target
+bitcode preparation with `opt`, and direct `ld.lld` linking. It does not invoke
+Clang or a separate `llc`. Native ORC execution is planned work, not an existing
+alternative hidden inside Alex. Deployment modes and runtime inputs are defined
+in [`Core/Types/Dialects.fs`](../src/Core/Types/Dialects.fs) and the backend contract.

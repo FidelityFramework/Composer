@@ -609,13 +609,21 @@ a potential component:
 
 ### Sequencing
 
-Transcribe depends on primitives that do not yet exist. The 34 remaining PRDs
-establish the foundation. The natural ordering:
+The September 25 [interactive compiler workbench plan](Interactive_Compiler_Workbench.md)
+introduces an earlier bootstrap workstream alongside language coverage. Its
+SageFS pilot, shared-session/proof work and bounded ORC integration do not require
+full self-hosting. The sequence below records the broader Transcribe/notebook
+destination; it must not delay those enabling experiments or imply that the
+existing Lattice server already supplies a shared compilation daemon.
 
-1. **34 PRDs** — complete the compiler's core feature set (fused model at full form)
+Transcribe depends on primitives that do not yet exist. The
+[current PRD index](PRDs/README.md) owns feature counts and acceptance status.
+The broader dependency ordering is:
+
+1. **Language coverage** — establish the compiler's required core feature set (fused model at full form)
 2. **Self-hosting** (Clef and Composer fully supported) — the bootstrap milestone
-3. **Daemon mode** (Stage 3) — LSP, incremental recomputation over the full PSG
-4. **Jupyter kernel** (Stage 4) — interactive execution, ORC JIT, notebook protocol
+3. **Native daemon mode** (Stage 3) — native hosting and admitted incremental recomputation over the full PSG; bootstrap services can precede it
+4. **Jupyter kernel** (Stage 4) — notebook protocol over interactive execution; bounded ORC integration can precede it
 5. **Transcribe** — split model introduced here, after the fused model is proven
 
 Within Transcribe:

@@ -243,6 +243,23 @@ them; they are not a mandatory list or a new serial phase before C/A/T/R work.
 |-----|-------|--------|--------|------|
 | [M-01](M-01-DialectAdmission.md) | Dialect Admission and Target Realization | Per operation/pathway oracle | Planned | Complete Alex's receiving/forwarding contract for Baker-settled expression, graph facts and proofs; consider math, affine, vector, tensor, async and cf, complete demanded index operations, and distinguish CIRCT, existing GPU/AIE and proposed Triton pathways. |
 
+### Interactive compiler workbench
+
+The [workbench and native REPL bridge](../Interactive_Compiler_Workbench.md)
+is a Composer-owned development workstream alongside language completion.
+SageFS is the first bootstrap-host candidate. The initial pilot can run alongside
+C-01–C-07; it does not wait for full self-hosting or advance those PRDs by itself.
+CCS/Baker retain semantic authority, Alex retains ctx pull witnessing, and
+Lattice/MCP clients share the existing proof and session service. WB identifiers
+are workstream milestones, not another language PRD category.
+
+| Milestone | Scope | Status | Note |
+|---|---|---|---|
+| [WB-01](../Interactive_Compiler_Workbench.md#pilot-acceptance) | SageFS compiler-workbench pilot | Planned | Evaluate a pinned host on a real coverage case; require rejection controls, saved-source replay, actual owning gates and measured feedback costs. No adapter is implemented by this plan. |
+| [WB-02](../Interactive_Compiler_Workbench.md#proof-responsiveness) | Shared session and responsive proofs | Planned | Reuse the CCS editor/proof service; establish compiler-generation identity, shared-client correctness and measured cvc5 scheduling/reuse. |
+| [WB-03](../Interactive_Compiler_Workbench.md#milestones) | Native interactive execution | Planned | Connect the ordinary lowering to ORC/JITLink with explicit invocation/lifetime contracts and JIT/AOT acceptance for a named slice. |
+| [WB-04](../Interactive_Compiler_Workbench.md#milestones) | Clef-facing clients and host transition | Planned | Extend Lattice clients and preserve the session contract when bootstrap-specific hosting is replaced; notebooks remain separately scoped. |
+
 ### FPGA targeting and artifact verification
 
 The dedicated [FPGA series](../fpga-targeting/README.md) owns this target's

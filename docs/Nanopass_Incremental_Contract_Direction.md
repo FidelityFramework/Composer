@@ -301,6 +301,17 @@ The capability gates are:
 These are dependencies to establish, not a fixed calendar or a requirement to
 complete every actor/CE feature before a useful native incremental slice.
 
+The September 25 [interactive compiler workbench](Interactive_Compiler_Workbench.md)
+adds a separate Composer-owned bootstrap investigation: evaluate SageFS as a
+persistent host for the real CCS/Baker/Alex pipeline while coverage work proceeds.
+Its [WB milestones](Interactive_Compiler_Workbench.md#milestones) distinguish the
+host pilot, shared sessions/proof responsiveness, native ORC execution and client
+integration. Keeping the compiler resident establishes neither selective
+recompilation nor native retained-value semantics. Compiler hot patches require
+generation-aware invalidation; fresh persisted-source checks remain the reference.
+This work reuses the proof service and the contracts in this document rather than
+introducing an alternative dependency engine or placing work/solver state in Alex.
+
 Two requested .NET bootstrap candidates were reviewed on September 19:
 
 | Candidate | Evidence and bounded role | Roadmap disposition |

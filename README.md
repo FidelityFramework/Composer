@@ -2,12 +2,11 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![License: Commercial](https://img.shields.io/badge/License-Commercial-orange.svg)](Commercial.md)
-[![Pipeline](https://img.shields.io/badge/Pipeline-25%20nanopasses-blue)]()
-[![Samples](https://img.shields.io/badge/Samples-3/16%20working-yellow)]()
+[![Architecture](https://img.shields.io/badge/Architecture-CCS%20%2F%20Baker%20%2F%20Alex-blue)](docs/Architecture_Canonical.md)
 
 <p align="center">
 🚧 <strong>Under Active Development</strong> 🚧<br>
-<em>Early development (Feb 2026: 3/16 samples working). Not production-ready.</em>
+<em>Coverage is tracked by the owning PRDs and dated validation waypoints. Not production-ready.</em>
 </p>
 
 Ahead-of-time Clef compiler producing native executables without managed runtime or garbage collection. Uses [Clef Compiler Services (CCS)](https://github.com/FidelityFramework/clef) for type checking and semantic analysis, generates MLIR through Alex multi-targeting layer, produces native binaries via LLVM.
@@ -17,6 +16,12 @@ Ahead-of-time Clef compiler producing native executables without managed runtime
 [Lattice integration](docs/Lattice_Integration.md) coordinates work across CCS, Composer, the VSCode and Neovim/Vim clients, grammar and helper repositories. This solution now includes [CCS.Editor](src/CCS.Editor/README.md) and the [Lattice server](src/Lattice.Server/README.md), with a local [HelloDimensionsProof](samples/lattice/HelloDimensionsProof/README.md) editor demo. It shows dimensional hover, compiler diagnostics and expandable source obligations dispatched to cvc5. Compiler-branch reconciliation and the broader editor gates remain explicit in the integration design.
 
 [CCS architecture](docs/CCS_Architecture.md) describes the compiler-owned facts that both lowering and editor queries consume. [BAREWire](https://github.com/FidelityFramework/BAREWire) and [Fidelity.Platform](https://github.com/FidelityFramework/Fidelity.Platform) supply contracts and target declarations used in that reasoning. Language requirements remain in the [Clef specification](https://github.com/FidelityFramework/clef-lang-spec).
+
+[Interactive compiler workbench and native REPL bridge](docs/Interactive_Compiler_Workbench.md)
+is planned work alongside language completion. It starts with a bounded SageFS
+hosting evaluation, preserves Baker/Alex authority, and coordinates shared
+Lattice/MCP sessions, responsive design-time proof dispatch and native ORC
+execution. Its roadmap milestones do not assert an implemented adapter or JIT.
 
 The sample counts and recent-change lists below retain their February 2026 dates; they are historical measurements, not results from the current tooling integration gates.
 
@@ -51,290 +56,202 @@ See: `docs/PRDs/README.md` for full feature roadmap and status.
 
 ## Architecture
 
-Composer implements a true nanopass compiler architecture with ~25 distinct passes from Clef source to native binary. Each pass performs a single, well-defined transformation on an intermediate representation.
+CCS constructs the typed graph and Baker elaborates/saturates its computation and
+relationships. Composer consumes that graph through Alex and realizes the selected
+target. The [pipeline overview](docs/Architecture_Canonical.md) is the current
+source map; older pass counts and FCS typed-tree-overlay diagrams are historical.
 
-### Nanopass Pipeline
-
-```
-Clef Source
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│ CCS: Clef Compiler Service                                  │
-│ • Parse Clef source and resolve project inputs               │
-│ • Infer native types and dimensional constraints             │
-│ • Construct and saturate the Program Semantic Graph          │
-│ • Carry range/layout facts and supported proof obligations   │
-│ • Return compiler-owned diagnostics and graph data           │
-└─────────────────────────────────────────────────────────────┘
-    ↓ PSG (Program Semantic Graph)
-┌─────────────────────────────────────────────────────────────┐
-│ Alex: Element/Pattern/Witness Architecture                  │
-│ • Elements (module internal): Atomic MLIR ops with XParsec  │
-│ • Patterns (public): Composable templates from Elements     │
-│ • Witnesses (public): Thin observers (~20 lines each)       │
-│                                                             │
-│ 16 category-selective witnesses:                            │
-│ - ApplicationWitness: function calls, intrinsics            │
-│ - ControlFlowWitness: if/while/for with MLIR SCF dialect    │
-│ - BindingWitness: let bindings, mutable variables          │
-│ - LambdaWitness: function definitions                        │
-│ - OptionWitness, LazyWitness, SeqWitness: type constructors │
-│ - 9 additional witnesses for Clef coverage                    │
-└─────────────────────────────────────────────────────────────┘
-    ↓ Portable MLIR (memref, arith, func, index, scf)
-┌─────────────────────────────────────────────────────────────┐
-│ MLIR Structural Passes (4 passes)                           │
-│ 1. Structural folding (deduplicate function bodies)          │
-│ 2. Declaration collection (external function declarations)   │
-│ 3. Type normalization (insert memref.cast at call sites)     │
-│ 4. FFI conversion (delegated to mlir-opt)                    │
-└─────────────────────────────────────────────────────────────┘
-    ↓ MLIR (portable dialects)
-┌─────────────────────────────────────────────────────────────┐
-│ mlir-opt Dialect Lowering                                    │
-│ - memref → LLVM struct                                       │
-│ - arith → LLVM arithmetic                                    │
-│ - scf → cf → LLVM control flow                               │
-│ - index → platform word size                                 │
-└─────────────────────────────────────────────────────────────┘
-    ↓ LLVM IR
-┌─────────────────────────────────────────────────────────────┐
-│ LLVM + Clang                                                 │
-│ - Optimization passes                                        │
-│ - Code generation                                            │
-│ - Linking                                                    │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-Native Binary (zero runtime dependencies)
+```text
+Clef source + project/library/platform inputs
+  -> CCS checking and typed PSG construction
+  -> Baker recipes / saturation / owning admission and obligation passes
+  -> Composer source-diagnostic and target gates
+  -> Alex ctx pull through graph/codata, coeffects and the Huet zipper
+       Elements -> Patterns -> Witnesses
+       admitted physical operations + required graph correspondence
+  -> declaration collection and bounded correspondence checks
+  -> selected backend
+       ELF: mlir-opt -> mlir-translate -> opt (target bitcode)
+            -> ld.lld (LLVM code generation and linking)
+  -> native artifact and its execution/verification gates
 ```
 
-## Architectural Principles
+The [direct LLVM/LLD backend](docs/LLVM_Backend.md) invokes neither Clang nor a
+separate `llc`. Native console deployment can use libc, startup objects and a
+loader; other deployment modes retain their own runtime requirements. Avoiding
+the .NET runtime does not imply zero native runtime dependencies.
 
-**1. Element/Pattern/Witness Stratification (Feb 2026)**
-- **Elements** (module internal): Atomic MLIR operations with XParsec state threading
-- **Patterns** (public): Composable templates that compose Elements across disciplines (memref + arith + func)
-- **Witnesses** (public): Thin observers (~20 lines) that delegate to Patterns via `tryMatch`
+### Architectural principles
 
-Witnesses physically cannot import Elements - they must use Patterns. This enforces compositional architecture.
+- **Baker settles; Alex witnesses.** Source algorithms, evaluation relationships,
+  captures, residence, layout and proof premises belong in their owning CCS/Baker
+  stages. Missing semantics cannot be supplied by a late emitter or F#/C surrogate.
+- **Context pull preserves position.** The Huet zipper holds focus, path and graph.
+  Program facts come from graph nodes/codata; current `TransferCoeffects` holds
+  platform reads and target selection. Emission accumulators, scopes and visited
+  sets are separate bookkeeping, not a semantic reconstruction layer.
+- **Compose the physical vocabulary.** Witnesses observe through `ctx` and invoke
+  Patterns, which compose Elements. `module internal` restricts assembly visibility;
+  it does not prohibit Witness-to-Element access within the Composer assembly.
+  There is no correctness-bearing line-count limit for a Witness or Pattern.
+- **Describe actual traversal.** Registered witnesses are combined in one
+  post-order traversal with scope-owned callbacks. This is not independent parallel
+  traversal per witness. `Values.fs` derives SSA names from node/role ordinals and
+  block arguments; CCS does not run an SSA-preassignment pass.
+- **Thin emission retains admitted structure.** Structured operations and regions
+  are compatible with flat/thin witnessing. Alex is target-aware; the admission
+  key is expression family × platform/backend profile × witness form.
+- **Evidence has a scope.** Graph tests, MLIR verification, solver answers and
+  native oracles establish different boundaries. [M-01](docs/PRDs/M-01-DialectAdmission.md)
+  still owns planned general admission, target-path reconciliation and correlated
+  fact/proof transport. Existing bounded checks do not establish complete coverage.
 
-**2. XParsec Throughout**
-Composable parser combinators at every level: Elements use `parser { }` CE for state threading, Patterns pull data from Coeffects monadically, Witnesses use `tryMatch` for PSG structure matching. No central dispatch hub, no mutable accumulator state.
+See [Alex Architecture](docs/Alex_Architecture_Overview.md) for the current
+implementation and [Thin Middle End](docs/Thin_Middle_End_Design.md) for its
+semantic boundary.
 
-**3. Coeffects Over Runtime**
-Pre-computed analysis (SSA assignment, platform resolution, mutability tracking, DU layouts) guides code generation. No runtime discovery. Coeffects are computed once before Alex witnessing begins.
+## Native types and representations
 
-**4. Codata Witnesses**
-Witnesses observe PSG structure and return MLIR operations. They do not build or transform—observation only. This preserves PSG immutability and enables nanopass composition.
+CCS's native type algebra retains Clef dimensions and declared representation
+requirements. Integer widths, layouts, callable environments and lifetimes must
+come from their owning language/platform contracts, not a host-language type or a
+convenient machine-width default. Alex reads those facts when selecting physical
+carriers.
 
-**5. Zipper + XParsec**
-Bidirectional PSG traversal with composable pattern matching. Enables local reasoning without global context threading.
+Current CPU string patterns use byte memrefs, while settled static strings can
+share a BAREWire pool with exact offsets, bytes and obligation anchors. A memref
+is an MLIR carrier, not the source-language definition of a string or a universal
+promise about descriptor size. Closure, sequence and aggregate carriers likewise
+have separately admitted layout and residence requirements. The
+[Alex component suite](tests/Alex.Tests/README.md) records the boundaries tested.
 
-**6. Portable Until Proven Backend-Specific**
-MiddleEnd emits only portable MLIR dialects (memref, arith, func, index, scf). Target-specific lowering delegated to mlir-opt and LLVM.
+Internal `TNativePtr` plumbing is not a user-denotable general pointer API. The
+[FFI contract](../clef-lang-spec/spec/ffi-boundary.md) and
+[C-01](docs/PRDs/C-01-Closures.md) govern typed foreign boundaries and remaining
+representation work. Earlier `NativePtr` examples or MLIR-shaped intrinsic
+signatures are not Clef surface declarations.
 
-## Native Type System
+## Minimal example
 
-CCS provides native type universe (`NTUKind`) at compile time. Types are compiler intrinsics, not runtime constructs:
-
-- Primitives: `i8`, `i16`, `i32`, `i64`, `f32`, `f64`, `nativeint` → MLIR integer/float/index types
-- Pointers: `nativeptr<'T>` → opaque pointers
-- **Strings**: `memref<?xi8>` directly (NO fat pointers, NO structs) → memref operations
-- Structures: Records/unions → MLIR struct types with precise layout
-- **Mutable Variables**: `let mutable x = ...` → `memref<1x'T>` with alloca + load/store (limited to local scope)
-
-### String Representation (MLIR Memref Semantics)
-
-**ARCHITECTURAL PRINCIPLE**: Strings ARE memrefs, not fat pointer structs.
-
-```mlir
-Static literal:    memref<13xi8>    // "Hello, World!"
-Dynamic (readln):  memref<?xi8>     // Runtime-sized, dimension intrinsic
-Concatenation:     memref<?xi8>     // Allocated with actual combined length
-```
-
-String operations use memref.dim to get length, memref.alloc for runtime-sized allocation, memcpy for substring extraction. This is MLIR-native, not LLVM-specific.
-
-### Intrinsic Operations
-
-Platform operations defined in CCS as compiler intrinsics:
-
-**System (`Sys` module):**
-- `Sys.write(fd: i64, buf: memref<?xi8>): i64` — syscall (extracts ptr + length from memref)
-- `Sys.read(fd: i64, buf: memref<?xi8>): i64` — syscall
-- `Sys.exit(code: i32): unit` — process termination
-
-**Memory (`NativePtr` module):**
-- `NativePtr.read(ptr: nativeptr<'T>): 'T` — load
-- `NativePtr.write(ptr: nativeptr<'T>, value: 'T): unit` — store
-- `NativePtr.stackalloc(count: nativeint): nativeptr<'T>` — stack allocation (memref.alloca)
-
-The `NativePtr` module is compat surface. Per the Clef spec (`ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing: confined to the generated Layer 1/2 membrane, counted as the TCB metric, replaced by use-class, and regenerated out at the corpus-wide regeneration horizon. See [docs/Closure_Nanopass_Architecture.md](docs/Closure_Nanopass_Architecture.md) Section 4 and [docs/PRDs/C-01-Closures.md](docs/PRDs/C-01-Closures.md) Section 6.7.
-
-**String (`String` + `NativeStr` modules):**
-- `String.length(s: memref<?xi8>): int` — memref.dim extraction
-- `String.concat2(s1: memref<?xi8>, s2: memref<?xi8>): memref<?xi8>` — allocate + memcpy
-- `NativeStr.fromPointer(buf: memref<Nxi8>, len: nativeint): memref<?xi8>` — substring extraction
-
-All intrinsics resolve to platform-specific MLIR during Alex traversal.
-
-## Minimal Example
+The [direct HelloWorld sample](samples/console/FidelityHelloWorld/01_HelloWorldDirect/HelloWorld.fs)
+exercises static output through the ordinary pipeline:
 
 ```fsharp
-module HelloWorld
+module Examples.HelloWorldDirect
 
 [<EntryPoint>]
 let main argv =
-    Console.write "Enter your name: "
-    let name = Console.readln()
-    Console.writeln $"Hello, {name}!"
+    Console.write "Hello, World!"
+    Console.writeln ""
     0
 ```
 
-Compiles to native binary with:
-- Zero .NET runtime dependencies
-- Direct syscalls for I/O
-- Stack allocation for locals (memref.alloca)
-- Mutable variables via TMemRef auto-loading
-- MLIR → LLVM optimization
+Its [project](samples/console/FidelityHelloWorld/01_HelloWorldDirect/HelloWorld.fidproj)
+selects a Fidelity.Platform dependency and CPU target. Use that declared profile
+when reproducing the sample; source syntax alone does not establish a target.
 
 ```bash
-composer compile HelloWorld.fidproj
-echo "Alice" | ./targets/helloworld
-# Output: "Enter your name: Hello, Alice!"
+dotnet build src/Composer.fsproj
+src/bin/Debug/net10.0/Composer compile samples/console/FidelityHelloWorld/01_HelloWorldDirect/HelloWorld.fidproj -k
+samples/console/FidelityHelloWorld/01_HelloWorldDirect/targets/helloworld
 ```
 
-See `/samples/console/FidelityHelloWorld/` for progressive examples (3 of 16 currently working).
+For a new `.fidproj`, copy an existing project for the intended platform and
+update its inputs. CPU projects use `target = "cpu"`; `output_kind` selects the
+deployment/runtime contract rather than the compiler's semantic model. Cross
+runtime/link inputs are documented in [LLVM Backend](docs/LLVM_Backend.md).
 
-## Project Configuration
+## Build and validation
 
-`.fidproj` files use TOML:
-
-```toml
-[package]
-name = "HelloWorld"
-
-[compilation]
-target = "native"
-
-[build]
-sources = ["HelloWorld.fs"]
-output = "helloworld"
-output_kind = "console"  # or "freestanding"
-```
-
-## Build Workflow
-
-```bash
-# Build compiler
-cd src && dotnet build
-
-# Compile project
-composer compile MyProject.fidproj
-
-# Keep intermediates for inspection
-composer compile MyProject.fidproj -k
-```
-
-### Intermediate Artifacts
-
-With `-k` flag, inspect each nanopass output in `targets/intermediates/`:
-
-| File | Nanopass Output |
-|------|----------------|
-| `01_psg0.json` | Initial PSG with reachability |
-| `02_intrinsic_recipes.json` | Intrinsic elaboration recipes |
-| `03_psg1.json` | PSG after intrinsic fold-in |
-| `04_saturation_recipes.json` | Baker saturation recipes |
-| `05_psg2.json` | Final saturated PSG to Alex |
-| `06_coeffects.json` | SSA, platform, mutability analysis |
-| `07_output.mlir` | Alex-generated portable MLIR |
-| `08_after_structural_folding.mlir` | Deduplicated function bodies |
-| `09_after_ffi_conversion.mlir` | FFI boundary preparation |
-| `10_after_declaration_collection.mlir` | External function declarations |
-| `11_after_type_normalization.mlir` | Call site type casts |
-| `12_output.ll` | LLVM IR after mlir-opt lowering |
-
-### Regression Testing
+Coordinate builds when Composer and CCS are shared with another task. The
+[regression runner](tests/regression/README.md) builds the compiler and runs
+sample/native-output cases sequentially:
 
 ```bash
 cd tests/regression
-dotnet fsi Runner.fsx                    # All samples
-dotnet fsi Runner.fsx -- --parallel      # Parallel execution
+dotnet fsi Runner.fsx
+dotnet fsi Runner.fsx -- --verbose
 dotnet fsi Runner.fsx -- --sample 02_HelloWorldSaturated
 ```
 
-**Current Status** (Feb 2026):
-- 3 of 16 samples pass (01, 02, 03)
-- 13 samples fail compilation (04-16)
+`--parallel` is unsupported. Owning [source admission](tests/SourceAdmission/README.md),
+[Alex component](tests/Alex.Tests/README.md), proof and native gates supplement
+these regressions. A subset or a historical sample count is not a fresh full-suite
+result.
 
-## Directory Structure
+With `-k`, retained artifacts in the sample's `targets/intermediates/` include:
 
-```
+| Artifact | Boundary |
+|---|---|
+| `01_psg0.json` | Initial typed PSG/reachability view. |
+| `02_intrinsic_recipes.json`, `03_psg1.json` | Intrinsic elaboration and fold-in. |
+| `04_saturation_recipes.json`, `05_psg2.json` | Baker recipes and final graph view. |
+| `07_output.mlir` | MLIR retained by the orchestrator. |
+| `08_after_declaration_collection.mlir` | Post-witness declaration collection. |
+| `09_obligations.mlir` | Optional emitted SMT module; not a discharge verdict. |
+| `10_output.mlir` | Final middle-end serialization. |
+| `08_output.ll` and associated bitcode | LLVM backend handoff. |
+
+The old `06_coeffects.json` identifier remains reserved in PhaseConfig; its name
+does not establish an active separate Composer analysis pass. The obsolete four
+middle-end pass sequence and its artifact names are not current output contracts.
+
+## Directory structure
+
+```text
 src/
 ├── CLI/                    Command-line interface
-├── Core/                   Configuration, timing, diagnostics
-├── FrontEnd/               CCS integration
+├── Core/                   Pipeline/target orchestration and backend contracts
+├── FrontEnd/               Calls CCS project checking
+├── CCS.Editor/             Versioned compiler projection and proof dispatch
+├── Lattice.Server/         Editor transport and scheduling
 ├── MiddleEnd/
-│   ├── PSGElaboration/     Coeffect analysis (SSA, platform, DU layouts)
-│   └── Alex/               MLIR generation layer
-│       ├── Dialects/       MLIR type system
-│       ├── CodeGeneration/ Type mapping, sizing
-│       ├── Traversal/      PSGZipper, XParsec combinators
-│       ├── Elements/       Atomic MLIR ops (module internal)
-│       ├── Patterns/       Composable templates (public)
-│       ├── Witnesses/      16 category-selective observers (public)
-│       └── Pipeline/       Orchestration, MLIR passes
-└── BackEnd/                LLVM compilation, linking
+│   ├── MLIRGeneration.fs   Alex ingress, validation and serialization
+│   └── Alex/
+│       ├── Dialects/       Physical operations/types and serialization
+│       ├── CodeGeneration/ Type and callable-symbol mapping
+│       ├── Traversal/      Huet context, derived values, traversal and coverage
+│       ├── XParsec/        Graph observation combinators
+│       ├── Elements/       Atomic physical operations
+│       ├── Patterns/       Composed admitted forms
+│       ├── Witnesses/      Context-pulled graph observation
+│       └── Pipeline/       Post-witness declaration collection
+└── BackEnd/                Selected target realization and artifacts
 ```
 
-## Multi-Stack Targeting
+Baker, graph construction and owning semantic analyses are in the companion
+[Clef repository](https://github.com/FidelityFramework/clef), not an additional
+Composer `PSGElaboration` pipeline.
 
-Portable MLIR enables diverse hardware targets:
+## Targets and roadmap
 
-| Target | Status | Lowering Path |
-|--------|--------|---------------|
-| x86-64 CPU | ✅ Working (limited) | memref → LLVM struct |
-| ARM Cortex-M | 🚧 Planned | memref → custom embedded lowering |
-| CUDA GPU | 🚧 Planned | memref → SPIR-V/PTX lowering |
-| AMD ROCm | 🚧 Planned | memref → SPIR-V lowering |
-| Xilinx FPGA | 🚧 Planned | memref → HDL stream buffer |
-| CGRA | 🚧 Planned | memref → dataflow lowering |
-| NPU | 🚧 Planned | memref → tensor descriptor |
-| WebAssembly | 🚧 Planned | memref → WASM linear memory |
+The [PRD index](docs/PRDs/README.md) records current feature/target scope and
+acceptance evidence. [Language Coverage Waypoints](docs/Language_Coverage_Waypoints.md)
+records coordinated revisions, remaining failures and native oracles. Existing
+CPU, MCU and other backend implementations must be distinguished from complete
+language/target admission; a portable MLIR vocabulary alone does not implement
+a new target.
 
-Previously blocked by hard-coded LLVM types. Now possible via target-specific mlir-opt lowering.
+Relevant workstreams include [Cortex-M](docs/MCU_Backend.md),
+[FPGA](docs/fpga-targeting/README.md),
+[WebAssembly](docs/wasm-targeting/README.md),
+[JavaScript](docs/javascript-targeting/README.md),
+[M-01 dialect admission](docs/PRDs/M-01-DialectAdmission.md), and the
+[interactive workbench](docs/Interactive_Compiler_Workbench.md). Follow their own
+status records; the February snapshot above is preserved as history.
 
 ## Documentation
 
 | Document | Content |
-|----------|---------|
-| [Lattice integration](docs/Lattice_Integration.md) | Repository map, server design, editor and proof-view gates |
-| [CCS architecture](docs/CCS_Architecture.md) | Current semantic service boundary and source references |
-| `docs/Architecture_Canonical.md` | CCS-first pipeline overview, intrinsic modules |
-| `docs/PSG_Nanopass_Architecture.md` | Phase 0-5+ detailed design |
-| `docs/Alex_Architecture_Overview.md` | Element/Pattern/Witness stratification |
-| `docs/XParsec_PSG_Architecture.md` | Pattern combinators, codata witnesses |
-| `docs/Coeffect_Analysis_Architecture.md` | SSA assignment, DU layouts, platform resolution |
-| `docs/PRDs/README.md` | Product requirement documents by category |
-
-## Roadmap
-
-Development organized by category-prefixed PRDs. See [docs/PRDs/README.md](docs/PRDs/README.md).
-
-**Foundation (F-01 to F-10)**: Core compilation
-- ✅ F-01 HelloWorldDirect (static strings)
-- ✅ F-02 ArenaAllocation (now: memref.alloc for strings)
-- ✅ F-03 PipeOperators (|> reduction)
-- ⏳ F-04 to F-10 (in progress, partial support)
-
-**Computation (C-01 to C-07)**: Closures, HOFs, Sequences
-- 🚧 C-01 Closures (active development - closure capture unimplemented)
-- 📋 C-02 to C-07 (planned - depends on C-01)
-
-**Async (A-01 to A-06)**: Async workflows, region-based memory
-- 📋 A-01 to A-06 (planned - depends on C-01)
-
-**Other Categories**: I/O (I-xx), Desktop (D-xx), Threading (T-xx), Reactive (R-xx), Embedded (E-xx) - all planned for future work.
+|---|---|
+| [Pipeline overview](docs/Architecture_Canonical.md) | Current CCS/Baker/Alex/backend ownership and source map. |
+| [Baker contract](../clef/docs/fidelity/Baker_Saturation_Architecture.md) | Construction, recipes, saturation and graph relationships. |
+| [Alex overview](docs/Alex_Architecture_Overview.md) | Context pull, positional traversal, physical expression and evidence limits. |
+| [CCS architecture](docs/CCS_Architecture.md) | Semantic service and graph facts. |
+| [Lattice integration](docs/Lattice_Integration.md) | Repository map, editor transport and proof-view gates. |
+| [Workbench](docs/Interactive_Compiler_Workbench.md) | Planned resident compiler and native REPL bridge. |
+| [LLVM backend](docs/LLVM_Backend.md) | Direct LLVM/LLD realization and native runtime inputs. |
+| [PRD index](docs/PRDs/README.md) | Feature statuses with scoped evidence. |
 
 ## Recent Changes (February 2026)
 
@@ -365,7 +282,7 @@ Areas of interest:
 - Memory optimization patterns (escape analysis, loop unrolling)
 - Nanopass transformations for advanced Clef features
 - Closure capture and higher-order function support
-- F* integration for proof-carrying code
+- Graph-resident obligations, cvc5 dispatch and the planned proof-composition service
 
 ## License
 
@@ -373,7 +290,8 @@ Dual-licensed under Apache License 2.0 and Commercial License. See [Commercial.m
 
 ## Acknowledgments
 
-- **Don Syme and Clef Contributors**: Quotations, active patterns, computation expressions enable self-hosting
+- **Don Syme and F# contributors**: Language and compiler heritage used by the bootstrap implementation
+- **Clef contributors**: Native language, graph and compiler development
 - **MLIR Community**: Multi-level IR infrastructure
 - **LLVM Project**: Robust code generation
 - **Nanopass Framework**: Compiler architecture principles

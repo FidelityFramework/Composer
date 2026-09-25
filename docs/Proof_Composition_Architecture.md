@@ -121,10 +121,30 @@ Framework authors establish reusable rules in that environment. Application chec
 The editor path needs:
 
 - Stable semantic identities and a dependency DAG for obligations, laws, premises, encodings, target facts and source snapshots.
-- Warm workers, cancellation and bounded queues; immediate reuse of still-valid results while affected obligations become pending.
+- Cancellation and bounded queues, with current work prioritized and obsolete queued work discarded. Publish completed obligations progressively against the current snapshot while affected obligations remain pending. Evaluate warm worker pools against fresh processes, including assertion isolation, reset and cancellation behavior; residency alone establishes no latency improvement.
 - Separate latency budgets for structural checks, supported solver leaves and larger composed checks. Measure cold and warm p50/p95, invalidation fan-out, memory use and certificate-check time on representative editing workloads before promising a latency bound.
 - Bounded, construction-specific instantiation and leaf solving. No unbounded theorem synthesis or interactive tactic development in the application editing loop.
 - Identical required checks for editor and command-line builds. An expired budget yields a visible pending/unresolved result; at a required commitment boundary it blocks the unestablished claim, never supplies a success.
+
+The planned [interactive compiler workbench](Interactive_Compiler_Workbench.md#proof-responsiveness)
+uses this same service for Lattice, agent and native-execution requests. Its
+optional SageFS adapter supplies another access path, not another proof service.
+Before sharing dispatch, extract or reuse the scheduling currently in the Lattice
+server so adapters share bounded work, cancellation and publication decisions.
+Solver waits must not hold the compiler checking lock. Keep the current serialized
+compiler boundary until isolation supports a different concurrency policy.
+
+Cross-revision reuse must retain the exact query and premises, encoding identity,
+solver version and options, target context and compiler implementation identity,
+and establish correspondence to the current PSG obligation. An unchanged query
+hash alone does not make an old verdict current. If compiler methods can change
+in memory, include an implementation epoch alongside the assembly hash and
+invalidate affected evidence on a patch. The workbench's
+[acceptance gates](Interactive_Compiler_Workbench.md#pilot-acceptance) measure
+edit-to-first and edit-to-complete proof latency, queue time and obsolete work
+under rapid edits and concurrent clients. Progressive publication, reuse and
+worker pooling remain planned improvements, subject to those correctness and
+performance measurements.
 
 The Clef Proofs view reports claim, participants, checked source version, premises, selected law, evidence kind and remaining host assumptions. Opening retained evidence must not rebuild the application. It should distinguish inference results, solver verdicts, emitted certificates and checked derivations. Hiding the display changes no checking obligation.
 

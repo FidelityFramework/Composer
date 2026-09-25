@@ -104,7 +104,7 @@ The
 [component tests, lines 22–73](https://github.com/bryancostanich/fsharp/blob/8bcc791eaa89050d7af4226a912dcc085d641a32/tests/FSharp.Compiler.ComponentTests/TypeChecks/FileOrderAuto/FileOrderAutoTests.fs#L22)
 exercise file ordering, cross-file type recursion and signature pairing. The
 [`and` tests, lines 213–241](https://github.com/bryancostanich/fsharp/blob/8bcc791eaa89050d7af4226a912dcc085d641a32/tests/FSharp.Compiler.ComponentTests/TypeChecks/FileOrderAuto/FileOrderAutoTests.fs#L213)
-retain the original `and` syntax. The checker changes add FS3887 warnings;
+retain the original `and` syntax. In this upstream prior art, the checker changes add FS3887 warnings;
 they do not collect separate same-file declarations into a recursive group.
 [CheckDeclarations.fs, lines 5203 and 5295 onward](https://github.com/bryancostanich/fsharp/blob/8bcc791eaa89050d7af4226a912dcc085d641a32/src/Compiler/Checking/CheckDeclarations.fs#L5203).
 

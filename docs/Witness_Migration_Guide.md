@@ -1,14 +1,52 @@
-# Witness Migration Guide - Parallel Nanopasses
+# Witness Migration Guide — superseded parallel-nanopass plan
 
-**Date**: January 27, 2026
-**Status**: Implementation Complete - Ready for Migration
-**Next**: Migrate all witnesses to nanopass pattern
+**Original date:** January 27, 2026. **Status:** Archived, September 25, 2026.
+The earlier “Implementation Complete — Ready for Migration” label is withdrawn
+as current guidance. The checked boxes below are historical assertions/proposed
+criteria, not evidence that today's tests, parallel equivalence or performance
+gates have passed.
 
-> **CRITICAL**: See [Alex_Architecture_Overview.md](Alex_Architecture_Overview.md#the-three-layer-architecture-elements-patterns-witnesses) for the architectural foundation explaining how shared Elements/Patterns maintain witness independence.
+## Current witness work
 
----
+Start with the [Alex architecture](Alex_Architecture_Overview.md#responsibility),
+[current traversal](Alex_Architecture_Overview.md#current-traversal-and-selection),
+[Alex component-test contract](../tests/Alex.Tests/README.md), and the owning
+language/target PRD. The target-selected registry already exists in
+[`WitnessRegistry.fs`](../src/MiddleEnd/Alex/Traversal/WitnessRegistry.fs).
+[`NanopassArchitecture.fs`](../src/MiddleEnd/Alex/Traversal/NanopassArchitecture.fs)
+combines witnesses within one post-order traversal; it does not launch one
+parallel whole-graph pass per witness.
 
-## Quick Start: Migrating a Witness
+There is no migration to the old `ParallelNanopass.fs`, `ParallelConfig`,
+`runNanopass` or `overlayAccumulators` sketch to perform. Current signatures and
+scope handling must be read from source. `TRSkip` means the next registered
+witness may handle the same focus, while a missing required premise must remain
+an error in its owning stage. The old witness counts, line limits and time
+estimates are not current acceptance criteria.
+
+A new admitted physical form composes existing Elements/Patterns/Witnesses and
+pulls its settled facts through `ctx`, graph/codata, coeffects and the positional
+Huet zipper. Missing semantic construction belongs in Baker. `module internal`
+is assembly visibility and does not enforce a folder boundary between Witnesses
+and Elements. Shared vocabulary alone does not prove parallel independence or
+make an accumulator overlay order-independent.
+
+Component tests use already-settled fixtures and explicitly preserve graph and
+position identity. They do not replace source admission, proof, lifetime or native
+oracles. No scope here authorizes a second semantic accumulator, recursive source
+emitter or F#/C substitute for Clef behavior. General admission and correlated
+evidence transport remain [M-01](PRDs/M-01-DialectAdmission.md) work.
+
+## Archived January instructions
+
+These instructions are retained only to explain the superseded
+[parallel-nanopass proposal](Parallel_Nanopass_Architecture.md). Do not copy its
+project edits, API calls or all-green checklists into current work.
+
+<details>
+<summary>January 27 migration sketch (superseded; not current instructions)</summary>
+
+## Historical migration sketch — do not apply
 
 ### Step 1: Add Category-Selective Witness Function
 
@@ -444,7 +482,7 @@ let private witnessArithmetic (ctx: WitnessContext) (node: SemanticNode) : Witne
 
 ---
 
-## Success Criteria
+## Historical proposed success criteria — not result evidence
 
 ### Per-Witness Migration
 
@@ -465,7 +503,7 @@ let private witnessArithmetic (ctx: WitnessContext) (node: SemanticNode) : Witne
 
 ---
 
-## Next Steps
+## Historical next steps — no longer current tasks
 
 1. **Create WitnessRegistry.fs** (5-10 minutes)
 2. **Migrate LiteralWitness.fs** (10-15 minutes) - DONE already?
@@ -478,8 +516,10 @@ let private witnessArithmetic (ctx: WitnessContext) (node: SemanticNode) : Witne
 
 ---
 
-**Status**: ✅ Architecture ready. Begin migration with LiteralWitness and ArithWitness.
+**Historical readiness claim withdrawn:** do not begin a migration from this checklist.
 
-**Estimated Time**: 6-8 hours for complete migration (14 witnesses)
+**Unvalidated January estimate:** 6-8 hours for complete migration (14 witnesses). Neither the count nor the estimate describes current work.
 
-**Expected Outcome**: Natural parallelism with dozens of nanopasses scaling automatically.
+**Unvalidated January expectation:** natural parallelism with dozens of nanopasses. No automatic scaling or measured speedup is established.
+
+</details>
