@@ -133,11 +133,17 @@ remains available throughout.
 | Pathway | Possible realization vocabulary | Required correspondence and acceptance |
 |---|---|---|
 | CPU/MCU and other LLVM pathways | Admitted portable forms into LLVM/target operations | Integer/index widths, ABI, memory spaces, numerical contracts and native behavior under the selected profile |
-| FPGA / [CIRCT](https://circt.llvm.org/docs/Dialects/) | `hw`, `comb`, `seq`, then applicable SystemVerilog/export flow; other CIRCT families only on demonstrated demand | Clock/reset, state transitions, latency/throughput, arithmetic behavior, storage/resource bounds and protocol backpressure from the graph; simulation/equivalence before board deployment |
+| FPGA / [CIRCT](https://circt.llvm.org/docs/Dialects/) | Existing `hw`, `comb`, `seq` and SystemVerilog/export baseline; [planned Dynamatic/Colibri/VHDL path](../fpga-targeting/README.md); other CIRCT families only on demonstrated demand | Clock/reset, state transitions, latency/throughput, arithmetic behavior, storage/resource bounds and protocol backpressure from the graph; checked component/source/artifact correspondence and scoped simulation/equivalence before deployment |
 | Existing GPU pathway | `gpu` and ROCDL for the current AMD path; other GPU families only as separately admitted pathways | Device entry, launch/work partition, address spaces, synchronization, transfer/lifetime and numerical behavior; preserve existing GPU evidence during migration |
 | Proposed Triton pathway | An explicitly pinned subset of [`tt`, `ttg` and applicable target dialects](https://triton-lang.org/main/dialects/dialects.html) | Tile/layout, masks, reductions, memory spaces, precision/accumulation and execution contracts from Baker; a verified conversion route and CPU/device comparison |
 | NPU / MLIR-AIE | Applicable AIE target operations | Tile placement, routes, bounded FIFO/DMA relationships, synchronization and numerical contracts already present in the graph |
 | Other pathways, including SPIR-V, WebAssembly and JSIR | Their declared realization vocabulary | Individual capability and preservation records; a portable operation is not a claim that every pathway currently supports it |
+
+The [FPGA roadmap](../fpga-targeting/07_roadmap.md) owns its fork, component
+realization, VHDL-to-Rocq and artifact-verification milestones. It uses this PRD's
+admission and complete-information handoff; it does not move semantic decisions
+into Alex or establish a parallel proof-residency mechanism. Its implementation
+remains Planned, separately from the current HelloArty baseline.
 
 Triton is a proposed kernel realization route, not an implemented Composer path
 and not the existing ROCDL path under another name. AI model semantics, automatic

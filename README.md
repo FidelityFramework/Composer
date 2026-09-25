@@ -22,6 +22,13 @@ The sample counts and recent-change lists below retain their February 2026 dates
 
 [Proof composition and the Rocq toolchain](docs/Proof_Composition_Architecture.md) records the design for automatically composing local, concurrent, distributed and device-level evidence. It identifies reusable Iris/Verdi-family foundations, their semantic integration requirements, the managed toolchain and the gates separating proposed coverage from demonstrated verification.
 
+[FPGA targeting and artifact verification](docs/fpga-targeting/README.md) is a
+dedicated roadmap for a Clef-fed Dynamatic fork, Colibri-centered circuit
+realization, direct VHDL-2008 output and an independently implemented
+VHDL-to-Rocq adapter. It shares admission and proof infrastructure with the
+existing compiler; its [milestones](docs/fpga-targeting/07_roadmap.md) distinguish
+planned circuit, mapped-netlist and bitstream verification from current evidence.
+
 ## Historical validation snapshot (February 2026)
 
 **Working Samples**: 3 of 16 console samples compile and execute correctly:

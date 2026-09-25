@@ -14,8 +14,10 @@ waits on.
 
 > **Solver naming.** This note writes obligations in **SMT-LIB2** and names
 > fragments (`QF_LIA`, `QF_BV`), not solvers. Each obligation must identify its
-> supported fragment and premises. Z3, cvc5 or a specialized decision procedure
-> may discharge it; solver choice does not expand the accepted contract.
+> supported fragment and premises. An open-source SMT solver with high
+> performance in the decidable theories we focus on — or a specialized decision
+> procedure — may discharge it; solver choice does not expand the accepted
+> contract.
 > Decidability is not a cost bound. Timeout, unknown and missing-premise results
 > remain unresolved, with a stable diagnostic when commitment requires discharge.
 

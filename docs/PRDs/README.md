@@ -243,6 +243,25 @@ them; they are not a mandatory list or a new serial phase before C/A/T/R work.
 |-----|-------|--------|--------|------|
 | [M-01](M-01-DialectAdmission.md) | Dialect Admission and Target Realization | Per operation/pathway oracle | Planned | Complete Alex's receiving/forwarding contract for Baker-settled expression, graph facts and proofs; consider math, affine, vector, tensor, async and cf, complete demanded index operations, and distinguish CIRCT, existing GPU/AIE and proposed Triton pathways. |
 
+### FPGA targeting and artifact verification
+
+The dedicated [FPGA series](../fpga-targeting/README.md) owns this target's
+engineering roadmap. It shares M-01's operation/profile admission, graph-resident
+obligations, numeric selection, Fidelity.Platform/BAREWire contracts and the
+[managed Rocq proof service](../Proof_Composition_Architecture.md). It does not
+change the acceptance status or priority of the language families above.
+
+| Area | Scope | Status | Note |
+|---|---|---|---|
+| [Dynamatic fork](../fpga-targeting/01_dynamatic_fork.md) | Clef-derived input, admitted dataflow transformations and preserved width/proof identities | Planned | Reuse the DHLS engine independently of C application ingestion; no fork integration is established by this plan. |
+| [Colibri realization](../fpga-targeting/02_colibri_circuit_basis.md) | Canonical component set, checked contracts and direct VHDL-2008 lowering | Planned | Reuse original implementations and verification assets; extensions and any Clef ports need explicit correspondence. |
+| [Circuit and artifact proofs](../fpga-targeting/04_vhdl_to_rocq.md) | Our VHDL-to-Rocq adapter, sequential composition and extracted netlist/configuration evidence | Planned | VHDL2Rocq supplies a published method, not an available dependency; proof coverage is declared per artifact and property. |
+
+[FPGA-01 through FPGA-07](../fpga-targeting/07_roadmap.md) record dependencies,
+positive/rejection gates and the progression from HelloArty and a bounded elastic
+oracle to mapped-circuit and bitstream evidence. They are workstream milestones,
+not a new source-language PRD hierarchy.
+
 ### Second Horizon - Admitted Papers
 
 Three working papers are admitted to the future reach, at the second horizon or beyond. The work each sets out is primarily PSG and hypergraph engineering, carried through the Alex coeffect and codata architecture.
@@ -250,10 +269,10 @@ Three working papers are admitted to the future reach, at the second horizon or 
 | Paper | Named Reach | Depends On | Status | Note |
 |-------|-------------|------------|--------|------|
 | FPS | "Fixed-Point Scaffolding": three axes meeting at a node (compilation, joint-constraint, verification-strength) | C-01, C-02, C-05, R-04 to R-06 | Planned | Admitted second-horizon research; implementation not started. |
-| NFT | "Negative and Fractional Types": the duality dimension as a fourth axis, its η/ε pairing carried as PSG codata, companion treatment in [Negative_Fractional_Types_Architecture.md](../Negative_Fractional_Types_Architecture.md) | C-01, C-02, C-05, R-04 to R-06 | Planned | Admitted second-horizon research; implementation not started. |
+| NFT | Negative and fractional resources, with native bidirectional composition as a reference case; [architecture](../Negative_Fractional_Types_Architecture.md) and [coordination/acceptance plan](../Bidirectional_Composition_Plan.md) | Applicable C-01/C-02/C-05 contracts; M-01 for native witnesses; R-04 to R-06 for reactive extensions | Planned | Design and source corrections tracked separately from implementation. Finite bidirectional, indexed-resource and exact-reconstruction exercises remain Planned. |
 | ADM | "Adaptive Domain Models": the geometric product as a joint constraint, with grade inference deriving the non-zero Cayley table entries at design time and eliminating the structurally zero entries from the compiled computation | C-01, C-02, C-05, R-04 to R-06 | Planned | Admitted second-horizon research; implementation not started. |
 
-This reach is load-bearing on the closure, lazy, and incremental families: the flat-closure finiteness lemma (C-01), the lazy slot class (C-05), and incremental cutoff by environment closedness (R-04 to R-06) are the members beneath it, and its guarantees hold exactly as far as those three hold. The geometric-algebra reach shares the same members and adds the grade and blade-support coeffects.
+The applicable closure and lazy contracts expose captures and delayed dependencies; reactive extensions additionally need incremental invalidation and cutoff. These prerequisites do not establish the papers' new semantic or decidability claims. Each admitted fragment needs its own inference, lifecycle and preservation argument, with target realization subject to M-01. The [bidirectional composition plan](../Bidirectional_Composition_Plan.md#executable-work) separates finite pure exercises from their later reactive extensions. The geometric-algebra reach adds its grade and blade-support obligations.
 
 ---
 

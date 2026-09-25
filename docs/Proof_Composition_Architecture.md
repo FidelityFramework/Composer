@@ -8,6 +8,15 @@ Fidelity can reuse substantial mechanized foundations for concurrent resources, 
 
 This document owns the Composer integration decisions, capability assessment and engineering gates. The [verification internals](https://clef-lang.com/docs/internals/verification/proof-composition-and-tooling/) explain their relationship to Clef's PSG and mode shifts. [Conformance §6.1](https://clef-lang.com/spec/draft/conformance/#61-verification-evidence-and-composition) states the tool-independent evidence contract. The working *Decidable by Construction* manuscript, §5.3, develops the proof-theoretic scope; its research record is `arxiv-papers/research/DBC/proof-composition-and-tier-four.md`. None of these documents establishes an implementation milestone by describing it.
 
+The [FPGA targeting series](fpga-targeting/README.md) owns the planned
+Colibri-based circuit realization and independent VHDL-to-Rocq adapter. Its
+[artifact-verification contract](fpga-targeting/05_artifact_verification.md)
+extends the HelloProof extraction pattern to circuits and supported configurations.
+It consumes this document's theorem admission, premise tracking and managed
+toolchain; it does not create another proof service. Colibri PSL/SBY assets are
+reuse inputs whose correspondence and checking scope must be established, not
+pre-existing Rocq certificates or universal FPGA coverage.
+
 ## Decisions retained and reconciled
 
 | Keep | Extend or replace |

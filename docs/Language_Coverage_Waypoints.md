@@ -7,6 +7,53 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## FPGA circuit and artifact verification planning — 2026-09-25
+
+**Documentation checkpoint; FPGA-01 through FPGA-07 remain Planned.** The new
+[FPGA series](fpga-targeting/README.md) is the restart point for the Clef-fed
+Dynamatic fork, canonical Colibri component realization, direct VHDL-2008 emitter
+and independently implemented VHDL-to-Rocq adapter. Its
+[roadmap](fpga-targeting/07_roadmap.md) separates source/component correspondence,
+mapped-netlist evidence and final-bitstream reconstruction.
+
+Shared edges remain owned by M-01, numeric/width selection, graph-resident
+obligations, the existing proof-composition/toolchain design, Fidelity.Platform,
+BAREWire and Lattice. The series records the current HelloArty/HelloProof limits,
+Colibri's per-component formal coverage and licenses, and VHDL2Rocq's proprietary
+combinational implementation. No Lean dependency or second general proof service
+is introduced. An admitted FPGA profile cannot silently bypass its component and
+evidence policy.
+
+Source inspection used Composer `c46485096c38dc2c9fef9db4ae60caa1905ca1a3`,
+Dynamatic `2fac2911faf35b84156e08782a9fcfe8fc6174d8` and Colibri
+`3fa784121ccea86d9e65b2e0dc08d2a3327f5f2f`; these are research references, not
+a tested combined toolchain. Pre-existing documentation working-tree edits were
+retained. Validation covers the new/changed local links and anchors and
+`git diff --check`. No compiler, solver, Rocq, synthesis, native or hardware tests
+were rerun; no implementation or PRD acceptance status is advanced here.
+
+## Bidirectional composition design accounting - 2026-09-21
+
+**Documentation checkpoint; native NFT work remains Planned.** The
+[coordination and acceptance plan](Bidirectional_Composition_Plan.md) is the
+single restart point for this case study. It links each source edit and its
+validation, including the NFT/PHG/FPS manuscripts, specification capsules,
+engineering design and the *A Path Less Traveled* blog article. Paper changes
+are Markdown only; generated TeX/PDF review and publication remain separate.
+
+The [NFT architecture](Negative_Fractional_Types_Architecture.md) now separates
+two-way dependency from inverse execution, identifies value-indexed resource
+and dynamic-instance obligations, and gives a bounded-storage exact inverse
+example. The PHG account distinguishes executable structure from local coeffects
+and ordered joint relations. Chen and Sabry's Theorem 25 erratum is recorded
+without withdrawing their compact-closed result or attributing it to Tardis.
+
+The plan retains independent executable gates for bidirectional demand semantics,
+finite indexed resources, and a target-checked reversible region. Neither this
+checkpoint nor the source-comment corrections in Clef promote a language PRD.
+Validation and the separate *Cold Half of Concurrency* publication result are
+recorded in the coordinator, avoiding another change ledger here.
+
 ## Clef repository history migration — 2026-09-20
 
 Clef's repository maintenance establishes a new root at the February 18 CCS
