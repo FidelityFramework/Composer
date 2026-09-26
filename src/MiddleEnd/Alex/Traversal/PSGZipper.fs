@@ -15,7 +15,7 @@
 /// - Graph: The full SemanticGraph for node lookups
 ///
 /// NOTHING ELSE goes in the zipper. Coeffects and accumulator state are separate.
-/// See: mlir_transfer_canonical_architecture memory
+/// See: docs/Single_Flattening_Design.md
 module Alex.Traversal.PSGZipper
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
@@ -231,17 +231,13 @@ let requireNode (nodeId: NodeId) (z: PSGZipper) : SemanticNode =
 // PATH INSPECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Find the enclosing Lambda by walking up the zipper's path.
-/// This is the DEFINITIVE source of truth for "are we inside a function?"
-/// Returns Some (lambdaNode, lambdaParams) if inside a Lambda, None if at module level.
+/// Actual enclosing lambda occurrences, nearest first. Navigation retains a
+/// shared node's current path rather than consulting its single Parent field.
+let enclosingLambdas (z: PSGZipper) : SemanticNode list =
+    z.Focus :: (z.Path |> List.map _.Parent)
+    |> List.filter (fun node -> match node.Kind with SemanticKind.Lambda _ -> true | _ -> false)
+
+let enclosingLambdaIds (z: PSGZipper) : NodeId list = enclosingLambdas z |> List.map _.Id
+
 let findEnclosingLambda (z: PSGZipper) : SemanticNode option =
-    // First check if the current focus IS a Lambda
-    match z.Focus.Kind with
-    | SemanticKind.Lambda _ -> Some z.Focus
-    | _ ->
-        // Walk up the path looking for a Lambda parent
-        z.Path
-        |> List.tryPick (fun step ->
-            match step.Parent.Kind with
-            | SemanticKind.Lambda _ -> Some step.Parent
-            | _ -> None)
+    enclosingLambdas z |> List.tryHead

@@ -268,62 +268,6 @@ let rec visitAllNodes
             MLIRAccumulator.addError diag visitedCtx.Accumulator
         | TRSkip -> ()  // Should never reach here (combineWitnesses filters out TRSkip)
 
-/// REMOVED: witnessSubgraph and witnessSubgraphWithResult
-///
-/// These functions created isolated accumulators which broke SSA binding resolution.
-/// With the flat accumulator architecture, scope boundaries are handled via ScopeMarkers
-/// instead of isolated accumulators.
-///
-/// Lambda and ControlFlow witnesses now use:
-/// 1. ScopeMarker (ScopeEnter) to mark scope start
-/// 2. Witness body nodes into shared accumulator
-/// 3. ScopeMarker (ScopeExit) to mark scope end
-/// 4. extractScope to get operations between markers
-/// 5. Wrap extracted ops in FuncDef/SCFOp
-/// 6. replaceScope to substitute wrapped operation for markers+contents
-
-/// Run a single nanopass over entire PSG with SHARED accumulator and GLOBAL visited set
-let runNanopass
-    (nanopass: Nanopass)
-    (graph: SemanticGraph)
-    (coeffects: TransferCoeffects)
-    (sharedAcc: MLIRAccumulator)  // SHARED accumulator (ops, bindings, errors)
-    (rootScope: ref<ScopeContext>)  // Shared root scope for operation accumulation
-    (globalVisited: ref<Set<NodeId>>)  // GLOBAL visited set (shared across ALL nanopasses)
-    : unit =
-
-    // Visit ALL reachable nodes, not just entry-point-reachable nodes
-    // This ensures nodes like Console.write/writeln (reachable via VarRef but not via child edges) are witnessed
-    for kvp in graph.Nodes do
-        let nodeId, node = kvp.Key, kvp.Value
-        if node.IsReachable && not (Set.contains nodeId !globalVisited) then
-            match PSGZipper.create graph nodeId with
-            | None -> ()
-            | Some initialZipper ->
-                let nodeCtx = {
-                    Graph = graph
-                    Coeffects = coeffects
-                    Accumulator = sharedAcc  // SHARED accumulator (for SSA bindings)
-                    RootAccumulator = sharedAcc  // Root accumulator (same as shared for top-level)
-                    ScopeContext = rootScope  // Shared root scope (mutable)
-                    RootScopeContext = rootScope  // Root scope for TopLevelOps (same as ScopeContext at top-level)
-                    Zipper = initialZipper
-                    GlobalVisited = globalVisited  // GLOBAL visited set
-                    TraversalVisited = globalVisited  // Same as global for single-nanopass path
-                }
-                // Visit this reachable node (post-order) with GLOBAL visited set
-                visitAllNodes nanopass.Witness nodeCtx node globalVisited
-
-// ═══════════════════════════════════════════════════════════════════════════
-// REMOVED: overlayAccumulators
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// REMOVED: overlayAccumulators
-///
-/// This function merged separate accumulators from parallel nanopasses.
-/// With the flat accumulator architecture, ALL nanopasses share a single accumulator,
-/// so no merging is needed. Operations and bindings accumulate directly during traversal.
-
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════

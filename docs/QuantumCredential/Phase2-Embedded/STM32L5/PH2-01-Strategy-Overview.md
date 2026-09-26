@@ -14,7 +14,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 | Aspect | What the "Cheat" Provides | What It Defers |
 |--------|---------------------------|----------------|
-| **Mechanism** | Hand-write `Platform.Bindings.Webview` module, Alex generates library calls | Farscape-based automated binding generation |
+| **Mechanism** | Declare `Platform.Bindings.Webview`; CCS/Baker settles calls, Alex witnesses and the backend realizes them | Farscape-based automated binding generation |
 | **Why it works** | Desktop OSes have mature dynamic linking infrastructure | - |
 | **Binding surface** | ~15 webview functions (create, setHtml, bind, return, etc.) | Complex callback/closure handling |
 | **Risk level** | LOW - well-understood pattern, limited scope | - |
@@ -23,7 +23,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 
 | Aspect | What the "Cheat" Provides | What It Defers |
 |--------|---------------------------|----------------|
-| **Mechanism** | NuttX RTOS provides a POSIX bootstrap layer; Alex generates syscalls | Bare-metal CMSIS bindings via Farscape |
+| **Mechanism** | NuttX RTOS provides a POSIX bootstrap layer; Composer's backend realizes CCS/Baker-settled syscall contracts | Bare-metal CMSIS bindings via Farscape |
 | **Why it works** | NuttX exposes GPIO/ADC/USB as `/dev` character devices | Direct hardware bindings and quotation-based memory |
 | **Binding surface** | Standard POSIX: `open`, `read`, `write`, `ioctl`, `close` | Hardware-specific register layouts |
 | **Risk level** | MEDIUM - requires NuttX port verification, unfamiliar territory | - |
@@ -46,7 +46,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 │  └───────────────────────┘      │  │                                │  │
 │                                 │  │ Platform.Bindings.Webview      │  │
 │  Webview Runtime                │  │   ↓                            │  │
-│  (WebKitGTK/WebView2)           │  │ Alex generates library calls   │  │
+│  (WebKitGTK/WebView2)           │  │ Backend realizes library calls │  │
 │                                 │  │   ↓                            │  │
 │                                 │  │ Dynamic linking at runtime     │  │
 │                                 │  └────────────────────────────────┘  │
@@ -131,7 +131,11 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: The full bare-metal path requires the complete quotation-based memory architecture to be functional: Farscape generating quoted descriptors, BAREWire providing interpretation infrastructure, clef nanopasses handling constraint validation, and Alex emitting correct volatile memory access. This is NOT a shortcut.
+The bare-metal path requires Farscape's declared descriptors, BAREWire's
+boundary contracts and CCS/Baker settlement of the memory, access, value and
+ordering premises. Alex passively witnesses the settled form; Composer's
+backend realizes target volatile operations and preserves their proof
+correspondence.
 
 ---
 
@@ -143,7 +147,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 |-----------|--------|---------------|
 | Fidelity.Platform.Webview | Not started | Add ~15 webview conduit functions |
 | Fidelity.Platform Webview module | Not started | Create BCL-sympathetic wrapper API |
-| Alex Bindings/Webview | Not started | Generate library calls (not syscalls) |
+| Webview target realization | Not started in this planning record | CCS/Baker settles library-call contracts; Alex witnesses; backend realizes |
 | Composer build orchestration | Not started | Invoke Fable, Vite, embed HTML |
 | IPC (BAREWire-over-webview) | Design exists | Implement base64 encoding bridge |
 
@@ -155,7 +159,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 |-----------|--------|---------------|
 | NuttX port for STM32L5 | Exists, needs verification | Configure and test |
 | Platform.Bindings.POSIX | Partially exists | Add open/close/ioctl |
-| Alex Bindings for ARM | Partially exists | Extend for POSIX syscalls on NuttX |
+| ARM target realization | Partial support recorded by this plan | Settle POSIX/NuttX contracts in CCS/Baker and extend Composer's backend realization |
 | ADC driver config | NuttX provides | Enable CONFIG_STM32_ADC1 |
 | USB CDC driver config | NuttX provides | Enable CONFIG_CDCACM |
 | PQC library | External | Link liboqs or pqm4 |
@@ -174,7 +178,7 @@ Both demo paths employ strategic shortcuts. Understanding these shortcuts - what
 | Farscape active pattern generation | Design exists | Generate recognition patterns |
 | clef PSG extensions | Not started | Add MemoryConstraint field |
 | clef constraint nanopasses | Not started | Attachment, validation, classification |
-| Alex operation class emission | Not started | VolatileStore, VolatileLoad, etc. |
+| Volatile access witnessing and realization | Not started in this planning record | Passive Alex witnessing of settled accesses; target operations in Composer's backend |
 | Baker quotation handling | Not started | Flow quotations through typed tree |
 
 **Risk**: HIGH - Significant architectural work required across multiple components.
@@ -247,7 +251,9 @@ module QuantumCredential =
         buffer
 ```
 
-**Alex generates**: Standard syscall sequences (`svc #0` on ARM Cortex-M with NuttX).
+**Backend realization**: The selected platform's declared syscall sequence,
+after CCS/Baker has settled the NuttX ABI and access contract and Alex has
+witnessed the admitted portable operations.
 
 ### What This Defers
 
@@ -322,7 +328,7 @@ let credentialSchema = BAREWire.schema<Credential>
 
 1. **Validate NuttX STM32L5 port** - Get LED blink working on hardware
 2. **Add POSIX bindings to Fidelity.Platform** - `openDevice`, `closeDevice`, `ioctl`
-3. **Extend Alex for ARM NuttX** - Syscall generation for POSIX operations
+3. **Settle and realize ARM NuttX contracts** - CCS/Baker owns POSIX declaration/ABI settlement; Composer's backend owns syscall generation
 4. **Complete WebView Platform.Bindings** - Desktop demo foundation
 
 ### Near-Term (Demo Components)

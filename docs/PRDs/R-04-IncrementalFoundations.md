@@ -217,10 +217,10 @@ llvm.cond_br %is_stale, ^recompute, ^use_cached
 |-------|------|----------------|
 | CCS | `checkIncremental` (Coordinator) | Check the body, compute dependencies from `let!`, classify as Applicative, assign heights, build `SemanticKind.IncrementalExpr` |
 | CCS | `inferCutoff` (TypeChecker) | Resolve cutoff per node; structural equality by default; honor `[<IncrementalCutoff>]`; verify dimensional compatibility |
-| Alex | `SSAAssignment` | Compute `IncrementalLayout`; assign SSAs for node construction |
-| Alex | `HeightAnalysis` | Validate height assignments for applicative subgraphs |
-| Alex | `IncrementalWitness` | Emit arena-allocated node struct and inline stabilization loop |
-| Alex | `CutoffWitness` | Generate the element-type equality comparison; inline into the stabilization check |
+| CCS/Baker | Incremental settlement | Settle node layout, dependency heights, storage, lifetime and complete joint premises |
+| CCS/Baker | Incremental recipes | Construct stabilization and cutoff comparison operations in the PSG |
+| Alex | Incremental witnesses | Passively compose published node storage and stabilization control |
+| Alex | Cutoff witnesses | Passively compose source-settled comparison operations |
 
 ---
 
@@ -228,9 +228,9 @@ llvm.cond_br %is_stale, ^recompute, ^use_cached
 
 | Coeffect | Purpose |
 |----------|---------|
-| IncrementalLayout | Node element type, height, dependency slots, cutoff SSA, construction SSAs |
+| IncrementalLayout | Source-settled node element type, height, dependency slots, cutoff identity and storage |
 | ClosureLayout | Capture set of the recompute thunk (from C-01) |
-| SSA | Values threaded through stabilization |
+| Emission correspondence | Physical names for already settled values; no semantic analysis or source fact synthesis |
 
 ---
 

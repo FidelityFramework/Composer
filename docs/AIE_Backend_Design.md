@@ -18,13 +18,14 @@ Constraints for this iteration:
 The kernel source follows the same principle as HelloArty's FPGA pattern: the
 programmer writes a *pure function*, and the compiler generates the spatial
 coordination infrastructure. In HelloArty, `Design<'State>.Step` is a pure
-function from state to state; the witness generates `hw.module`, `seq.compreg`,
-clock domains, and reset logic. The programmer never writes `always_ff`.
+function from state to state. CCS/Baker settles state, clock and reset semantics;
+Composer's backend realizes the admitted hardware structure.
 
 For NPU, the `Compute` field of an `ElementKernel<'T>` is a pure binary
-function from `'T -> 'T -> 'T`. The witness generates `aie.device`, `aie.tile`,
-`aie.core`, `aie.objectfifo`, acquire/release synchronization, and the DMA
-runtime sequence. The programmer never writes acquire/release or manages FIFOs.
+function from `'T -> 'T -> 'T`. CCS/Baker settles computation, partitioning,
+buffer extent, capacity, synchronization and lifetime. Alex passively witnesses
+published operations; Composer's backend realizes tiles, FIFOs and DMA for the
+selected target while preserving those contracts.
 
 The lower strata (MLIR-AIE with its imperative coordination protocol) is
 generated infrastructure, not authored surface syntax.
@@ -92,9 +93,9 @@ type Shape = {
 ///   Design<'S>         = { InitialState: 'S; Step: 'S -> 'S }
 ///   ElementKernel<'T>  = { Compute: 'T -> 'T -> 'T; Shape: Shape }
 ///
-/// The Compute field is a pure function. The witness lowers it
-/// to arith/memref/scf ops inside each aie.core, surrounded by
-/// the object FIFO acquire/release protocol.
+/// CCS/Baker settles the Compute function and its data-movement protocol.
+/// Alex witnesses the published operations; the backend realizes each aie.core
+/// and the admitted object FIFO acquire/release protocol.
 type ElementKernel<'T> = {
     Compute: 'T -> 'T -> 'T
     Shape: Shape
@@ -107,7 +108,8 @@ let emul : ElementKernel<int32> = {
 }
 ```
 
-The witness extracts from the `ElementKernel<int32>` record:
+CCS/Baker settles the following facts from the `ElementKernel<int32>` value,
+retaining divisibility, extent, operation and representation premises:
 - `Shape.Elements` = 64, `Shape.Grain` = 16 => 4 tiles
 - `Compute` = `multiply` => lowered to `arith.muli %a, %b : i32`
 - `'T` = `int32` => `memref<16xi32>` object FIFO element type
@@ -139,10 +141,10 @@ type StencilKernel<'T, 'N> = {
 }
 ```
 
-Each would have its own witness strategy for generating the appropriate
-MLIR-AIE patterns (different object FIFO depths, accumulator chains for
-reduction, halo exchange for stencils). For hello world, only
-`ElementKernel` is implemented.
+Each requires source-owned recipes and complete joint settlement for its
+data-movement protocol, storage and lifetime. Alex witnesses the settled forms;
+the backend realizes admitted FIFO depths, reduction chains and halo exchange.
+This design's bounded example covers `ElementKernel`.
 
 ## Platform Attributes and Target Routing
 
@@ -162,9 +164,8 @@ Attribute         DeclRoot          Backend routing (via fidproj target)
 [<KernelModule>]  KernelModule      target=gpu  → GPU backend (future)
 ```
 
-The WitnessRegistry gates which witness runs per platform:
-- `target=npu` registers `KernelModuleWitness` (emits MLIR-AIE)
-- `target=gpu` would register `GPUKernelWitness` (emits GPU dialect)
+Target-aware witness registration selects passive composition for admitted
+settled forms. The NPU and GPU backends own their target dialect realization.
 
 Both witnesses match `DeclRoot.KernelModule`. The source stays portable; the
 compilation project carries the target configuration.
@@ -193,15 +194,14 @@ produces a standalone xclbin; it does not link against any host libraries.
 Clef kernel source (.clef)
     |
     v
-[FrontEnd] CCS: .clef -> PSG
+[FrontEnd] CCS/Baker: .clef -> elaborated and settled PSG
     |
     v
-[MiddleEnd] Alex: PSG -> MLIR-AIE dialect
-    |  KernelModuleWitness extracts the compute body
-    |  and generates aie.device/tile/core/objectfifo/runtime_sequence
+[Witness boundary] Alex: immutable publication -> admitted portable operations
+    |  Passive Huet Element/Pattern/Witness composition
     |
     v
-MLIR-AIE text (aie.device, aie.core with arith+memref+scf body)
+Composer AIE backend: target realization -> MLIR-AIE text
     |
     v
 [BackEnd] AIE: aiecc.py drives the rest
@@ -224,16 +224,17 @@ emul.xclbin + insts.bin
 | Source pattern   | main : int              | Design<'S>              | ElementKernel<'T>          |
 | Primary field    | (function body)         | Step: 'S -> 'S          | Compute: 'T -> 'T -> 'T   |
 | Metadata fields  | (none)                  | InitialState: 'S        | Shape: Shape               |
-| Alex emits       | func/memref/arith/scf   | hw/comb/seq             | aie.*/arith/memref/scf     |
+| Backend forms    | func/memref/arith/scf   | hw/comb/seq             | aie.*/arith/memref/scf     |
 | Backend tool     | mlir-opt + opt + ld.lld  | circt-opt               | aiecc.py (aie-opt + Peano) |
 | Output artifact  | NativeBinary (ELF)      | Verilog (.sv)           | Xclbin (.xclbin + .bin)    |
 
-### MLIR-AIE Output (Generated by KernelModuleWitness)
+### MLIR-AIE Output (Backend Realization)
 
-The witness generates the full MLIR-AIE module. The `Compute` function body
-is lowered to vanilla arith/memref/scf ops inside each `aie.core` body.
-The spatial infrastructure (tiles, object FIFOs, DMA) is generated from the
-`Shape` descriptor.
+The backend realizes the admitted kernel structure as MLIR-AIE. CCS/Baker has
+already settled the computation, shape, storage and synchronization premises.
+Alex does not recover them from record field names or inspect the source body
+for an operation to substitute. Tiles, object FIFOs and DMA preserve those
+published facts and their source-to-artifact correspondence.
 
 For HelloNappy with 4 tiles, 16 elements per tile, `multiply`:
 
@@ -309,7 +310,7 @@ module {
     }
 
     // Cores 1-3: identical structure, different FIFO names
-    // (generated by the witness in a loop over tile index)
+    // (realized by the backend from settled tile membership)
 
     %core_1 = aie.core(%tile_1) {
       // ... same body with @in1_1, @in2_1, @out_1
@@ -483,33 +484,21 @@ type DeclRoot =
 Add `hasKernelModuleAttribute` following the same pattern as
 `hasHardwareModuleAttribute`. Detects `[<KernelModule>]` on bindings.
 
-### 3. KernelModuleWitness (new)
+### 3. Source Settlement and Kernel Witnessing
 
-**File:** `Composer/src/MiddleEnd/Alex/Witnesses/KernelModuleWitness.fs`
+CCS/Baker checks the actual kernel value and constructs its computation and
+coordination protocol through owning recipes. It settles element representation,
+shape divisibility, partition membership, buffer capacity, data movement,
+synchronization, callable declarations and lifetime with complete joint premises.
 
-Registered in WitnessRegistry when `targetPlatform = NPU`, inserted before
-BindingWitness (same pattern as HardwareModuleWitness for FPGA).
+Alex's kernel witness observes the immutable publication and composes admitted
+portable operations. It does not extract semantics from record field names,
+divide shape literals to discover tile membership or walk a callback body to
+infer an arithmetic algorithm.
 
-Matches `SemanticKind.Binding(_, _, _, Some DeclRoot.KernelModule)`.
-
-Extracts from the `ElementKernel<'T>` record:
-- `Shape.Elements` (literal int) and `Shape.Grain` (literal int)
-- Derives tile count as `Elements / Grain`
-- `Compute` (VarRef to pure function; Lambda body lowered to arith ops)
-- `'T` (element type from record type parameter)
-
-Generates complete MLIR-AIE module text:
-- `aie.device(npu2)` wrapper
-- Per-tile: shim tile, compute tile, 3 object FIFOs, `aie.core` with lowered
-  compute body
-- `aie.runtime_sequence` with per-tile DMA descriptors (strided, offset by
-  `tileIndex * Grain`)
-
-The compute body lowering walks the `Compute` function's expression tree
-and emits the corresponding arith/memref/scf ops inside the `aie.core` region.
-For `multiply = fun a b -> a * b` this produces `arith.muli`. For more complex
-expressions, the full expression tree is lowered (additions, shifts, comparisons,
-nested arithmetic).
+Composer's AIE backend realizes settled structure as device, tile, FIFO, core and
+DMA operations. Each target transformation retains the required source and
+artifact correspondence. Missing settlement fails at its owning source contract.
 
 ### 4. BackEndArtifact extension
 

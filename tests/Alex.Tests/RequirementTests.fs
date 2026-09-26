@@ -21,7 +21,7 @@ let private fixture () =
     let row =
         { Sources = [required.Id; condition.Id; body.Id]; Target = frontier.Id
           Class = EdgeClass.Provenance; Role = EdgeRole.MatchRequirement; Ordinal = 1 }
-    { raw with Edges = row :: raw.Edges }, root.Id, frontier.Id, required.Id, condition.Id
+    ({ raw with Edges = row :: raw.Edges } |> prepareSource), root.Id, frontier.Id, required.Id, condition.Id
 
 let private context graph root frontier site condition conditionType =
     let position = Zipper.create graph root |> require "Missing root" |> atChild frontier |> atChild site
@@ -89,6 +89,10 @@ let ``requirement rejects stale evidence operands and occurrences before emittin
                     if edge.Role = EdgeRole.MatchRequirement then { edge with Sources = [site; site; List.last edge.Sources] } else edge)
             { graph with Edges = edges }
         | _ -> graph
+    let changed =
+        if List.contains defect ["missing-evidence"; "wrong-order"; "wrong-condition"] then
+            changed |> refusePublication "Requirement"
+        else changed
     let carrier = if defect = "non-boolean" then TInt(IntWidth 32) else TInt(IntWidth 1)
     let ctx = context changed root frontier site condition carrier
     let ctx =
@@ -116,7 +120,7 @@ let ``a selected singleton returns its existing body carrier without an invented
         else Pattern.Const(NativeLiteral.Bool true)
     let arm = { Pattern = selectedPattern; Guard = None; Body = body.Id; Bindings = [] }
     let selected = builder.Create(SemanticKind.CaseElimination(input.Id, [arm]), Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph selected.Id |> require "Missing selected match"
     let operands = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode body.Id (Arg 1) (TInt(IntWidth 1)) operands

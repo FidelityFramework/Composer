@@ -67,7 +67,7 @@ let private fixture captured =
                                     EnvironmentLayouts = inputs.Layouts
                                     EnvironmentOrigins = inputs.Origins
                                     KnownCallables = inputs.Known } }
-    graph, owner.Id, alias.Id, reference.Id, annotation.Id, sequence.Id, named.Id
+    prepareSource graph, owner.Id, alias.Id, reference.Id, annotation.Id, sequence.Id, named.Id
 
 let private context graph position accumulator =
     let scope = ref (Alex.Traversal.ScopeContext.ScopeContext.root ())
@@ -161,7 +161,7 @@ let ``named callee annotations retain the actual code operand at each wrapper oc
     let raw = builder.Build []
     let carriers, residuals = Carriers.settle { Layouts = Map.empty; Origins = Map.empty; Known = Map.empty } raw
     Assert.Empty residuals
-    let graph = { raw with Codata = lazy { raw.Codata.Value with CallableCarriers = carriers } }
+    let graph = { raw with Codata = lazy { raw.Codata.Value with CallableCarriers = carriers } } |> prepareSource
     let operands = MLIRAccumulator.empty ()
     let applicationPosition = Zipper.create graph root.Id |> require "Missing root" |> atChild application.Id
     let mutable referencePosition = applicationPosition
@@ -216,7 +216,7 @@ let ``transparent callable transport requires the destination occurrence carrier
     match matchAt (Alex.Patterns.CallablePatterns.pCallableForward ctx owner) otherPosition 64 operands with
     | Result.Error _ -> ()
     | Result.Ok _ -> failwith "A reused node identity must not replace its actual occurrence"
-    let changed = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = graph.Codata.Value.CallableCarriers.Remove alias } }
+    let changed = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = graph.Codata.Value.CallableCarriers.Remove alias } } |> refusePublication "Callable carrier"
     let position = Zipper.create changed sequence |> require "Missing sequence" |> atChild alias
     let ctx = context changed position operands
     let output = Alex.Witnesses.BindingWitness.nanopass.Witness ctx changed.Nodes[alias]
@@ -248,7 +248,7 @@ let ``intrinsic annotations are compile-time callees only at an actual applicati
             builder.Create(SemanticKind.Application(outer, [argument.Id]), resultType, dummyRange, children = [outer; argument.Id])
         else builder.Create(SemanticKind.Binding("value", false, false, None), functionType, dummyRange, children = [outer])
     builder.SetParent(outer, root.Id)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let operands = MLIRAccumulator.empty ()
     let position = Zipper.create graph root.Id |> require "Missing annotation fixture"
     let mutable focus = position
@@ -314,6 +314,7 @@ let ``continuation callable read preserves its loaded environment and requires t
                                                          ContinuationFrames = Map.ofList [frameOwner.Id, frame] } }
     let operands = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode frameValue.Id (Arg 0) (TMemRefStatic(40, TInt(IntWidth 8))) operands
+    let graph = prepareSource graph
     let ctx = context graph (Zipper.create graph read.Id |> require "Missing frame read") operands
     let output = Alex.Witnesses.SeqWitness.nanopass.Witness ctx read
     if foreignOwner then

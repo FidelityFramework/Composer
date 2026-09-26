@@ -21,6 +21,7 @@ let private runOn target inputType inputCarrier patterns =
         | true, TInt(IntWidth bits) ->
             { raw with Nodes = raw.Nodes.Add(input.Id, { raw.Nodes[input.Id] with ValueRange = Some(ValueRange.Bounded(0I, (1I <<< bits) - 1I)) }) }
         | _ -> raw
+    let graph = prepareSource graph
     let position = Zipper.create graph choice.Id |> require "Missing raw decision"
     let operands = MLIRAccumulator.empty ()
     for index, body in List.indexed bodies do

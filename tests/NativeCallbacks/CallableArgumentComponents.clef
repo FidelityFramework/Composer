@@ -1,0 +1,15 @@
+module CallableArgumentComponents
+
+let choose (unused: bool) (used: int) = used
+let apply (unused: bool) (callback: int -> int) (used: int) = callback used
+let make (offset: int) =
+    ((fun (value: int) -> value + offset): int -> int)
+
+[<EntryPoint>]
+let main _ =
+    let selected = choose false 37
+    let callback = make 5
+    let first = apply false callback 7
+    let other = make 11
+    let second = apply true other 2
+    if selected = 37 && first = 12 && second = 13 then 0 else 1

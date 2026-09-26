@@ -102,7 +102,7 @@ let ``changed lazy source proof retracts cached physical projection`` defect =
     let ctx = context graph alias accumulator
     seed ctx first 1 |> ignore
     let removed = if defect = "force-proof" then EdgeRole.LazyMemoization else EdgeRole.LazyLayout
-    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) } |> settleDemand
+    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) } |> refusePublication "Lazy"
     let reading = Operands.project (context changed alias accumulator) alias
     Assert.True(Result.isError reading)
     Assert.Empty accumulator.AllOps
@@ -129,7 +129,7 @@ let ``physical thunk formal uses the exact environment extent of its lazy value`
     let _, _, formal = Assert.Single parameters
     Assert.Equal(contract.Formal, formal)
     for removed in [EdgeRole.LazyInstance; EdgeRole.LazyLayout; EdgeRole.LazyMemoization] do
-        let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) } |> settleDemand
+        let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) } |> refusePublication "Lazy"
         let changedContext = context changed first (MLIRAccumulator.empty ())
         Assert.True((Alex.Traversal.CallableOperands.tryThunkDeclaration changedContext contract.Thunk).IsNone)
 
@@ -148,9 +148,10 @@ let ``only witnessed formation accounts for uninitialized cache declarations`` i
     let _, layout = reading.Layouts |> Map.toList |> Assert.Single
     let contract = Clef.Compiler.PSGSaturation.SemanticGraph.LazyValues.instance graph layout.Owner |> Option.get
     let graph =
-        if invalidated then { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) }
-        else graph
-        |> settleDemand
+        if invalidated then
+            { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) }
+            |> refusePublication "Lazy"
+        else settleDemand graph
     let accumulator = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode contract.InitialComputed (Arg 0) (TInt(IntWidth 1)) accumulator
     let ctx = context graph contract.Environment accumulator

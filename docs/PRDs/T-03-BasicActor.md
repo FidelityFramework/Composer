@@ -97,152 +97,22 @@ Messages are discriminated unions (already supported via F-05+).
         NativeType.TAsync(msgVar))
 ```
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.1 Actor Structure
+CCS/Baker constructs and settles actor activation, behavior closure calls,
+queue operations, message ordering and publication, waiting, completion and
+cleanup. Queue/message storage and the worker's captures retain their actual
+identity, extent, capacity, ownership and lifetime relationships.
 
-> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+These protocols are represented in the PSG through owning ingredients and
+recipes. Their joint premises cover queue state and every participating producer,
+consumer and message occurrence; emitter-local pointer manipulations cannot
+supply that proof.
 
-```fsharp
-type MailboxProcessor<'Msg> = {
-    Queue: MessageQueue<'Msg>  // Thread-safe queue
-    Thread: ThreadHandle       // Worker thread
-    Behavior: Inbox<'Msg> -> Async<unit>  // Closure
-}
-
-type MessageQueue<'Msg> = {
-    Head: nativeptr<MessageNode<'Msg>>
-    Tail: nativeptr<MessageNode<'Msg>>
-    Mutex: Mutex
-    CondVar: CondVar
-}
-
-type MessageNode<'Msg> = {
-    Next: nativeptr<MessageNode<'Msg>>
-    Data: 'Msg
-}
-```
-
-### 4.2 MailboxProcessor.Start Witness
-
-```fsharp
-let witnessMailboxProcessorStart z behaviorClosureSSA =
-    let actorSSA = freshSSA ()
-
-    // 1. Allocate MailboxProcessor struct
-    emit $"  %%{actorSSA} = llvm.alloca 1 x !mailbox_processor"
-
-    // 2. Initialize message queue
-    emit "  %queue_ptr = llvm.getelementptr %actor[0, 0]"
-    emit "  llvm.call @queue_init(%queue_ptr)"
-
-    // 3. Store behavior closure
-    emit "  %behavior_ptr = llvm.getelementptr %actor[0, 2]"
-    emit $"  llvm.store %%{behaviorClosureSSA}, %%behavior_ptr"
-
-    // 4. Create worker thread (attr=0 means default attributes)
-    emit "  %thread_ptr = llvm.getelementptr %actor[0, 1]"
-    emit "  %attr_zero = llvm.mlir.zero : !llvm.ptr"
-    emit $"  llvm.call @pthread_create(%%thread_ptr, %%attr_zero, @actor_loop, %%{actorSSA})"
-
-    TRValue { SSA = actorSSA; Type = TMailboxProcessor msgType }
-```
-
-### 4.3 Post Witness
-
-```fsharp
-let witnessPost z actorSSA messageSSA =
-    // 1. Allocate message node
-    emit "  %node = llvm.alloca 1 x !message_node"
-    emit "  %data_ptr = llvm.getelementptr %node[0, 1]"
-    emit $"  llvm.store %%{messageSSA}, %%data_ptr"
-
-    // 2. Get queue
-    emit "  %queue_ptr = llvm.getelementptr %actor[0, 0]"
-
-    // 3. Lock, enqueue, signal, unlock
-    emit "  %mutex = llvm.getelementptr %queue_ptr[0, 2]"
-    emit "  llvm.call @pthread_mutex_lock(%mutex)"
-
-    // Enqueue at tail
-    emit "  %tail_ptr = llvm.getelementptr %queue_ptr[0, 1]"
-    emit "  %old_tail = llvm.load %tail_ptr"
-    emit "  %next_ptr = llvm.getelementptr %old_tail[0, 0]"
-    emit "  llvm.store %node, %next_ptr"
-    emit "  llvm.store %node, %tail_ptr"
-
-    // Signal waiter
-    emit "  %cond = llvm.getelementptr %queue_ptr[0, 3]"
-    emit "  llvm.call @pthread_cond_signal(%cond)"
-
-    emit "  llvm.call @pthread_mutex_unlock(%mutex)"
-
-    TRVoid
-```
-
-### 4.4 Actor Loop (Worker Thread)
-
-```fsharp
-let emitActorLoop z actorSSA =
-    // Entry point for worker thread
-    emit "llvm.func @actor_loop(%actor: !llvm.ptr) -> !llvm.ptr {"
-
-    // Get queue and behavior
-    emit "  %queue = llvm.getelementptr %actor[0, 0]"
-    emit "  %behavior_ptr = llvm.getelementptr %actor[0, 2]"
-    emit "  %behavior = llvm.load %behavior_ptr : !closure_type"
-
-    // Create inbox (points to queue)
-    emit "  %inbox = %queue"
-
-    // Start behavior coroutine
-    emit "  %code = llvm.extractvalue %behavior[0]"
-    emit "  %env = llvm.extractvalue %behavior[1]"
-    emit "  llvm.call %code(%env, %inbox)"
-
-    // pthread requires ptr return (0 = no meaningful value)
-    emit "  %ret_zero = llvm.mlir.zero : !llvm.ptr"
-    emit "  llvm.return %ret_zero"
-    emit "}"
-```
-
-### 4.5 Inbox.Receive Witness
-
-```fsharp
-let witnessInboxReceive z inboxSSA =
-    let resultSSA = freshSSA ()
-
-    // Lock queue
-    emit "  %mutex = llvm.getelementptr %inbox[0, 2]"
-    emit "  llvm.call @pthread_mutex_lock(%mutex)"
-
-    // Wait while empty (message queue is pointer-based, 0 = empty)
-    emit "  llvm.br ^check"
-    emit "^check:"
-    emit "  %head_ptr = llvm.getelementptr %inbox[0, 0]"
-    emit "  %head = llvm.load %head_ptr"
-    emit "  %zero = llvm.mlir.zero : !llvm.ptr"
-    emit "  %is_empty = llvm.icmp eq %head, %zero"
-    emit "  llvm.cond_br %is_empty, ^wait, ^dequeue"
-
-    emit "^wait:"
-    emit "  %cond = llvm.getelementptr %inbox[0, 3]"
-    emit "  llvm.call @pthread_cond_wait(%cond, %mutex)"
-    emit "  llvm.br ^check"
-
-    emit "^dequeue:"
-    // Dequeue from head
-    emit "  %next_ptr = llvm.getelementptr %head[0, 0]"
-    emit "  %next = llvm.load %next_ptr"
-    emit "  llvm.store %next, %head_ptr"
-    emit "  %data_ptr = llvm.getelementptr %head[0, 1]"
-    emit $"  %%{resultSSA} = llvm.load %%data_ptr"
-
-    // Unlock
-    emit "  llvm.call @pthread_mutex_unlock(%mutex)"
-
-    TRValue { SSA = resultSSA; Type = msgType }
-```
+Alex passively witnesses settled declarations, control, storage and calls.
+It does not invent queue algorithms, worker wrappers, frame layouts or message
+allocation. Composer's backend realizes the admitted threading and synchronization
+operations for the selected target.
 
 ## 5. MLIR Output Specification
 
@@ -362,8 +232,8 @@ Done
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Witnesses/ActorWitness.fs` | CREATE | MailboxProcessor witnesses |
-| `src/Alex/CodeGeneration/ActorTypes.fs` | CREATE | Actor struct type generation |
+| Alex actor witnesses | CREATE | Passively compose settled actor operations |
+| CCS/Baker actor settlement | CREATE | Settle actor/message storage, layouts, lifetimes and declarations |
 
 ## 8. Implementation Checklist
 
@@ -371,14 +241,15 @@ Done
 - [ ] Add TMailboxProcessor, TInbox types
 - [ ] Add Start, Post, Receive intrinsics
 
-### Phase 2: Queue Implementation
+### Phase 2: CCS/Baker Queue Construction
 - [ ] Implement thread-safe message queue
 - [ ] Implement enqueue (Post)
 - [ ] Implement dequeue (Receive)
 
-### Phase 3: Actor Loop
+### Phase 3: CCS/Baker Actor Loop and Passive Witnessing
 - [ ] Implement worker thread entry
-- [ ] Integrate with async coroutine
+- [ ] Integrate with the settled async continuation protocol
+- [ ] Publish immutable facts for passive actor witnesses
 
 ### Phase 4: Validation
 - [ ] Sample 29 compiles

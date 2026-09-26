@@ -174,7 +174,7 @@ The Pi's GPIO appears as:
 
 **GPIO ioctl interface:**
 ```c
-// Structures (for reference - Alex generates these)
+// Boundary structures: CCS/Baker settles layout; the backend realizes it
 struct gpioline_info {
     uint32_t line_offset;
     uint32_t flags;

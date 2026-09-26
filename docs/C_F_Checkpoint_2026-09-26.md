@@ -3,8 +3,10 @@
 **Scoped integration checkpoint, 2026-09-26.** This
 records delivered changes and their actual source, tooling and native cohorts.
 **It does not mark any C PRD Complete.**
-The subsequent full-manifest audit below found 27 compilation failures. This
-checkpoint is not evidence of a clean F/C regression handoff.
+The latest HEAD audit records 27/51 compilations, 23 compilation errors, one
+300-second timeout, and a runtime mismatch in 04c. The earlier 21/48 cohort below
+had 27 compilation failures. This checkpoint is not evidence of a clean F/C
+regression handoff.
 C and F have equal delivery standing; the order below expresses dependencies.
 The current implementation is substantially beyond the initial PRD review, but
 specification agreement, source proof, physical composition and native behavior
@@ -18,6 +20,110 @@ The ledger is an implementation inventory, not an additional source of language
 requirements or a separately authorized prerequisite project. The correction
 changes no compiler behavior, acceptance result or feature status.
 
+## Reassessment after the completed independent sweeps
+
+The [independent assessment](C_F_Independent_Assessment_2026-09-26.md), reread
+after expansion to 519 lines on September 26, materially broadens the repair
+inventory. Its [HEAD extraction](evidence/2026-09-26-head-manifest-audit.json)
+records **1,583/1,583 CCS tests, 211/302 Alex tests, 27/51 compilations and
+26 matching executions**. The runtime oracle is zero exit and normalized stdout;
+stderr is retained but not asserted. These are the auditor's runs, not new runs
+during reassessment. Source-suite success does not establish native conformance.
+
+Resume pairing: **Clef fd4ee1b, Composer b4f6396, spec d3f1d88** (including
+645c15a and 0e1f866), **BAREWire 61b0bf7, Fidelity.Platform b1aaf62**.
+BAREWire supplies the storage-commitment API this Composer cohort requires.
+The assessment remains an independent record; the dispositions here do not
+silently rewrite it.
+
+**Architectural correction, September 26:** remove all MLIR plugin dependencies
+now, including conditional loading when an old plugin file happens to exist.
+Retirement is not conditional on migrating a consumer first. CCS/Baker settles
+language semantics and physical-form authority in the PSG; Alex passively
+expresses that settled computation through its Huet Element/Pattern/Witness
+composition. No middle-end MLIR semantic transform repairs missing settlement.
+Target-specific lowering remains in the selected backend. Plugin removal and
+subsequent regression results must be recorded separately; this directive does
+not claim that compiler removal or the affected feature gates have passed.
+
+| Existing owners | Corrections that change the execution plan |
+|---|---|
+| C-01/C-02, F-04; M-01 | Retire both graph-identity publication tables in favor of immutable source-owned codata and source invalidation. Preserve Huet Element/Pattern/Witness composition. Restore 04/11a/12 returned closures; publish physical components by enclosing implementation and formal. About 81 Alex failures are attributed to publication by the audit, not all to harmless fixtures. Remove all MLIR plugin dependencies and packed closure construction now. Repair affected consumers through PSG settlement and passive witnessing; no consumer migration delays removal. |
+| C-01/C-02/C-05/C-06/C-07, F-03/F-04/F-08/F-09 | Implement default deferral and sharing rather than omission over strict evaluation. Cover mutable reads/stores, inline/partial application, aggregates, primitive/foreign demand, dominance, captures and recursion. Migrate Platform console and BAREWire effectful discarded bindings with the demand change. Record explicit-eager oracle migrations and pass original04c. |
+| C-06/C-07, F-11 | Restore 16a publication and 16c/16e operand transport; locate original16's timeout using bounded phase evidence. 16a fails at its mutable scalar accumulator, not by itself at a sequence allocation. |
+| F-11/C-08; C-03/F-02/F-07 and M-01 consumers | Remove unobservable-range register-width fallback at representation commitment. Carry established/refuted/unresolved obligation outcomes into artifact acceptance. Repair ESP32-S3 signed finite bounds; test zero, negatives and subnormals. Complete lifetime propagation and remove missing-escape-to-stack fallback. |
+| C-04/C-07, F-05/F-08/F-09 | Admit List/Map/Set schemes; correct Set removal, AVL rotation, Map removal, unresolved recursion, recipe saturation and guarded selectors. Complete Array/range and Seq successor routes through native cases. Retain unsupported pattern forms as discriminating regressions. |
+| F-01/F-06/F-07 and actual library/FFI owners | Complete the D10 corpus migration before attributing samples17–23 to C/F lowering. Test unpaced multiline input; the paced06 pass does not close readln. Restore the specified char-to-int kind function and enforce shift preconditions. |
+| Affected F/C verification owners | Complete reusable .NET drivers, separate exact stream oracles, compiler inventories, effective timeouts and durable evidence. Port remaining Python-only gates. Run platform-bearing editor/analyzer/LSP cases. Shared callable/publication checkpoints require the full manifest plus focused exact-stream and full/pruned controls. |
+| F-11(d)/C-08(d), Baker/Alex contract | Establish complete ordered incidence, membership/absence dependencies, revisions, rewrite footprints, obligation status and schedule-independent settlement before reuse or concurrent publication. Assign program-wide resource owners; compare serial/parallel full and incremental builds with reconciliation. Independent process test jobs already exist; this row concerns work inside compilation. |
+
+Read-only verification also qualifies several claims in the assessment:
+
+- Normal compilation emits optional SMT/ledger artifacts without invoking a
+  solver. It does enforce source checks for storage, exact numeric coverage and
+  Lazy placement. The gap is complete obligation status and actual artifact
+  correspondence, not absence of all proofs. F-11 already owns numeric commitment
+  and discharge; the fallback requires a concrete migration/closure gate there.
+- Re-entrant force and recursive value initialization are already tracked in
+  C-03 §5 and C-05 §7. Their native outcomes still require settlement. Tail-call
+  control stack, deferred accumulator space and numeric recurrence representation
+  are distinct obligations, even when one case needs all three.
+- Startup already has the spec's eager contract for observable initializers in
+  activated units. Mutable shared-cell capture, deferred immutable reads and
+  aggregate payloads are also specified; contradictory older prose needs repair,
+  not renewed owner authorization. The `let rec`/`and` contradiction requires one
+  canonical admission contract; self/mutual function recursion remains in scope.
+- Coarse legacy escape classifications coexist with stronger closure/sequence/
+  Lazy residence proofs. The arena-lifetime measure persists in `memory-regions.md`;
+  the cited current `units-of-measure.md` passage does not support that allegation.
+
+The PHG .NET checker independently passes **6,607,900 exhaustive families and
+20,000 seeded cases**, including 14,633 nonchordal raw-overlap cases
+(`/tmp/phg-hull-independent-check.log`). The conditional subtree construction is
+useful; it does not establish complete compiler conflict footprints or arbitrary
+PSG chordality. Its omission argument needs correction: on path `0–1–2`, both
+`{0,1,2}` and `{0,2}` have the same hull. Reconciliation must independently check
+participant roles, order/multiplicity, premise completeness and revisions.
+Hull crossing is exact for the chosen tree partition, but its conflict coverage
+is conservative relative to semantics. Optimal hull coloring is not optimal
+compiler scheduling or a joint resource-capacity proof.
+
+The [acceptance order](#next-coordinated-acceptance-order) below now incorporates
+these dependencies. [Owner decisions](PRDs/README.md#september-26-owner-decisions)
+record existing authorization. This reassessment changes documentation, not
+compiler behavior, completion status or percentage estimates.
+
+### Work resumed after reassessment
+
+The .NET regression runner now honors `compile_timeout` independently of the
+native `timeout_seconds`; absent compile settings inherit the sample deadline,
+and explicit CLI `--timeout` overrides both. Invalid or overflowing manifest
+deadlines are rejected. `selection.txt` and `run.json` record both effective
+deadlines. The existing16d `compile_timeout = 180` therefore takes effect without
+giving its executable a 180-second deadline. `RunnerTests.fsx` and
+`ParallelRunnerTests.fsx` pass, including an actual child compilation longer than
+the runtime allowance and an independent native timeout. The
+[durable driver evidence](evidence/2026-09-26-runner-deadlines.json) retains both
+transcripts, observed exits and input/host hashes. This repairs the driver; it is
+not evidence that original16's compiler timeout is fixed.
+
+Publication review confirms that removing the tables requires immutable content,
+not a boolean or token beside a raw `SemanticGraph`. Node types, kind payloads,
+metadata, signatures and layouts currently retain mutable checker cells. The
+prepared input must own frozen nodes and codata; Alex's entry, zipper, parser
+state, witness context and retained occurrence records must consume that input
+without a raw-graph escape hatch. Exact prepared copies retain their facts;
+edited source drafts require new source publication. This preserves the Huet
+mechanics and prevents source edits from carrying old authority into witnessing.
+The current global tables remain a reported defect until that migration is real.
+
+The bounded specification correction aligns mutable capture with the original
+shared cell, CCS8012 with hard failed-coverage diagnostics, and arena lifetime
+relations with the coeffect domain. Arena operation notation is schematic, not
+new lifetime-parameter syntax. CCS's `arenaTyCon` still declares a Measure
+parameter; the source representation requires its corresponding owning-domain
+repair. The specification edits do not count as that implementation.
+
 ## Source publication and nominal identity checkpoint
 
 This intermediate checkpoint preserves the source-boundary repair requested on
@@ -26,8 +132,8 @@ not closure of the F/C campaign. The following source changes extend the earlier
 cohorts below:
 
 The paired Clef `main` commit is **`fd4ee1b`**, “Checkpoint source witness
-publication and exact nominal identities”. The Composer commit carrying this
-entry is “Checkpoint passive witness consumers and compilation timing”. Resume
+publication and exact nominal identities”. The paired Composer commit is
+**`b4f6396`**, “Checkpoint passive witness consumers and compilation timing”. Resume
 with both repositories at these matching checkpoints before updating either.
 
 - **C-01/C-02 and F-03/F-04:** ordinary unused-argument proofs retain complete use
@@ -44,8 +150,9 @@ with both repositories at these matching checkpoints before updating either.
   definitions, fields and layouts. This also corrects declaration reachability
   and descriptor/callback lookups affected by the same identity defect.
 - **Witness and tooling integrity:** source publication materializes domain
-  projections and semantic indices before handoff. Exact graph copies require
-  renewed source admission. Witness registration is transfer-owned; .NET timing
+  projections and semantic indices before handoff. The checkpoint's requirement
+  to re-admit exact graph copies is a graph-identity defect identified above,
+  not the intended authority contract. Witness registration is transfer-owned; .NET timing
   uses independent spans and measured wall time. The
   [comparative evaluation contract](Nanopass_Incremental_Contract_Direction.md#26-parallel-full-builds-and-comparative-timing)
   covers full and incremental parallel compilation and final reconciliation.
@@ -82,10 +189,10 @@ The following acceptance work stays visible at this checkpoint:
 | Nominal identity | Source and native multi-file controls covering both accessors and direct field reads, with exact declaration retention |
 | Parallel/incremental compiler | Source-authorized regions, worker-owned state, segmented realization, reconciliation and measured equivalence against full compilation |
 
-The source projection seal is current-process graph admission. It is not an
-accepted edit revision, persistent dependency cache, scoped compiler or a
-substitute for the final assembly/type capability boundary. All unfinished work
-above remains within the existing feature and integration contracts.
+The source projection seal at this revision is current-process graph admission,
+an architectural divergence scheduled for removal. Source-owned codata and
+invalidation must carry authority; the seal cannot substitute for the final
+assembly/type capability boundary. Work above retains its existing owners.
 
 ### Integrated checkpoint verification
 
@@ -163,14 +270,12 @@ dotnet fsi tests/Infrastructure/TimingTests.fsx
 dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj --no-build -- /tmp/composer-nominal-v22/compiler/Composer NominalIdentity MixedDimensionSchemes
 ```
 
-Resume with the 91 Alex failures grouped by actual cause, prepare valid fixture
-graphs before constructing their zippers, and retain invalid-graph and actual
-operand rejection oracles. Complete source environment/field/numeric projection
-and the restricted witness input/dependency boundary without admitting missing
-facts. Recheck the discriminating native controls after each affected source or
-witness change. Original 04c is the ordinary-demand acceptance target; its runtime
-failures are not closed by unused-argument omission. Finish those correctness
-gates before using them as incremental/parallel performance workloads.
+Follow the revised acceptance order below. First repair source-owned publication
+and its real callable/storage regressions; do not make fixtures register graphs
+in a global table to obtain passing counts. Preserve invalid-input and actual
+operand rejection oracles. Recheck native closure, Lazy and sequence controls
+alongside the full manifest at shared-boundary checkpoints. Original04c remains
+the ordinary-demand acceptance target. Correctness precedes speedup claims.
 
 ## Witness correspondence working cohort
 
@@ -336,10 +441,12 @@ does not by itself identify which earlier change introduced each defect.
 | 21 RecordsAndTags, 22 UnionPayloads, 23 RecordSurface | F-05/F-08/F-09/F-10 aggregate and selected payload behavior, with C-04 supporting operations |
 | 17 ExternCall | Foreign binding/ABI fixture reconciliation, with C-01 foreign-boundary and F-08 optional-result overlap; retired integer-as-pointer types must not be re-admitted to make this sample pass |
 
-Thus **26 failures directly exercise C/F contracts**; 17 needs its distinct
-foreign-boundary contract. The actual samples 18–23 are not the planned A-series
-examples which reuse those numbers in the PRD index. Scope must follow the
-source program and owning contract, not the numeric prefix alone.
+The independent reassessment corrects this attribution: **19 failures reached
+C/F contracts** in this earlier cohort. Samples18–23 stop at D10 source admission;
+their intended features do not identify the failing compiler stage. Sample17
+belongs to Fidelity.Libc/Farscape source regeneration and its foreign boundary.
+Rerun after corpus migration before attributing residual errors to C/F. These
+programs are not the planned A-series examples that reuse their numbers.
 
 The earlier native successes recorded below did not include any of these 27
 failed samples. Several have older passing evidence, so their present failures
@@ -596,27 +703,48 @@ by inference.
 
 ## Next coordinated acceptance order
 
-1. **C-01/C-02 and F-03/F-04 — shared binding and argument demand:** reuse proven memo-storage
-   ingredients through a distinct ordinary demand contract; do not change source
-   values into public `Lazy<'T>`. Native first slice: unused effectful actual gives
-   zero traces; two demands of one actual give one; distinct dynamic actuals give
-   distinct traces; direct `eager` runs at its reached actual boundary before the
-   callee body. Then cover partial/result-call stages, inactive branches, selected
-   payloads, shared captures and operation-specific demand.
-2. **Complete general callable/storage and selected-pattern routes:** finish the
-   C-01/C-02 direct-cell/retained-field gates and F-05 source forms above, with
-   real layout, scope and failure authority. Extend Lazy/Seq payload families from
-   their admitted scalar/static-string slices using the same exact backing rules.
-3. **Close recurrence and full collections:** original13/15 bounds and tail
-   gates; common sentinel/arena/persistence contract; all List/Array/Option/Result
-   and Map/Set operations; all Seq successor and materializer gates. Register
-   previously unregistered13a cases and keep an individual operation evidence row.
-4. **Deliver the reciprocal F and Framework gates:** expanded manifest, exact
-   sequence/callback/admission/format controls, actual BAREWire RoundTrip and
-   Ariel release/mapped-carrier checks through .NET drivers, analyzer/live-LSP
-   editing and source-to-transformed-artifact integrity. Use the WrenHello,
-   HelloDISCO and Elmish/CE UI plans as concrete consumer slices with their own
-   reactive/UI/async owners, not claims already established by these compiler tests.
+1. **C-01/C-02/C-07, F-04 and M-01 — repair the shared publication boundary.**
+   Replace global graph-identity tables with source-owned immutable witness input
+   and invalidation. Publish exact callable transport and occurrence-owned physical
+   argument components. Restore04/11a/12 and16a; diagnose original16's timeout.
+   Preserve discriminating negative tests. Run native closures/Lazy/Seq and the
+   full manifest at the next shared-boundary checkpoint.
+2. **C-01/C-02/C-05 and F-03/F-04 — implement ordinary demand end to end.**
+   Baker owns deferred initialization, sharing, demand placement and strictness
+   evidence; Alex witnesses the resulting graph. Cover04c, inline/partial/foreign
+   applications, primitives, mutable reads/stores, captures, aggregates, dominance
+   and recursive initialization. Reconcile the remaining source-contract seams.
+   Migrate library effects and eager probes in the same integration. Preserve the
+   specified startup contract. Develop incidence and premise tracking here so
+   later incremental reuse does not require a second semantic model.
+3. **F-11/C-08 with C-03/F-02/F-07 and M-01 — close numeric and proof commitment.**
+   Eliminate missing-range defaults; retain generic dimensional inference.
+   Establish complete obligation outcomes and realized-artifact correspondence,
+   lifetime authority and target representation bounds. Finish passive numeric,
+   layout and ABI projection. Repair mapped-view callbacks and legitimate FFI
+   function-address conversions under the immediate plugin-retirement rule
+   above. Their required source and backend contracts do not authorize retaining
+   packed closures, loading a plugin, or adding a middle-end MLIR semantic
+   transform. Gate the affected cases through stock backend lowering.
+4. **F-05/C-03/C-04/C-06/C-07 — complete patterns, recursion and collections.**
+   Admit promised forms and schemes; use saturating Baker recipes with structural
+   recursion identity and guarded selectors. Complete balanced/persistent storage,
+   capacity, deferred payload residence, every promised operation and registered
+   native case. Prove control-stack, demand-space and numeric recurrence properties
+   separately. D10 library/corpus migration proceeds alongside these source tasks.
+5. **F-11(d)/C-08(d) — deliver scoped and parallel compilation.**
+   Complete incidence and absence invalidation, accepted revisions, rewrite
+   footprints and certificate checks. Isolate worker state and program resources;
+   witness admitted scopes through Alex, replace/reconcile segments and link.
+   Compare serial/parallel full and incremental results and timings. Require exact
+   participant evidence in addition to any structural hull certificate.
+6. **Close every affected F/C and Framework gate on a coordinated cohort.**
+   Complete .NET drivers, independent stream oracles and durable artifacts during
+   the preceding steps. Run the expanded manifest, full/pruned differentials,
+   unpaced IO, proof/native/lifetime controls, BAREWire RoundTrip, Ariel mapped
+   consumers and platform-bearing editor/analyzer/live-LSP gates. Record each
+   advertised case and actual result before completion. WrenHello, HelloDISCO and
+   Elmish/CE showcases retain their additional UI/reactive/target owners.
 
 Existing executable entry points are listed in the
 [completion ledger §5](C_F_Completion_Ledger.md#5-executable-checks-and-evidence-record).

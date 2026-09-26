@@ -1,0 +1,86 @@
+{
+  "AlexTests": {
+    "Failed": 91,
+    "Log": "/tmp/composer-callable-alex-full-v23.log",
+    "Passed": 213
+  },
+  "Cohort": "v23 callable transport and phase timing, interim validation",
+  "CompilerHashes": [
+    {
+      "File": "Composer.dll",
+      "Sha256": "7532208949E8665E0906C167F98C7911C39CDA82734E28E2DE5A03EE7F14301D"
+    },
+    {
+      "File": "Clef.Compiler.Service.dll",
+      "Sha256": "B2B8EAE85160AA6EC9973E330624F7D660532B4AE9D8444DCF0D6531E16364BD"
+    },
+    {
+      "File": "BAREWire.dll",
+      "Sha256": "C68B7CE258F00EEE55E6ECB70748771E7F913C1143DBD0C983C919685C59B04A"
+    }
+  ],
+  "CompilerSnapshot": "/tmp/composer-callable-transport-v23/compiler",
+  "Date": "2026-09-26",
+  "Limits": [
+    "Initial original04 and12 jobs hit their 30-second per-sample compile limits; fresh same-compiler reruns at 300 seconds passed with exact stdout and empty stderr.",
+    "Does not include later validated-demand input, nearest-emitted-owner restriction or transport worklist hardening; those require the next coherent build.",
+    "Alex still has 91 failing tests. This is not a full C-series acceptance or plugin-independent lowering claim."
+  ],
+  "NativeRuns": [
+    {
+      "ChangedInputs": [],
+      "Evidence": "/tmp/composer-callable-transport-v23/native/20260926T223330-d5127937854441278437fe145091cec2",
+      "Results": [
+        {
+          "Compile": "CompileTimeout 30000",
+          "ExactStreams": null,
+          "Name": "04_HelloWorldFullCurried",
+          "Run": "Not run"
+        },
+        {
+          "Compile": "CompileSuccess 5444L",
+          "ExactStreams": true,
+          "Name": "11a_DirectCaptures",
+          "Run": "RunSuccess 34L"
+        },
+        {
+          "Compile": "CompileTimeout 30000",
+          "ExactStreams": null,
+          "Name": "12_HigherOrderFunctions",
+          "Run": "Not run"
+        }
+      ]
+    },
+    {
+      "ChangedInputs": [],
+      "Evidence": "/tmp/composer-callable-transport-v23/native/20260926T223431-e1b17337bfb14b6aad491b252e53d13d",
+      "Results": [
+        {
+          "Compile": "CompileSuccess 31352L",
+          "ExactStreams": true,
+          "Name": "04_HelloWorldFullCurried",
+          "Run": "RunSuccess 36L"
+        },
+        {
+          "Compile": "CompileSuccess 55951L",
+          "ExactStreams": true,
+          "Name": "12_HigherOrderFunctions",
+          "Run": "RunSuccess 33L"
+        }
+      ]
+    }
+  ],
+  "NewControl": {
+    "Evidence": "/tmp/composer-callbacks-fsharp-b617286206d74fc6b8b31abd57ebcbd0",
+    "ExpectedCombinedOutput": "",
+    "ExpectedExit": 0,
+    "Log": "/tmp/composer-callable-arguments-native-v23b.log",
+    "Name": "CallableArgumentComponents",
+    "Passed": true
+  },
+  "SourceTests": {
+    "Failed": 0,
+    "Log": "/tmp/clef-callable-full-v23.log",
+    "Passed": 1586
+  }
+}

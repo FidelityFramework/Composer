@@ -409,10 +409,6 @@ and FuncOp =
     | FuncCall of Val list * string * Val list                                             // results, func, args
     | FuncCallIndirect of Val list * SSA * Val list                                        // results, callee, args
     | FuncConstant of SSA * string * MLIRType                                              // result, funcName, funcType
-    // Cast index → function type for call_indirect (unrealized_conversion_cast)
-    | IndexToFunc of SSA * SSA * MLIRType list * MLIRType                                 // result, sourceIndex, argTypes, retType
-    // Explicit foreign function-address boundary, not canonical closure storage
-    | FuncToIndex of SSA * SSA * MLIRType list * MLIRType                                 // result, sourceFunc, argTypes, retType
     // Return
     | Return of Val list                                                                  // ordered typed results
 

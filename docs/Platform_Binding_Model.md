@@ -98,7 +98,9 @@ let vectorAdd (a: array<float>) (b: array<float>) =
         vectorAdd_scalar a b
 ```
 
-CCS sees the predicates as abstract. Alex witnesses them to eliminate dead branches at compile time.
+CCS/Baker resolves declared predicates, settles the selected branch and retains
+the declaration and selection premises in the PSG. Alex passively witnesses the
+published structure; it does not evaluate platform predicates or infer dead code.
 
 ## Memory Regions
 
@@ -123,7 +125,10 @@ module MemoryRegions =
     @>
 ```
 
-DMM escape classifications (StackScoped, ClosureCapture, ReturnEscape, ByRefEscape) map to these regions via the `NTUMemorySpace` qualifier attached to PSG nodes during coeffect analysis.
+CCS/Baker settles escape, covering lifetime, placement, access and capacity under
+the selected storage declarations. These are distinct premises; an escape cause
+alone neither selects an allocation nor supplies a missing lifetime. Alex reads
+the published storage facts and actual allocation identities.
 
 ## Cache Characteristics
 
@@ -185,48 +190,29 @@ platform = { path = "/home/hhh/repos/Fidelity.Platform/Profiles/StrixHalo_ArtyLa
 
 ## Pipeline Integration
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Composer CLI                                            │
-│  1. Parse fidproj with Fidelity.Toml                    │
-│  2. Load Fidelity.Platform binding(s)                   │
-│  3. Extract quotations (platform, capabilities, etc.)   │
-│  4. Pass to CCS as PlatformContext                      │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  CCS                                                    │
-│  1. Receive PlatformContext                             │
-│  2. Attach platform metadata to PSG nodes               │
-│  3. Validate NTU type identity (not width)              │
-│  4. Resolve DTS dimensions, DMM escape classifications  │
-│  5. Return PSG with quotations attached                 │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  Alex                                                    │
-│  1. Read platform quotations from PSG                   │
-│  2. Witness NTU types → concrete MLIR types             │
-│  3. Eliminate dead branches via predicates              │
-│  4. Select numeric format per DTS dimensional domain    │
-│  5. Generate substrate-optimized MLIR                   │
-└─────────────────────────────────────────────────────────┘
-```
+| Owner | Responsibility |
+|---|---|
+| Composer CLI | Supply the project and selected declaration inputs to CCS |
+| CCS/Baker | Read and validate declarations; infer source types/dimensions; settle predicates, ranges, numeric representations, layout, storage and declaration/ABI facts through nanopass ingredients and recipes |
+| Source publication | Retain immutable settled codata, exact declaration and occurrence identities, ordered joint proof premises and the intermediate rewrite record |
+| Alex | Read the published facts through passive Huet Element/Pattern/Witness composition; emit admitted portable physical forms |
+| Composer backend | Realize the selected target operations and ABI, preserving the published contracts in the actual artifact |
 
-## NTU Type Resolution by Substrate
+Missing platform or semantic facts fail at their CCS/Baker owner. Alex does not
+analyze declarations, choose numeric formats, settle layouts, query hyperedges
+for new facts or eliminate source branches. All custom MLIR plugins and their
+compatibility dependencies are retired.
 
-| NTU Type | CPU/Linux/X86_64 | CPU/Linux/ARM32 | FPGA/Xilinx/Artix7 |
-|----------|------------------|-----------------|---------------------|
-| NTUint | i64 | i32 | i32 (softcore) |
-| NTUuint | i64 | i32 | i32 |
-| NTUptr<'T> | ptr (8B) | ptr (4B) | ptr (4B) |
-| NTUsize | u64 | u32 | u32 |
-| NTUfloat64 | f64 | f64 | posit32 (if DTS selects) |
-| NTUposit(32,2) | emulated | emulated | hardened IP |
+## Native Representation Settlement
 
-FPGA bindings may map `NTUfloat64` to `posit32` when the DTS dimensional domain and target capabilities both confirm the substitution is safe. This is the representation selection rule described in `CCS_Architecture.md`.
+Clef's integer and real kinds retain their native dimensional identity. CCS/Baker
+selects representations from justified ranges and the actual offered platform
+set under the numeric-selection contract. Boundary declarations retain their
+coverage and transfer obligations. Neither an architecture name nor a host word
+size supplies a default integer width or permission to substitute numeric forms.
+
+Alex reads settled representation and adaptation facts. The backend realizes
+the selected operations and checks their actual modes, layout and correspondence.
 
 ## Adding New Substrates
 
@@ -241,7 +227,7 @@ FPGA bindings may map `NTUfloat64` to `posit32` when the DTS dimensional domain 
 
 3. **For CPU targets:** add Syscalls.fs and CacheCharacteristics.fs
 
-4. **For FPGA targets:** add posit resolution rules to Types.fs
+4. **For each target:** declare offered representations, capabilities and operation modes for CCS/Baker settlement; target-specific realization belongs to the backend
 
 5. **Create .fsproj and reference in fidproj**
 

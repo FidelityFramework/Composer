@@ -13,6 +13,7 @@
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
     <Compile Include="FunctionResultTests.fs" />
+    <Compile Include="ForeignDeclarationTests.fs" />
     <Compile Include="StringBoundaryTests.fs" />
     <Compile Include="UnitResultTests.fs" />
     <Compile Include="IndexSwitchTests.fs" />

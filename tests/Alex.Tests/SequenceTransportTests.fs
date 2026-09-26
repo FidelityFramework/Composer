@@ -84,6 +84,7 @@ let private fixture () =
         { raw with Codata = lazy { raw.Codata.Value with
                                     SequenceFlows = flows; SequenceFamilies = Map.ofList [first, family]
                                     ContinuationFrames = Map.ofList [first, firstFrame; second, secondFrame] } }
+        |> prepareSource
     graph, first, second, alias.Id, reference.Id, annotation.Id, block.Id, condition.Id, left.Id, right.Id, choice.Id
 
 let private context graph position accumulator =
@@ -141,7 +142,9 @@ let ``sequence forward rejects scalar fallback missing flow and wrong occurrence
     match matchAt (pSequenceForward ctx first) different 64 operands with
     | Result.Error _ -> ()
     | Result.Ok _ -> failwith "A foreign Huet occurrence was accepted"
-    let changed = { graph with Codata = lazy { graph.Codata.Value with SequenceFlows = graph.Codata.Value.SequenceFlows.Remove alias } }
+    let changed =
+        { graph with Codata = lazy { graph.Codata.Value with SequenceFlows = graph.Codata.Value.SequenceFlows.Remove alias } }
+        |> refusePublication "Sequence source occurrence has no published complete protocol"
     let position = Zipper.create changed block |> require "Missing block" |> atChild alias
     let ctx = context changed position operands
     match matchAt (pSequenceForward ctx first) position 64 operands with
@@ -179,6 +182,8 @@ let ``join cannot discard a possible source owner`` () =
     let changed =
         { graph with Codata = lazy { graph.Codata.Value with
                                       SequenceFlows = graph.Codata.Value.SequenceFlows.Add(choice, { narrowed with Occurrence = choice }) } }
+        |> unpublished
+        |> prepareSource
     let operands = MLIRAccumulator.empty ()
     let position = Zipper.create changed choice |> require "Missing conditional"
     let ctx = context changed position operands
@@ -199,6 +204,8 @@ let ``a generator raw frame formal cannot acquire a sequence pair from a flow ro
         { graph with Codata = lazy { codata with
                                       SequenceFlows = codata.SequenceFlows.Add(formal, forgedFlow)
                                       SequenceFamilies = codata.SequenceFamilies.Add(first, { family with Participants = family.Participants.Add formal }) } }
+        |> unpublished
+        |> prepareSource
     let position = Zipper.create changed formal |> require "Missing generator formal"
     match Operands.project (context changed position (MLIRAccumulator.empty ())) formal with
     | Result.Error _ -> ()
@@ -226,6 +233,7 @@ let ``sequence projection rejects changed actual frame under an unchanged family
         if defect = "authority" then
             { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.SequenceFamilyLayout || edge.Target <> second) }
         else changed
+    let changed = changed |> refusePublication "Sequence family disagrees"
     let position = Zipper.create changed choice |> require "Missing conditional"
     let ctx = context changed position (MLIRAccumulator.empty ())
     // The first alternative itself is unchanged; the entire advertised family
@@ -249,6 +257,7 @@ let ``sequence projection rejects changed actual generator formal and signature`
         | _ -> failwith "Fixture lost its generator"
     let changed =
         { graph with Nodes = graph.Nodes.Add(formal.Id, { formal with Type = wrongFormalType }).Add(generator.Id, changedGenerator) }
+        |> refusePublication "Sequence family disagrees"
     let position = Zipper.create changed choice |> require "Missing conditional"
     let ctx = context changed position (MLIRAccumulator.empty ())
     match Operands.project ctx first with

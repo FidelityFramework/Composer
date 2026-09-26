@@ -6,6 +6,7 @@ open System.Security.Cryptography
 open System.Text.Json
 
 let cases = [
+    "CallableArgumentComponents", "CallableArgumentComponents.clef", "callable-argument-components", ["func.call @CallableArgumentComponents.apply"; "func.call @CallableArgumentComponents.make"]
     "MixedDimensionSchemes", "MixedDimensionSchemes.clef", "mixed-dimension-schemes", ["arith.cmpf"]
     "NominalIdentity", "NominalIdentity.clef", "nominal-identity", ["arith.cmpf"]
     "ResultCases", "ResultCases.clef", "result-cases", ["arith.cmpi";"func.call_indirect"]
@@ -36,7 +37,7 @@ let cases = [
     "IgnoreValues", "IgnoreValues.clef", "ignore-values", ["func.call @IgnoreValues.numeric";"func.call @IgnoreValues.optional";"func.call @IgnoreValues.consumeUnit"]
 ]
 
-let exactOutputs = Map.ofList ["MixedDimensionSchemes", ""; "NominalIdentity", ""]
+let exactOutputs = Map.ofList ["MixedDimensionSchemes", ""; "NominalIdentity", ""; "CallableArgumentComponents", ""]
 
 let companionSources = Map.ofList ["NominalIdentity", ["NominalIdentityLeft.clef"; "NominalIdentityRight.clef"]]
 

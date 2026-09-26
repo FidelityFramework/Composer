@@ -295,7 +295,7 @@ let mapNTUKindForPlatform (_state: PSGParserState) (kind: NTUKind) : MLIRType =
 let getNodeSSA (nodeId: NodeId) : PSGParser<Alex.Dialects.Core.Types.SSA> =
     parser {
         let! state = getUserState
-        return Alex.Traversal.Values.resultOf state.Coeffects.TargetPlatform state.Graph nodeId
+        return Alex.Traversal.Values.resultOf state.Coeffects.TargetPlatform state.Graph (Alex.Traversal.PSGZipper.enclosingLambdaIds state.Zipper) nodeId
     }
 
 /// Extract all SSAs for a node from coeffects (monadic)
@@ -304,7 +304,7 @@ let getNodeSSA (nodeId: NodeId) : PSGParser<Alex.Dialects.Core.Types.SSA> =
 let getNodeSSAs (nodeId: NodeId) : PSGParser<Alex.Dialects.Core.Types.SSA list> =
     parser {
         let! state = getUserState
-        return Alex.Traversal.Values.valuesOf state.Coeffects.TargetPlatform state.Graph nodeId
+        return Alex.Traversal.Values.valuesOf state.Coeffects.TargetPlatform state.Graph (Alex.Traversal.PSGZipper.enclosingLambdaIds state.Zipper) nodeId
     }
 
 // ═══════════════════════════════════════════════════════════════════════════

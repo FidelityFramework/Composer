@@ -25,7 +25,7 @@ let private fixture () =
     let operand = builder.Create(SemanticKind.PatternBinding "alreadyComputed", Types.boolType, dummyRange)
     let marker = builder.Create(SemanticKind.EagerExpr operand.Id, Types.boolType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [marker.Id], Types.boolType, dummyRange)
-    let graph = builder.Build [] |> Demand.normalize
+    let graph = builder.Build [] |> Demand.normalize |> prepareSource
     graph, root.Id, marker.Id, operand.Id
 
 [<Fact>]
@@ -88,7 +88,7 @@ let ``an eager effect remains inside its conditional arm for either guard value`
     let marker = builder.Create(SemanticKind.EagerExpr effect.Id, Types.boolType, dummyRange)
     let fallback = builder.Create(SemanticKind.Literal(NativeLiteral.Bool false), Types.boolType, dummyRange)
     let choice = builder.Create(SemanticKind.IfThenElse(guard.Id, marker.Id, Some fallback.Id), Types.boolType, dummyRange)
-    let graph = builder.Build [] |> Demand.normalize
+    let graph = builder.Build [] |> Demand.normalize |> prepareSource
     let accumulator = MLIRAccumulator.empty ()
     let position = Zipper.create graph choice.Id |> require "Missing conditional"
     let ctx = context graph position accumulator
@@ -141,7 +141,7 @@ let ``eager lazy value preserves its actual code and environment without forcing
     let prepared, _ = Clef.Compiler.Nanopass.LazyFactoryResults.prepare raw raw.Codata.Value.Curry
     let settled, reading = Clef.Compiler.Nanopass.LazyRuntime.settle { prepared with Platform = Some platform }
     Assert.Empty reading.Diagnostics
-    let graph = Demand.normalize settled
+    let graph = Demand.normalize settled |> settleDemand
     let marker = graph.Nodes.Values |> Seq.filter (fun node -> node.IsReachable && match node.Kind with SemanticKind.EagerExpr _ -> true | _ -> false) |> Assert.Single
     let operand = Clef.Compiler.PSGSaturation.SemanticGraph.ExplicitDemand.operand graph marker.Id |> require "Missing source operand"
     let accumulator = MLIRAccumulator.empty ()
@@ -168,7 +168,7 @@ let private unitFixture () =
     let effect = builder.Create(SemanticKind.PatternBinding "consoleWritelnResult", Types.unitType, dummyRange)
     let marker = builder.Create(SemanticKind.EagerExpr effect.Id, Types.unitType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [marker.Id], Types.unitType, dummyRange)
-    let graph = builder.Build [] |> Demand.normalize
+    let graph = builder.Build [] |> Demand.normalize |> prepareSource
     graph, root.Id, marker.Id, effect.Id
 
 [<Theory>]
@@ -205,7 +205,7 @@ let ``actual unit store completes once before the eager marker returns canonical
     let value = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
     let store = builder.Create(SemanticKind.Set(target.Id, value.Id), Types.unitType, dummyRange)
     let marker = builder.Create(SemanticKind.EagerExpr store.Id, Types.unitType, dummyRange)
-    let graph = builder.Build [] |> Demand.normalize
+    let graph = builder.Build [] |> Demand.normalize |> prepareSource
     let accumulator = MLIRAccumulator.empty ()
     let cellType = TMemRefStatic(1, TInt(IntWidth 1))
     MLIRAccumulator.bindNode cell.Id (Arg 0) cellType accumulator
@@ -243,7 +243,7 @@ let ``void Console call output remains in its eager conditional arm before unit 
     let marker = builder.Create(SemanticKind.EagerExpr effect.Id, Types.unitType, dummyRange)
     let fallback = builder.Create(SemanticKind.Literal NativeLiteral.Unit, Types.unitType, dummyRange)
     let choice = builder.Create(SemanticKind.IfThenElse(guard.Id, marker.Id, Some fallback.Id), Types.unitType, dummyRange)
-    let graph = builder.Build [] |> Demand.normalize
+    let graph = builder.Build [] |> Demand.normalize |> prepareSource
     let accumulator = MLIRAccumulator.empty ()
     let position = Zipper.create graph choice.Id |> require "Missing unit conditional"
     let ctx = context graph position accumulator
@@ -323,7 +323,7 @@ let ``a transparent unit parent cannot certify emission of a deferred effect chi
     let marker = builder.Create(SemanticKind.EagerExpr parent.Id, Types.unitType, dummyRange)
     let raw = builder.Build [] |> Demand.normalize
     let previous = raw.Codata.Value
-    let graph = { raw with Codata = lazy { previous with Curry = { previous.Curry with DeferredArgNodes = Set.singleton deferred.Id } } }
+    let graph = { raw with Codata = lazy { previous with Curry = { previous.Curry with DeferredArgNodes = Set.singleton deferred.Id } } } |> prepareSource
     let accumulator = MLIRAccumulator.empty ()
     let position = Zipper.create graph marker.Id |> require "Missing deferred marker"
     let ctx = context graph position accumulator

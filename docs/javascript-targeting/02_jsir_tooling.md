@@ -23,7 +23,15 @@ Fusion requires common source/declaration identities, related operation identiti
 
 For each contribution, distinguish a borrowed design principle, adapted implementation, invoked analysis tool and observed integration result. Tool adoption follows demonstrated usefulness against the shared fixtures; a build need not execute every reference tool. Any optional external checker receives a scoped obligation/model with stated assumptions through the established proof machinery. That does not require completing inference for the entire imported program or create a parallel authority for Clef correctness.
 
-The resulting pipeline preserves its architectural ownership: CCS elaborates semantic constraints; Baker composes recipes through fan-out and incorporates them through generic fold-in; Alex observes settled joint constraints with its zipper, patterns and elements; the backend realizes portable witnessed operations. The [worked integration example](09_contract_directed_dependency_recovery.md#combined-contributions-to-this-fixture) makes the overlapping contributions concrete.
+The resulting pipeline preserves its architectural ownership: CCS elaborates
+semantic constraints; Baker composes recipes through fan-out and incorporates
+them through generic fold-in. CCS/Baker settles the joint constraints and
+publishes their consequences as node-local codata or deliberately reified
+annotations. Alex observes that settled publication through its Huet zipper,
+Elements, Patterns and Witnesses; emission never queries the hyperedge set.
+The backend realizes portable witnessed operations. The
+[worked integration example](09_contract_directed_dependency_recovery.md#combined-contributions-to-this-fixture)
+makes the overlapping contributions concrete.
 
 ## Pin the reviewed JSIR tool
 

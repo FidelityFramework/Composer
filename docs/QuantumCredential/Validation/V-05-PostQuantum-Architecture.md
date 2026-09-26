@@ -145,7 +145,10 @@ Implementation variants in pqm4:
 
 ## Platform Bindings for PQC Libraries
 
-Fidelity uses the Platform.Bindings pattern (BCL-free) rather than DllImport. CCS defines function signatures with `Unchecked.defaultof<T>` placeholders, and Alex provides platform-specific MLIR emission that links against the native PQC libraries.
+Fidelity uses declared Platform.Bindings contracts. CCS/Baker resolves their
+signatures and settles actual argument, storage, ownership, demand and ABI
+premises. Alex passively witnesses the admitted portable declarations and
+calls; Composer's backend realizes and links the native PQC library boundary.
 
 ### Layer 1: Platform Bindings (BCL-Free)
 
@@ -180,7 +183,10 @@ module Platform.Bindings.Dilithium =
         Unchecked.defaultof<int>
 ```
 
-Alex recognizes calls to `Platform.Bindings.Kyber.*` and emits LLVM declarations that link against the PQC library (liboqs, pq-crystals, or pqm4 depending on target).
+CCS/Baker resolves the PQC binding declarations and selected library contract.
+Alex consumes the settled binding identity without name recognition.
+Composer's backend supplies target declarations and linkage for the admitted
+library, such as liboqs, pq-crystals or pqm4.
 
 ### Layer 2: Type Definitions
 

@@ -140,7 +140,7 @@ Using standard dialects, the demo still validates:
 | **Parallel entropy sampling** | scf.parallel executes on 4 cores |
 | **Natural suspension at I/O** | Syscalls yield to OS scheduler |
 | **Interleaved entropy** | arith operations combine channels |
-| **Platform.Bindings pattern** | func.call to Alex-emitted syscalls |
+| **Platform.Bindings pattern** | Settled portable call witnessed by Alex; target syscall realized by Composer's backend |
 | **Quotation-based constraints** | clef nanopasses attach metadata |
 
 What the demo did not exercise, and where the standing design settles each:
@@ -159,15 +159,15 @@ What the demo did not exercise, and where the standing design settles each:
 ### Phase 1: Demo (January)
 
 - Standard MLIR dialects only
-- Manual "this is parallel" decisions in Alex
+- Explicit source parallelism elaborated and admitted by CCS/Baker
 - scf.parallel for multi-channel sampling
 - Syscall-based I/O with OS-provided preemption
 
 ### Phase 2: Purity Analysis (Post-Demo)
 
-- Extend Alex with referential transparency detection
-- Annotate PSG nodes with purity information
-- Generate scf.parallel automatically for pure regions
+- CCS/Baker establishes effects, independence, memory ownership and progress premises
+- Retain the participants, scope and proof evidence on the PSG
+- Baker elaborates admitted parallel regions; Alex passively witnesses their settled operations
 - Still using standard dialects
 
 ### Phases 3–5: Retired
@@ -183,7 +183,7 @@ The remaining phases of the earlier progression (a DCont dialect, an Inet dialec
 | File | Purpose |
 |------|---------|
 | `Alex/CodeGeneration/MLIRBuilder.fs` | MLIR emission infrastructure |
-| `Alex/Bindings/Linux/` | Platform-specific syscall emission |
+| Composer's Linux backend | Target-specific syscall realization from settled boundary facts |
 | `Fidelity.Platform` | Platform.Bindings signatures |
 
 ### Architecture Documents

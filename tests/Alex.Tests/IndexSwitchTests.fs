@@ -110,16 +110,16 @@ let ``index switch rejects incompatible supplied evidence with a precise reason`
     | Result.Ok _ -> failwithf "Switch accepted invalid %s evidence" fault
 
 [<Fact>]
-let ``declarations inside switch arms reach existing module collection`` () =
+let ``explicit module import serves a switch arm without relocation`` () =
     let declaration = MLIROp.FuncOp(FuncOp.FuncDecl("external_effect", [integer], [integer], FuncVisibility.Private, []))
     let call = MLIROp.FuncOp(FuncOp.FuncCall([{ SSA = (V(99, 2)); Type = integer }], "external_effect", [first]))
     let operations =
-        match observe (pBuildIndexSwitch selector [7L, ([declaration; call], [])] ([], []) []) with
+        match observe (pBuildIndexSwitch selector [7L, ([call], [])] ([], []) []) with
         | Result.Ok (operations, _) -> operations
         | Result.Error message -> failwith message
     let definition = MLIROp.FuncOp(FuncOp.FuncDef("calls", [Arg 0, TIndex; Arg 3, integer], [integer],
         operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = first.SSA; Type = integer }]))], FuncVisibility.Public))
-    let collected = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [definition]
+    let collected = [declaration; definition]
     Assert.Equal(declaration, collected.Head)
     let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "switch_declarations" collected
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] text

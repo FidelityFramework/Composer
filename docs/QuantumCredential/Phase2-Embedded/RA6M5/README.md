@@ -62,7 +62,7 @@ The broader product story still matters:
 Interop splits by the *nature* of the source:
 
 - **FSP → PORT.** Imperative vendor glue whose value is the domain map, not the code. Reimplemented as Clef-native modules guided by the keep / reimplement / discard taxonomy (PH2-05). C/C++ becomes *reference*, not a dependency.
-- **Large C libraries → BIND.** Mature, well-factored C (e.g. a USB device stack; or LVGL on display-equipped targets) bound via the Farscape membrane (matched Clef binding + Alex lowering witness pairs); C remains behind the boundary. The RA6M5 itself is headless — status LEDs, with a phone as its display surface over USB (see [D-02-Mobile-Companion](../../Demo/D-02-Mobile-Companion.md)) — so its own bind surface is the host/USB link, not a GUI.
+- **Large C libraries → BIND.** Mature, well-factored C (e.g. a USB device stack; or LVGL on display-equipped targets) is bound via the Farscape membrane. CCS/Baker settles the generated declaration and any semantic adapter; Alex witnesses the admitted contract and Composer's backend realizes the foreign boundary. C remains behind that boundary. The RA6M5 itself is headless — status LEDs, with a phone as its display surface over USB (see [D-02-Mobile-Companion](../../Demo/D-02-Mobile-Companion.md)) — so its own bind surface is the host/USB link, not a GUI.
 
 Farscape's revised Renesas role is to ingest the Renesas **SVD / CMSIS-Device** for register address and bitfield constants — **not** FSP headers.
 

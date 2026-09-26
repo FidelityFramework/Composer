@@ -1,6 +1,7 @@
 module BackEnd.MCU.Pipeline
 
 open System.IO
+open Alex.Dialects.Core.Types
 open Core.Types.Pipeline
 open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 
@@ -11,8 +12,15 @@ open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 let private implementation: BackEnd = {
     Name = "LLVM / MCU image (Cortex-M or Xtensa)"
     Compile = fun witnessed ctx ->
-        let mlirText = witnessed.Text
         try
+            // MCU ABI realization belongs to this backend. The witnessed
+            // operations and their source correspondence arrive unchanged.
+            let targetOperations = witnessed.Operations |> List.map (function
+                | MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
+                | operation -> operation)
+            let mlirText =
+                Alex.Dialects.Core.Serialize.moduleToString witnessed.PointerBits
+                    (witnessed.ModuleName |> Option.defaultValue "main") targetOperations
             let directory = ctx.IntermediatesDir |> Option.defaultWith (fun () ->
                 let path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath ctx.OutputPath), "intermediates")
                 Directory.CreateDirectory path |> ignore

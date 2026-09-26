@@ -25,7 +25,7 @@ let private fixture () =
     let binding = builder.Create(SemanticKind.Binding("effectResult", false, false, None),
                                  Types.unitType, dummyRange, children = [conditional.Id])
     builder.SetParent(conditional.Id, binding.Id)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph binding.Id |> require "Missing unit fixture binding" |> atChild conditional.Id
     position, thenBranch.Id, elseBranch.Id
 
@@ -127,7 +127,7 @@ let private unitComparison () =
           Category = IntrinsicCategory.Comparison; FullName = "Operators.op_Equality" },
         NativeType.TFun(Types.unitType, NativeType.TFun(Types.unitType, Types.boolType)), dummyRange)
     let call = builder.Create(SemanticKind.Application(equal.Id, [left.Id; right.Id]), Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let operands = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode left.Id (Arg 0) unitType operands
     MLIRAccumulator.bindNode right.Id (Arg 1) unitType operands

@@ -72,7 +72,7 @@ This would meet the <500ms human-imperceptible target.
 1. **Bare-metal targeting**: Fidelity can generate freestanding binaries with direct hardware access
 2. **Zero runtime overhead**: No GC, no interpreter, no dynamic dispatch
 3. **Type-safe register access**: Clef types can model hardware registers safely
-4. **Platform bindings**: Alex can generate optimal ARM64 code for BCM2837 peripherals
+4. **Platform bindings**: CCS/Baker settles declared BCM2837 peripheral contracts; Alex witnesses them and Composer's backend realizes ARM64 operations. Performance requires measured evidence.
 
 ## Files on YoshiPi
 

@@ -1,17 +1,17 @@
 # Alex XParsec Remediation Assessment
 
 **Date:** February 2026
-**Status:** Largely complete — vestiges remain
+**Status:** February 2026 assessment; measurements below are historical evidence.
 
 ---
 
 ## Executive Summary
 
-The XParsec remediation of Alex is substantially done. Witness code has been reduced from **5,773 lines to ~2,225 lines** (61% reduction). All witnesses now follow the Element/Pattern/Witness architecture and use XParsec combinators for PSG traversal.
+The February assessment reported the XParsec remediation of Alex as substantially done. Witness code has been reduced from **5,773 lines to ~2,225 lines** (61% reduction). All witnesses now follow the Element/Pattern/Witness architecture and use XParsec combinators for PSG traversal.
 
 **Remaining work is vestige cleanup, not a full refactoring.** Two vestige patterns persist in some witnesses:
 1. **Hidden helpers** — private functions that should live in Patterns
-2. **TMemRef push-passing** — witnesses load values and pass them downstream as parameters instead of using the PULL/catamorphism model where Patterns detect and handle `TMemRef` at point of use
+2. **TMemRef push-passing** — eager loads and downstream passing were recorded as a vestige. The source-owned occurrence contract now governs load versus address use; Patterns consume that settlement.
 
 The next major engineering milestone is **DMM escape analysis integration**, not further XParsec refactoring.
 
@@ -51,82 +51,20 @@ The next major engineering milestone is **DMM escape analysis integration**, not
 
 ---
 
-## Vestige Patterns
+## Passive Pattern Composition
 
-Two anti-patterns from the pre-remediation era occasionally surface during new witness development. They are not systemic failures — they are localized and fixable.
+The February review identified hidden witness helpers and eager load-passing as
+vestiges. Moving either behavior into a Pattern is insufficient if it still
+infers source semantics.
 
-### Vestige 1: Hidden Helper Functions
+CCS/Baker settles the load or address use for each occurrence, including native
+type, demand, actual storage identity, mutability and lifetime. It constructs
+required operations in the PSG before publication. A physical `TMemRef` shape,
+SSA count or source spelling is not authority to insert a load.
 
-**What it is:** A private function defined inside a witness module that computes something which properly belongs in a Pattern.
-
-**Why it's wrong:** Witnesses are observers (the codata/photographer principle). Computation and composition belong in Patterns. Hidden helpers accumulate witness-specific logic that can't be reused.
-
-**Before (WRONG):**
-```fsharp
-// Inside VarRefWitness.fs — private helper doing Pattern work
-let private buildLoadForMutableRef (node: SemanticNode) (state: PSGState) : MLIROp list =
-    let memrefType = ...
-    let ptrSSA = ...
-    // builds GEP + Load ops manually
-    [gepOp; loadOp]
-
-let witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    match node.Type with
-    | TMemRef _ -> { InlineOps = buildLoadForMutableRef node ctx.State; ... }
-    | _ -> ...
-```
-
-**After (RIGHT):**
-```fsharp
-// The load logic lives in MemoryPatterns.fs as a composable Pattern
-// Witness delegates entirely:
-let witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    match tryMatch (pVarRef >>= MemoryPatterns.pLoadIfMemRef) ... with
-    | Some result -> result
-    | None -> WitnessOutput.error "VarRef pattern failed"
-```
-
-### Vestige 2: TMemRef Push-Passing
-
-**What it is:** A witness detects that a value has type `TMemRef`, loads it eagerly, and passes the loaded value as a parameter to downstream Patterns.
-
-**Why it's wrong:** This is the PUSH model — it makes the witness stateful and breaks monadic composition. The correct model is PULL: Patterns detect `TMemRef` at the point of use and compose load operations there. This is the catamorphism model described in the Managed Mutability blog.
-
-**Before (WRONG — push model):**
-```fsharp
-// Witness eagerly loads, pushes value downstream
-let witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    let argVal = resolveArg ctx node.Arg
-    let loadedVal =
-        match argVal.Type with
-        | TMemRef innerTy ->
-            // Load eagerly before calling pattern
-            let loadSSA = freshSSA()
-            let loadOp = MLIROp.LLVMOp (LLVMOp.Load (loadSSA, argVal.SSA, innerTy, ...))
-            { SSA = loadSSA; Type = innerTy; ExtraOps = [loadOp] }
-        | _ -> argVal
-    ApplicationPatterns.pFuncCall ctx loadedVal  // receives pre-loaded value
-```
-
-**After (RIGHT — pull model):**
-```fsharp
-// Pattern detects TMemRef at point of use and composes load
-let witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    match tryMatch (pApplication >>= ApplicationPatterns.pEmitCall) ctx.Graph node ... with
-    | Some result -> result
-    | None -> WitnessOutput.error "Application pattern failed"
-
-// In ApplicationPatterns.fs — PULL: detect and load at point of use
-let pEmitCall : PSGParser<MLIROp list> = parser {
-    let! (func, args) = pApplication
-    let! state = getUserState
-    // Pattern internally handles TMemRef args by composing load ops
-    let! resolvedArgs = args |> List.map pResolveValue |> sequence
-    ...
-}
-```
-
-The PULL model ensures witnesses remain stateless observers; all composition lives in Patterns where it can be reused and tested independently.
+Patterns compose physical Elements from those immutable settled facts.
+Witnesses observe through the Huet zipper. Neither layer reconstructs source
+demand, chooses storage or repairs missing premises.
 
 ---
 
@@ -146,26 +84,19 @@ The **parallelism invariant** is architectural: witnesses are pure functions of 
 
 ---
 
-## Next: DMM Escape Analysis
+## Source-Owned DMM Settlement
 
-The remediation provides the right foundation for DMM integration. The PULL model is essential: once escape classifications are attached to PSG nodes as coeffects, Patterns can detect them at point of use and select the appropriate allocation strategy — exactly as they detect `TMemRef` and compose load operations.
+CCS/Baker owns escape analysis, capture relationships, allocation residence and
+complete lifetime proof. Owning recipes construct any required promotion,
+allocation and release operations in the PSG before publication.
 
-The escape analysis roadmap (from the Managed Mutability blog):
+Alex's Patterns compose the physical operations already admitted by that
+settlement. They do not detect captures, choose stack versus arena residence or
+promote escaping allocations. The publication retains actual storage identity,
+extent, capacity, alignment, lifetime and the complete joint premises.
 
-**Phase 1 — Closure capture integration:**
-- Detect when a mutable allocation escapes via closure capture
-- Select arena allocation strategy in `ClosurePatterns.pBuildClosure`
-- `EscapeKind.EscapesViaClosure` already defined in CCS
-
-**Phase 2 — Arena hoisting:**
-- Allocations that escape their lexical scope promoted to arena
-- `arena { ... }` computation expression scope (Bounded model)
-- Alex `MemoryPatterns` generates `memref.alloc` vs `memref.alloca` based on escape kind
-
-**Phase 3 — Full lifetime inference:**
-- L1 model: compiler infers all escape classifications
-- No annotations needed for the common case
-- Language server (Lattice) surfaces escape path and promotion decisions
+The editor consumes the same source-owned conclusions and located failures.
+Missing facts fail at their owner; emitter fallbacks cannot substitute for proof.
 
 ---
 
@@ -182,14 +113,14 @@ The escape analysis roadmap (from the Managed Mutability blog):
 ### Vestige Cleanup
 
 - [ ] No hidden helper functions in any witness
-- [ ] No TMemRef push-passing — all TMemRef handling via PULL model in Patterns
+- [ ] Load/address operations follow source-settled per-occurrence facts; no physical-type-driven inference in Patterns
 - [ ] All witnesses under ~100 lines (simple: 20-40, complex: 50-100)
 
 ### DMM Integration (Next Milestone)
 
-- [ ] `EscapeKind` coeffect attached to PSG allocation nodes
-- [ ] `MemoryPatterns.pAllocate` selects `alloca` vs `alloc` based on escape kind
-- [ ] `ClosurePatterns.pBuildClosure` detects captured mutable refs and upcasts to arena
+- [ ] CCS/Baker settles complete capture, escape, residence and lifetime premises
+- [ ] Baker recipes construct admitted allocation and promotion operations
+- [ ] Alex passively witnesses immutable source-settled storage operations
 - [ ] `arena { ... }` computation expression compiles correctly (Bounded model)
 
 ---

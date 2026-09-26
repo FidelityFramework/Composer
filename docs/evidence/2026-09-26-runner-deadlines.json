@@ -1,0 +1,68 @@
+{
+  "Description": "Regression driver verification after independent assessment. Both process exit codes observed as zero. No compiler or native acceptance run is claimed.",
+  "Inputs": [
+    {
+      "Path": "tests/regression/RunnerCore.fsx",
+      "Sha256": "C993F466FE96C9E38374067BED5C85369BB8AACD1ECA5CA30A7E0A2DBCE2D79A"
+    },
+    {
+      "Path": "tests/regression/RunnerTests.fsx",
+      "Sha256": "E9E7E3347B0298CAD87367E89BA76DBCD0E5B7809A52A2AACE5278178843F8E9"
+    },
+    {
+      "Path": "tests/regression/ParallelRunnerTests.fsx",
+      "Sha256": "945557C6544DED6E7FE0A2D99F859C902AA14B6277B187B5D63CB7D54919AC4F"
+    },
+    {
+      "Path": "tests/regression/Runner.fsx",
+      "Sha256": "6E899FCF8D3162D29FE07B0A9DEBFAF68D013681013F70A3CF7483C9CD0A0655"
+    },
+    {
+      "Path": "tests/Infrastructure/ProcessHost/Program.fs",
+      "Sha256": "8708E9B3D2DE122542857865227CA6644ECB0F65DD8B87CFE010352E8E911FD8"
+    },
+    {
+      "Path": "tests/Infrastructure/ProcessHost/bin/Debug/net10.0/ProcessHost.dll",
+      "Sha256": "FCAE69B84505F39A53B14030F4A405749B211899B1835681D632E8C8EACADBA2"
+    },
+    {
+      "Path": "src/bin/Debug/net10.0/XParsec.dll",
+      "Sha256": "497EA9D5692F9AF66861D921A2BE97E2B8BF86D85F617001579D528F64FD045A"
+    },
+    {
+      "Path": "src/bin/Debug/net10.0/Fidelity.Data.dll",
+      "Sha256": "08097913761860B955DB3C5DF5B849F12347A635902C26D272BC53F6B9D22D71"
+    }
+  ],
+  "RecordedUtc": "2026-09-26T22:32:54.135309+00:00",
+  "Runs": [
+    {
+      "Command": "dotnet fsi tests/regression/RunnerTests.fsx",
+      "ExitCode": 0,
+      "Transcript": [
+        "PASS manifest compile and runtime deadlines are independent and bounded",
+        "PASS matching stdout requires a zero native exit",
+        "PASS launch failure is distinct from timeout",
+        "PASS both redirected streams drain concurrently",
+        "PASS held-open stdout/stderr time out and descendants are terminated",
+        "PASS blocked stdin shares the timeout",
+        "PASS argument lists preserve spaces and literal shell syntax",
+        "PASS every requested sample filter must match",
+        "PASS real CLI failure and success exit codes propagate",
+        "All regression harness tests passed."
+      ]
+    },
+    {
+      "Command": "dotnet fsi tests/regression/ParallelRunnerTests.fsx",
+      "ExitCode": 0,
+      "Transcript": [
+        "PASS strict jobs/timeouts, unique artifacts and snapshot containment including symlinks",
+        "PASS worker limits, actual overlap, deterministic results and independent artifacts",
+        "PASS compile/run phase barrier, failed/skipped compile admission and missing stdin failure",
+        "PASS .NET streams, stdin, hosted launch errors, nonzero child exits and timeout cleanup including orphans",
+        "All parallel runner tests passed."
+      ]
+    }
+  ],
+  "Runtime": "10.0.12"
+}

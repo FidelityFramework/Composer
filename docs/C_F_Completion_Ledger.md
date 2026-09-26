@@ -13,6 +13,14 @@ separate prerequisite project. The [PRD index](PRDs/README.md) is the entry poin
 the [shared evaluation traceability](PRDs/C-Series-Acceptance.md#12-shared-evaluation-requirements-within-existing-prds)
 links the governing spec clauses to the affected C/F acceptance cases.
 
+The [completed-sweep reassessment](C_F_Checkpoint_2026-09-26.md#reassessment-after-the-completed-independent-sweeps)
+and its revised acceptance order govern continuation. At Clef `fd4ee1b` / Composer
+`b4f6396`, the independent audit records CCS1,583/1,583, Alex211/302,
+27/51 compilations and26 matching executions;04c mismatches. It adds specific
+source-publication, default-demand, library, numeric/discharge, collection and
+incremental obligations under the owners below. Earlier counts retain their
+historical cohorts and do not establish current acceptance.
+
 The earlier committed checkpoint, Composer `db4bc8b01bb6` and Clef
 `f898c97e11c5`, passed 1,058 CCS tests, 124 Alex tests, the default editor suite
 and four native controls; native16h had not yet passed. Subsequent main-v19

@@ -25,8 +25,8 @@ they carry to each backend. The standard's
 govern each extension. Candidate vocabulary alone does not enable operations.
 All semantic decisions remain Baker-owned; the receiving contract covers both
 the expression and the correlated graph facts/proof identities it needs.
-Alex is target-aware: it selects an admitted Pattern/Witness using the settled
-platform/backend facts. One profile may require `scf`, while another warrants
+Alex is target-aware: it matches the source-settled physical form and
+platform/backend facts to an admitted Pattern/Witness. One profile may require `scf`, while another warrants
 `cf`. Numeric selection and arithmetic construction likewise govern the admitted
 `arith`/`math` forms. Portable vocabulary does not require identical IR for every
 target. M-01 records the receiving, information-preservation and testing duties.
@@ -34,6 +34,20 @@ target. M-01 records the receiving, information-preservation and testing duties.
 One normative half of the boundary is in the spec: `clef-lang-spec/spec/backend-lowering-architecture.md` requires that the middle end emit only portable dialects and treats an `llvm.*` op in the middle end as a category error, because a target commitment is lossy and forecloses every other leg.
 
 This document states the second half, the hard-stop rule in full: **no llvm dialect, and no semantic dialect, in the MLIR witnessed out of the PSG.** The standard dialects, `func`, `memref`, `arith`, `scf`, `index`, are the baseline vocabulary of the witnessed region, extended under M-01's operation/profile admission contract. The first ban reserves target-specific encoding for the backend realization stage; it does not prohibit target-aware witnessing. The second keeps the middle end semantics-free in a precise sense: the semantics ride in the graph, the judgments discharge over its literals, and what reaches MLIR is the settled decomposition. A dialect that encoded closure-ness or continuation-ness into the witnessed region would carry semantics past the point of their discharge.
+
+**No MLIR semantic transform runs in the middle end.** CCS/Baker owns semantic
+elaboration, saturation and physical-form settlement in the PSG. Alex passively
+composes Elements through Patterns and Witnesses at the actual Huet occurrence.
+Serialization and physical correspondence checks do not confer authority to
+infer or repair missing semantics. Target-specific lowering and its preservation
+checks remain backend work.
+
+**Remove all MLIR plugins immediately.** This includes conditional loading,
+build dependencies and retained fallback paths. Consumer migration is not a
+prerequisite for removal. An affected source form must receive its correct PSG
+contract and passive expression, or retain a located failure until repaired;
+it does not regain a plugin route. Completion is established by the recorded
+plugin-free compiler and native gates, not by this architectural directive.
 
 ### Typed handoff and runtime requirements
 
@@ -44,8 +58,8 @@ without parsing text or reconstructing its source meaning.
 
 For a terminal refutable match, Baker establishes the typed decision and an
 always-active `Require` before the selected continuation. Its joint relation
-retains the actual condition, body and ordered frontier. Alex checks that
-relation at the current Huet-zipper occurrence and composes the standard
+retains the actual condition, body and ordered frontier. Alex consumes its
+source-settled projection at the current Huet-zipper occurrence and composes the standard
 `cf.assert` through its Element, Pattern and Witness. A selected singleton
 returns the actual body carrier; it does not invent a physical join result.
 
@@ -93,5 +107,5 @@ In each case the dialect is transliteration vocabulary for what the target nativ
 - [C-01 PRD](./PRDs/C-01-Closures.md) Section 14: the form family, the standard-dialect correspondence table, and the per-obligation correspondence that supersedes the interim plugins.
 - [Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md): the suspension instance of the doctrine, and the second dissolved dialect.
 - `clef-lang-spec/spec/backend-lowering-architecture.md`: the portable-dialect requirement, operation admission and target realization; its current closure contract retires deferred casts.
-- `clef-lang-spec/spec/boundary-constraints-status.md`: the boundary-constraint sequencing under which the interim plugins operate.
-- `mlir-plugins/ROADMAP.md`: the tail plugins' own statement of interim scope.
+- `clef-lang-spec/spec/boundary-constraints-status.md`: boundary-constraint requirements; historical plugin sequencing does not authorize a current dependency.
+- The historical `mlir-plugins/ROADMAP.md` described the retired tail plugins' interim scope. It is not an implementation dependency or a prerequisite for their removal.

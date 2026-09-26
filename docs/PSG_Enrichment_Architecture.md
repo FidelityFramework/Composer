@@ -81,8 +81,8 @@ Baker is responsible for **decomposing language features to primitives**. This i
   - MoveNext implementation
 
 - `lazy expr` decomposes to:
-  - Thunk structure (computed flag + value + code)
-  - Force implementation
+  - A separate thunk value and typed environment with computed state, cache and captures
+  - Source-owned guarded computation, result storage, completion publication and hot read
 
 **Key characteristic:** The user wrote a high-level expression; Baker synthesizes the implementation structure.
 
@@ -132,43 +132,27 @@ This enables tooling to:
 
 ## Pipeline Placement
 
-```
-Source Code
-    ↓
-  CCS (Parse + Type Check)
-    ↓
-  PSG Construction (Phase 1-3)
-    ↓
-  CCS Type Resolution (Phase 4)
-    ↓
-┌─────────────────────────────────────┐
-│         PSG SATURATION              │
-│  ┌─────────────────────────────┐   │
-│  │ Intrinsic Elaboration       │   │  ← Expands intrinsic operations
-│  │ (SemanticGraph.Elaboration) │   │
-│  └─────────────────────────────┘   │
-│  ┌─────────────────────────────┐   │
-│  │ Baker Saturation            │   │  ← Decomposes HOFs
-│  │ (Baker/Recipes)             │   │
-│  └─────────────────────────────┘   │
-└─────────────────────────────────────┘
-    ↓
-  PSG Elaboration (Nanopasses)
-    ↓
-  Coeffect Analysis                    ← Separate concept (see Coeffect_Analysis_Architecture.md)
-    ↓
-  Alex/Zipper → MLIR → LLVM → Binary
-```
+| Boundary | Owning work |
+|---|---|
+| CCS source construction | Native types, declaration identities and source constraints |
+| CCS/Baker elaboration and saturation | Intrinsic and operation recipes, demand/control, captures, numeric selection, layout, residence, declaration/ABI settlement and proof premises |
+| Source publication | Immutable settled PSG codata and structure, with ordered joint premises and the intermediate rewrite record |
+| Alex | Passive Huet Element/Pattern/Witness composition into admitted portable MLIR |
+| Selected backend | Target-specific realization and artifact preservation checks |
 
-### Why Saturation Happens in PSG Layer
+### Source-owned analysis and readiness
 
-Saturation must happen BEFORE coeffect analysis because:
+CCS/Baker analyses and graph construction follow their semantic dependencies.
+Recipes can introduce participants that require renewed analysis; changed
+premises invalidate dependent results before publication. Each domain owns its
+refinement and convergence rules. Missing prerequisites, contradictions and
+settled facts remain distinct; merely exhausting work establishes no readiness.
 
-1. **Coeffects analyze the saturated graph** - SSA assignment, mutability analysis, and yield state tracking need to see the full structure, including synthesized nodes.
-
-2. **"Only pay for what you use"** - Coeffect analyses only run when their results are needed. A saturated PSG that doesn't use sequences doesn't incur yield state analysis cost.
-
-3. **Lowering strategy depends on structure** - The control-flow ↔ dataflow pivot (see Coeffect_Analysis_Architecture.md) requires the complete structure to make informed decisions.
+Alex reads the immutable settled publication. It neither computes coeffects nor
+queries hyperedges to reconstruct semantic facts. Physical SSA identities derive
+from settled graph roles and block arguments without a semantic preassignment
+pass. Target-specific lowering belongs to the backend. Custom MLIR plugins and
+middle-end semantic transformations are retired.
 
 ## Implementation: Marking API
 
@@ -227,7 +211,9 @@ Every synthesized node is marked. There is no hidden structure. Developers can a
 
 - **Intrinsic elaboration** handles operation semantics
 - **Baker saturation** handles algorithmic structure
-- **Coeffect analysis** (separate) handles metadata for lowering
+- **CCS/Baker analyses** settle semantic and proof facts over the graph and publish immutable codata
+- **Alex** passively composes the admitted physical form from that publication
+- **Backend realization** preserves the source contract through target-specific transformations
 
 ### 3. Composability
 
@@ -243,7 +229,7 @@ The expansion ID links enable:
 
 ## Related Documents
 
-- [Coeffect_Analysis_Architecture.md](./Coeffect_Analysis_Architecture.md) - Coeffect analysis (separate from enrichment)
+- [Coeffect_Analysis_Architecture.md](./Coeffect_Analysis_Architecture.md) - Source-owned analysis and publication
 - [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) - PSG construction pipeline
 - [CCS_Architecture.md](./CCS_Architecture.md) - Clef Compiler Services
 - [Architecture_Canonical.md](./Architecture_Canonical.md) - Overall system architecture

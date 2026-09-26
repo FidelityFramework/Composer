@@ -97,7 +97,7 @@ Following Fidelity's `Platform.Bindings` pattern:
 ```fsharp
 module Platform.Bindings.SPI =
     let transfer (cs: GPIOPin) (tx: NativeSpan<byte>) (rx: NativeSpan<byte>) : int =
-        Unchecked.defaultof<int>  // Alex provides implementation
+        Unchecked.defaultof<int>  // Declared boundary; backend realization
 ```
 
 ## Phase 4: MLIR scf.parallel Integration
@@ -117,9 +117,11 @@ module Platform.Bindings.SPI =
 }
 ```
 
-### Alex Binding for Parallel ADC
+### Source-Owned ADC Protocol and Backend Realization
 
-The binding should:
+CCS/Baker elaborates and settles the protocol, its actual state and ordering
+participants, storage and platform requirements. Alex witnesses the settled
+operations; Composer's backend realizes the target accesses. The protocol must:
 1. Configure SPI for the target channel
 2. Assert chip select
 3. Send command byte (0x01, 0x80 | (ch << 4), 0x00)
@@ -134,7 +136,10 @@ The MCP3004 is a single SPI device - true parallel reads aren't possible. But we
 2. **Pipeline**: Start next channel's command while processing previous result
 3. **Batch**: Group all 4 reads in a tight loop with no Python overhead
 
-The `scf.parallel` expresses the *logical* parallelism. MLIR lowering decides actual execution.
+An `scf.parallel` form requires CCS/Baker to establish the operation's admitted
+ordering, ownership and progress premises. Its presence does not prove that
+shared-device transactions can overlap. Composer's backend realizes only the
+execution admitted by that settled contract.
 
 ## Phase 5: Entropy Extraction Pipeline
 
@@ -166,7 +171,7 @@ With DMA burst reads:
 |-----------|------------|------|
 | clef types | ~/repos/clef | TBD - ARM native types |
 | Platform.Bindings.SPI | Fidelity.Platform | src/Platform.fs |
-| scf.parallel codegen | Composer | src/Alex/Bindings/ |
+| Parallel protocol settlement and realization | CCS/Baker and Composer | Source-owned PSG elaboration, passive Alex witnessing, then backend target realization |
 | Entropy sample | Composer | samples/embedded/EntropyGenerator/ |
 
 ## Success Criteria

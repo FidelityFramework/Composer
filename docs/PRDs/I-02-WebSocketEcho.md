@@ -94,7 +94,11 @@ For WebSocket handshake, we need SHA-1 and Base64:
 
 **Note**: These can be implemented in Clef using byte operations, or linked from a minimal crypto library.
 
-## 4. Composer/Alex Layer Implementation
+## 4. Clef Library Implementation
+
+Frame parsing and handshake logic are ordinary Clef library behavior. CCS/Baker
+checks and settles that behavior; Alex passively witnesses the resulting graph.
+The compiler does not recognize or reconstruct the WebSocket protocol.
 
 ### 4.1 Frame Parsing
 

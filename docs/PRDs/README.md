@@ -19,6 +19,27 @@ The contracts preserve Baker's rewrite tape, joint constraints and dependency
 evidence for parallel checking and incremental compilation. Acceptance of these
 PRDs establishes delivery scope; passing evidence establishes completion.
 
+### September 26 owner decisions
+
+These entries record authorization already given in the working conversation;
+they do not record acceptance-test success or introduce additional gate numbers.
+
+- **Numeric scope:** the owner requested numeric selection beyond width inference,
+  permitted lettered groups or new F/C numbers, then accepted the proposal:
+  “I accept this proposal - flesh them out and let's make validation cases for
+  them for full coverage.” F-11, C-08 and their numeric inventory record that scope.
+- **Incremental compilation:** the owner requested CCS/Baker reevaluation confined
+  by PSG dependencies, source-authorized scoped Alex witnessing, segmented objects
+  linked by LLD, re-segmentation and comparison with full builds: “I think we need
+  to fully establish this now”. The incremental contract and F-11(d)/C-08(d)
+  acceptance groups record this work. Its dependency order is now explicit in the
+  [checkpoint](../C_F_Checkpoint_2026-09-26.md#next-coordinated-acceptance-order).
+- **Semantic ownership:** the owner requires lazy-default unused arguments and
+  effects to remain deferred, explicit eager treatment, Baker nanopass saturation
+  with joint evidence, and passive Alex Huet Element/Pattern/Witness composition.
+  These requirements govern repairs; neither current behavior nor a test count
+  can override them.
+
 Status reconciliation, 2026-09-20: operational capability, PRD completion and
 regression evidence are recorded separately. The foundation is implemented and
 operational within the scope below; **Retrospective** describes how its documents
@@ -97,12 +118,12 @@ the design and current implementation boundary.
 
 ### Foundation (F-xx) - Core Compilation
 
-The [September 26 full-manifest audit](../C_F_Checkpoint_2026-09-26.md#subsequent-full-manifest-audit--2026-09-26)
-records 21 native passes and 27 compilation failures. F-04, F-08 and F-09 have
-observed failures in their original acceptance samples and are reopened below;
-F-06 retains its previously recorded failure. The earlier selected v19/v20 passes
-did not rerun these failed samples. A clean worktree or successful compiler build
-does not establish a clean native regression baseline.
+The [latest September26 reassessment](../C_F_Checkpoint_2026-09-26.md#reassessment-after-the-completed-independent-sweeps)
+records27/51 compilations and26 matching executions;04c mismatches. F-04,
+F-08 and F-09 retain observed failures. Sample06 now passes the paced-input
+oracle; F-06's unpaced multiline behavior still needs repair. The earlier21/48
+audit and selected v19/v20 passes retain their own cohorts. A successful compiler
+build does not establish a clean native regression baseline.
 
 The earlier foundation-wide native baseline is the
 [C-06 regression checkpoint](../Language_Coverage_Waypoints.md#c-06-native-continuation-settlement--2026-09-20)
@@ -122,7 +143,7 @@ run.
 | [F-03](F-03-PipeOperators.md) | Pipe Operators | 03 | Complete | Pipe normalization and function application are operational; 03 passes. |
 | [F-04](F-04-CurryingLambdas.md) | Currying & Lambdas | 04 | In-Progress | September 26 audit: original04 fails callable declaration/result/storage witnessing. Its earlier native pass remains dated evidence; restore the unchanged F-04 oracle through the owning C-01/C-02 contracts. |
 | [F-05](F-05-DiscriminatedUnions.md) | Discriminated Unions | 05 | Complete | Original 05 again passes stock MLIR and exact native output after Baker settles integer/UTF-8 storage and snapshot ownership; the separate 22-case formatter and encoding oracle also passes. |
-| [F-06](F-06-InteractiveParsing.md) | Interactive Parsing | 06 | In-Progress | Implemented interactive parsing/mixed numeric DU baseline; original 06 has a recorded source-admission regression on three legacy `int` conversion calls in platform Parse (`CCS8009`). |
+| [F-06](F-06-InteractiveParsing.md) | Interactive Parsing | 06 | In-Progress | HEAD06 passes with Platform b1aaf62. The runner's 50ms line pacing does not close buffered multiline input; restore the specified char-to-int kind function and test unpaced input. |
 | [F-07](F-07-BitwiseOperators.md) | Bitwise Operators | 07 | Complete | AND/OR/XOR/complement/shifts, comparisons and Boolean composition pass. The surface is native operators, not the retired `Bits.*` byte-order/bitcast API. |
 | [F-08](F-08-OptionType.md) | Option Type | 08, 08a–e | In-Progress | September 26 audit:08 passes;08a–e fail compilation. Restore defaults, alternatives, iteration and fold acceptance through their C-01/C-02/C-04 dependencies; earlier six-sample passes are historical. |
 | [F-09](F-09-ResultType.md) | Result Type | 09, 09a–c | In-Progress | September 26 audit:09 passes;09a–c fail compilation. Restore callbacks, elimination and predicates through the owning callable/selected-branch contracts. Historical unchecked `get`/`getError` sketches are not admitted native operations. |
@@ -158,12 +179,12 @@ migrated to normative memoization alongside the C-05 implementation.
 | PRD | Title | Sample | Status | Note |
 |-----|-------|--------|--------|------|
 | [C-01](C-01-Closures.md) | Flat Closures and Callable Environments | 11, 11a–b | In-Progress | Direct captures and bounded environments tested; full function/environment transport, mutable direct signatures and broader residence remain open. |
-| [C-02](C-02-HigherOrderFunctions.md) | Higher-Order Functions | 12 | In-Progress | Native callback paths tested; stored/bare Seq operation partials expose remaining callable admission work. |
-| [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | In-Progress | Implementation exists; original 13 has a recorded generic integer-width failure. Full PRD acceptance is not established by C-07. |
+| [C-02](C-02-HigherOrderFunctions.md) | Higher-Order Functions | 12 | In-Progress | HEAD12 regresses in returned-closure transport; physical argument components and broader stored/bare operation routes remain acceptance work. Earlier callback passes are bounded evidence. |
+| [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | In-Progress | HEAD13 compiles and runs. This does not establish tail-call preservation, bounded demand space, normative numeric commitment or recursive-value initialization; register mutual-recursion controls and reconcile contradictory recursion syntax. |
 | [C-04](C-04-CoreCollections.md) | Core Collections | 13a | In-Progress | Option/range work and collection recipes exist; canonical List/Map/Set storage, bounded extent/capacity and registered 13a native gates remain open. |
 | [C-05](C-05-Lazy.md) | Lazy Evaluation and Memoization | 14 | In-Progress | Canonical Baker memoization and typed storage are implemented for the recorded14/14a/14b cases, which pass again in the September26 audit. The sample oracle now requires memoization. Broader capture/result/residence and force-control acceptance remains open. |
 | [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–d | In-Progress | Native core and bounded scalar/Option transport tested; original recurrence/aggregate and broader residence gates remain separate. |
-| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | September26 audit:16a/16d/16f/16h pass;16b/16c/16e/16g and original16 fail compilation. Restore those controls and close the full eleven-operation and successor inventories. Older16a–g passes remain dated evidence. |
+| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | HEAD16b/16d/16f/16g/16h pass;16a regresses at publication,16c/16e fail operand witnessing,original16 times out at300s. Restore these controls and close the complete operation/successor inventory. |
 | [C-08](C-08-ArithmeticConstruction.md) | Arithmetic Construction and Reduction | [Numeric inventory](Numeric_Validation_Cases.md) | In-Progress | Accepted September 26: (a) construction admission; (b) accumulator/merge laws and capacity; (c) decomposition and joint constraints; (d) functional, parallel and artifact acceptance. F-11 supplies numeric facts; M-01 and the execution/platform owners retain their realization obligations. |
 
 ### Async (A-xx) - Asynchronous Programming

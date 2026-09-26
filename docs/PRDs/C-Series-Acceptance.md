@@ -88,6 +88,15 @@ operations, regions, results and block arguments remain valid physical forms.
 Alex's emission bookkeeping does not become a second elaboration or saturation
 engine.
 
+All MLIR plugin dependencies must be removed immediately, including conditional
+load paths and packed representations retained for those plugins. Removal does
+not wait for a consumer migration. No middle-end MLIR semantic transform may
+replace the removed path: semantic and representation decisions settle in the
+PSG, and Alex passively composes the settled form through Huet
+Elements/Patterns/Witnesses. Target lowering remains backend work. Each affected
+feature must pass its source, physical and native gates without a plugin;
+removal alone closes no feature gate.
+
 Alex remains target-aware through selected declarations and admitted portable
 physical forms. The [target-commitment boundary](../../../clef-lang-spec/spec/backend-lowering-architecture.md#2-portable-middle-end-target-committing-backend)
 places target-specific dialects and encoding in the backend. That awareness

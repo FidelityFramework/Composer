@@ -254,7 +254,7 @@ Status: FAILED
    - `binary`: Path to output binary (usually `targets/<name>`)
    - `expected_output`: Expected stdout (use `"""` for multiline)
    - Optional: `stdin_file` for samples needing input
-   - Optional: `timeout_seconds` for samples needing more time
+   - Optional: `timeout_seconds` for the sample's runtime deadline (also the compile default), and `compile_timeout` for a separate compile deadline, both in seconds. `--timeout` explicitly overrides both. The run records both effective deadlines in `selection.txt` and `run.json`.
 
 2. If the sample needs stdin input, create a `.stdin` file in the sample directory.
 

@@ -12,16 +12,16 @@ All hardware access follows the established Platform.Bindings pattern in Fidelit
 
 ```fsharp
 module Platform.Bindings =
-    /// Function signature - Alex provides the implementation
+    /// Declared boundary settled by CCS/Baker and realized by the backend
     let someHardwareOp (args...) : returnType =
         Unchecked.defaultof<returnType>
 ```
 
 **How it works:**
 1. Fidelity.Platform declares the function signature with `Unchecked.defaultof<T>` body
-2. Alex recognizes `Platform.Bindings.*` calls during PSG traversal
-3. Alex emits platform-specific MLIR (syscalls for Linux, API calls for Windows)
-4. The generated code calls the actual OS interface
+2. CCS/Baker resolves the declaration and settles demand, storage, representation and ABI requirements on the PSG
+3. Alex passively witnesses the admitted call through Huet Elements, Patterns and Witnesses
+4. Composer's backend realizes the target syscall or API call and preserves the settled boundary contract
 
 **For YoshiPi (Linux/ARM64)**, all hardware access reduces to:
 - `open()` - Get file descriptor for device
@@ -45,24 +45,24 @@ module Platform.Bindings =
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Open a device or file by path.
-    /// Alex implementations: Linux: open() syscall
+    /// Backend realization: Linux open() boundary
     /// Returns file descriptor (>= 0) or -1 on error
     let openDevice (path: nativeint) (flags: int) : int =
         Unchecked.defaultof<int>
 
     /// Close a file descriptor.
-    /// Alex implementations: Linux: close() syscall
+    /// Backend realization: Linux close() boundary
     let closeDevice (fd: int) : int =
         Unchecked.defaultof<int>
 
     /// Perform ioctl on a file descriptor.
-    /// Alex implementations: Linux: ioctl() syscall
+    /// Backend realization: Linux ioctl() boundary
     /// The 'arg' parameter is type-punned based on the request
     let ioctl (fd: int) (request: uint64) (arg: nativeint) : int =
         Unchecked.defaultof<int>
 
     /// Seek to position in file.
-    /// Alex implementations: Linux: lseek() syscall
+    /// Backend realization: Linux lseek() boundary
     let lseek (fd: int) (offset: int64) (whence: int) : int64 =
         Unchecked.defaultof<int64>
 ```
@@ -425,16 +425,18 @@ module CredentialReceiver =
 
 ---
 
-## Alex Implementation Notes
+## Backend Realization Notes
 
 ### Syscall Numbers (Linux ARM64)
 
-Alex generates syscall instructions for these bindings:
+Composer's backend generates syscall instructions from the platform and ABI
+facts settled by CCS/Baker. The following table of constants belongs to the
+Linux ARM64 target contract:
 
 ```fsharp
-// Alex/Bindings/LinuxSyscalls.fs
+// Linux ARM64 backend realization
 module LinuxSyscalls =
-    // ARM64 syscall numbers (same as x86_64 for most)
+    // ARM64 syscall numbers; other architectures use their own declarations
     let SYS_read    = 63L
     let SYS_write   = 64L
     let SYS_openat  = 56L    // open() is implemented via openat(AT_FDCWD, ...)
@@ -445,7 +447,8 @@ module LinuxSyscalls =
 
 ### MLIR Generation Pattern
 
-For `ioctl`, Alex generates:
+For `ioctl`, the following is a backend realization sketch after CCS/Baker
+has settled the request value, argument representation and storage obligations:
 
 ```mlir
 // ioctl(fd, request, arg) -> result
@@ -457,30 +460,14 @@ For `ioctl`, Alex generates:
     (i64 29, i32 %fd, i64 %request, i64 %arg) : i32
 ```
 
-### Binding Registration
+### Binding Settlement
 
-```fsharp
-// Alex/Bindings/DeviceBindings.fs
-module DeviceBindings =
-    let registerBindings () =
-        // Register for Linux ARM64
-        PlatformDispatch.register Linux ARM64 "openDevice"
-            (fun prim -> emitSyscall SYS_openat prim)
-
-        PlatformDispatch.register Linux ARM64 "closeDevice"
-            (fun prim -> emitSyscall SYS_close prim)
-
-        PlatformDispatch.register Linux ARM64 "ioctl"
-            (fun prim -> emitSyscall SYS_ioctl prim)
-
-        PlatformDispatch.register Linux ARM64 "lseek"
-            (fun prim -> emitSyscall SYS_lseek prim)
-
-        // Also register for x86_64 (desktop testing)
-        PlatformDispatch.register Linux X86_64 "openDevice"
-            (fun prim -> emitSyscall SYS_openat_x86 prim)
-        // ... etc
-```
+CCS/Baker resolves each binding declaration for the selected platform and
+publishes its actual operands, demand, storage, return and ABI contract.
+Alex consumes those facts without dispatching on a source function's spelling.
+The backend realizes `openDevice`, `closeDevice`, `ioctl` and `lseek` using the
+selected architecture's declared syscall convention. An x86-64 realization
+requires its own declarations and preservation evidence.
 
 ---
 

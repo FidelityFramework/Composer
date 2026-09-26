@@ -116,7 +116,7 @@ or hardware acceptance run.
 | Area | Existing evidence | New work in this series |
 |---|---|---|
 | HelloArty | Clocked state and pin-oriented design; recorded CIRCT-to-SystemVerilog/XDC acceptance | VHDL realization and checked source-to-circuit evidence |
-| Width inference | [TypeMapping](../../src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs) and [hardware witnessing](../../src/MiddleEnd/Alex/Witnesses/HardwareModuleWitness.fs) consume range-derived widths | Complete width/representation/correspondence transport across the new backend |
+| Width settlement and witnessing | CCS/Baker owns range analysis and width/representation settlement; the documented [TypeMapping](../../src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs) and [hardware witness](../../src/MiddleEnd/Alex/Witnesses/HardwareModuleWitness.fs) seams consume settled facts | Preserve source-owned settlement and passive witnessing; complete width/representation/correspondence transport across the new backend |
 | CIRCT backend | [Lowering](../../src/BackEnd/CIRCT/Lowering.fs) currently proceeds through SystemVerilog export | Independent VHDL emitter; preserve the recorded baseline while bringing it up |
 | HelloProof | [MemoryMap.v](../../../ship-of-theseus/HelloProof/targets/rocq/MemoryMap.v) reproves extracted ELF layout facts | Circuit models, temporal obligations and later configuration reconstruction |
 | Proof projection | [SMTTransfer](../../src/MiddleEnd/Alex/Traversal/SMTTransfer.fs) and the shared proof-composition design | Checked circuit relation and supported certificate reconstruction |

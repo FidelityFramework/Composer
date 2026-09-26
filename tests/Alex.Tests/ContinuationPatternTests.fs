@@ -23,7 +23,7 @@ let private fixture descriptor =
     let read = builder.Create(SemanticKind.FrameRead(frame.Id, source.Id), Types.boolType, dummyRange)
     let write = builder.Create(SemanticKind.FrameWrite(frame.Id, source.Id, value.Id), Types.unitType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [write.Id; read.Id], Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph root.Id |> require "Missing frame fixture root"
     let slot: ContinuationSlot =
         { Source = source.Id; ValueType = Types.boolType; IsCapture = true
@@ -168,7 +168,7 @@ let ``continuation dispatch uses the selector range without changing the graph``
     builder.SetParent(dispatch.Id, binding.Id)
     let raw = builder.Build []
     let range = if unsigned then ValueRange.Bounded(0I, 255I) else ValueRange.Bounded(-128I, 127I)
-    let graph = { raw with Nodes = raw.Nodes.Add(selector.Id, { selector with ValueRange = Some range }) }
+    let graph = { raw with Nodes = raw.Nodes.Add(selector.Id, { selector with ValueRange = Some range }) } |> prepareSource
     let position = Zipper.create graph binding.Id |> require "Missing dispatch fixture" |> atChild dispatch.Id
     let operands = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode selector.Id (Arg 0) (TInt(IntWidth 8)) operands
@@ -222,6 +222,7 @@ let private constructionFixture () =
     let graph = { raw with Codata = lazy { Codata.empty with
                                                 Escapes = [template.Id, EscapeKind.StackScoped; first.Id, EscapeKind.StackScoped; second.Id, EscapeKind.StackScoped] |> Map.ofList
                                                 ContinuationFrames = Map.ofList [template.Id, plan] } }
+                |> prepareSource
     let position = Zipper.create graph root.Id |> require "Missing constructor fixture"
     let operands = MLIRAccumulator.empty ()
     MLIRAccumulator.registerSSAType (Arg 0) (TMemRefStatic(1, TInt(IntWidth 1))) operands
@@ -298,7 +299,7 @@ let ``dispatch witness pulls declared child positions or identifies a missing ch
     let binding = builder.Create(SemanticKind.Binding("result", false, false, None), Types.boolType, dummyRange, children = [dispatch.Id])
     builder.SetParent(dispatch.Id, binding.Id)
     let raw = builder.Build []
-    let graph = if missingChild then { raw with Nodes = raw.Nodes.Remove right.Id } else raw
+    let graph = (if missingChild then { raw with Nodes = raw.Nodes.Remove right.Id } else raw) |> prepareSource
     let position = Zipper.create graph binding.Id |> require "Missing dispatch witness fixture" |> atChild dispatch.Id
     let accumulator = MLIRAccumulator.empty ()
     let rootScope = ref (ScopeContext.root ())
@@ -343,7 +344,7 @@ let ``empty activation storage has zero extent and admits no slot access`` () =
     let allocation = builder.Create(SemanticKind.ContinuationStorage owner.Id, Types.mkArrayType Types.boolType, dummyRange)
     let binding = builder.Create(SemanticKind.Binding("scratch", false, false, None), allocation.Type, dummyRange, children = [allocation.Id])
     builder.SetParent(allocation.Id, binding.Id)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph binding.Id |> require "Missing zero activation fixture" |> atChild allocation.Id
     let operands = MLIRAccumulator.empty ()
     let operations, value =
@@ -436,9 +437,10 @@ let private ownedRegionFixture () =
                                 Escapes = Map.empty
                                 ContinuationFrames = Map.ofList [parent.Owner, parent; child.Owner, child]
                                 ContinuationRegions = Map.ofList [first, region 16; second, region 72] } }
+        |> prepareSource
     let position = Zipper.create graph original.Focus.Id |> require "Missing owned region fixture"
     // A formal has an assigned argument before any source read witnesses it.
-    let assigned = Alex.Traversal.Values.resultOf (coeffects graph 64).TargetPlatform graph formal.Id
+    let assigned = Alex.Traversal.Values.resultOf (coeffects graph 64).TargetPlatform graph [generator.Id] formal.Id
     MLIRAccumulator.registerSSAType assigned (TMemRefStatic(parent.Bytes, TInt(IntWidth 8))) operands
     position, child, first, second, assigned, operands
 

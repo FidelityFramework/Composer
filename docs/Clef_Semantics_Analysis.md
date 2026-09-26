@@ -18,52 +18,22 @@ realize, and where are the gaps?
 
 ---
 
-## 1. Operational Semantics: The Pipeline IS the Abstract Machine
+## 1. Operational Semantics and Compiler Correspondence
 
-Operational semantics defines meaning by describing how programs execute on an abstract
-machine. A machine state is a term; evaluation is transitions between states.
+Source operational semantics describes program evaluation. CCS/Baker owns its
+checking, elaboration and saturation in the PSG. Each owning nanopass must
+preserve the applicable source contract and record its intermediate rewrite.
 
-**Composer's nanopass pipeline is a big-step operational semantics in disguise.**
+Alex's Huet traversal composes Elements through Patterns and Witnesses from
+immutable settled facts. Its traversal order and physical naming are compiler
+mechanics; they do not define source evaluation order, demand or meaning.
+Composer's backend realizes the admitted target operations while preserving the
+required source-to-artifact correspondence.
 
-Each nanopass takes a PSG in language L_n and produces a PSG in language L_{n+1}. The
-language transformations are explicit:
-
-```
-L_SynExpr → L_PSG₁ (structural)
-L_PSG₁   → L_PSG₂ (symbol-correlated)
-L_PSG₂   → L_PSG₃ (reachability-marked)
-L_PSG₃   → L_PSG₄ (typed overlay)
-L_PSG₄   → L_PSG₅ (flattened)
-...
-L_PSG_n  → MLIR
-```
-
-Each intermediate form is inspectable via the `-k` flag. Each transition does one
-thing. The correspondence with nanopass framework theory (Sarkar, Keep; Indiana) is
-exact: each pass is a **single-step reduction** in a meta-level operational semantics
-where the "term" being reduced is the entire program representation.
-
-The small-step character shows up in the zipper traversal. Alex's PSGZipper walks the
-enriched PSG node by node. At each node, an XParsec pattern fires or doesn't. The
-zipper carries state (SSA counters, builder accumulator). This is a **small-step
-abstract machine** where:
-
-- The **state** is `(ZipperFocus, AccumulatorState)`
-- The **transition** is: match pattern, emit MLIR, advance focus
-- The **terminal state** is: zipper exhausted, MLIR module complete
-
-**What we have**: A concrete operational semantics embodied in code. The pipeline
-defines how a Clef program runs, not on hardware, but through the compiler's abstract
-machine.
-
-**What's formalized**: The nanopass intermediate languages are implicitly defined by
-the PSG node types at each phase. The `-k` artifacts make each intermediate state
-observable.
-
-**What's missing**: The transition rules exist as F# code but not as inference rules
-on paper. A formal small-step relation `⟨PSG_n, σ⟩ → ⟨PSG_{n+1}, σ'⟩` has not been
-written down. This would be the natural next step for anyone wanting to prove compiler
-correctness.
+Formalization must distinguish source evaluation, source-owned graph rewrites,
+passive witnessing and backend realization. A working emitter is evidence of a
+particular artifact, not the definition of Clef's semantics or proof of complete
+language acceptance.
 
 ---
 
@@ -235,8 +205,10 @@ semantic axioms about volatility, cacheability, and lifetime:
 | `Flash` | No | Yes | Program lifetime (read-only) |
 
 These are axiomatic properties. They hold by construction because the type system
-enforces them. Code generation consumes these classifications to select the correct
-load/store instructions, barrier insertions, and allocation strategies per target.
+enforces them. CCS/Baker settles concrete access, ordering, storage and lifetime obligations.
+Alex witnesses the published operations. Composer's backend realizes the
+admitted target instructions; region labels alone do not authorize barrier
+insertion or allocation-strategy inference during emission.
 
 ### Three Specification Models: How Axioms Enter the System
 
@@ -378,7 +350,7 @@ classifications and the abelian group structure of DTS.
                   ▼
               Enriched PSG
                   │
-                  │ →  (operational: zipper small-step machine)
+                  │ →  (passive Huet witnessing of settled facts)
                   ▼
               MLIR → LLVM → Native Binary
 ```
@@ -390,8 +362,9 @@ The three semantic perspectives are not layered on top of each other. They are
    coeffects) compositionally
 2. **Coeffects** are primarily axiomatic: they are provable properties that
    downstream stages trust
-3. **The nanopass pipeline + zipper** is primarily operational: it defines how the
-   program transforms step by step toward executable form
+3. **CCS/Baker nanopasses** preserve source semantics through graph rewrites;
+   **Alex** passively witnesses their settled publication and the backend
+   realizes the admitted target operations
 
 This is not accidental. The four pillars (Codata, Zipper, Combinators, Elision) map
 onto these semantic traditions:

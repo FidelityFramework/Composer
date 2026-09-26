@@ -125,7 +125,7 @@ Renesas FSP is an **imperative driver framework layered over CMSIS**. It is mine
 - **Reimplement over the Clef CMSIS HAL** — clock/PLL/CGC bring-up, pin mux (PFS as Clef data), per-peripheral register config/enable sequences, and NVIC/vector setup dispatched into Clef concurrency.
 - **Discard** — the `*_api_t` vtable / `_instance_t` / `_ctrl_t` / `_cfg_t` quartet, configurator codegen, RTOS glue, global ctrl handles, error-code + out-param style, manual init ordering, and callback function pointers.
 
-The principle is **keep the map, redraw the roads.** This is the **PORT** mode of Transcribe (agent-driven Clef-native reimplementation), distinct from the **BIND** mode used for large, well-factored C libraries (e.g. a USB device stack, or LVGL on display-equipped targets), ingested via the Farscape membrane → Clef binding + Alex lowering witness pairs. (The RA6M5 is a headless USB key with status LEDs; a phone provides its display surface over USB — see [D-02-Mobile-Companion](../Demo/D-02-Mobile-Companion.md).)
+The principle is **keep the map, redraw the roads.** This is the **PORT** mode of Transcribe (agent-driven Clef-native reimplementation), distinct from the **BIND** mode used for large, well-factored C libraries (e.g. a USB device stack, or LVGL on display-equipped targets). Farscape supplies declarations; CCS/Baker settles their boundary contracts and semantic adapters; Alex passively witnesses the admitted form; Composer's backend realizes it. (The RA6M5 is a headless USB key with status LEDs; a phone provides its display surface over USB — see [D-02-Mobile-Companion](../Demo/D-02-Mobile-Companion.md).)
 
 ### Reactive Runtime (replaces RTOS + callbacks)
 

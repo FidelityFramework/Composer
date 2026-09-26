@@ -11,6 +11,38 @@ open Alex.Traversal.ScopeContext
 open Alex.Tests.Fixtures
 module Zipper = Alex.Traversal.PSGZipper
 
+[<Fact>]
+let ``ordinary omission and callable components give exact occurrence owned arguments`` () =
+    let project = System.IO.Path.GetFullPath(System.IO.Path.Combine(__SOURCE_DIRECTORY__, "../NativeCallbacks/CallableArgumentComponents.fidproj"))
+    let checkedProject =
+        match Clef.Compiler.Project.ProjectChecker.checkProject project with
+        | Result.Ok value -> value
+        | Result.Error reason -> failwith reason
+    let errors = checkedProject.CheckResult.Diagnostics |> List.filter (fun diagnostic ->
+        Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.Diagnostic.effectiveSeverity diagnostic = Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.NativeDiagnosticSeverity.Error)
+    Assert.Empty errors
+    let graph = checkedProject.CheckResult.Graph
+    let declaration = graph.Codata.Value.CallableEmission.Declarations.Values |> Seq.filter (fun value ->
+        value.Lookup = value.Implementation &&
+        (value.Parameters |> List.map (fun (name, _, _) -> name)) = ["unused"; "callback"; "used"]) |> Assert.Single
+    let formal name = declaration.Parameters |> List.find (fun (actual, _, _) -> actual = name) |> fun (_, _, id) -> id
+    let position = Zipper.create graph declaration.Implementation |> require "Missing admitted lambda"
+    let owners = Zipper.enclosingLambdaIds position
+    let platform = (coeffects graph 64).TargetPlatform
+    let values id = Alex.Traversal.Values.valuesOf platform graph owners id
+    Assert.Empty(values (formal "unused"))
+    Assert.Equal<SSA list>([Arg 0; Arg 1], values (formal "callback"))
+    Assert.Equal<SSA list>([Arg 2], values (formal "used"))
+    Assert.Throws<System.InvalidOperationException>(fun () ->
+        Alex.Traversal.Values.resultOf platform graph owners (formal "unused") |> ignore) |> ignore
+    Assert.Throws<System.InvalidOperationException>(fun () ->
+        Alex.Traversal.Values.resultOf platform graph owners (formal "callback") |> ignore) |> ignore
+    Assert.Throws<System.InvalidOperationException>(fun () ->
+        Alex.Traversal.Values.valuesOf platform graph [] (formal "used") |> ignore) |> ignore
+    let otherOwner = graph.Codata.Value.CallableEmission.Arguments.Keys |> Seq.find ((<>) declaration.Implementation)
+    Assert.Throws<System.InvalidOperationException>(fun () ->
+        Alex.Traversal.Values.valuesOf platform graph [otherOwner; declaration.Implementation] (formal "used") |> ignore) |> ignore
+
 /// A settled component graph shares one environment read and formal across two
 /// function occurrences. The second occurrence places that formal at argument 1;
 /// the nodes' single Parent fields deliberately describe only the first use.
@@ -62,6 +94,7 @@ let ``shared body reads each lambda occurrence's block argument and restores out
     let parentAssociations, parentTypes = operands.NodeAssoc, operands.SSATypes
     let rootScope = ref (ScopeContext.root ())
     let visited = ref (Set.ofList [externalBinding.Id; externalValue.Id])
+    let graph = prepareSource graph
     let position = Zipper.create graph root.Id |> require "Missing shared-body root"
     let context =
         { Coeffects = coeffects graph 64; Accumulator = operands; RootAccumulator = operands
@@ -154,6 +187,10 @@ let ``definition discovered inside a dependency is reused by later reference and
     let operands = MLIRAccumulator.empty ()
     let rootScope = ref (ScopeContext.root ())
     let visited = ref Set.empty
+    let inputs: Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.Inputs = { Layouts = Map.empty; Origins = Map.empty; Known = Map.empty }
+    let carriers, residuals = Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.settle inputs graph
+    Assert.Empty residuals
+    let graph = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = carriers } } |> prepareSource
     let position = Zipper.create graph caller.Id |> require "Missing dependency caller"
     let context =
         { Coeffects = coeffects graph 64; Accumulator = operands; RootAccumulator = operands
@@ -189,7 +226,7 @@ let ``occurrence-bound formal read emits its settled refinement before consumpti
     // The component receives the already settled read meet. It must retain the
     // actual occurrence's argument SSA while emitting that physical conversion.
     let meet = { Consumer = read.Id; Operand = read.Id; From = 64; To = 8; Adapt = MeetKind.Truncate }
-    let graph = { raw with Codata = lazy { raw.Codata.Value with Meets = Map.ofList [read.Id, [meet]] } }
+    let graph = { raw with Codata = lazy { raw.Codata.Value with Meets = Map.ofList [read.Id, [meet]] } } |> prepareSource
     let operands = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode formal.Id (Arg 1) (TInt(IntWidth 64)) operands
     let position = Zipper.create graph read.Id |> require "Missing refined formal read"

@@ -25,7 +25,7 @@ let private fixture () =
         NativeType.TFun(arrayType, Types.stringType), dummyRange)
     let call = builder.Create(SemanticKind.Application(intrinsic.Id, [input.Id]), Types.stringType, dummyRange,
                               children = [intrinsic.Id; input.Id])
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph call.Id |> require "Missing string boundary fixture"
     position, input.Id
 
@@ -117,6 +117,7 @@ let ``an exact byte storage origin composes allocation writes reads and string i
     let graph =
         { raw with Edges = storage @ raw.Edges
                    Codata = lazy { raw.Codata.Value with Meets = Map.ofList [write.Id, [writeMeet]; read.Id, [readMeet]] } }
+        |> prepareSource
     let byteType, intType = TInt(IntWidth 8), TInt(IntWidth 64)
     for occurrence in [allocation.Id; binding.Id; input.Id] do
         Assert.Equal(Some byteType, tryArrayElementTypeAt graph occurrence)

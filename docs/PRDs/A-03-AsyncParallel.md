@@ -61,111 +61,33 @@ Async.Sequential : Async<'T>[] -> Async<'T[]>
 
 ### 3.2 No New SemanticKind
 
-Async.Parallel is recognized as an intrinsic call - no special PSG node needed. The witness handles it based on the intrinsic tag.
+CCS recognizes Async.Parallel as an intrinsic call. Baker constructs and settles
+its protocol in the PSG before publication; an intrinsic tag alone is insufficient
+for a witness to invent parallel execution behavior.
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.1 Sequential Implementation (Single-Threaded)
+CCS/Baker constructs the parallel or sequential protocol required by the
+selected source operation. It settles activation, work dependencies, result
+ordering, join conditions, storage capacity, lifetime and synchronization
+obligations in the PSG.
 
-```fsharp
-let witnessAsyncParallel z asyncArraySSA =
-    // For single-threaded mode, just run each in sequence
-    let resultArraySSA = freshSSA ()
+A witness cannot silently replace `Async.Parallel` with a sequential loop or
+choose a thread-per-computation algorithm. Any admitted realization must preserve
+the source contract and carry the premises required for its scheduling and
+resource commitments.
 
-    // 1. Get array length
-    emit $"  %%len = llvm.call @array_length(%%{asyncArraySSA})"
+Alex passively composes the published control, storage and calls. Composer's
+backend realizes the selected target's threading or scheduling operations.
+Native concurrency, ordering and completion observations remain distinct
+acceptance requirements.
 
-    // 2. Allocate result array
-    emit $"  %%{resultArraySSA} = llvm.call @array_create_uninit(%%len)"
+## 5. Backend Realization Contract
 
-    // 3. Loop over asyncs
-    emit "  %i = llvm.alloca 1 x i32"
-    emit "  llvm.store 0, %i"
-    emit "  llvm.br ^loop"
-
-    emit "^loop:"
-    emit "  %idx = llvm.load %i : i32"
-    emit "  %done = arith.cmpi uge, %idx, %len : i32"
-    emit "  llvm.cond_br %done, ^exit, ^body"
-
-    emit "^body:"
-    // Get async at index
-    emit $"  %%async_i = llvm.call @array_get(%%{asyncArraySSA}, %%idx)"
-
-    // Run it synchronously
-    emit "  %result_i = llvm.call @async_run_sync(%async_i)"
-
-    // Store result
-    emit $"  llvm.call @array_set(%%{resultArraySSA}, %%idx, %%result_i)"
-
-    // Increment and loop
-    emit "  %next = arith.addi %idx, 1 : i32"
-    emit "  llvm.store %next, %i"
-    emit "  llvm.br ^loop"
-
-    emit "^exit:"
-
-    TRValue { SSA = resultArraySSA; Type = TArray resultElemType }
-```
-
-### 4.2 Parallel Implementation (With Threading)
-
-When threading is available (T-01/T-02):
-
-```fsharp
-let witnessAsyncParallelThreaded z asyncArraySSA =
-    // 1. Allocate result array and completion counter
-    // 2. For each async, spawn a thread that:
-    //    a. Runs the async
-    //    b. Stores result in array
-    //    c. Increments completion counter
-    // 3. Wait for all completions
-    // 4. Return result array
-```
-
-This is deferred to after threading PRDs.
-
-## 5. MLIR Output Specification
-
-### 5.1 Sequential Loop
-
-```mlir
-// Async.Parallel [| async1; async2; async3 |]
-llvm.func @async_parallel_seq(%asyncs: !llvm.ptr, %len: i32) -> !llvm.ptr {
-    // Allocate result array
-    %results = llvm.call @array_create_uninit(%len) : (i32) -> !llvm.ptr
-
-    // Initialize loop counter
-    %i_ptr = llvm.alloca 1 x i32
-    llvm.store %c0, %i_ptr
-    llvm.br ^loop
-
-^loop:
-    %i = llvm.load %i_ptr : i32
-    %done = arith.cmpi uge, %i, %len : i32
-    llvm.cond_br %done, ^exit, ^body
-
-^body:
-    // Get async at index
-    %async_ptr = llvm.call @array_get_ptr(%asyncs, %i)
-    %async_val = llvm.load %async_ptr : !llvm.ptr
-
-    // Run synchronously
-    %result = llvm.call @async_run_sync(%async_val)
-
-    // Store result
-    %result_ptr = llvm.call @array_get_ptr(%results, %i)
-    llvm.store %result, %result_ptr
-
-    // Increment
-    %next = arith.addi %i, %c1 : i32
-    llvm.store %next, %i_ptr
-    llvm.br ^loop
-
-^exit:
-    llvm.return %results : !llvm.ptr
-}
-```
+The selected backend realizes the source-settled scheduling, result-storage and
+join operations. It preserves the admitted concurrency, ordering and lifetime
+contract. A sequential-loop sketch does not establish Async.Parallel acceptance;
+native concurrency and completion evidence must cover the admitted realization.
 
 ## 6. Validation
 
@@ -234,14 +156,15 @@ Note: In single-threaded mode, "Computing N" appears in order. With true threadi
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Witnesses/AsyncWitness.fs` | MODIFY | Implement parallel/sequential execution |
+| Alex async witnesses | MODIFY | Witness source-settled parallel/sequential protocols |
 
 ## 8. Implementation Checklist
 
-### Phase 1: Sequential Implementation
+### Phase 1: Source-Owned Protocol
 - [ ] Add Async.Parallel intrinsic to CCS
-- [ ] Implement sequential execution witness
-- [ ] Test with array of asyncs
+- [ ] Construct and settle admitted activation, join and result-storage operations in Baker
+- [ ] Witness published operations passively
+- [ ] Test ordering and completion with an array of asyncs
 
 ### Phase 2: Validation
 - [ ] Sample 19 compiles without errors

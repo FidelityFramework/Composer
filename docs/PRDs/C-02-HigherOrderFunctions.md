@@ -113,9 +113,17 @@ ordinary lambda/application witnesses. Alex pulls at the actual Huet position;
 it does not reconstruct partial applications, discover captures or select source
 algorithms by library spelling.
 
-Pair transport carries the producer/code and actual environment operands through
-recall, signatures, calls, returns, branch joins and storage. Each witness checks
+Pair transport must carry producer/code and actual environment operands through
+recall, signatures, calls, returns, branch joins and storage. Each witness consumes
 the current source-owned convention and composes the corresponding operations.
+
+At Clef `fd4ee1b` / Composer `b4f6396`, this acceptance work remains open:
+04/11a/12 fail returned-closure transport; physical argument ordinals do not cover
+omitted and multi-component predecessors; default demand, broader stored values
+and operator/intrinsic reification require their source/Baker implementations.
+The [independent reassessment](../C_F_Checkpoint_2026-09-26.md#reassessment-after-the-completed-independent-sweeps)
+records the complete cohort. Existing pair paths do not establish this whole
+contract, and Alex must not repair missing source facts by analysis.
 
 ## 5. MLIR Output Specification
 

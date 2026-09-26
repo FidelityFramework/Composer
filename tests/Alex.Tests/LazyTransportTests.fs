@@ -176,7 +176,7 @@ let ``lazy witness forwarding retracts when the destination layout proof is remo
     let root = Zipper.create graph block |> require "Missing block"
     let source = Assert.Single graph.Nodes[saved].Children
     seed (context graph root accumulator) source 0 1 |> ignore
-    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) } |> settleDemand
+    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) } |> refusePublication "Lazy"
     let position = Zipper.create changed block |> require "Missing changed block" |> atChild saved
     let ctx = context changed position accumulator
     let output = Alex.Witnesses.BindingWitness.nanopass.Witness ctx changed.Nodes[saved]
@@ -194,8 +194,8 @@ let ``validated lazy code is globally observed once while formations remain loca
     let graph =
         if invalidated then
             { original with Edges = original.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) }
-        else original
-        |> settleDemand
+            |> refusePublication "Lazy"
+        else settleDemand original
     let accumulator = MLIRAccumulator.empty ()
     let globalVisited = ref Set.empty
     let position = Zipper.create graph layout.Owner |> require "Missing formation"
@@ -208,5 +208,10 @@ let ``validated lazy code is globally observed once while formations remain loca
     for _ in [1; 2] do
         let ctx = { context graph position accumulator with GlobalVisited = globalVisited }
         Alex.Traversal.NanopassArchitecture.visitAllNodes observer ctx position.Focus ctx.TraversalVisited
-    Assert.Equal(2, observations |> Seq.filter ((=) layout.Owner) |> Seq.length)
-    Assert.Equal((if invalidated then 2 else 1), observations |> Seq.filter ((=) layout.Thunk) |> Seq.length)
+    if invalidated then
+        Assert.Empty observations
+        Assert.Empty globalVisited.Value
+        Assert.Equal(2, accumulator.Errors.Length)
+    else
+        Assert.Equal(2, observations |> Seq.filter ((=) layout.Owner) |> Seq.length)
+        Assert.Equal(1, observations |> Seq.filter ((=) layout.Thunk) |> Seq.length)

@@ -1,536 +1,134 @@
-# PSG Nanopass Architecture v2: True Nanopass Pipeline
-
-> **ARCHITECTURE UPDATE (January 2026)**: PSG construction has been moved to CCS (Clef Compiler Services).
-> CCS now builds the PSG with native types attached and SRTP resolved during type checking.
-> Composer consumes the PSG as "correct by construction" and focuses on lowering passes and code generation.
-> This document describes the nanopass principles that CCS uses for PSG construction.
-
-## Executive Summary
-
-This document defines the nanopass principles for PSG (Program Semantic Graph) construction. Drawing directly from the nanopass framework principles (Sarkar, Waddell, Dybvig, Keep - Indiana University), PSG construction is a **true nanopass pipeline**.
-
-**Key Change**: PSG construction now happens in CCS, not Composer. Composer receives the completed PSG and applies lowering nanopasses before code generation.
-
-## Reference
-
-- **Nanopass Framework**: `~/repos/nanopass-framework-scheme`
-- **User Guide**: `~/repos/nanopass-framework-scheme/doc/user-guide.pdf`
-- **Key Papers**:
-  - Sarkar et al. "A Nanopass Infrastructure for Compiler Education" (ICFP 2004)
-  - Keep "A Nanopass Framework for Commercial Compiler Development" (ICFP 2013)
-- **Baker Architecture**: `docs/Baker_Architecture.md` - Details Phase 4 implementation
-
-## Core Nanopass Principles
-
-From the nanopass framework user guide:
-
-> "The idea of writing a compiler as a series of small, single-purpose passes grew out of a course on compiler construction... Passes in a [nanopass] compiler are easy to understand, as each pass is responsible for just one transformation. The compiler is easier to debug when compared with a traditional compiler composed of a few, multi-task passes."
-
-Key properties:
-1. **Each pass does ONE transformation**
-2. **Input/output languages are formally defined** (grammar-checked)
-3. **Boilerplate is auto-generated** (catamorphisms, traversal code)
-4. **Passes are composable** - can be reordered, inserted, removed
-5. **Each intermediate is inspectable** - validates correctness at each step
-
-## The Architectural Blind Spot
-
-### What We Had
-
-```
-CCS (SynExpr + symbols) → [Monolithic PSG Builder] → PSG
-                                    ↓
-                              Type Integration (also monolithic)
-                                    ↓
-                              Nanopasses (FlattenApps, ReducePipe, DefUse, etc.)
-                                    ↓
-                              Reachability
-                                    ↓
-                              Alex/Zipper → MLIR
-```
-
-The "Monolithic PSG Builder" was doing too much:
-- Walking syntax tree (SynExpr)
-- Correlating CCS symbols
-- Attempting to capture typed tree information
-- All in one pass
-
-### What We Need
-
-```
-CCS Parse → PSG₀ (Pure Syntax)
-              ↓ Pass 1: Structural Construction (FULL LIBRARY)
-            PSG₁ (Nodes + ChildOf edges)
-              ↓ Pass 2: Symbol Correlation (FULL LIBRARY)
-            PSG₂ (+ ClefSymbol attachments)
-              ↓ Pass 3: Reachability (SOFT DELETE - NARROWS SCOPE)
-            PSG₃ (+ IsReachable marks, structure intact)
-              │
-              │ *** GRAPH NOW NARROWED TO APPLICATION SCOPE ***
-              │
-              ↓ Pass 4: Typed Tree Overlay [BAKER] (NARROWED GRAPH ONLY)
-            PSG₄ (+ Type, Constraints, SRTP resolution, member bodies)
-              ↓ Pass 5+: Enrichment Nanopasses (NARROWED GRAPH ONLY)
-            PSG_n (+ def-use edges, classifications, etc.)
-              ↓
-            Alex/Zipper → MLIR (NARROWED, ENRICHED GRAPH)
-```
-
-**Critical Transition at Phase 3**: Reachability analysis narrows the compute graph to application scope. Phases 4+ (Baker, enrichment nanopasses, Alex) all operate on this narrowed graph. This ensures:
-- Performance: Expensive type correlation only on reachable code
-- Zipper coherence: Baker and Alex see the same narrowed scope
-- Semantic correctness: Only code that will be compiled gets enriched
-
-### Pass Ordering and Dependencies
-
-The nanopass framework allows for **dependency ordering** between passes. This isn't arbitrary coupling - it reflects semantic dependencies in the compilation process:
-
-```
-Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5+
-                      ↓
-              SCOPE NARROWING
-                      ↓
-            Baker depends on this
-```
-
-**Phase 3 (Reachability) is a scope-narrowing pass.** All subsequent passes (Baker, enrichment, Alex) depend on this narrowing. This is proper nanopass design:
-
-1. **Explicit dependency**: Baker's precondition is "reachability complete"
-2. **Focused scaffolding**: Work remains focused on the right part of the graph
-3. **Composability preserved**: Passes can still be reordered within their dependency constraints
-
-The nanopass framework paper (Keep 2013) discusses this: passes may have ordering constraints when one pass's output is another's precondition. This is not tight coupling - it's semantic dependency made explicit.
-
-## The Typed Tree Zipper
-
-### Why a Zipper?
-
-The typed tree (`ClefExpr`) must be correlated with the syntax tree (`SynExpr`) during PSG construction. This correlation is NOT a simple traversal - it requires:
-
-1. **Bidirectional navigation** - Move forward and backward through both trees
-2. **Context preservation** - Know where we are in both trees
-3. **Structural alignment** - Match ClefExpr nodes to PSG nodes by range
-4. **Backtracking** - When misaligned, back up and realign
-
-A zipper provides exactly these capabilities.
-
-### The Correlation Problem
-
-```
-SynExpr (syntax)              ClefExpr (typed)
-==================            ===================
-App                           Call
-├── LongIdent:op_Dollar       ├── TraitCall (SRTP resolved!)
-├── Ident:WritableString      │   ├── sourceTypes
-└── Ident:s                   │   ├── memberName: "$"
-                              │   └── args...
-                              └── ...
-```
-
-The syntax tree sees `op_Dollar` as a regular identifier. The typed tree knows it's an SRTP-resolved static member. Only by correlating them can we capture the resolution.
-
-### Zipper Design
-
-```fsharp
-/// Typed tree zipper for ClefExpr/PSG correlation
-type TypedTreeZipper = {
-    /// Current focus in typed tree
-    TypedFocus: ClefExpr
-    /// Current focus in PSG
-    PSGFocus: PSGNode
-    /// Path back to root in typed tree
-    TypedPath: TypedTreeCrumb list
-    /// Path back to root in PSG
-    PSGPath: PSGCrumb list
-    /// Accumulated type information
-    TypeInfo: Map<NodeId, TypeCorrelation>
-}
-
-type TypeCorrelation = {
-    ResolvedType: ClefType
-    Constraints: ClefGenericParameterConstraint list
-    /// For TraitCall nodes - the resolved member info
-    SRTPResolution: SRTPResolution option
-}
-
-type SRTPResolution = {
-    TraitName: string           // e.g., "op_Dollar", "op_Addition"
-    SourceTypes: ClefType list
-    MemberFlags: SynMemberFlags
-    /// The resolved target (extracted from CCS)
-    ResolvedMember: ClefMemberOrFunctionOrValue option
-}
-```
-
-### XParsec Integration
-
-The zipper combines with XParsec for pattern-based correlation:
-
-```fsharp
-/// XParsec combinator for matching ClefExpr patterns
-let traitCall : Parser<TypedTreeZipper, SRTPResolution> =
-    pexpr {
-        let! focus = getFocus
-        match focus.TypedFocus with
-        | ClefExprPatterns.TraitCall(sourceTypes, traitName, flags, paramTypes, retTypes, args) ->
-            return {
-                TraitName = traitName
-                SourceTypes = sourceTypes
-                MemberFlags = flags
-                ResolvedMember = extractResolvedMember focus  // CCS internals
-            }
-        | _ ->
-            return! fail "Not a trait call"
-    }
-```
-
-## Soft-Delete Reachability
-
-### Why Soft Delete?
-
-Reachability must run BEFORE typed tree overlay to reduce the correlation workload. But the typed tree zipper needs the FULL structure to navigate - it can't correlate if nodes are missing.
-
-Solution: **Soft delete** - mark nodes as unreachable but preserve structure.
-
-```fsharp
-/// Soft-delete reachability - marks but doesn't remove
-let markUnreachable (psg: ProgramSemanticGraph) : ProgramSemanticGraph =
-    let reachable = computeReachableSet psg
-    { psg with
-        Nodes = psg.Nodes |> Map.map (fun id node ->
-            { node with
-                IsReachable = Set.contains id reachable
-                // Structure intact - Children, ParentId unchanged
-            })
-    }
-```
-
-### Benefits
-
-1. **Typed tree zipper can navigate** - Full structure available for correlation
-2. **Reduced work** - Zipper can skip unreachable nodes during correlation
-3. **Deferred pruning** - Hard delete happens after typed overlay, if needed
-4. **Debugging** - Can inspect what was marked unreachable
-
-## The New Pipeline
-
-### Phase 0: CCS Parse and Type Check
-
-```
-Clef Source → CCS → (ParseResults[], CheckProjectResults)
-```
-
-CCS provides:
-- `SynExpr` syntax trees (parse)
-- `ClefExpr` typed trees (check)
-- Symbol resolution (check)
-
-### Phase 1: Structural Construction
-
-**Input**: `ParseResults[]` (SynExpr trees)
-**Output**: `PSG₁` with nodes and ChildOf edges
-
-**Language transformation**:
-```
-L_SynExpr → L_PSG₁
-  terminals: (syntaxKind, range, fileName)
-  Expr → (syntaxKind, children[], range, fileName)
-```
-
-This pass ONLY walks syntax, creating structural nodes. No CCS symbols yet.
-
-### Phase 2: Symbol Correlation
-
-**Input**: `PSG₁`, `CheckProjectResults`
-**Output**: `PSG₂` with ClefSymbol attachments
-
-**Language transformation**:
-```
-L_PSG₁ → L_PSG₂
-  Expr → (syntaxKind, children[], range, fileName, symbol?)
-```
-
-Uses CCS `GetAllUsesOfAllSymbols()` to correlate by range.
-
-### Phase 3: Soft-Delete Reachability
-
-**Input**: `PSG₂`
-**Output**: `PSG₃` with IsReachable marks
-
-**Language transformation**:
-```
-L_PSG₂ → L_PSG₃
-  Expr → (syntaxKind, children[], range, fileName, symbol?, isReachable)
-```
-
-Marks unreachable nodes but preserves ALL structure.
-
-### Phase 4: Typed Tree Overlay (The Zipper Pass)
-
-**Input**: `PSG₃`, `CheckProjectResults` (ClefExpr trees)
-**Output**: `PSG₄` with Type, Constraints, SRTP resolution
-
-**Language transformation**:
-```
-L_PSG₃ → L_PSG₄
-  Expr → (syntaxKind, children[], range, fileName, symbol?, isReachable,
-          type?, constraints?, srtpResolution?)
-```
-
-This is where the TypedTreeZipper walks ClefExpr in parallel with PSG, correlating by range and attaching:
-- Resolved types (after inference)
-- Resolved constraints (after solving)
-- SRTP resolution info (TraitCall → resolved member)
-
-**Only processes reachable nodes** - skips `IsReachable = false`.
-
-### Phase 5+: Enrichment Nanopasses
-
-Each subsequent pass enriches `PSG₄`:
-
-```
-PSG₄ → FlattenApplications → PSG₅
-PSG₅ → ReducePipeOperators → PSG₆
-PSG₆ → AddDefUseEdges → PSG₇
-PSG₇ → AnnotateParameters → PSG₈
-PSG₈ → ClassifyOperations → PSG₉
-...
-```
-
-### Phase N: Hard Pruning (Optional)
-
-If needed for performance, a final pass can physically remove unreachable nodes:
-
-```fsharp
-let pruneUnreachable (psg: ProgramSemanticGraph) : ProgramSemanticGraph =
-    { psg with
-        Nodes = psg.Nodes |> Map.filter (fun _ n -> n.IsReachable)
-        // Rebuild edges to only reference remaining nodes
-    }
-```
-
-## SRTP Resolution: The Concrete Example
-
-### The Problem
-
-```fsharp
-// Alloy/Console.fs (with CCS - string has native semantics)
-type WritableString =
-    | WritableString
-    static member inline ($) (WritableString, s: string) = writeString s
-
-let inline Write s = WritableString $ s
-```
-
-When we call `Console.Write "hello"`:
-- Syntax sees: `App [op_Dollar, WritableString, "hello"]`
-- Types resolve: `$` → `WritableString.op_Dollar(WritableString, string)` → `writeString`
-- Note: With CCS, `string` has native semantics (UTF-8 `memref<?xi8>` view) - no separate overloads needed
-
-### The Solution
-
-The typed tree overlay captures this via `ClefExpr.TraitCall`:
-
-```fsharp
-// In TypedTreeZipper pass
-match typedFocus with
-| TraitCall(sourceTypes, "op_Dollar", flags, paramTypes, retTypes, args) ->
-    let srtpInfo = {
-        TraitName = "op_Dollar"
-        SourceTypes = sourceTypes  // [WritableString]
-        MemberFlags = flags
-        // CCS has resolved this - extract the target
-        ResolvedMember = Some (resolveToWriteSystemString ...)
-    }
-    attachToPSGNode currentNode srtpInfo
-```
-
-Now the PSG node has the SRTP resolution attached. Downstream passes can use it directly - no need to re-resolve.
-
-## Implementation Roadmap
-
-### Immediate (This Iteration)
-
-1. **Restructure Builder/Main.fs** - Separate Phase 1 (structural) from Phase 2 (symbol correlation)
-2. **Move reachability earlier** - Phase 3, soft-delete
-3. **Stub TypedTreeZipper** - Phase 4 infrastructure
-
-### Near-Term
-
-4. **Implement TypedTreeZipper** - Full correlation logic
-5. **Add SRTP capture** - TraitCall handling
-6. **Update XParsec** - Combinators for typed patterns
-
-### Validation
-
-7. **Test with WritableString** - SRTP resolution captured
-8. **Test with TimeLoop** - Mutable state flows correctly
-9. **All samples compile** - End-to-end validation
-
-## Impact on Downstream Components
-
-### Alex/Zipper
-
-With typed overlay complete, Alex's job simplifies:
-- SRTP already resolved → follow resolved member
-- Types already attached → no re-inference
-- Reachable nodes marked → skip dead code
-
-### PSGScribe
-
-The scribe becomes a pure transcription layer:
-- Follow PSG structure
-- Emit MLIR based on node.Kind, node.Operation, node.SRTPResolution
-- No resolution logic - that's done in Phase 4
-
-### Nanopasses
-
-Enrichment nanopasses work on fully-typed PSG:
-- DefUseEdges can create more precise edges (with type info)
-- ClassifyOperations can see resolved SRTP targets
-- Future passes have complete information
-
-## Validation Strategy
-
-Each phase outputs intermediate PSG (when `-k` flag set):
-
-```
-targets/intermediates/
-├── psg_phase_1_structural.json
-├── psg_phase_2_symbol_correlated.json
-├── psg_phase_3_reachability_marked.json
-├── psg_phase_4_typed_overlay.json
-├── psg_phase_5_flattened.json
-├── psg_phase_6_pipe_reduced.json
-├── psg_phase_7_def_use.json
-└── ...
-```
-
-Each can be inspected independently. Diffs show exactly what each pass added.
-
-## Conclusion
-
-This architectural revision makes PSG construction a **true nanopass pipeline** from the ground up. The critical addition is the **typed tree overlay pass** using a **zipper** for ClefExpr/PSG correlation.
-
-Key benefits:
-1. **SRTP resolution captured at source** - No downstream guessing
-2. **Soft-delete reachability** - Zipper can navigate, work is reduced
-3. **Each phase is inspectable** - True to nanopass principles
-4. **Downstream components simplified** - Work done once, at the right place
-
-This is not incremental improvement - it's fixing a foundational blind spot that was causing second-order problems throughout the pipeline.
-
----
-
-# Addendum: From PSG to PHG (Program Hypergraph)
-
-## Vision: The Temporal Program Hypergraph
-
-The nanopass architecture lays the foundation for evolving the Program Semantic Graph (PSG) into a full **Program Hypergraph (PHG)**. This evolution is not just nomenclature—it's the architectural insight that will enable Fidelity to produce efficient workflows for everything from LLVM-targeted CPUs to novel dataflow architectures.
-
-**Reference**: See [Hyping Hypergraphs](../../clef-lang-site/hugo/content/docs/internals/pipeline/hyping-hypergraphs.md) for the vision of temporal hypergraphs and learning systems.
-
-## Why Hypergraphs?
-
-Traditional graphs force us to decompose multi-way relationships into binary edges, losing semantic information. Consider how:
-
-- Async code with delimited continuations creates rich, multi-way dependencies
-- Pattern matching has multiple input→output relationships
-- Closure capture involves multiple variables entering a single scope
-
-Standard binary edges require auxiliary "join" and "split" nodes to represent these relationships. A hypergraph preserves them naturally:
-
-```fsharp
-// Traditional PSG (binary edges)
-let closure_binding = NodeId "let_f"
-let captured_x = PSGEdge { Source = closure_binding; Target = x_def; Kind = SymbolUse }
-let captured_y = PSGEdge { Source = closure_binding; Target = y_def; Kind = SymbolUse }
-// Relationship between x and y as co-captured variables is lost
-
-// PHG (hyperedge)
-let closure_capture = PHGHyperedge {
-    Participants = Set.ofList [x_def; y_def; closure_binding]
-    Kind = ClosureCapture
-    Semantics = { SharedScope = true; CaptureKind = ByRef }
-}
-// Multi-way relationship preserved
-```
-
-## Nanopass as PHG Foundation
-
-Each nanopass adds edges to the PSG. As the edge vocabulary grows, we're building toward a richer structure:
-
-| Nanopass | Edge Kind Added | PHG Hyperedge Potential |
-|----------|-----------------|-------------------------|
-| Def-Use | `SymbolUse` | Variable flow hyperedge |
-| Continuation | `ControlFlow` | Async join hyperedge |
-| Environment | `Captures` | Closure context hyperedge |
-| Effect | `EffectOrdering` | Effect chain hyperedge |
-| Platform Binding | `ExternCall` | Extern boundary hyperedge (extern declaration, marshaled arguments, lifetime owner, ABI contract) |
-
-When multiple edges share the same semantic relationship, they can be promoted to a hyperedge:
-
-```fsharp
-// Nanopass edges
-let edges = [
-    { Source = use1; Target = def; Kind = SymbolUse }
-    { Source = use2; Target = def; Kind = SymbolUse }
-    { Source = use3; Target = def; Kind = SymbolUse }
-]
-
-// PHG hyperedge (all uses of 'def' as single multi-way relationship)
-let hyperedge = {
-    Participants = Set.ofList [def; use1; use2; use3]
-    Kind = DataflowFanOut
-    Direction = Definition def
-}
-```
-
-A callback crossing has a joint lifetime contract across registration, retained state, invocations, quiescence and release. Each conclusion must retain all participants and their roles; checking isolated pairs does not establish that joint conclusion. A native hyperedge expresses these dependencies directly, while a relation-node encoding can preserve the same information. Neither representation discharges the obligation merely by recording it. A finite flat environment supplies direct layout obligations; captured references, foreign behavior and exactly-once release require their own established premises. See the [closure settlement contract](Closure_Settlement_Contract.md) and closure specification §11.
-
-## Targeting Multiple Architectures
-
-The PHG vision enables unified compilation across traditional and novel architectures:
-
-```
-Program Hypergraph Core
-        ↓
-    Gradient-Based Analysis
-        ↓
-   ┌────┼────┬────────┐
-   ↓    ↓    ↓        ↓
-Harvard Von    Hybrid    Dataflow
-   ↓    ↓    ↓        ↓
-LLVM  CPU+GPU Spatial  Groq/Tenstorrent
-```
-
-The same PHG structure can be analyzed with different "gradients":
-
-- **Control-flow emphasis** → LLVM IR, traditional CPU optimization
-- **Dataflow emphasis** → Spatial kernels, streaming pipelines
-- **Hybrid** → Heterogeneous CPU+GPU execution
-
-## Temporal Dimension
-
-The final evolution adds a temporal dimension—the PHG learns from each compilation:
-
-```fsharp
-type TemporalProgramHypergraph = {
-    Current: ProgramHypergraph
-    History: TemporalProjection list  // Previous compilations
-    LearnedPatterns: CompilationKnowledge
-}
-```
-
-Each nanopass intermediate we output today becomes training data for the learning PHG of tomorrow. This is why labeled intermediate output matters—we're building the dataset for future optimization learning.
-
-## Roadmap
-
-1. **Landed (2026-09)**: hyperedges as first-class values on the graph — `Hyperedge {Sources; Target; Class; Role; Ordinal}` in `SemanticGraph.Edges`, the single kind-derived relation table (`kindEdges`) that `extractImpliedChildren` and `getSemanticReferences` project from, obligation nodes as graph citizens with `Constrains`/`Resides` edges, platform residence read structurally from the `PlatformDescription` record, and the first arity > 1 edge (the consecutive-layout obligation over every user string literal). Discharge from the graph at saturation (`ObligationDischarge`), re-derived from the artifact by Composer's `SMTTransfer` for twin pairing. See `clef/docs/fidelity/phg/`.
-2. **Near-term**: the closure hyperedge — captures ∪ site as the source set, the C-01 §14 form as the annotation, layout settled in CCS, the cast plugin retired (`clef/docs/fidelity/phg/Closure_Retooling_Plan.md`)
-3. **Mid-term**: the suspension recipe and net structure over the same machinery ([Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md)); the extern boundary as a hyperedge
-4. **Long-term**: Temporal PHG with compilation learning, and the reach the working papers set out: in "Fixed-Point Scaffolding", three axes meeting at a node (compilation, joint-constraint, verification-strength); in "Negative and Fractional Types", the duality dimension as a fourth, parallel to those three
-
-The fourth entry is PSG and hypergraph engineering, second horizon or beyond: η morphisms creating dual pairs, ε morphisms annihilating them, and hyperedges pairing positive and negative cells, with Baker's elaboration carrying the type-level pairing as codata for the Alex coeffect and codata analyses to read. It rests on the flat-closure finiteness lemma, the lazy slot class, and incremental cutoff by environment closedness, and none of it holds if they do not. A third working paper, "Adaptive Domain Models", is admitted at the same second-horizon placement with the geometric product as a joint constraint: grade inference derives the non-zero Cayley table entries at design time and eliminates the structurally zero entries from the compiled computation, joint-constraint engineering in the same sense as the extern boundary above. The design position is that this Cayley elimination generalizes past AI: the same compile-time joint resolution informs UI rendering and astrophysics computation, the Fidelity.UI over TMPL line of work.
-
-The nanopass infrastructure we're building today is the foundation for this evolution. Each small, single-purpose pass is a step toward the unified PHG representation that will enable Fidelity to target the full spectrum of computing architectures—from traditional CPUs to the novel dataflow processors that are reshaping the industry.
+# PSG Nanopass Architecture
+
+CCS/Baker constructs, elaborates and saturates the Program Semantic Graph.
+Source semantics, type and dimensional inference, demand, numeric selection,
+capture and residence analysis, layout, declaration/ABI settlement and proof
+premises belong there. Composer receives the settled publication; Alex passively
+composes admitted portable MLIR through Huet Elements/Patterns/Witnesses. The
+selected backend owns target-specific realization.
+
+The January typed-tree-overlay and post-CCS lowering roadmap is retired. It does
+not define a second semantic pipeline in Composer or a parallel language model
+derived from the .NET host.
+
+## Governing design
+
+The [Baker saturation contract](../../clef/docs/fidelity/Baker_Saturation_Architecture.md),
+[nanopass incremental contract](Nanopass_Incremental_Contract_Direction.md) and
+[C-series acceptance requirements](PRDs/C-Series-Acceptance.md) govern this work.
+The language specification defines semantics; dated
+[coverage waypoints](Language_Coverage_Waypoints.md) record implementation and
+acceptance at their actual source, dependency and target revisions.
+
+Nanopass composition retains these requirements:
+
+1. Each ingredient and recipe has an explicit operation and premises.
+2. Each owning pass has an admitted input, output, refinement and convergence
+   contract; dependency order follows those contracts.
+3. Fan-out/fold-in preserves source identity, scope, ordered operand occurrences,
+   joint participants, alternatives and proof provenance.
+4. The intermediate rewrite record remains inspectable, including replaced and
+   retired participants without promoting them to current execution or evidence.
+5. Missing, contradictory and settled premises remain distinguishable.
+   Quiescence, cancellation or an exhausted budget does not establish readiness.
+
+## Source construction and saturation
+
+CCS constructs native source types and resolved declaration identities. Baker
+uses reusable ingredients and operation recipes to make the required computation
+explicit in the PSG: applications, shared deferred producers, memoization,
+captures, selected branches, collection operations, control and suspension.
+
+Owning analyses establish the applicable facts over that structure. A rewrite
+that changes a participant invalidates or rebuilds dependent facts before renewed
+settlement. Semantic construction and analysis can have dependencies in both
+directions; a rigid one-shot sequence cannot stand in for their sound fixed
+points.
+
+Ordinary call-by-need remains the source default. Supplied operands and captures
+retain their shared deferred identities; explicit eager demand and any proved
+earlier evaluation retain their own activation and effect premises. No traversal
+order supplies an evaluation rule.
+
+Numeric widths and representations derive from justified ranges and selected
+declarations. Layout includes exact typed constituents, offsets, alignment,
+extent and actual storage authority. A missing range, residence or declaration
+fact cannot become a convenient width, allocation or ABI convention.
+
+## Scope, reachability and history
+
+The semantic dependency region includes cross-scope bindings, aliases, captures,
+calls, storage, effects and joint proof participants. A zipper path provides
+occurrence context; it does not enumerate that whole region or establish a
+result's freshness.
+
+Reachability and publication are source-owned facts. Preserve enough structure
+and origins for scope, diagnostics, proof support and the rewrite record.
+Pruned serialization is a view of the accepted graph; it does not authorize
+discarding premises or reusing a segment solely because its displayed subtree
+is unchanged. Exercise withdrawal, newly reachable alternatives and recursive
+dependencies under the incremental contract.
+
+## Joint relations and obligations
+
+Hyperedges retain ordered participants, their roles and multiplicity. For
+example, a foreign callback's lifetime relation joins its declaration, adapter,
+actual environment, registration, permitted invocations, quiescence and release.
+Independent pairwise checks do not establish that joint lifetime conclusion.
+
+A relation-node encoding can also preserve a joint relation when its ports and
+incidence retain the same information. Neither graph representation proves a
+claim merely by recording it. Finite direct closure fields provide a bounded
+layout frontier; captured-storage residence and foreign completion require
+separate established premises.
+
+Owning CCS/Baker mechanisms derive and discharge supported obligations at the
+required commitment boundary. A proof record retains the actual source,
+declarations, rule, snapshot and participant identities. Matching anchor names
+or generating an SMT module is not a discharge result.
+
+## Publication and passive Alex composition
+
+CCS/Baker publishes immutable settled codata and structure. It owns source
+readiness, declaration scope, typed call conventions, demand placement and
+representation adaptations. Alex consumes those facts at its actual Huet
+occurrence. Witnesses invoke Patterns, which compose Elements into the admitted
+portable form.
+
+Alex performs no inference, analysis, source-algorithm reconstruction or semantic
+repair. It does not query hyperedges to rediscover premises, select widths,
+compute layouts, hoist declarations or regenerate an application convention.
+Missing source facts produce a located failure at their owning contract.
+Missing passive physical coverage remains an Alex coverage failure.
+
+Physical SSA names and operand bookkeeping express settled graph roles and block
+arguments; they do not become a semantic analysis or preassignment pass.
+All custom MLIR plugins, conditional loaders and compatibility dependencies are
+retired. Middle-end MLIR transformations cannot replace source settlement.
+
+## Backend correspondence and evidence
+
+The selected backend realizes target operations, ABI details and machine or
+circuit transformations under the published contract. Changes to representation,
+layout, instruction modes, storage or control require preservation or renewed
+evidence for the affected claims. Source proof and stock verification do not
+alone establish the emitted artifact's correspondence.
+
+Each accepted capability retains its source cases, inspectable PSG and
+obligations, actual realized artifact, and independently discriminating native
+or target observations. Preserve failures and their first incorrect fact.
+Focused success does not establish complete F/C acceptance.
+
+## Recorded graph work and research scope
+
+The September 2026 record reports graph-resident hyperedges and obligation
+nodes, kind-derived relation projections, platform residence and a joint
+consecutive-string-layout obligation. Those dated reports do not establish full
+closure, continuation, discharge, incremental or target acceptance; current
+waypoints retain their exact scope.
+
+Proposed suspension, interaction-net and longer-horizon research uses the same
+source-owned graph infrastructure only under each admitted semantic contract.
+Baker publishes settled consequences for Alex to read. These directions do not
+authorize analysis in the witness, infer a lifetime from finite incidence, or
+establish new language support from a diagram.

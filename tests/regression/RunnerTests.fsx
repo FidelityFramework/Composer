@@ -17,7 +17,7 @@ let script name body =
 
 let sample = {
     Name = "oracle"; ProjectFile = "unused.fidproj"; BinaryName = "unused"
-    StdinFile = None; ExpectedOutput = "expected\n"; TimeoutSeconds = 2
+    StdinFile = None; ExpectedOutput = "expected\n"; TimeoutSeconds = 2; CompileTimeoutSeconds = 2
     Skip = false; SkipReason = None }
 let config = { SamplesRoot = work; CompilerPath = "unused"; DefaultTimeoutSeconds = 2; PruneIntermediates = false }
 Directory.CreateDirectory(Path.Combine(work, sample.Name)) |> ignore
@@ -27,6 +27,37 @@ let report result = {
     StartTime = DateTime.UtcNow; EndTime = DateTime.UtcNow; Results = [result] }
 
 try
+    let manifest = Path.Combine(work, "timeouts.toml")
+    let manifestText compileTimeout =
+        "[config]\nsamples_root = \".\"\ncompiler = \"unused\"\ndefault_timeout_seconds = 7\n"
+        + "[[samples]]\nname = \"defaults\"\n"
+        + "[[samples]]\nname = \"separate\"\ntimeout_seconds = 1\n" + compileTimeout + "\n"
+    File.WriteAllText(manifest, manifestText "compile_timeout = 4")
+    let _, deadlines = loadManifest manifest
+    check (deadlines[0].TimeoutSeconds = 7 && deadlines[0].CompileTimeoutSeconds = 7) "Default deadlines were not inherited."
+    check (deadlines[1].TimeoutSeconds = 1 && deadlines[1].CompileTimeoutSeconds = 4) "Compile-only deadline changed or was ignored."
+    File.WriteAllText(manifest, manifestText "")
+    let _, inherited = loadManifest manifest
+    check (inherited[1].CompileTimeoutSeconds = 1) "A missing compile deadline must inherit the sample deadline."
+    for invalid in ["0"; "-1"; "2147483647"; "\"slow\""] do
+        File.WriteAllText(manifest, manifestText ("compile_timeout = " + invalid))
+        let rejected =
+            try loadManifest manifest |> ignore; false
+            with ex -> ex.Message.Contains "Manifest compile_timeout"
+        check rejected ("Invalid compile deadline was accepted: " + invalid)
+    let slowCompiler = script "slow compiler" "sleep 1.2"
+    let bounded = { sample with TimeoutSeconds = 1; CompileTimeoutSeconds = 4 }
+    let _, compiled, _ = compileSamplePhaseAsync { config with CompilerPath = slowCompiler } None bounded |> fun pending -> pending.GetAwaiter().GetResult()
+    match compiled with
+    | CompileSuccess _ -> ()
+    | result -> failwithf "Compilation used the runtime deadline: %A" result
+    let slowBinary = script "slow native" "sleep 30"
+    let timed = runBinaryPhase config (bounded, CompileSuccess 0L, Some slowBinary)
+    match timed.RunResult with
+    | Some (RunTimeout 1000) -> ()
+    | result -> failwithf "Compile allowance leaked into the native deadline: %A" result
+    printfn "PASS manifest compile and runtime deadlines are independent and bounded"
+
     let succeeds = script "matching output" "printf 'expected\\n'"
     let successful = runBinaryPhase config (sample, CompileSuccess 0L, Some succeeds)
     check (didPass (report successful)) "Matching stdout with exit zero must pass."

@@ -223,14 +223,16 @@ In MLIR, the two Level-1 operations have no data dependency and can be scheduled
 
 ### ADC Sampling Interface
 
-The ADC read operation is a platform binding; Fidelity's Alex component provides the native implementation:
+The ADC read operation is a platform binding. CCS/Baker settles its demand,
+storage, access and ABI contract; Alex witnesses the admitted operation and
+Composer's backend supplies its native realization:
 
 ```fsharp
 module Platform.Bindings.ADC =
     /// Read a single sample from the specified ADC channel (0-3)
     /// Returns 10-bit value (0-1023)
     let readChannel (channel: int) : uint16 =
-        Unchecked.defaultof<uint16>  // Alex provides implementation
+        Unchecked.defaultof<uint16>  // Declared boundary; backend realization
 ```
 
 ### Extracting the Lower 8 Bits

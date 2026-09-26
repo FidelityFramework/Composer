@@ -51,7 +51,7 @@ let ``separate code and environment returns survive direct and indirect calls an
          f (FuncOp.FuncCallIndirect([second], indirectCode.SSA, [indirectEnv; argument]))
          MLIROp.ArithOp(ArithOp.AddI(total.SSA, first.SSA, second.SSA, integer))]
     let consumer = definition pointerBits "consume_callable_results" [env.SSA, env.Type; argument.SSA, argument.Type] body [total]
-    let operations = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [implementation; factory; codeIdentity; consumer]
+    let operations = [implementation; factory; codeIdentity; consumer]
     let source = Alex.Dialects.Core.Serialize.moduleToString (Ok pointerBits) "function_results" operations
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
     // MLIR's printer elides the enclosing func dialect inside function bodies.
@@ -72,12 +72,12 @@ let ``separate code and environment returns survive direct and indirect calls an
     Assert.DoesNotContain("unrealized_conversion_cast", lowered)
 
 [<Fact>]
-let ``declaration collection preserves result lists inside nounwind bodies`` () =
+let ``module declaration preserves result lists in nounwind calls`` () =
     let declaration = f (FuncOp.FuncDecl("foreign_callable", [environment], results, FuncVisibility.Private, []))
     let returned = [value (V(803, 0)) callback; value (V(803, 1)) environment]
     let wrapper = MLIROp.NoUnwindFunction(FuncOp.FuncDef("forward_callable", [Arg 0, environment], results,
-                      [declaration; f (FuncOp.FuncCall(returned, "foreign_callable", [value (Arg 0) environment])); f (FuncOp.Return returned)], FuncVisibility.Public))
-    let collected = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [wrapper]
+                      [f (FuncOp.FuncCall(returned, "foreign_callable", [value (Arg 0) environment])); f (FuncOp.Return returned)], FuncVisibility.Public))
+    let collected = [declaration; wrapper]
     Assert.Equal(declaration, collected.Head)
     let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "nounwind_results" collected
     MlirComponentTests.mlirOpt ["--verify-each"] text |> ignore
@@ -85,19 +85,19 @@ let ``declaration collection preserves result lists inside nounwind bodies`` () 
 [<Theory>]
 [<InlineData(false)>]
 [<InlineData(true)>]
-let ``declaration collection rejects missing or reordered mandatory results`` reorder =
+let ``stock verifier rejects missing or reordered mandatory call results`` reorder =
     let declaration = f (FuncOp.FuncDecl("required_results", [], results, FuncVisibility.Private, []))
     let supplied = if reorder then [value (V(804, 0)) environment; value (V(804, 1)) callback] else []
     let call = f (FuncOp.FuncCall(supplied, "required_results", []))
-    let error = Assert.Throws<System.Exception>(fun () -> Alex.Pipeline.MLIRNanopass.declarationCollectionPass [declaration; call] |> ignore)
-    Assert.Contains("ordered results", error.Message)
+    let caller = f (FuncOp.FuncDef("caller", [], [], [call; f (FuncOp.Return [])], FuncVisibility.Private))
+    let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "bad_results" [declaration; caller]
+    Assert.ThrowsAny<System.Exception>(fun () -> MlirComponentTests.mlirOpt ["--verify-each"] text |> ignore) |> ignore
 
 [<Fact>]
-let ``declaration relocation cannot conceal conflicting result signatures`` () =
+let ``stock verifier rejects conflicting external result signatures`` () =
     let declare returns = f (FuncOp.FuncDecl("same_name", [], returns, FuncVisibility.Private, []))
-    let error = Assert.Throws<System.Exception>(fun () ->
-        Alex.Pipeline.MLIRNanopass.declarationCollectionPass [declare results; declare (List.rev results)] |> ignore)
-    Assert.Contains("Conflicting function signatures", error.Message)
+    let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "conflicting_results" [declare results; declare (List.rev results)]
+    Assert.ThrowsAny<System.Exception>(fun () -> MlirComponentTests.mlirOpt ["--verify-each"] text |> ignore) |> ignore
 
 [<Fact>]
 let ``function code SSA has no implicit packed storage size`` () =

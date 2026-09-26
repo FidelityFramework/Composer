@@ -158,12 +158,15 @@ dependency invalidation, semantic fixed points and design-time scheduling stay
 with their owning compiler infrastructure. Reusing a navigation position does
 not establish that its graph facts or proofs are still current.
 
-The current post-witness middle-end pass in
-[`MLIRNanopass.fs`](../src/MiddleEnd/Alex/Pipeline/MLIRNanopass.fs) collects and
-validates external function declarations. It is not a second closure,
-continuation or source-language lowering pipeline. Current serializers and
-target paths still have reconciliation work recorded in M-01; the doctrine is
-not a claim that every existing branch already satisfies it.
+No post-witness MLIR semantic transform is authorized. The former
+`MLIRNanopass.fs` path must be removed rather than retained as a place to repair
+declarations, closures or continuations. External declarations and signatures
+must already have source-owned authority; Alex composes their physical form
+through the existing Huet Element/Pattern/Witness path. All MLIR plugin
+dependencies must be removed immediately, without waiting for a consumer
+migration. Target lowering stays in the selected backend. Current serializer
+and target-path reconciliation work remains recorded in M-01; the rule itself
+does not establish successful compiler or native gates.
 
 ## Existing integrity evidence and its limits
 

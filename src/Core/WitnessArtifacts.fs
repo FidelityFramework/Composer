@@ -133,6 +133,8 @@ let validate scope operations text writable (catalog: Catalog) =
             elif duplicateRecords || definitions.Length <> recorded.Length || definitions |> List.exists (fun op -> not (List.contains op recorded)) then
                 fail "missing, duplicate or changed emitted definition correspondence"
             elif all |> List.filter isOwnedOperation |> List.length <> definitions.Length then fail "nested definition has no module-unit ownership"
+            elif all |> List.choose (function MLIROp.FuncOp(FuncDecl _) as op -> Some op | _ -> None) |> List.length <> (imports operations).Length then
+                fail "nested external declaration has no module import ownership"
             elif conflicting then fail "conflicting typed import/definition signatures"
             elif unit.Imports <> imports operations || unit.Imports.Length <> (unit.Imports |> List.map _.Symbol |> Set.ofList).Count then
                 fail "missing, changed or duplicate typed import inventory"

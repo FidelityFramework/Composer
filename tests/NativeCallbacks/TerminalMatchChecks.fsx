@@ -54,7 +54,7 @@ let cases =
 let samples =
     cases |> List.map (fun (name, binary, _) ->
         { Name = "NativeCallbacks"; ProjectFile = name + ".fidproj"; BinaryName = binary
-          StdinFile = None; ExpectedOutput = ""; TimeoutSeconds = 180; Skip = false; SkipReason = None })
+          StdinFile = None; ExpectedOutput = ""; TimeoutSeconds = 180; CompileTimeoutSeconds = 180; Skip = false; SkipReason = None })
 File.WriteAllText(Path.Combine(root, "run.json"), JsonSerializer.Serialize(
     {| Compiler = compiler; SourceDirectory = __SOURCE_DIRECTORY__; CompilerRebuiltByThisRun = false
        FullIntermediates = true; CoreFilesDisabled = OperatingSystem.IsLinux(); Selection = cases |},

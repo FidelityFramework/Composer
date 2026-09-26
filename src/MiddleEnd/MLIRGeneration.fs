@@ -81,36 +81,12 @@ let private generateCore
     | (entryId, _) :: _ ->
         match transferWithCorrespondence graph entryId coeffects intermediatesDir with
         | Result.Ok (topLevelOps, scope, definitions) ->
-            // Filter ops by target platform — FPGA/NPU exclude CPU-only func.func ops
-            let retainedOperation op =
-                match targetPlatform, op with
-                | Core.Types.Dialects.TargetPlatform.FPGA, MLIROp.FuncOp _ -> false
-                | Core.Types.Dialects.TargetPlatform.NPU, MLIROp.RawMLIR _ -> true
-                | Core.Types.Dialects.TargetPlatform.NPU, _ -> false
-                | _ -> true
-            let platformOps = topLevelOps |> List.filter retainedOperation
-            let targetDefinition op =
-                match targetPlatform, op with
-                | Core.Types.Dialects.TargetPlatform.MCU, MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
-                | _ -> op
-
-            // Apply MLIR nanopasses (MLIR→MLIR transformations)
-            let transformedOps =
-                Alex.Pipeline.MLIRNanopass.applyPasses platformOps coeffects.Platform intermediatesDir
-                |> List.map targetDefinition
-
-            // Transport each recorded operation through the same physical
-            // relocation/wrapper transformations. Never recover a source owner
-            // by looking up an emitted symbol name.
-            let transformedDefinitions =
-                definitions |> List.choose (fun row ->
-                    if not (retainedOperation row.Operation) then None
-                    else Alex.Pipeline.MLIRNanopass.relocateDefinition row.Operation
-                         |> Option.map (fun op -> { row with Operation = targetDefinition op }))
-
+            // Preserve exactly what the PSG witnesses produced. Declaration
+            // placement and target admission must be correct at their owners;
+            // this boundary never repairs, drops or rewrites witnessed MLIR.
             let storageValidation =
-                Alex.Traversal.StaticStorageValidation.validate graph transformedOps
-                |> Result.bind (fun () -> Alex.Traversal.StaticStorageValidation.validateWritable arch graph transformedOps)
+                Alex.Traversal.StaticStorageValidation.validate graph topLevelOps
+                |> Result.bind (fun () -> Alex.Traversal.StaticStorageValidation.validateWritable arch graph topLevelOps)
             match storageValidation with
             | Result.Error message -> Result.Error message
             | Result.Ok writableStorage ->
@@ -120,9 +96,9 @@ let private generateCore
                 let mlirText =
                     match targetPlatform with
                     | Core.Types.Dialects.TargetPlatform.NPU ->
-                        let opsText = opsToString arch.Pointer transformedOps "  "
+                        let opsText = opsToString arch.Pointer topLevelOps "  "
                         sprintf "module {\n%s\n}" opsText
-                    | _ -> moduleToString arch.Pointer "main" transformedOps
+                    | _ -> moduleToString arch.Pointer "main" topLevelOps
 
                 // Write final MLIR output (renamed to 10_output.mlir for nanopass visibility)
                 match intermediatesDir with
@@ -157,10 +133,10 @@ let private generateCore
                     match targetPlatform with
                     | Core.Types.Dialects.TargetPlatform.FPGA | Core.Types.Dialects.TargetPlatform.NPU -> Core.Types.WitnessArtifacts.TargetModuleActivation
                     | _ -> Core.Types.WitnessArtifacts.CheckedProgramStartup
-                Core.WitnessArtifacts.create scope activation transformedDefinitions transformedOps mlirText writableStorage
+                Core.WitnessArtifacts.create scope activation definitions topLevelOps mlirText writableStorage
                 |> Result.map (fun catalog ->
                     let witnessed =
-                        { Operations = transformedOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
+                        { Operations = topLevelOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
                           Catalog = Some catalog
                           ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
                     witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)

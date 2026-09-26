@@ -11,7 +11,7 @@ For the January demo goal of compiling Clef code that interfaces with CMSIS HAL 
 1. **Parser is broken** (BLOCKING): CppSharp integration exists but is bypassed
 2. **No macro support**: CMSIS HAL depends heavily on `#define` constants
 3. **Wrong output format**: Generates P/Invoke for .NET runtime, not CCS-style intrinsics
-4. **No ARM bindings in Alex**: Need bare-metal register access, not syscalls
+4. **Missing ARM/bare-metal realization**: The recorded gap was register-access support. Its source contract belongs to CCS/Baker and target realization belongs to Composer's backend.
 
 ---
 
@@ -326,30 +326,30 @@ module GPIO =
         Alternate: uint32
     }
 
-// Platform.Bindings - BCL-free, Alex provides MLIR emission
+// Platform.Bindings - CCS/Baker settles the boundary; backend realizes it
 module Platform.Bindings.HAL.GPIO =
     /// Initialize GPIO peripheral
     let init (gpio: nativeint) (initStruct: nativeint) : unit =
-        ()  // Alex emits register writes or HAL calls
+        ()  // Declared register/HAL boundary
 
     /// Write GPIO pin
     let writePin (gpio: nativeint) (pin: uint16) (state: int) : unit =
-        ()  // Alex emits BSRR register write
+        ()  // Declared GPIO write boundary
 ```
 
 **Key Differences**:
 1. NO BCL dependencies (no `System.Runtime.InteropServices`)
-2. `Unchecked.defaultof<T>` or `()` as placeholder for Alex-provided implementation
+2. `Unchecked.defaultof<T>` or `()` as the recorded declaration placeholder; CCS/Baker must settle its boundary contract before witnessing
 3. Structs use `[<Struct>]` attribute for value semantics
-4. Module naming follows `Platform.Bindings.*` convention for Alex recognition
+4. CCS/Baker resolves `Platform.Bindings.*` declarations; Alex consumes settled binding identities without name recognition
 
 **Fix Complexity**: Medium. New generator mode or separate `FidelityCodeGenerator.fs`.
 
-### 4.4 Gap 4: No ARM/BareMetal Bindings in Alex
+### 4.4 Gap 4: Missing ARM/Bare-Metal Realization
 
 **Impact**: Medium. Without this, bindings compile but don't run on STM32.
 
-**Current Alex Binding Infrastructure**:
+**Target vocabulary recorded by the original assessment**:
 ```fsharp
 // BindingTypes.fs - These already exist!
 type OSFamily =
@@ -363,33 +363,13 @@ type Architecture =
     | RISCV64 | RISCV32 | WASM32
 ```
 
-**What's Missing**: Actual binding implementations in `Alex/Bindings/ARM/`
-
-**HAL Functions Need Memory-Mapped Register Access**:
-```fsharp
-// Example: HAL_GPIO_WritePin implementation for STM32L5
-let bindGpioWritePin (platform: TargetPlatform) (prim: ExternPrimitive) = mlir {
-    match prim.Args with
-    | [gpioBase; pin; state] ->
-        // GPIO BSRR register is at offset 0x18 from base
-        let! bsrrOffset = arith.constant 0x18L I32
-        let! bsrrAddr = llvm.getelementptr gpioBase [bsrrOffset]
-
-        // If state == SET, write to lower 16 bits (set)
-        // If state == RESET, write to upper 16 bits (reset)
-        let! shiftAmount =
-            match state with
-            | { Value = 0 } -> arith.constant 16L I32  // RESET
-            | _ -> arith.constant 0L I32               // SET
-        let! bitPattern = arith.shli pin shiftAmount
-
-        // Store to BSRR (write-only register)
-        do! llvm.store bitPattern bsrrAddr
-        return EmittedVoid
-    | _ ->
-        return NotSupported "WritePin requires (gpio, pin, state)"
-}
-```
+**Required ownership**: CCS/Baker settles the declared register identity,
+offset, access mode, width, value range, demand and ordering premises. A GPIO
+set/reset adapter is semantic graph structure elaborated by Baker recipes.
+Alex passively witnesses its settled operations. Composer's ARM backend
+realizes the target address and volatile write under those published facts.
+Neither a source-name match nor an emitter-local branch establishes the
+register contract.
 
 **Fix Complexity**: High. Requires:
 - Understanding STM32L5 memory map
@@ -465,7 +445,7 @@ The Clef binding doesn't need to resolve these; they're passed at runtime.
 
 ## 6. Comparison with Composer's Binding Pattern
 
-### 6.1 How CCS/Alex Bindings Work
+### 6.1 Source Settlement, Passive Witnessing and Backend Realization
 
 Composer's current binding system (for console I/O, time, etc.) follows the **Platform.Bindings pattern** (BCL-free):
 
@@ -475,34 +455,23 @@ Composer's current binding system (for console I/O, time, etc.) follows the **Pl
 module Platform.Bindings =
     /// Write bytes to file descriptor
     let writeBytes (fd: int) (buffer: nativeint) (count: int) : int =
-        Unchecked.defaultof<int>  // Placeholder - Alex provides implementation
+        Unchecked.defaultof<int>  // Declared boundary settled by CCS/Baker
 
     /// Read bytes from file descriptor
     let readBytes (fd: int) (buffer: nativeint) (maxCount: int) : int =
         Unchecked.defaultof<int>
 ```
 
-**Step 2: Alex registers bindings by module/function name**
-```fsharp
-// Alex/Bindings/Console/ConsoleBindings.fs
-let registerBindings () =
-    ExternDispatch.register Linux X86_64 "writeBytes"
-        (fun ext -> bindWriteBytes TargetPlatform.linux_x86_64 ext)
-```
+**Step 2: CCS/Baker settles the binding.** Resolve its declaration and actual
+operands, demand, storage, lifetime, representation and ABI requirements against
+the selected platform. Required adapter bodies are elaborated in the PSG with
+their joint premises and rewrite correspondence.
 
-**Step 3: Alex generates platform-specific MLIR**
-```fsharp
-let bindWriteBytes (platform: TargetPlatform) (prim: ExternPrimitive) = mlir {
-    match platform.OS with
-    | Linux ->
-        // Generate syscall instruction
-        let! result = emitUnixWriteSyscall 1L fd buf count
-        return Emitted result
-    | MacOS ->
-        let! result = emitUnixWriteSyscall 0x2000004L fd buf count
-        return Emitted result
-}
-```
+**Step 3: Alex passively witnesses; Composer's backend realizes.** Huet
+Elements, Patterns and Witnesses consume the settled portable call or access.
+The backend generates the selected target's syscall, foreign call or volatile
+register operation. Missing source premises return to CCS/Baker; Alex does not
+repair them or dispatch on module/function names.
 
 ### 6.2 What Farscape Must Generate for CMSIS
 
@@ -513,30 +482,25 @@ Following the Platform.Bindings pattern (BCL-free):
 // Generated: CMSIS.STM32L5.GPIO.fs
 namespace CMSIS.STM32L5
 
-/// Platform.Bindings for HAL GPIO - Alex provides MLIR emission
+/// HAL GPIO declarations settled by CCS/Baker and realized by the backend
 module Platform.Bindings.HAL.GPIO =
     /// Initialize GPIO peripheral
     let init (gpio: nativeint) (initStruct: nativeint) : unit =
-        ()  // Alex emits HAL_GPIO_Init call or direct register access
+        ()  // Declared initialization contract
 
     /// Write GPIO pin state
     let writePin (gpio: nativeint) (pin: uint16) (state: int) : unit =
-        ()  // Alex emits HAL_GPIO_WritePin or BSRR register write
+        ()  // Declared GPIO write contract
 
     /// Read GPIO pin state
     let readPin (gpio: nativeint) (pin: uint16) : int =
         Unchecked.defaultof<int>
 ```
 
-**Alex provides ARM bindings** (new module):
-```fsharp
-// Alex/Bindings/ARM/GPIOBindings.fs
-let registerGPIOBindings () =
-    ExternDispatch.register BareMetal ARM32_Thumb "Platform.Bindings.HAL.GPIO.init"
-        (fun ext -> bindGpioInit ext)
-    ExternDispatch.register BareMetal ARM32_Thumb "Platform.Bindings.HAL.GPIO.writePin"
-        (fun ext -> bindGpioWritePin ext)
-```
+CCS/Baker admits the generated declarations and settles their target contract.
+Composer's ARM backend supplies the corresponding physical realization after
+passive Alex witnessing. Generation of a declaration alone does not establish
+operation support or preservation evidence.
 
 ---
 
@@ -600,12 +564,13 @@ macros |> List.exists (fun m -> m.Name = "GPIO_PIN_0") |> should be true
 
 **Priority**: MEDIUM - Required for demo execution
 
-**Location**: `src/Alex/Bindings/ARM/`
+**Ownership**: CCS/Baker for source contracts and adapter elaboration;
+Composer's ARM backend for target realization.
 
 **Tasks**:
-1. Create `GPIOBindings.fs` for HAL_GPIO_* functions
-2. Implement memory-mapped register access patterns
-3. Handle volatile semantics in MLIR generation
+1. Settle HAL_GPIO_* declarations, actual operands and source demand in CCS/Baker
+2. Elaborate register adapters and discharge their layout, access and value premises in the PSG
+3. Witness the settled form passively in Alex; realize target volatile operations in the backend
 4. Test with QEMU ARM emulation or hardware
 
 ---
@@ -632,7 +597,7 @@ macros |> List.exists (fun m -> m.Name = "GPIO_PIN_0") |> should be true
 
 ### 9.2 Reference Code
 
-- **Composer bindings pattern**: `src/Alex/Bindings/Console/ConsoleBindings.fs`
+- **Composer binding contract**: [Platform bindings specification](../../../../../clef-lang-spec/spec/platform-bindings.md)
 - **CCS primitives**: Core type operations
 - **CMSIS headers**: `helpers/cmsis/STM32L5xx_HAL_Driver/Inc/`
 - **Full STM32CubeL5**: `~/repos/STM32CubeL5/`

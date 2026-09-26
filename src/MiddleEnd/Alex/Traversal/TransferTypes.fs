@@ -333,7 +333,7 @@ type MLIRAccumulator() =
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)
     member val EmittedStaticGlobals: Map<string, MLIRType * ProgramStorageEntry option> = Map.empty with get, set
     member val PendingStaticGlobals: MLIROp list = [] with get, set                // memref.global decls emitted by a parser, awaiting drain to TopLevelOps by the witness (module-scope placement)
-    // NOTE: Function declarations now handled by MLIR Declaration Collection Pass (no coordination needed)
+    // External imports require explicit source authority and module-scope emission.
 
     // Deferred InlineOps: Partial app arguments whose InlineOps are suppressed at their
     // original scope and re-emitted at the saturated call site (MLIR region isolation)
@@ -573,11 +573,6 @@ module MLIRAccumulator =
         | true, ops -> ops
         | false, _ -> []
 
-    /// NOTE: Function declaration coordination removed - now handled by MLIR Declaration Collection Pass
-    /// This eliminates "first witness wins" race condition and separates concerns:
-    /// - Witnesses emit FuncCall operations (codata)
-    /// - Declaration Collection Pass analyzes calls and emits FuncDecl (structural MLIR transformation)
-
     /// NOTE: Scope markers removed - single-phase execution with nested accumulators
     /// Scope-owning witnesses (Lambda, ControlFlow) create nested accumulators for body operations.
     /// Operations naturally nest; bindings remain global for cross-scope lookups.
@@ -738,11 +733,11 @@ module ModuleValues =
 
 /// The result value a node names (Alex.Traversal.Values)
 let requireSSA (nodeId: NodeId) (ctx: WitnessContext) : SSA =
-    Alex.Traversal.Values.resultOf ctx.Coeffects.TargetPlatform ctx.Graph nodeId
+    Alex.Traversal.Values.resultOf ctx.Coeffects.TargetPlatform ctx.Graph (Alex.Traversal.PSGZipper.enclosingLambdaIds ctx.Zipper) nodeId
 
 /// The values a node names (Alex.Traversal.Values)
 let requireSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
-    Alex.Traversal.Values.valuesOf ctx.Coeffects.TargetPlatform ctx.Graph nodeId
+    Alex.Traversal.Values.valuesOf ctx.Coeffects.TargetPlatform ctx.Graph (Alex.Traversal.PSGZipper.enclosingLambdaIds ctx.Zipper) nodeId
 
 /// The escape kind of an allocating site (Codata.Escapes); stack-scoped where the graph records none.
 let escapeOf (graph: SemanticGraph) (nodeId: NodeId) : EscapeKind =

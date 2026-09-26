@@ -25,7 +25,7 @@ let ``driver rejects a foreign occurrence even if its node was previously visite
     let builder = NodeBuilder()
     let value = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [value.Id], Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph root.Id |> require "Missing root"
     let initial = if alreadyVisited then Set.singleton value.Id else Set.empty
     let visited = ref initial
@@ -41,7 +41,7 @@ let ``driver rejects a foreign occurrence even if its node was previously visite
 let ``driver rejects a zipper from another graph snapshot before witnessing`` () =
     let builder = NodeBuilder()
     let value = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
-    let oldGraph = builder.Build []
+    let oldGraph = builder.Build [] |> prepareSource
     let graph = { oldGraph with DeclarationRoots = [value.Id, DeclRoot.EntryPoint] }
     let position = Zipper.create oldGraph value.Id |> require "Missing old occurrence"
     let visited = ref Set.empty
@@ -70,7 +70,7 @@ let main _ = discard (helper ())
         graph.Nodes.Values |> Seq.find (fun node ->
             node.IsReachable && (match node.Kind with SemanticKind.Binding("helper", false, _, _) -> true | _ -> false))
     let projection =
-        match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.tryEmission graph with
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary graph with
         | Result.Ok projection -> projection
         | Result.Error reason -> failwith reason
     Assert.Contains(helper.Id, projection.DeferredOnly)
@@ -80,10 +80,11 @@ let main _ = discard (helper ())
     let graph =
         if removeAuthority then
             { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.OrdinaryUnusedActual) }
+            |> unpublished
         else graph
     let position = Zipper.create graph helper.Id |> require "Missing actual helper declaration"
-    // Intentionally withhold source resealing: emission cannot use the old
-    // projection, or infer an eager fallback, after its graph was replaced.
+    // Intentionally withhold source publication after editing its premises.
+    // Emission cannot infer an eager fallback for an unpublished graph.
     let ctx = { originalContext with Graph = graph; Zipper = position }
     let observed = ResizeArray<NodeId>()
     let witness (_: WitnessContext) (node: SemanticNode) =
@@ -99,12 +100,14 @@ let main _ = discard (helper ())
     Assert.True graph.Nodes[helper.Id].IsReachable
 
 [<Fact>]
-let ``a copied source projection cannot enter production transfer or claim coverage`` () =
+let ``an explicitly invalidated source projection cannot enter transfer or claim coverage`` () =
     let builder = NodeBuilder()
     let value = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
-    let original = builder.Build []
+    let original = builder.Build [] |> prepareSource
     let supplied = coeffects original 64
-    let graph = { original with Nodes = original.Nodes }
+    let copied = { original with Nodes = original.Nodes }
+    Assert.True(Result.isOk(Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead copied))
+    let graph = unpublished copied
     Assert.False(obj.ReferenceEquals(original, graph))
     let position = Zipper.create graph value.Id |> require "Missing copied occurrence"
     let accumulator = MLIRAccumulator.empty ()
@@ -122,7 +125,7 @@ let ``a copied source projection cannot enter production transfer or claim cover
     Assert.Empty (ScopeContext.getOps scope.Value)
     match Alex.Traversal.MLIRTransfer.transferWithCorrespondence graph value.Id supplied None with
     | Result.Error reason -> Assert.Contains("Source emission admission", reason)
-    | Result.Ok _ -> failwith "An unsealed graph entered production witnessing"
+    | Result.Ok _ -> failwith "An unpublished graph entered production witnessing"
     Assert.Single(Alex.Traversal.CoverageValidation.validateCoverage graph Set.empty) |> ignore
 
 [<Fact>]
@@ -144,7 +147,7 @@ let ``match scrutinee bindings guard and body retain the declared structural occ
          { Pattern = Pattern.Wildcard; Bindings = []; Guard = None; Body = fallback.Id }]
     let choice = builder.Create(SemanticKind.CaseElimination(scrutinee.Id, arms), Types.boolType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [choice.Id], Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph root.Id |> require "Missing root"
     let visited = ref Set.empty
     let ctx = context graph position visited
@@ -185,7 +188,7 @@ let ``match refuses an unsettled source guard before visiting any child`` () =
     let value = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
     let arm = { Pattern = Pattern.Wildcard; Bindings = []; Guard = Some value.Id; Body = value.Id }
     let choice = builder.Create(SemanticKind.CaseElimination(value.Id, [arm]), Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let position = Zipper.create graph choice.Id |> require "Missing match"
     let visited = ref Set.empty
     let ctx = context graph position visited

@@ -19,7 +19,7 @@ This document describes a desktop application framework built on the Fidelity ec
 - **Single native executable** with embedded web UI
 - **Partas.Solid** component model compiled to JavaScript via Fable
 - **Composer** orchestrates the entire build pipeline
-- **Platform-agnostic Fidelity.Platform bindings**, platform-specific Alex implementations
+- **Fidelity.Platform declarations**, settled by CCS/Baker and realized by Composer's backend
 - **System webview** (WebKitGTK/WebView2/WKWebView) renders the UI
 
 The architecture follows the same model as SAFE Stack for web applications, but targets native desktop instead of web servers.
@@ -137,7 +137,10 @@ let gpioDescriptor: Expr<PeripheralDescriptor> = <@
 @>
 ```
 
-The Composer compiler inspects this quotation during PSG construction, extracting the memory region classification. This information flows through the pipeline, informing Alex that volatile loads are required for peripheral access.
+CCS/Baker inspects this quotation during source elaboration and settles the
+memory region, access semantics, layout and proof premises on the PSG. Alex
+passively witnesses the admitted access form. Composer's backend realizes
+the target's volatile operations while preserving those settled facts.
 
 Unlike runtime reflection, quotations are **compile-time artifacts**. They require no runtime support, impose no overhead, and introduce no BCL dependencies.
 
@@ -157,24 +160,16 @@ var result = shape switch
 
 Clef has similar `match` expressions, but active patterns add a crucial capability: **compositional matching**.
 
-```fsharp
-// Clef - Active pattern definition
-let (|PeripheralAccess|_|) (node: PSGNode) =
-    match node with
-    | CallToExtern name args when isPeripheralBinding name ->
-        Some (extractPeripheralInfo args)
-    | _ -> None
-
-// Usage - composes with other patterns
-match currentNode with
-| PeripheralAccess info -> emitVolatileAccess info
-| SRTPDispatch srtp -> emitResolvedCall srtp
-| _ -> emitDefault node
-```
+For a peripheral call, CCS/Baker resolves its declaration, classifies access
+and elaborates the required operation and proof participants. It publishes the
+settled storage, access and boundary facts. Alex's patterns observe that
+publication at the actual Huet occurrence and compose its admitted witness.
 
 **Why this matters for Fidelity:**
 
-Active patterns are how the typed tree zipper and Alex traversal recognize PSG structures. They:
+CCS/Baker uses active patterns during source analysis and elaboration. Alex's
+Huet Elements, Patterns and Witnesses observe the resulting settled structure;
+they do not repeat classification or derive missing semantic facts. Patterns:
 - **Compose** with `&` (and) and `|` (or)
 - **Encapsulate** recognition logic
 - **Decouple** pattern definition from usage
@@ -344,7 +339,7 @@ Fidelity.Platform defines the **interface** for platform bindings without any pl
 ```fsharp
 // Fidelity.Platform/Platform.fs
 module Platform.Bindings =
-    // Alex provides implementation for each platform
+    // CCS/Baker settles the boundary; Composer's backend realizes the call
     let createWebview (debug: int) (window: nativeint) : nativeint =
         Unchecked.defaultof<nativeint>
 
@@ -354,44 +349,35 @@ module Platform.Bindings =
     // ... etc
 ```
 
-The `Unchecked.defaultof<T>` is a **conduit marker** - it signals that Alex provides the actual implementation.
+The placeholder denotes a declared platform binding. CCS/Baker resolves its
+declaration, demand, storage and ABI requirements; Alex witnesses the settled
+call, and Composer's backend supplies the target realization.
 
 **There is NO platform-specific code in Fidelity.Platform:**
 - No `#if LINUX`
 - No `DllImport` (that's BCL!)
 - No Linux/, Windows/, macOS/ directories
 
-### Alex: Platform-Specific MLIR Emission
+### Source Settlement, Passive Witnessing and Backend Realization
 
-Alex makes all platform decisions during code generation:
+CCS/Baker resolves the selected platform declarations and settles the webview
+call contract, including actual argument identities, ownership, storage,
+calling convention and required proof premises. Any semantic adapter body is
+elaborated by Baker recipes in the PSG, with its scope and rewrite record.
 
-```fsharp
-// Alex/Bindings/Webview/WebviewBindings.fs
-let bindCreateWebview (platform: TargetPlatform) (prim: PlatformPrimitive) = mlir {
-    match platform.OS with
-    | Linux ->
-        // WebKitGTK: call webkit_web_view_new()
-        let! result = llvm.call "@webview_create" [...]
-        return Emitted result
-    | Windows ->
-        // WebView2: CreateCoreWebView2Controller()
-        let! result = llvm.call "@webview_create" [...]
-        return Emitted result
-    | MacOS ->
-        // WKWebView via Objective-C runtime
-        let! result = llvm.call "@webview_create" [...]
-        return Emitted result
-}
-```
+Alex observes that publication through Huet Elements, Patterns and Witnesses
+and composes the admitted portable call. It does not inspect platform
+quotations, infer an ABI or synthesize adapters while emitting.
 
-The same Fidelity.Platform code compiles to different platform-specific MLIR depending on the `--target` flag.
+Composer's backend realizes the settled call for WebKitGTK, WebView2 or
+WKWebView and supplies target-specific operations and linkage.
 
 ### Why This Matters
 
 This separation enables:
 - **Cross-compilation**: Build for any platform from any platform
 - **Single codebase**: No conditional compilation in application code
-- **Type safety**: Compiler verifies the interface, Alex provides implementation
+- **Type safety**: CCS/Baker checks and settles the interface; the backend preserves its contract
 - **Extensibility**: Add new platforms without touching Fidelity.Platform
 
 ---
@@ -568,7 +554,8 @@ The webview approach provides:
 
 Both approaches share the architectural principles:
 - Platform-agnostic definitions in Fidelity.Platform
-- Platform-specific implementations in Alex
+- Source-owned settlement and passive Alex witnessing
+- Platform-specific implementations in Composer's backend
 - Composer as the unified build orchestrator
 
 ---
@@ -586,9 +573,9 @@ Both approaches share the architectural principles:
 | Term | Definition |
 |------|------------|
 | **Fidelity.Platform** | Native Clef standard library - platform-agnostic bindings |
-| **Alex** | Composer's multi-dimensional targeting layer - generates platform-specific MLIR |
-| **Conduit** | A Platform.Bindings function where Alex provides the implementation |
-| **DCont** | Delimited continuations MLIR dialect |
+| **Alex** | Passive Huet Element/Pattern/Witness composition from CCS/Baker-settled graph facts |
+| **Conduit** | A declared platform binding settled by CCS/Baker, witnessed by Alex and realized by the backend |
+| **DCont** | Source-owned delimited-continuation structure in the PSG, witnessed using admitted standard operations |
 | **Fable** | F# compiler, producing JSX for this frontend path |
 | **Partas.Solid** | F# DSL and Fable plugin for SolidJS components |
 | **Platform.Bindings** | Module convention for platform-provided functions |

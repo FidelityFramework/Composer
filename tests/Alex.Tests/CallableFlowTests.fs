@@ -47,14 +47,14 @@ let private fixture () =
     builder.SetParent(entry.Id, main.Id)
     let raw, startupErrors = Clef.Compiler.Nanopass.ProgramInitialization.normalize [main.Id] (builder.Build [main.Id, DeclRoot.EntryPoint])
     Assert.Empty startupErrors
-    let raw = settleDemand raw
+    let raw = Clef.Compiler.Nanopass.OrdinaryDemand.normalize raw
     let carriers, _ = Carriers.settle { Layouts = Map.empty; Origins = Map.empty; Known = Map.empty } raw
     let flows, residuals = Flows.settle
                             { Carriers = carriers; Joins = Map.empty; Layouts = Map.empty
                               SequenceFlows = Map.empty; SequenceFamilies = Map.empty } raw
     Assert.Empty residuals
     let codata = { raw.Codata.Value with CallableCarriers = carriers; CallableFlows = flows }
-    { raw with Codata = lazy codata }, formal.Id, alias.Id, first.Id, secondCall.Id, opaque.Id
+    prepareSource { raw with Codata = lazy codata }, formal.Id, alias.Id, first.Id, secondCall.Id, opaque.Id
 
 let private context graph id bits =
     let operands = MLIRAccumulator.empty ()
@@ -102,7 +102,7 @@ let ``an added opaque actual retracts a previously projected formal on a new gra
     let node = graph.Nodes[call]
     let callee = match node.Kind with SemanticKind.Application(callee, _) -> callee | _ -> failwith "Missing fixture call"
     let changed = { node with Kind = SemanticKind.Application(callee, [opaque]); Children = [callee; opaque] }
-    let revised = { graph with Nodes = graph.Nodes.Add(call, changed) } |> settleDemand
+    let revised = { graph with Nodes = graph.Nodes.Add(call, changed) } |> refusePublication "Callable"
     match Operands.project (context revised formal 64) formal with
     | Result.Error _ -> ()
     | Result.Ok _ -> failwith "Stale complete callable flow survived the changed actual"

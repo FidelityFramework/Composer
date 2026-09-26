@@ -76,17 +76,10 @@ let private fixture captured =
         { raw with Codata = lazy { raw.Codata.Value with
                                       CallableCarriers = carriers; KnownCallables = inputs.Known
                                       EnvironmentLayouts = inputs.Layouts; EnvironmentOrigins = inputs.Origins } }
-    { Graph = graph; Inputs = inputs; Owner = owner.Id; Alias = alias.Id; Other = other.Id
+    { Graph = prepareSource graph; Inputs = inputs; Owner = owner.Id; Alias = alias.Id; Other = other.Id
       Implementation = implementation.Id; Formal = formal.Id }
 
 let private context graph occurrence =
-    // Component publication is a source operation performed before choosing the
-    // Huet occurrence. Deliberately malformed source remains unsealed: its
-    // negative tests must observe refusal, never a repaired carrier contract.
-    let graph =
-        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare graph with
-        | Result.Ok prepared -> prepared
-        | Result.Error _ -> graph
     let accumulator = MLIRAccumulator.empty ()
     let scope = ref (Alex.Traversal.ScopeContext.ScopeContext.root ())
     let visited = ref Set.empty
@@ -99,6 +92,19 @@ let private code shape ssa : Val = { SSA = ssa; Type = Operands.functionType sha
 let private environment shape ssa : Val =
     { SSA = ssa; Type = Operands.environmentType shape |> require "No environment in captured fixture" }
 let private heldEnvironment value = Operands.environment value |> require "Captured operand lost its environment"
+
+[<Fact>]
+let ``returned closure preserves its own witnessed code and actual environment`` () =
+    let fixture = fixture true
+    let ctx = context fixture.Graph fixture.Owner
+    let shape = Operands.project ctx fixture.Owner |> ok
+    let codeValue = code shape (Arg 7)
+    let environmentValue = environment shape (Arg 9)
+    Operands.bind ctx fixture.Owner codeValue (Some environmentValue) |> ok
+    let returned = Operands.reproject ctx fixture.Owner fixture.Owner |> ok
+    Assert.Equal(codeValue, Operands.code returned)
+    Assert.Equal(environmentValue, heldEnvironment returned)
+    Assert.Empty ctx.Accumulator.Errors
 
 [<Fact>]
 let ``source carrier keeps declared physical formals and distinct actual occurrences`` () =
@@ -153,7 +159,7 @@ let ``same code with different environments survives recall and alias copy witho
     let edges = fixture.Graph.Edges |> List.map (fun edge ->
         if edge.Target = fixture.Alias && edge.Role = EdgeRole.Definition then { edge with Sources = [fixture.Other] }
         else edge)
-    let graph = { fixture.Graph with Nodes = fixture.Graph.Nodes.Add(fixture.Alias, alias); Edges = edges }
+    let graph = { fixture.Graph with Nodes = fixture.Graph.Nodes.Add(fixture.Alias, alias); Edges = edges } |> prepareSource
     let ctx = context graph fixture.Owner
     let shape = Operands.project ctx fixture.Owner |> ok
     let fn = code shape (Arg 0)
@@ -278,7 +284,7 @@ let private higherOrder captured returnsCallable =
                              DeclarationRoots = roots }
     let raw, startupErrors = Clef.Compiler.Nanopass.ProgramInitialization.normalize (Option.toList main) raw
     Assert.Empty startupErrors
-    let raw = settleDemand raw
+    let raw = Clef.Compiler.Nanopass.OrdinaryDemand.normalize raw
     let callable = if returnsCallable then body.Id else parameter.Id
     let inputs =
         if captured then
@@ -292,7 +298,7 @@ let private higherOrder captured returnsCallable =
         { raw with Codata = lazy { raw.Codata.Value with
                                       CallableCarriers = carriers; KnownCallables = inputs.Known
                                       EnvironmentLayouts = inputs.Layouts; EnvironmentOrigins = inputs.Origins } }
-    graph, binding.Id, callable, fixture.Owner
+    prepareSource graph, binding.Id, callable, fixture.Owner
 
 [<Theory>]
 [<InlineData(false, false)>]
@@ -313,9 +319,9 @@ let ``higher order and returned values expand only their settled callable compon
         Assert.Equal<MLIRType list list>([components], Operands.parameterTypes shape)
         Assert.Equal<MLIRType list>([boolean], Operands.resultTypes shape)
         Assert.Equal<CallableValueShape list>([CallableValueShape.Callable callable], graph.Codata.Value.CallableCarriers[binding].ParameterShapes)
-    let missing = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = graph.Codata.Value.CallableCarriers.Remove callable } }
+    let missing = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = graph.Codata.Value.CallableCarriers.Remove callable } } |> refusePublication "Callable carrier"
     let reason = Operands.project (context missing binding) binding |> failure
-    Assert.Contains("no settled carrier", reason)
+    Assert.Contains("source witness projection", reason)
 
 [<Fact>]
 let ``equal physical shapes cannot change the settled callable identity during copy`` () =
@@ -329,9 +335,11 @@ let ``equal physical shapes cannot change the settled callable identity during c
         { fixture.Graph with
             Nodes = fixture.Graph.Nodes.Add(replacement.Id, raw.Nodes[replacement.Id])
             Codata = lazy { fixture.Graph.Codata.Value with CallableCarriers = fixture.Graph.Codata.Value.CallableCarriers.Add(fixture.Other, alien) } }
-    let ctx = context graph fixture.Owner
-    let shape = Operands.project ctx fixture.Owner |> ok
-    Operands.bind ctx fixture.Owner (code shape (Arg 0)) None |> ok
+        |> refusePublication "Callable carrier"
+    let originalContext = context fixture.Graph fixture.Owner
+    let shape = Operands.project originalContext fixture.Owner |> ok
+    Operands.bind originalContext fixture.Owner (code shape (Arg 0)) None |> ok
+    let ctx = { context graph fixture.Owner with Accumulator = originalContext.Accumulator; RootAccumulator = originalContext.Accumulator }
     Operands.copy ctx fixture.Owner fixture.Other |> failure |> ignore
     Assert.True((MLIRAccumulator.recallCallable fixture.Other ctx.Accumulator).IsNone)
 
@@ -340,10 +348,10 @@ let ``cyclic callable signature references fail without recursive emission or a 
     let graph, binding, input, _ = higherOrder false false
     let source = graph.Codata.Value.CallableCarriers[binding]
     let cyclic = { source with Occurrence = input; SourceType = graph.Nodes[input].Type }
-    let graph = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = graph.Codata.Value.CallableCarriers.Add(input, cyclic) } }
+    let graph = { graph with Codata = lazy { graph.Codata.Value with CallableCarriers = graph.Codata.Value.CallableCarriers.Add(input, cyclic) } } |> refusePublication "Callable carrier"
     let ctx = context graph binding
     let reason = Operands.project ctx binding |> failure
-    Assert.Contains("recursive component reference", reason)
+    Assert.Contains("source witness projection", reason)
     Assert.Empty ctx.Accumulator.AllOps
     Assert.Empty ctx.Accumulator.NodeAssoc
     Assert.Empty ctx.Accumulator.CallableAssoc
@@ -398,7 +406,7 @@ let private measuredFixture () =
     let carriers, residuals = Carriers.settle inputs raw
     Assert.Empty residuals
     let graph = { raw with Codata = lazy { graph.Codata.Value with CallableCarriers = carriers; KnownCallables = inputs.Known; EnvironmentOrigins = inputs.Origins } }
-    graph, declarationId, existing.Alias, existing.Other, code.Id
+    prepareSource graph, declarationId, existing.Alias, existing.Other, code.Id
 
 [<Fact>]
 let ``quantified measure aliases forward the exact recalled code and environment without erasing units`` () =
@@ -419,7 +427,7 @@ let ``quantified measure aliases forward the exact recalled code and environment
 let ``unquantified dimensions cannot borrow the shared signature permission`` () =
     let graph, declaration, _, _, implementation = measuredFixture ()
     let changedCode = { graph.Nodes[implementation] with Metadata = graph.Nodes[implementation].Metadata.Remove SchemeMetadata.Declaration }
-    let changed = { graph with Nodes = graph.Nodes.Add(implementation, changedCode) }
+    let changed = { graph with Nodes = graph.Nodes.Add(implementation, changedCode) } |> refusePublication "Callable"
     Operands.project (context changed declaration) declaration |> failure |> ignore
     let carrier = graph.Codata.Value.CallableCarriers[declaration]
     Operands.components (context graph declaration) (List.last carrier.ParameterShapes) |> failure |> ignore
@@ -439,7 +447,7 @@ let private measuredCallFixture () =
     let nodes = [binding; callee; environment; argument; call] |> List.fold (fun nodes node -> Map.add node.Id node nodes) graph.Nodes
     let row = { Sources = [occurrence; implementation; environment.Id; argument.Id]; Target = call.Id
                 Class = EdgeClass.Provenance; Role = EdgeRole.EnvironmentInvocation; Ordinal = 0 }
-    { graph with Nodes = nodes; Edges = row :: graph.Edges }, call.Id, implementation, parameters, row
+    prepareSource { graph with Nodes = nodes; Edges = row :: graph.Edges }, call.Id, implementation, parameters, row
 
 [<Fact>]
 let ``direct physical parameters require the current instantiated call and retain symbolic shared code`` () =
@@ -464,4 +472,5 @@ let ``direct parameter projection refuses broken instance correspondence`` chang
             let argument = graph.Nodes[List.last row.Sources]
             { graph with Nodes = graph.Nodes.Add(argument.Id, { argument with Type = Types.floatType }) }
         | _ -> failwith "Unknown mutation"
+    let graph = refusePublication "Callable" graph
     Operands.parametersAtCall (context graph site) site implementation parameters |> failure |> ignore

@@ -144,68 +144,26 @@ perf c2c report --stdio                       # map contention back to source
 
 When Fidelity claims two actors have isolated arenas, `perf c2c` should report **zero HITM events** between them. A true report substantiates the compile-time guarantee; a violation indicates either a compiler bug or incorrect usage. This is the verification loop that distinguishes the co-design predicate from a marketing claim: *the compiler produces a falsifiable guarantee, and a standard tool confirms it.*
 
-### 2.4 Coeffect Analysis: Hardware Intent as Data Beside the Graph
+### 2.4 Source-Owned Coeffect Analysis
 
-Where BAREWire supplies *spatial* knowledge (where data lives), coeffect analysis supplies *strategic* knowledge (what a computation needs from its environment, and therefore how it should be parallelized and placed). Coeffects are the dual of effects: effects describe what a computation does *to* its environment; coeffects describe what it requires *from* it.
+CCS/Baker owns the analysis of computation, memory access, resource requirements
+and temporal dependencies. Owning ingredients and recipes preserve native
+dimensions, scope, ordered joint incidence and the intermediate rewrite record.
 
-The framing case is the choice between two compilation strategies that determine what optimizations are even possible:
+Those analyses settle the constraints needed for any admitted placement or
+execution strategy. A purity label or a missing map entry does not authorize a
+fallback sequential strategy. Complete premises must establish the proposed
+commitment, and changes retract the conclusions that depend on them.
 
-- **Interaction nets** — for pure computation with no sequential dependencies or external effects. Computation is a graph of local rewrite rules; everything that can happen at once does. Maps naturally to GPU thread blocks, systolic arrays, dataflow fabrics.
-- **Delimited continuations** — for computation where order matters: external resources, temporal state, controlled concurrency. Captures "the rest of the computation" at well-defined points.
+Alex observes the immutable node-local consequences of this settlement through
+Huet Element/Pattern/Witness composition. It does not select a source execution
+regime, query hyperedges or derive placement from a function body. Composer's
+backend realizes the selected target while preserving the declared contract and
+source-to-artifact correspondence.
 
-The selection is driven by inferred context requirements:
-
-```fsharp
-type ContextRequirement =
-    | Pure                           // No external dependencies → Interaction nets
-    | MemoryAccess of AccessPattern  // Data access pattern → Guides parallelization
-    | ResourceAccess of Resource Set // External resources → Delimited continuations
-    | Temporal of HistoryDepth       // Needs past values → Streaming architecture
-```
-
-The architecturally decisive property is *where this knowledge lives*. Coeffects are **not** woven into the AST; they are held in **external analysis maps keyed by node id, beside the graph:**
-
-```fsharp
-// The graph node stays clean — structure only
-type PSGNode = {
-    Id: NodeId
-    Kind: PSGNodeKind
-    Symbol: FSharpSymbol option
-    SourceRange: range
-}
-
-// Coeffects live in external maps
-type CoeffectAnalysis = {
-    ComputationPatterns:  Map<NodeId, ComputationPattern>
-    MemoryAccessPatterns: Map<NodeId, AccessPattern>
-    ResourceRequirements: Map<NodeId, Set<Resource>>
-    TemporalDependencies: Map<NodeId, HistoryDepth>
-}
-
-// Strategy selection consults the maps, not the node
-let selectBackend (node: PSGNode) (coeffects: CoeffectAnalysis) =
-    match Map.tryFind node.Id coeffects.ComputationPatterns with
-    | Some PureDataParallel     -> InteractionNetBackend
-    | Some ResourceDependent    -> DelimitedContinuationBackend
-    | Some StreamingComputation -> PipelineParallelBackend
-    | _                         -> DefaultSequentialBackend
-```
-
-This "maps beside the graph" shape is **real in the Composer codebase today**, not aspirational. `PSGElaboration.Coeffects` and its siblings ([src/MiddleEnd/PSGElaboration/Coeffects.fs](../src/MiddleEnd/PSGElaboration/Coeffects.fs), [CoeffectValidation.fs](../src/MiddleEnd/PSGElaboration/CoeffectValidation.fs)) compute exactly such `Map<NodeId, _>` / `Set<NodeId>` structures — for example `AddressedMutableBindings: Set<NodeId>` and `ModifiedVarsInLoopBodies` — and they are serialized for inspection as `06_coeffects.json` in every sample's intermediates. A fragment from `10a_ImperativeControl`:
-
-```json
-{
-  "mutability": {
-    "AddressedMutableBindings": [706, 708, 765, 767, 769, 862, ...],
-    "ModifiedVarsInLoopBodies": [
-      { "Item1": 854, "Item2": ["intPos", "isDone", "iv"] },
-      { "Item1": 900, "Item2": ["ci", "pos"] }
-    ]
-  }
-}
-```
-
-The conceptual `CoeffectAnalysis` of the design note and the shipped `PSGElaboration.Coeffects` are the same idea at two altitudes: *metadata about the graph, computed before lowering, never mutating the graph.* (See [Coeffect_Analysis_Architecture.md](./Coeffect_Analysis_Architecture.md): "Coeffect analysis never modifies the PSG. It only computes metadata.")
+[Source-owned coeffect analysis](Coeffect_Analysis_Architecture.md) defines this
+boundary. Separate node-indexed maps are a representation technique, not a
+separate semantic-analysis owner.
 
 ### 2.5 Reconfiguration as the Reward: Per-Layer and Hybrid Placement
 

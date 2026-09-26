@@ -132,55 +132,6 @@ let pDirectCall (nodeId: NodeId) (funcName: string) (args: (SSA * MLIRType) list
             return (castOps @ [callOp], TRValue { SSA = resultSSA; Type = retType })
     }
 
-/// Build closure call — uniform calling convention for all function values.
-/// Every function value is a closure pair (memref<2xindex> = {code_ptr, env_ptr}).
-/// Extracts code_ptr and env_ptr, casts code_ptr to function type, call_indirect.
-///
-/// SSA layout (from Application node): [0]=result, [1..6]=closure extraction
-///   [0] = resultSSA
-///   [1] = oneSSA (constant 1 index)
-///   [2] = codePtrSSA (loaded from pair[0])
-///   [3] = unused (was envViewSSA)
-///   [4] = envPtrSSA (loaded from pair[1])
-///   [5] = zeroSSA (constant 0 index)
-///   [6] = funcCastSSA (index→func cast)
-let pClosureCall (nodeId: NodeId) (closureSSA: SSA) (args: (SSA * MLIRType) list) (retType: MLIRType)
-                 : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 7) $"pClosureCall: Expected 7 SSAs, got {ssas.Length}"
-        let resultSSA   = ssas.[0]
-        let oneSSA      = ssas.[1]
-        let codePtrSSA  = ssas.[2]
-        let envPtrSSA   = ssas.[4]
-        let zeroSSA     = ssas.[5]
-        let funcCastSSA = ssas.[6]
-
-        let pairTy = TMemRefStatic(2, TIndex)
-
-        // Index constants
-        let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
-        let oneOp = MLIROp.ArithOp (ArithOp.ConstI (oneSSA, 1L, TIndex))
-
-        // Load code_ptr from pair[0]
-        let codeLoadOp = MLIROp.MemRefOp (MemRefOp.Load (codePtrSSA, closureSSA, [zeroSSA], TIndex, pairTy))
-
-        // Load env_ptr from pair[1]
-        let envLoadOp = MLIROp.MemRefOp (MemRefOp.Load (envPtrSSA, closureSSA, [oneSSA], TIndex, pairTy))
-
-        // Cast code_ptr to function type: (index, args...) -> retType
-        let envVal = { SSA = envPtrSSA; Type = TIndex }
-        let argVals = envVal :: (args |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty }))
-        let allArgTypes = argVals |> List.map (fun v -> v.Type)
-        let funcCastOp = MLIROp.FuncOp (FuncOp.IndexToFunc (funcCastSSA, codePtrSSA, allArgTypes, retType))
-
-        // call_indirect: env_ptr prepended to user args
-        let callOp = MLIROp.FuncOp (FuncOp.FuncCallIndirect ([{ SSA = resultSSA; Type = retType }], funcCastSSA, argVals))
-
-        let ops = [zeroOp; oneOp; codeLoadOp; envLoadOp; funcCastOp; callOp]
-        return (ops, TRValue { SSA = resultSSA; Type = retType })
-    }
-
 // ═══════════════════════════════════════════════════════════
 // ARITHMETIC WRAPPER PATTERNS
 // ═══════════════════════════════════════════════════════════

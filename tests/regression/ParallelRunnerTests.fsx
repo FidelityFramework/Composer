@@ -89,7 +89,7 @@ let phaseBarrier () = task {
 let failedCompilesNeverRun () = task {
     let sample = {
         Name = "not-executed"; ProjectFile = "absent.fidproj"; BinaryName = "absent"
-        StdinFile = None; ExpectedOutput = ""; TimeoutSeconds = 1
+        StdinFile = None; ExpectedOutput = ""; TimeoutSeconds = 1; CompileTimeoutSeconds = 1
         Skip = false; SkipReason = None }
     let config = { SamplesRoot = work; CompilerPath = "absent"; DefaultTimeoutSeconds = 1; PruneIntermediates = false }
     let! failed = runBinaryPhaseAsync config (sample, CompileFailed (9, "compile out", "compile error", 1L), None)

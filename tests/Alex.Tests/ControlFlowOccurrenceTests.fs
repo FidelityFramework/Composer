@@ -21,7 +21,7 @@ let ``conditional guard descends through its actual occurrence and recalls the e
     let no = builder.Create(SemanticKind.Literal(NativeLiteral.Bool false), Types.boolType, dummyRange)
     let choice = builder.Create(SemanticKind.IfThenElse(guard.Id, yes.Id, Some no.Id), Types.boolType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [choice.Id], Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> prepareSource
     let accumulator = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode formal.Id (Arg 0) (TInt(IntWidth 1)) accumulator
     let scope = ref (ScopeContext.root ())
@@ -64,7 +64,7 @@ let ``control flow rejects a branch missing its declared occurrence even when an
     let choice = builder.Create(SemanticKind.IfThenElse(guard.Id, yes.Id, Some no.Id), Types.boolType, dummyRange)
     let original = builder.Build []
     let node = original.Nodes[choice.Id]
-    let graph = { original with Nodes = original.Nodes.Add(choice.Id, { node with Children = [guard.Id; no.Id] }) }
+    let graph = { original with Nodes = original.Nodes.Add(choice.Id, { node with Children = [guard.Id; no.Id] }) } |> prepareSource
     let accumulator = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode yes.Id (Arg 0) (TInt(IntWidth 1)) accumulator
     let scope = ref (ScopeContext.root ())

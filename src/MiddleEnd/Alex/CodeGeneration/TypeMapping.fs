@@ -243,9 +243,7 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         | Some tc -> mapTyCon tc []
         | None -> failwithf "mapNativeTypeForArch: unresolved carrier variable in numeric type '%s'; CCS must resolve it" (formatType ty)
     | NativeType.TFun _ ->
-        // Closures: {codePtr: ptr, envPtr: ptr} - homogeneous, use memref array
-        // Use TIndex (not TPtr) because index can be memref element type
-        TMemRefStatic (2, TIndex)
+        failwith "A callable requires its source-published code/environment components; scalar packed-closure type mapping is retired."
     | NativeType.TVar tvar ->
         // Use Union-Find to resolve type variable chains
         match find tvar with

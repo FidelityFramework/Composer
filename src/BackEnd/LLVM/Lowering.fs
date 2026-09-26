@@ -2,8 +2,6 @@
 ///
 /// This module handles MLIR-to-LLVM IR conversion:
 /// - Dialect lowering via mlir-opt (vector, scf, cf, func, arith → llvm)
-/// - reconcile-ffi-externs plugin resolves FFI extern symbol collisions
-/// - flat-closure-lowering plugin resolves closure cast patterns
 /// - mlir-translate to LLVM IR
 ///
 /// When Composer becomes self-hosted, this module gets replaced with
@@ -11,21 +9,6 @@
 module BackEnd.LLVM.Lowering
 
 open System.IO
-
-/// Resolve the path to an MLIR pass plugin.
-/// Checks FIDELITY_MLIR_PLUGINS environment variable first, then falls back
-/// to the standard build location under ~/repos/mlir-plugins/build/<name>/.
-let private resolvePluginPath (name: string) =
-    let envPath = System.Environment.GetEnvironmentVariable("FIDELITY_MLIR_PLUGINS")
-    let pluginDir =
-        if not (System.String.IsNullOrEmpty(envPath)) then envPath
-        else
-            let home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
-            Path.Combine(home, "repos", "mlir-plugins", "build", name)
-    Path.Combine(pluginDir, name + ".so")
-
-let internal closurePluginPath = resolvePluginPath "flat-closure-lowering"
-let internal ffiPluginPath = resolvePluginPath "reconcile-ffi-externs"
 
 /// Lower MLIR to LLVM IR using mlir-opt and mlir-translate
 let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerBits: int option) : Result<unit, string> =
@@ -52,45 +35,19 @@ let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerB
         File.WriteAllText(targetedPath, source.Substring(0, brace).TrimEnd() + attributes + source.Substring(brace))
         let mlirPath = targetedPath
         let indexPass name = sprintf "%s{index-bitwidth=%d}" name width
-        // Step 1: mlir-opt to convert to LLVM dialect
-        // Uses --pass-pipeline syntax (required for dynamically loaded pass plugins).
-        //
-        // Pipeline order:
-        //   memref preparation → vector → scf → cf → index → func → arith →
-        //   reconcile-ffi-externs → resolve-closure-casts →
-        //   reconcile-unrealized-casts → canonicalize
-        //
-        // reconcile-ffi-externs strips the "ffi." prefix from FFI extern
-        // declarations, reconciling any type differences with MLIR infrastructure
-        // declarations (e.g., @malloc from finalize-memref-to-llvm) via
-        // explicit LLVM casts (ptrtoint/inttoptr).
-        //
-        // resolve-closure-casts resolves three cast patterns from flat closures:
-        //   - !llvm.ptr → i64  (FuncToIndex: function pointer stored as index)
-        //   - i64 → !llvm.ptr  (IndexToFunc: index recovered as function pointer)
-        //   - i64 → memref     (IndexToMemRef: pointer to captured memref data)
-        //
-        // Both plugins run AFTER all standard dialect conversions and BEFORE
-        // reconcile-unrealized-casts.
-        let pluginArgs =
-            [ closurePluginPath; ffiPluginPath ]
-            |> List.filter File.Exists
-            |> List.map (sprintf "--load-pass-plugin=\"%s\"")
-            |> String.concat " "
-        let hasPlugins = pluginArgs.Length > 0
+        // Target realization uses stock dialect conversions. Callable and FFI
+        // semantics must already be settled in the PSG and witnessed faithfully.
         let passes =
             [ "expand-strided-metadata"; "memref-expand"; indexPass "finalize-memref-to-llvm"
               "convert-vector-to-llvm"; "convert-scf-to-cf"; "convert-cf-to-llvm"
               indexPass "convert-index-to-llvm"; indexPass "convert-func-to-llvm"
-              indexPass "convert-arith-to-llvm" ]
-            @ (if File.Exists ffiPluginPath then ["reconcile-ffi-externs"] else [])
-            @ (if File.Exists closurePluginPath then ["resolve-closure-casts"] else [])
-            @ ["reconcile-unrealized-casts"; "canonicalize"]
+              indexPass "convert-arith-to-llvm"
+              "reconcile-unrealized-casts"; "canonicalize" ]
         let pipeline = "builtin.module(" + String.concat "," passes + ")"
-        let mlirOptArgs = sprintf "%s --pass-pipeline=\"%s\" \"%s\"" pluginArgs pipeline mlirPath
         use mlirOptProcess = new System.Diagnostics.Process()
         mlirOptProcess.StartInfo.FileName <- "mlir-opt"
-        mlirOptProcess.StartInfo.Arguments <- mlirOptArgs
+        mlirOptProcess.StartInfo.ArgumentList.Add("--pass-pipeline=" + pipeline)
+        mlirOptProcess.StartInfo.ArgumentList.Add mlirPath
         mlirOptProcess.StartInfo.UseShellExecute <- false
         mlirOptProcess.StartInfo.RedirectStandardOutput <- true
         mlirOptProcess.StartInfo.RedirectStandardError <- true

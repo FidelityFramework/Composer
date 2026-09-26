@@ -265,9 +265,12 @@ explicit sequencing and strict primitives keep their required order; ordinary
 applications and aggregate formation cannot inherit blanket operand demand.
 Likewise, an immutable capture described as a snapshot may contain a computed
 value or a deferred binding identity. Materializing its bits must preserve which
-one it denotes. Program startup selects declared actions and demanded values;
-the mere presence of an effectful initializer is insufficient to activate an
-otherwise ordinary unused binding.
+one it denotes. Program startup follows its
+[separate activation contract](../../clef-lang-spec/spec/program-structure-and-execution.md#program-execution):
+observable initializers of active implementation units execute in compilation
+order before entry. Importing declarations alone does not activate a dependency
+unit; executable demand can activate it and its observable initializers. Ordinary
+bindings inside those activated computations retain default demand and sharing.
 
 Historical native traces that depended on implicit eager argument evaluation
 need semantic review. Where the intended example requires eager ordering, make

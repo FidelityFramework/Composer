@@ -115,9 +115,13 @@ the owning stage.
 General pair transport uses typed multi-value recall, signatures and call/return
 results. These component foundations must compose through the production
 witnesses, joins and stored-callable handling, with source-to-native acceptance
-for each boundary. The legacy packed path in
-`ApplicationPatterns.pClosureCall` is implementation debt, not the canonical
-contract. The bounded known-callee path does not establish arbitrary function
+for each boundary. The legacy packed path, including
+`ApplicationPatterns.pClosureCall`, must be removed immediately along with all
+MLIR plugin dependencies and conditional loading. Consumer migration does not
+delay retirement. Missing closure support must be repaired in its owning PSG
+contract and passive Element/Pattern/Witness composition; a middle-end MLIR
+semantic transform cannot substitute for that work.
+The bounded known-callee path does not establish arbitrary function
 storage or invocation. `Values.fs` derives SSA names from graph/role ordinals and
 block arguments; no capture reconstruction or SSA-preassignment pass is added.
 
@@ -135,7 +139,8 @@ Stock verification does not prove capture timing, lifetime or native correctness
 Interior function addresses are not converted to data. Canonical closure output
 SHALL NOT rely on `unrealized_conversion_cast` or a cast-resolution plugin.
 [M-01](M-01-DialectAdmission.md) governs operation/profile admission and downstream
-information preservation, including transformations of the witnessed artifact.
+information preservation, including target transformations in the selected
+backend. It does not authorize semantic transformation of MLIR in the middle end.
 
 ## 6. FFI Boundary Marshaling
 

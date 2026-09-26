@@ -301,7 +301,13 @@ Changing the source to distinguish null from undefined must invalidate both the 
 
 CCS checks the owned source and its actual callers. Baker's fan-out composes recipes from Ingredients; generic fold-in incorporates the resulting structure. The returned callable has settled captures and application boundaries in the PSG. The Option branch retains its conditional projection and ordinary evaluation semantics.
 
-Alex observes that settled graph through Library of Alexandria patterns and elements using the Huet-style zipper over the joint constraints. It emits `func`, `scf`, `arith`, `memref` and `index`. It does not match the names `create`, `choose` or either example package to select custom code generation.
+Alex observes that settled graph at authorized Huet positions through Library
+of Alexandria Elements, Patterns and Witnesses. Joint constraints remain in
+CCS/Baker; their settled consequences reach witnessing as node-local codata or
+deliberately reified annotations for a named downstream consumer. Emission
+never queries the hyperedge set. Alex emits `func`, `scf`, `arith`, `memref` and
+`index`. It does not match the names `create`, `choose` or either example package
+to select custom code generation.
 
 The JavaScript backend realizes these portable operations and uses retained codata where necessary. Under the Option specification's established no-collision condition for string payloads, an erased Option can use undefined for None. A possible JavaScript shape for the reachable SDK function is then:
 

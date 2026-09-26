@@ -77,7 +77,7 @@ let private fixture () =
             CallableJoins = storage.Joins
             MutableCallableStorage = storage.Storage
             Escapes = Map.ofList [cell.Id, EscapeKind.StackScoped] }
-    let graph = { raw with Codata = lazy codata }
+    let graph = { raw with Codata = lazy codata } |> prepareSource
     { Graph = graph; Root = Zipper.create graph root.Id |> require "Missing component root"
       Initial = initial.Id; Replacement = replacement.Id; Cell = cell.Id; FirstRead = firstRead.Id
       Snapshot = snapshot.Id; Assignment = assignment.Id; Target = target.Id; LatestRead = latestRead.Id
@@ -212,13 +212,21 @@ let ``mutable read retracts after a write changes even when prior cell operands 
     let f, operands, _, _, _, _ = stages 64
     let assignment = f.Graph.Nodes[f.Assignment]
     let changed = { assignment with Kind = SemanticKind.Set(f.Target, f.Initial) }
-    let graph = { f.Graph with Nodes = f.Graph.Nodes.Add(assignment.Id, changed) }
+    let graph =
+        { f.Graph with Nodes = f.Graph.Nodes.Add(assignment.Id, changed) }
+        |> refusePublication "Mutable callable storage"
     let position = Zipper.create graph f.LatestRead |> require "Missing changed read"
-    let output = observe Alex.Witnesses.VarRefWitness.nanopass position 64 operands
-    match output.Result with
-    | TRError diagnostic -> Assert.Contains("complete source protocol", diagnostic.Message)
-    | other -> failwithf "Stale source evidence admitted a read: %A" other
-    Assert.Empty(output.InlineOps)
+    let ctx = context position 64 operands
+    let snapshots = MLIRAccumulator.snapshotOperands operands
+    // Classification requires publication too. Exercise the actual read Pattern
+    // directly after the source owner has refused this changed write census.
+    let read = Alex.Patterns.MutableCallablePatterns.pReadMutableCallable ctx f.Cell f.LatestRead
+    match matchAt read position 64 operands with
+    | Result.Error reason -> Assert.Contains("source witness projection", reason)
+    | Result.Ok _ -> failwith "Stale source evidence admitted a mutable read"
+    Assert.Same(snapshots.Callables, operands.CallableAssoc)
+    Assert.Same(snapshots.CallableCells, operands.CallableCellAssoc)
+    Assert.Empty(operands.AllOps)
 
 [<Fact>]
 let ``scoped operand snapshots retain the shared cell beside callable value snapshots`` () =

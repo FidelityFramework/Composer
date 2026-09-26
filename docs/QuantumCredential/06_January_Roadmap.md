@@ -207,7 +207,7 @@ separate integration requirements.
 
 **CCS:**
 - [ ] Review and test Time.fs primitives
-- [ ] Ensure all current primitives have Alex bindings
+- [ ] Establish each primitive's CCS/Baker contract, passive witness coverage and backend realization
 
 ### Week 2: ARM Platform Primitives
 
@@ -216,9 +216,9 @@ separate integration requirements.
 - [ ] Add ADC sampling primitive
 - [ ] Add basic timer primitives
 
-**Alex:**
-- [ ] Add ARM syscall/register bindings
-- [ ] Create STM32L5-specific memory map
+**CCS/Baker and Composer backend:**
+- [ ] Settle ARM syscall/register declarations and ABI in CCS/Baker; add backend realization after passive witnessing
+- [ ] Declare the STM32L5 memory map and settle its source access obligations in CCS/Baker
 - [ ] Test LED blink on hardware
 
 **Hardware:**

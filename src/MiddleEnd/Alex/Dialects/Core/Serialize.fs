@@ -594,16 +594,10 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             let bodyStr = body |> List.map (opToString pointer) |> String.concat "\n    "
             sprintf "func.func @%s(%s) -> %s {\n    %s\n}" (symbolName name) argsStr (resultTypesToString pointer resultTypes) bodyStr
         | FuncDecl (name, paramTypes, resultTypes, _visibility, byvalParams) ->
+            if not byvalParams.IsEmpty then
+                failwithf "Foreign declaration '%s' requires a source-settled aggregate ABI realization; portable func declarations cannot realize byval metadata" name
             let paramsStr = paramTypes |> List.map (typeToString pointer) |> String.concat ", "
-            let attrsStr =
-                match byvalParams with
-                | [] -> ""
-                | bvs ->
-                    // Encode byval metadata as function attribute for reconcile-ffi-externs plugin.
-                    // Format: "idx:size:align,idx:size:align,..."
-                    let bvStr = bvs |> List.map (fun bv -> sprintf "%d:%d:%d" bv.ParamIndex bv.SizeBytes bv.AlignBytes) |> String.concat ","
-                    sprintf " attributes {ffi.byval = \"%s\"}" bvStr
-            sprintf "func.func private @%s(%s) -> %s%s" (symbolName name) paramsStr (resultTypesToString pointer resultTypes) attrsStr
+            sprintf "func.func private @%s(%s) -> %s" (symbolName name) paramsStr (resultTypesToString pointer resultTypes)
         | FuncCall (results, funcName, args) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString pointer v.Type) |> String.concat ", "
@@ -616,12 +610,6 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
                 (resultTypesToString pointer (List.map _.Type results))
         | FuncConstant (result, funcName, funcTy) ->
             sprintf "%s = func.constant @%s : %s" (ssaToString result) (symbolName funcName) (typeToString pointer funcTy)
-        | IndexToFunc (result, source, argTypes, retTy) ->
-            let funcTyStr = typeToString pointer (TFunc(argTypes, if retTy = TVoid then [] else [retTy]))
-            sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s" (ssaToString result) (ssaToString source) funcTyStr
-        | FuncToIndex (result, source, argTypes, retTy) ->
-            let funcTyStr = typeToString pointer (TFunc(argTypes, if retTy = TVoid then [] else [retTy]))
-            sprintf "%s = builtin.unrealized_conversion_cast %s : %s to index" (ssaToString result) (ssaToString source) funcTyStr
         | Return values ->
             match values with
             | [] -> "func.return"

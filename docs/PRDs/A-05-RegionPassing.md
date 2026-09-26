@@ -80,40 +80,17 @@ val transform : r:Region -> input:nativeptr<int> -> len:int -> nativeptr<int>@r
 
 The `@r` annotation (not user-visible syntax) indicates the result is allocated in region `r`.
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.1 Region Parameter SSA
+CCS/Baker settles actual-to-formal region identity, ownership, borrowing,
+allocation provenance and lifetime for each call occurrence. It admits release
+only where the complete source-owned relationship permits it; borrowed regions
+cannot become owned because of their physical pointer representation.
 
-Region parameters are treated like any other parameter:
-
-```fsharp
-// In SSAAssignment for function parameters
-| paramType when paramType = TRegion ->
-    let paramSSA = freshSSA ()
-    bindParameter name paramSSA TRegion
-```
-
-### 4.2 No Special Witness Logic
-
-Region parameters use the same MLIR as local regions - they're just pointers to Region structs. The only difference is ownership tracking (no release).
-
-### 4.3 BorrowedRegion Coeffect
-
-The coeffect system tracks borrowed regions to prevent accidental release:
-
-```fsharp
-type FunctionCoeffect = {
-    BorrowedRegions: Set<string>  // Parameter names
-    // ...
-}
-
-let emitRegionRelease z regionSSA =
-    if isBorrowedRegion regionSSA z then
-        // Compiler error - should have been caught in CCS
-        failwith "Cannot release borrowed region"
-    else
-        emitMunmap z regionSSA
-```
+Region parameters use the source-settled physical signature. Alex witnesses
+those parameters and admitted operations like other settled values. It does not
+run ownership analysis or decide whether to insert or suppress a release.
+Unresolved or invalid ownership fails at the owning source contract.
 
 ## 5. MLIR Output Specification
 
@@ -218,7 +195,7 @@ Doubled: 20 20 20 20 20
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Preprocessing/RegionOwnership.fs` | CREATE | Track borrowed region coeffects |
+| CCS/Baker region ownership | CREATE | Settle actual/formal borrowing and lifetime premises |
 
 ## 8. Implementation Checklist
 
@@ -227,9 +204,10 @@ Doubled: 20 20 20 20 20
 - [ ] Error on releasing borrowed region
 - [ ] Track allocations per region parameter
 
-### Phase 2: Alex Implementation
-- [ ] Add BorrowedRegion coeffect
-- [ ] Verify release not emitted for borrowed
+### Phase 2: Settlement and Witnessing
+- [ ] Publish source-settled borrowing and admitted operations
+- [ ] Passively witness settled region parameters and calls
+- [ ] Verify the source graph contains no unauthorized borrowed-region release
 
 ### Phase 3: Validation
 - [ ] Sample 21 compiles without errors

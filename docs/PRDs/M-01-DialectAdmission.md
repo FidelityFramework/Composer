@@ -32,6 +32,16 @@ express the complete admitted form, including nested regions, results, block
 arguments and dependencies. A missing receiving form is concrete Elements,
 Patterns or Witnesses work; a missing semantic fact belongs to Baker.
 
+All MLIR plugin dependencies must be removed immediately, including conditional
+loading and associated fallback paths. Consumer migration is not a prerequisite
+for removal. M-01 does not authorize a middle-end MLIR semantic transform:
+semantic decomposition, declaration/signature authority and representation
+selection settle in the PSG. Alex passively composes the admitted physical form
+through Huet Elements/Patterns/Witnesses. Backend target lowering and its
+preservation checks remain in the selected backend. Record plugin-free build,
+verifier and native outcomes separately; removing a dependency does not itself
+complete an operation/pathway admission.
+
 This PRD gives the existing [retooling admission discipline](../../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md#7-the-drift-gates--checked-in-ci-not-remembered)
 a cross-cutting Composer waypoint. The [language standard](../../../clef-lang-spec/spec/backend-lowering-architecture.md#21-portable-dialects)
 governs admission; [Thin Middle End](../Thin_Middle_End_Design.md) governs the
@@ -48,7 +58,7 @@ BAREWire, Fidelity.Platform, Fidelity.UI where applicable, and the program,
 elaborated into Baker's graph.
 
 **Alex is target-aware.** A Pattern/Witness can match the selected profile and
-the graph's settled facts to choose the appropriate MLIR form. This is faithful
+the graph's source-settled physical form to compose the appropriate MLIR operations. This is faithful
 observation of the available information. It does not require all targets to
 receive the same dialect subset, control-flow form or operation sequence.
 For example, an explicit-block `cf` form can suit one profile while another
@@ -60,6 +70,7 @@ The admission key is **expression family × platform/backend profile × witness
 form**. Record the form's prerequisites, suitability/selection rule, accepted
 input/output vocabulary and evidence. Where several forms are valid, a declared
 selection policy resolves the choice without inventing new semantic facts.
+That choice settles in the PSG before witnessing; Alex consumes its result.
 Having a dialect installed, a type printer, a conversion pass, or one working
 operation is insufficient evidence for the rest of that dialect.
 

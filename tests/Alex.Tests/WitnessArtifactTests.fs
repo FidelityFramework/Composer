@@ -47,15 +47,14 @@ let private recorded ctx operations =
     scope, rows, catalog
 
 [<Fact>]
-let ``actual witness occurrence survives declaration relocation and exact import collection`` () =
+let ``actual witness occurrence accompanies explicit module import inventory`` () =
     let ctx = fixture ()
     let external = MLIROp.FuncOp(FuncDecl("foreign", [], [], FuncVisibility.Private, []))
-    let op = definition "body" [external; MLIROp.FuncOp(FuncCall([], "foreign", []))]
+    let op = definition "body" [MLIROp.FuncOp(FuncCall([], "foreign", []))]
     EmissionCorrespondence.record ctx [op]
     let scope = ctx.Accumulator.WitnessScope.Value
-    let operations = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [op]
-    let rows = ctx.Accumulator.EmittedDefinitions |> List.map (fun row ->
-        { row with Operation = Alex.Pipeline.MLIRNanopass.relocateDefinition row.Operation |> require "Missing relocated definition" })
+    let operations = [external; op]
+    let rows = ctx.Accumulator.EmittedDefinitions
     let catalog = Catalog.create scope CheckedProgramStartup rows operations (text operations) [] |> good
     Assert.Equal("foreign", (Assert.Single catalog.Units.Head.Imports).Symbol)
     let row = Assert.Single catalog.Units.Head.Definitions
@@ -138,7 +137,7 @@ let ``identical duplicate typed imports are refused as duplicate inventory`` () 
 [<InlineData(1)>]
 [<InlineData(2)>]
 [<InlineData(3)>]
-let ``relocation rejects duplicate imports with conflicting byval or visibility`` mutation =
+let ``catalog rejects duplicate imports with conflicting byval or visibility`` mutation =
     let descriptor = TMemRefStatic(2, TInt(IntWidth 32))
     let actual = { ParamIndex = 0; SizeBytes = 8; AlignBytes = 4 }
     let altered =
@@ -151,18 +150,29 @@ let ``relocation rejects duplicate imports with conflicting byval or visibility`
     let second =
         MLIROp.FuncOp(FuncDecl("foreign_record", [descriptor; descriptor], [],
             (if mutation = 3 then FuncVisibility.Public else FuncVisibility.Private), [altered]))
-    let error = Assert.ThrowsAny<Exception>(fun () ->
-        Alex.Pipeline.MLIRNanopass.declarationCollectionPass [first; definition "body" [second]] |> ignore)
-    Assert.Contains("Conflicting external declaration ABI or visibility", error.Message)
+    let ctx = fixture ()
+    let operations = [first; second; definition "body" []]
+    EmissionCorrespondence.record ctx operations
+    Catalog.create ctx.Accumulator.WitnessScope.Value CheckedProgramStartup ctx.Accumulator.EmittedDefinitions operations "physical inventory" []
+    |> refused "duplicate typed import inventory"
 
 [<Fact>]
-let ``relocation preserves one exactly equivalent repeated import including byval`` () =
-    let descriptor = TMemRefStatic(2, TInt(IntWidth 32))
-    let declaration = MLIROp.FuncOp(FuncDecl("foreign_record", [descriptor], [], FuncVisibility.Private,
-                                          [{ ParamIndex = 0; SizeBytes = 8; AlignBytes = 4 }]))
-    let operations = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [declaration; definition "body" [declaration]]
-    let imports = operations |> List.collect (Catalog.flatten >> Seq.toList) |> List.filter (function MLIROp.FuncOp(FuncDecl _) -> true | _ -> false)
-    Assert.Equal(declaration, Assert.Single imports)
+let ``one explicit module declaration serves repeated calls without a repair pass`` () =
+    let ctx = fixture ()
+    let declaration = MLIROp.FuncOp(FuncDecl("foreign", [], [], FuncVisibility.Private, []))
+    let call = MLIROp.FuncOp(FuncCall([], "foreign", []))
+    let operations = [declaration; definition "body" [call; call]]
+    let _, _, catalog = recorded ctx operations
+    Assert.Equal("foreign", (Assert.Single catalog.Units.Head.Imports).Symbol)
+
+[<Fact>]
+let ``a nested import is rejected rather than hoisted`` () =
+    let ctx = fixture ()
+    let declaration = MLIROp.FuncOp(FuncDecl("foreign", [], [], FuncVisibility.Private, []))
+    let operations = [definition "body" [declaration]]
+    EmissionCorrespondence.record ctx operations
+    Catalog.create ctx.Accumulator.WitnessScope.Value CheckedProgramStartup ctx.Accumulator.EmittedDefinitions operations (text operations) []
+    |> refused "nested external declaration"
 
 [<Fact>]
 let ``planned startup cannot disappear from the emitted unit`` () =

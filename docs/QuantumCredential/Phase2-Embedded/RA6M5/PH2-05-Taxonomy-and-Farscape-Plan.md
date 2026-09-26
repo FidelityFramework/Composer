@@ -130,7 +130,7 @@ only to binding-ingestion — to be extended to cover PORT):
 | Source | Nature | Mode | Mechanism |
 |--------|--------|------|-----------|
 | **Renesas FSP** | imperative vendor glue; the value is the domain map, not the code | **PORT** | Agent-driven Clef-native reimplementation guided by the keep/reimplement/discard taxonomy above. C/C++ becomes *reference*, not a dependency. |
-| **USB device stack** / **LVGL** (display-equipped targets) | large, mature, well-factored C library | **BIND** | Farscape membrane → matched (Clef binding + Alex lowering witness) pairs. C remains behind the boundary. |
+| **USB device stack** / **LVGL** (display-equipped targets) | large, mature, well-factored C library | **BIND** | Farscape declaration → CCS/Baker boundary/adapter settlement → passive Alex witnessing → backend realization. C remains behind the boundary. |
 
 The criterion is the *shape and value* of the source. FSP's value is its domain
 decomposition and datasheet-aligned vocabulary; its code is imperative scaffolding we

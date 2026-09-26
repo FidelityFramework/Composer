@@ -1,347 +1,81 @@
-# Coeffect Analysis Architecture
-
-> **Coeffect Analysis** is the computation of metadata about the PSG that enables lowering strategy decisions. It is fundamentally distinct from **Enrichment** (node synthesis) - coeffects analyze structure, they don't create it.
-
-## Overview
-
-In functional programming theory, **effects** describe what a computation does to its environment (mutation, I/O, exceptions), while **coeffects** describe what a computation requires from its environment (context, resources, capabilities).
-
-In the Fidelity compiler, **Coeffect Analysis** extends this concept to encompass all metadata computation that informs lowering strategies. This includes:
-- SSA assignment (variable lifetimes and versions)
-- Mutability analysis (which bindings are mutable, which are addressed)
-- Yield state tracking (for sequence expressions) — interim; superseded by the suspension recipe, which settles segments and frame slots on the graph at saturation ([Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md))
-- Pattern binding analysis (for match expressions)
-- String table construction (for string literals)
-
-## The Critical Distinction
-
-### Enrichment: Synthesizing Structure
-
-Enrichment (elaboration + saturation) creates PSG nodes:
-- Input: PSG with some nodes
-- Output: PSG with more nodes
-- The structure of the graph changes
-
-### Coeffect Analysis: Computing Metadata
-
-Coeffect analysis computes information about existing structure:
-- Input: Saturated PSG
-- Output: Metadata/indices/maps about the PSG
-- The structure of the graph is unchanged
-
-```
-┌──────────────────────┐     ┌──────────────────────┐
-│     ENRICHMENT       │     │  COEFFECT ANALYSIS   │
-│  (Node Synthesis)    │     │  (Metadata Compute)  │
-├──────────────────────┤     ├──────────────────────┤
-│ • Intrinsic elab     │     │ • SSA assignment     │
-│ • Baker saturation   │     │ • Mutability analysis│
-│ • Pattern expansion  │     │ • Yield state indices│
-│                      │     │ • Pattern bindings   │
-├──────────────────────┤     ├──────────────────────┤
-│ Creates nodes        │     │ Analyzes nodes       │
-│ Changes PSG shape    │     │ PSG shape unchanged  │
-│ Happens BEFORE lower │     │ Happens BEFORE lower │
-└──────────────────────┘     └──────────────────────┘
-```
-
-### Hyperedge Enrichment: Structure Over F
-
-Since the hypergraph landed in CCS (2026-09) there is a third class, and it is enrichment, not analysis. A recipe over the hyperedge set $F$ creates **nodes and edges**: an obligation node whose `Constrains` edge names the storages it governs, a `Resides` edge from a buffer to the platform space that declares it, a layout edge whose source set is every literal it places. Its consequence reaches the witness only as annotations projected onto the governed nodes (the transport rule, spec `program-hypergraph.md` §5) — the witness never queries $F$. What used to be authored as a coeffect in this repository (the readln buffer capacity, the consecutive placement of string literals, the closure layout) is, class by class, becoming a consequence of $F$ settled in CCS; the coeffect table above shrinks as that happens, and nothing in it is authoritative where the graph already carries the fact.
-
-## Why Coeffects Matter for Fidelity
-
-### The Control-Flow ↔ Dataflow Duality
-
-This is the essence of the "Fidelity" in Fidelity framework.
-
-Clef source code expresses computations declaratively (dataflow style):
-```fsharp
-let result = items |> List.map transform |> List.filter predicate
-```
-
-But native code execution is inherently control-flow oriented:
-```
-loop:
-  load item
-  call transform
-  test predicate
-  branch ...
-```
-
-Coeffect analysis provides the information needed to **pivot between these representations** while preserving semantic fidelity.
-
-### The Pivot Decision
-
-Given a computation, the compiler can lower it via:
-1. **Control-flow emphasis** - Explicit loops, branches, state machines
-2. **Dataflow emphasis** - SIMD operations, vectorization, fusion
-
-The choice depends on:
-- Target platform capabilities (SIMD width, cache structure)
-- Input characteristics (known size, streaming vs materialized)
-- Operation semantics (can it vectorize? does order matter?)
-
-**Coeffect analysis provides the data needed to make this decision correctly.**
-
-## Coeffect Analysis Components
-
-### 1. SSA Assignment
-
-Computes Single Static Assignment form for the PSG:
-- Each variable binding gets a unique SSA name
-- Tracks variable versions through mutations
-- Enables register allocation and optimization
-
-```fsharp
-type SSAAssignment = {
-    NodeToSSA: Map<NodeId, SSA>
-    BindingVersions: Map<string, int>
-}
-```
-
-**Why it's a coeffect:** SSA names are metadata about bindings, not new nodes. The PSG structure is unchanged; we're computing a mapping.
-
-### 2. Mutability Analysis
-
-Identifies mutable state patterns:
-- Which bindings are mutable (`let mutable`)
-- Which mutable bindings have their address taken (`&x`)
-- Which variables are modified in loop bodies
-- Module-level mutable bindings (require special initialization)
-
-```fsharp
-type MutabilityAnalysis = {
-    AddressedMutableBindings: Set<NodeId>
-    ModifiedVarsInLoopBodies: Set<NodeId>
-    ModuleLevelMutableBindings: (string * NodeId * NodeId) list
-}
-```
-
-**Why it's a coeffect:** This is analysis of existing structure. We're classifying bindings, not creating new ones.
-
-### 3. Yield State Indices
-
-For sequence expressions, tracks:
-- Number of yield points
-- State machine structure (Sequential vs WhileBased)
-- Internal state variable mappings
-
-```fsharp
-type YieldStateAnalysis = {
-    SeqExprId: NodeId
-    NumYields: int
-    BodyKind: SeqBodyKind
-    Yields: (NodeId * int * NodeId) list  // YieldId, StateIndex, ValueId
-    InternalState: (string * NodeId * int) list  // Name, BindingId, StructIndex
-}
-```
-
-**Why it's a coeffect:** Yield indices are metadata for state machine generation. The seq expression nodes already exist; we're computing their state machine layout.
-
-### 4. Pattern Binding Analysis
-
-For match expressions, tracks:
-- Entry pattern bindings (top-level matches)
-- Case-specific bindings (per-branch bindings)
-- Binding lifetimes and scopes
-
-```fsharp
-type PatternBindingAnalysis = {
-    EntryPatternBindings: (NodeId * string * NativeType) list
-    CasePatternBindings: Map<int, (NodeId * string * NativeType) list>
-}
-```
-
-**Why it's a coeffect:** Pattern bindings are structural analysis. The match expression exists; we're computing how values flow through it.
-
-### 5. String Table
-
-Collects string literals for data section emission:
-- Global name assignment
-- Content and byte length
-- Deduplication
-
-```fsharp
-type StringEntry = {
-    GlobalName: string
-    Content: string
-    ByteLength: int
-}
-```
-
-**Why it's a coeffect:** String literals exist in the PSG. The table is metadata enabling efficient data section layout.
-
-## Pipeline Placement
-
-```
-Source Code → CCS → PSG Construction
-                          ↓
-                    CCS Resolution
-                          ↓
-┌─────────────────────────────────────┐
-│          PSG SATURATION             │  ← Enrichment happens here
-│   (Intrinsic Elab + Baker)          │
-└─────────────────────────────────────┘
-                          ↓
-                    PSG Elaboration Nanopasses
-                          ↓
-┌─────────────────────────────────────┐
-│        COEFFECT ANALYSIS            │  ← Analysis happens here
-│   (SSA, Mutability, YieldState...)  │
-└─────────────────────────────────────┘
-                          ↓
-                    Alex/Zipper → MLIR
-```
-
-### Why Analysis Happens After Saturation
-
-1. **Complete structure required** - SSA assignment needs to see ALL bindings, including those synthesized by Baker.
-
-2. **Yield states need full seq body** - Seq expression analysis requires the complete state machine structure, which Baker provides.
-
-3. **Mutability must see enriched code** - Baker may introduce mutable accumulators; mutability analysis must see them.
-
-## The "Only Pay for What You Use" Principle
-
-Coeffect analyses are demand-driven:
-
-| If the PSG contains... | Then run... |
-|------------------------|-------------|
-| Seq expressions | YieldStateAnalysis |
-| Mutable bindings | MutabilityAnalysis |
-| Match expressions | PatternBindingAnalysis |
-| String literals | StringTableCollection |
-| Any bindings | SSAAssignment (always) |
-
-This is efficient: a simple program with no sequences doesn't pay for sequence analysis.
-
-## Serialization: `alex_coeffects.json`
-
-All coeffect analysis results are serialized for debugging:
-
-```json
-{
-  "version": "2.0",
-  "ssaAssignment": {
-    "nodeToSSA": { "42": "v0", "43": "v1" },
-    "bindingVersions": { "x": 2, "y": 1 }
-  },
-  "mutability": {
-    "addressedMutableBindings": [55, 67],
-    "moduleLevelMutableBindings": [
-      { "name": "counter", "bindingId": 55, "initialValueId": 56 }
-    ]
-  },
-  "yieldStates": {
-    "seqYields": [
-      {
-        "seqExprId": 100,
-        "numYields": 3,
-        "bodyKind": "WhileBased",
-        "yields": [...]
-      }
-    ]
-  },
-  "strings": [
-    { "globalName": "@str_abc123", "content": "Hello", "byteLength": 5 }
-  ]
-}
-```
-
-This enables:
-- Debugging lowering decisions
-- Understanding state machine layout
-- Verifying SSA correctness
-- Auditing mutability handling
-
-## The Control-Flow ↔ Dataflow Pivot in Practice
-
-### Example: Sequence Expression
-
-Source (dataflow style):
-```fsharp
-seq {
-    for x in items do
-        if predicate x then
-            yield transform x
-}
-```
-
-Coeffect analysis provides:
-- Yield count: 1
-- Body kind: WhileBased
-- State variables: iterator position, current value
-
-With this metadata, Alex can choose:
-- **Control-flow lowering:** State machine with explicit transitions
-- **Dataflow lowering:** (if items is known-size array) Vectorized filter-map
-
-### Example: List Operations
-
-Source (dataflow style):
-```fsharp
-items |> List.map f |> List.filter p |> List.fold g init
-```
-
-Coeffect analysis provides:
-- Operation chain structure
-- Intermediate type sizes
-- Potential fusion opportunities
-
-With this metadata, Alex can choose:
-- **Control-flow lowering:** Three separate traversals
-- **Dataflow lowering:** Fused single-pass with deforestation
-
-## Why This is "Fidelity"
-
-The Fidelity framework preserves semantic correctness while enabling optimal lowering:
-
-1. **Clef semantics preserved** - The user's code means exactly what Clef says it means
-2. **Native efficiency achieved** - Lowering exploits platform capabilities
-3. **Pivot informed by coeffects** - Analysis provides data for correct decisions
-
-Without coeffect analysis, the compiler would either:
-- Always use conservative lowering (inefficient)
-- Make uninformed optimization decisions (potentially incorrect)
-
-Coeffects enable **informed, correct optimization**.
-
-## Design Principles
-
-### 1. Analysis Not Transformation
-
-Coeffect analysis never modifies the PSG. It only computes metadata. This ensures:
-- PSG remains the single source of truth
-- Analysis results can be recomputed
-- Debugging shows original structure
-
-### 2. Demand-Driven Computation
-
-Analyses run only when needed. A module with no sequences has no sequence analysis overhead.
-
-### 3. Serializable Results
-
-All coeffect data serializes to JSON for debugging and tooling integration.
-
-### 4. Pipeline Phase Discipline
-
-Coeffect analysis runs AFTER enrichment, BEFORE lowering. This ordering is architecturally required.
-
-## Second-Horizon Reach
-
-Coeffect and codata analysis is also the carriage for the framework's furthest stated reach, second horizon or beyond. In the working paper "Fixed-Point Scaffolding", three axes meet at a PSG node: compilation, joint-constraint, and verification-strength. "Negative and Fractional Types" proposes the duality dimension as a fourth, parallel to those three, with η morphisms creating dual pairs and ε morphisms annihilating them. Its audit-log hyperedges would pair positive and negative cells, with Baker's elaboration carrying the type-level pairing as PSG codata for these analyses to read, and the paper states that reversal verification remains decidable because the dependencies are structurally explicit in the flat closure representation. That is the load path: flat closures (the finiteness lemma, with the form family of [C-01 PRD](./PRDs/C-01-Closures.md) Section 14), thunks (the lazy slot class), and incremental (cutoff by environment closedness) are the members beneath the reach, and its guarantees hold exactly as far as those three hold. [Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md) carries the continuation frame as an instance of that same Section 14 environment, [Thin_Middle_End_Design.md](./Thin_Middle_End_Design.md) holds the witness boundary that governs this work, and the spec today carries negative and fractional types only as proposed, non-normative entries in `clef-lang-spec/spec/terms-and-definitions.md`, with [Negative_Fractional_Types_Architecture.md](./Negative_Fractional_Types_Architecture.md) as the companion treatment those entries name.
-
-With the third admitted paper, "Adaptive Domain Models", the scaffold has geometric-algebra underpinnings that support the engineering and are evinced by the theory of its decidability. Blade-support masks are coeffects in this document's sense: the PHG paper states the output support of a geometric-product hyperedge as the set of symmetric differences over the operand masks, a sound over-approximation, with the guarantee that no arithmetic path exists for a foreclosed component. Joint resolution discharges through the standing tiers, with the furthest formal reach as the stated exception: cryptographic relational proofs in pRHL sit at the relational tier (Tier 4), where interactive formalization enters.
-
-## Related Documents
-
-- [PSG_Enrichment_Architecture.md](./PSG_Enrichment_Architecture.md) - Enrichment (distinct from coeffects)
-- [Architecture_Canonical.md](./Architecture_Canonical.md) - Overall system architecture
-- [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) - PSG construction and nanopasses
-
-## Serena Memories
-
-- `psg_elaboration_architecture` - PSGElaboration nanopass architecture
-- `deterministic_memory_management` - Memory management decisions (coeffect-informed)
-- `lazy_seq_flat_closure_architecture` - Lazy/Seq implementations (use yield state analysis)
+# Source-owned coeffect analysis
+
+CCS/Baker owns semantic analysis, elaboration and saturation in the PSG. The
+[PHG specification](../../clef-lang-spec/spec/program-hypergraph.md) governs joint
+relations and their transport. Alex consumes settled consequences through passive
+Huet Element/Pattern/Witness composition.
+
+## Structure, facts and joint premises
+
+Baker ingredients and recipes construct the executable structure of admitted
+operations. Owning analyses establish its type, demand, effect, capture, numeric,
+storage, placement and lifetime facts. Both participate in source settlement;
+there is no separate semantic-analysis stage in Alex.
+
+A local conclusion may be stored as a node coeffect. When it depends jointly on
+several participants, the graph retains their roles, ordered occurrences,
+multiplicity, premises and obligation status. A projected range or layout does
+not replace the relationship that justifies it.
+
+For example, a continuation frame depends on its delimiter, suspension cuts,
+live-across values, initializers and all relevant stores. A closure environment
+depends on its actual capture instances, modes, uses, physical formals and
+covering storage. A static pool depends on its complete literal membership,
+declared storage authority, layout and capacity. These are source-owned judgments.
+
+## Elaboration and settlement
+
+Fan-out proposes typed graph changes and relations against identified premises.
+Fold-in validates those premises, preserves source/replacement correspondence
+and invalidates dependent facts. Owning analyses then establish the requirements
+of the demanded boundary, including any newly generated structure.
+
+The dependency order follows each judgment's actual inputs. There is no universal
+one-pass rule that all semantic analysis happens after every recipe. Recursive
+components need their domain's sound convergence policy. Quiescence, a progress
+label or a stopped work budget cannot establish missing facts.
+
+Source-owned analysis may be demand-driven. A request for information does not
+transfer analysis ownership to its consumer. Every fact required for witnessing
+must be settled before that commitment. Partial editor observations may retain
+pending facts and their located explanations.
+
+## Publication and physical composition
+
+CCS/Baker publishes immutable node-local codata and reified structure containing
+the settled consequences needed downstream. Alex does not query hyperedges or
+rerun analysis to complete the publication. Its structural zipper retains the
+actual occurrence and enclosing scope.
+
+Physical SSA naming, typed operand recall and operation correspondence are
+emission bookkeeping. They neither determine semantic layouts nor supply proof
+premises. The backend realizes the admitted operations for the selected target;
+its scheduling and encoding must preserve or re-establish the affected claims.
+
+An unresolved source fact, absent witness coverage for an already settled form,
+and failed artifact correspondence are distinct failures. Preserve their origins
+and owning boundaries instead of silently choosing a width, storage class or
+replacement algorithm.
+
+## Invalidation and retained evidence
+
+Each conclusion retains its actual dependencies, including absence and membership
+observations, complete alternative support, rule identities and platform facts.
+An edit retracts unsupported conclusions and resettles their owning regions.
+Scoped witnessing receives source-authorized revisions, occurrences and boundary
+contracts; matching node numbers do not authorize reuse.
+
+The rewrite record preserves proposals, fold-in decisions, transferred and
+invalidated facts, retired participants and intermediate correspondence. Pruned
+views retain evidence closure or resolvable references. Independent analyses and
+backend checks must establish their own propositions; a shared graph does not
+make their proofs interchangeable.
+
+## Governing contracts
+
+- [Baker saturation](../../clef/docs/fidelity/Baker_Saturation_Architecture.md)
+- [Closure settlement](Closure_Settlement_Contract.md)
+- [Evaluation and demand](Evaluation_Strategy_Contract.md)
+- [Nanopass and incremental contracts](Nanopass_Incremental_Contract_Direction.md)
+- [Alex witnessing](Alex_Architecture_Overview.md)
+- [C-series acceptance](PRDs/C-Series-Acceptance.md)

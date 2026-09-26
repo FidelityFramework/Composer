@@ -92,110 +92,21 @@ let checkAsyncBind env builder name innerExpr contExpr =
         error "let! requires Async<_> on right-hand side"
 ```
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.1 Suspension Point Numbering (Nanopass)
+CCS/Baker owns suspension discovery, delimiter and continuation identity,
+liveness across suspension, frame storage and definite initialization. It
+constructs and settles the bind, resume, completion and cleanup protocol in the
+PSG before publication.
 
-**File**: `src/Alex/Preprocessing/SuspensionIndices.fs`
+Suspension ordering and frame membership are source facts with complete joint
+premises. A frame change invalidates its dependent layouts, calls and witnesses.
+A sequential execution sketch cannot substitute for the required async semantics.
 
-Assign unique indices to all `let!` and `do!` points:
-
-```fsharp
-type SuspensionCoeffect = {
-    AsyncExprId: NodeId
-    SuspensionPoints: Map<NodeId, int>  // AsyncBind/Do NodeId -> index
-}
-```
-
-### 4.2 Coroutine State Machine
-
-With suspension points, the async becomes a true coroutine:
-
-```fsharp
-type AsyncFrame<'T> = {
-    State: int          // Current state (0 = start, N = after suspension N)
-    Result: 'T          // Final result
-    // ... intermediate values from let! bindings ...
-    // ... captures ...
-}
-```
-
-### 4.3 AsyncBind Emission
-
-At each `let!`, emit suspension logic:
-
-```fsharp
-let emitAsyncBind z bindNodeId name innerSSA suspIdx =
-    // 1. Evaluate inner async (for now, completes immediately)
-    let innerResultSSA = emitRunSynchronously z innerSSA
-
-    // 2. Store result for use after potential suspension
-    emit $"  %%{name}_ptr = llvm.getelementptr %%frame[0, {suspIdx + 2}]"
-    emit $"  llvm.store %%{innerResultSSA}, %%{name}_ptr"
-
-    // 3. Suspension point (for true async in future)
-    // emit $"  %susp_{suspIdx} = llvm.call @llvm.coro.suspend(...)"
-    // emit $"  llvm.switch %susp_{suspIdx} [0: ^resume_{suspIdx}, 1: ^cleanup]"
-
-    // 4. Continue with bound value
-    emit $"^after_let_{suspIdx}:"
-    let boundSSA = freshSSA ()
-    emit $"  %%{boundSSA} = llvm.load %%{name}_ptr"
-
-    // Add binding to state
-    z |> addVarBinding name boundSSA (typeOf innerSSA)
-```
-
-### 4.4 Full Coroutine Form
-
-With multiple suspension points:
-
-```mlir
-llvm.func @composed_async(%frame: !llvm.ptr) -> !llvm.ptr
-    attributes {presplitcoroutine} {
-entry:
-    %id = llvm.call @llvm.coro.id(...)
-    %hdl = llvm.call @llvm.coro.begin(...)
-
-    // Load state
-    %state_ptr = llvm.getelementptr %frame[0, 0]
-    %state = llvm.load %state_ptr : i32
-    llvm.switch %state [
-        0: ^start,
-        1: ^after_let1,
-        2: ^after_let2
-    ]
-
-^start:
-    // let! x = async { return 10 }
-    // ... run inner async ...
-    %x = ...  // result is 10
-    llvm.store %x, %x_slot
-    llvm.store 1, %state_ptr  // next state
-    // For true suspension: %susp = llvm.call @llvm.coro.suspend(...)
-    llvm.br ^after_let1
-
-^after_let1:
-    %x_val = llvm.load %x_slot : i32
-
-    // let! y = async { return 20 }
-    // ... run inner async ...
-    %y = ...  // result is 20
-    llvm.store %y, %y_slot
-    llvm.store 2, %state_ptr
-    llvm.br ^after_let2
-
-^after_let2:
-    %y_val = llvm.load %y_slot : i32
-
-    // return x + y
-    %result = arith.addi %x_val, %y_val : i32
-    llvm.store %result, %result_slot
-
-    llvm.call @llvm.coro.end(...)
-    llvm.return %hdl
-}
-```
+Alex witnesses settled control and storage from immutable node-local codata.
+It neither numbers source suspension points nor reconstructs continuation
+control from async bodies. Composer's backend realizes the admitted coroutine
+operations for the selected target.
 
 ## 5. MLIR Output Specification
 
@@ -288,8 +199,8 @@ Result: 42
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Preprocessing/SuspensionIndices.fs` | MODIFY | Number suspension points |
-| `src/Alex/Witnesses/AsyncWitness.fs` | MODIFY | Emit state machine with suspension |
+| CCS/Baker continuation settlement | MODIFY | Settle suspension identity, liveness, frame and control |
+| Alex async witnesses | MODIFY | Witness settled continuation control and frame operations |
 | `src/Alex/Traversal/CCSTransfer.fs` | MODIFY | Handle AsyncBind, AsyncDo |
 
 ## 8. Implementation Checklist
@@ -299,11 +210,11 @@ Result: 42
 - [ ] Implement let!/do! type checking
 - [ ] Assign suspension indices during checking
 
-### Phase 2: Alex State Machine
-- [ ] Extend frame struct for bound variables
-- [ ] Emit state-based dispatch switch
-- [ ] Emit suspension point code
-- [ ] Emit continuation after each let!
+### Phase 2: Settlement and Witnessing
+- [ ] Settle frame membership, storage and definite initialization in CCS/Baker
+- [ ] Construct resume, completion and cleanup control through Baker recipes
+- [ ] Publish immutable facts and passively witness settled operations
+- [ ] Realize admitted coroutine operations in the selected backend
 
 ### Phase 3: Validation
 - [ ] Sample 18 compiles without errors

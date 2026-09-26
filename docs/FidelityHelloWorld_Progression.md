@@ -2,11 +2,11 @@
 
 ## Overview
 
-The FidelityHelloWorld samples in `/samples/console/FidelityHelloWorld/` form a progressive test suite for Composer compiler capabilities. Each sample builds on previous ones, proving specific Clef features compile correctly to native code.
+This document retains the historical sample progression and its recorded findings. Current sample identities, delivery scope and acceptance belong to the [PRD index](PRDs/README.md), [C-series acceptance contract](PRDs/C-Series-Acceptance.md) and [coverage waypoints](Language_Coverage_Waypoints.md). A source example or historical status does not establish a fresh compiler result.
 
-**Implementation Philosophy**: Each feature follows the Photographer Principle - nanopasses build the scene (enrich the PSG with coeffects), the Zipper moves attention through the graph, Active Patterns focus the semantic lens, and Transfer snaps the picture (emits MLIR via Templates). If you find yourself computing metadata during code generation, stop - that belongs in a nanopass.
+**Ownership**: CCS/Baker elaborates and saturates source semantics through nanopass ingredients and recipes, preserving scope, ordered joint premises and the intermediate rewrite record. Alex reads immutable settled codata at its actual Huet occurrence and passively composes Elements/Patterns/Witnesses. Target-specific realization belongs to Composer's backend. No analysis, inference, emitter hyperedge queries or semantic MLIR repair belongs in Alex; all custom plugins and compatibility paths are retired.
 
-## Current Samples (01-13)
+## Historical sample inventory (01-13)
 
 ### Working Samples
 
@@ -49,13 +49,13 @@ match person with
 | { Name = n; Age = a } -> printfn "%s is %d" n a
 ```
 
-**Implementation**: The `RecordPattern` Active Pattern (semantic lens) identifies record destructuring. The pattern's field bindings are coeffect-tagged during PSG construction. Alex witnesses each bound field and emits struct field extraction via the `FieldAccess` template - no string matching on field names.
+**Owning contract**: CCS/Baker resolves record patterns, field declarations, demand, projection and representation. Alex witnesses the published field-access form without field-name inference or pattern analysis.
 
 #### A.2: Fix Sample 12 (Closures)
 
 **Problem**: Source code has type errors.
 
-**Action**: Review and fix source code, then verify compiler handles closures correctly. Closure capture is coeffect-tagged - the PSG knows which variables are captured. Alex witnesses the capture set and emits environment struct allocation.
+**Owning contract**: Preserve the reported failure and its source form. CCS/Baker settles capture identity, the actual function/environment components, typed application, layout and covering residence. Alex witnesses the published allocation and access forms; it does not construct a closure from a capture list.
 
 #### A.3: Fix Sample 13 (Recursion)
 
@@ -68,7 +68,7 @@ let rec factorial n =
     else n * factorial (n - 1)
 ```
 
-**Implementation**: Recursive bindings require pre-binding the function name before processing the body. The `RecursiveBinding` coeffect marks self-references. Alex witnesses the recursion and emits a forward declaration followed by the body - the recursive call resolves to the same function symbol.
+**Owning contract**: CCS/Baker establishes recursive identities, group constraints, captures, effect/range fixed points, declaration scope and call conventions. Alex emits declarations at their settled scope and consumes the published calls; no declaration discovery or hoisting occurs during witnessing.
 
 ---
 
@@ -76,7 +76,7 @@ let rec factorial n =
 
 Implement `seq` computation expression using MoveNext struct pattern.
 
-The Seq iterator is codata - defined by observation (MoveNext/Current), not construction. The Zipper witnesses each `yield` point and the `SeqYield` template emits state machine transitions. No central seq dispatcher - each yield is a local state transition.
+CCS/Baker constructs sequence control, cut/resume relations, live-across storage, fresh enumeration and successful-current premises. Alex witnesses the settled machine through passive Huet composition; traversal does not synthesize transitions from yield syntax.
 
 #### B.1: Sample 14 - SimpleSeq
 
@@ -96,7 +96,7 @@ for n in numbers do
     Console.writeln (Format.int n)
 ```
 
-**Implementation**: CCS recognizes the Seq builder. A nanopass tags each `yield` with its state index (coeffect). Alex folds over the seq body - at each `YieldPoint` node, the `SeqStateMachine` template emits the state transition. The iterator struct holds `{ State: int; Current: 'T }`. For-in desugars to while + MoveNext.
+**Owning contract**: CCS/Baker recipes elaborate the sequence and consumer, then settle control, demand, actual iterator identity, current-read guards, frame layout and residence. Alex consumes that immutable publication through ordinary admitted control, call and memory forms.
 
 #### B.2: Sample 15 - SeqOperations
 
@@ -112,7 +112,7 @@ let evens = Seq.filter (fun x -> x % 2 = 0) numbers
 let first5 = Seq.take 5 numbers
 ```
 
-**Implementation**: Seq module operations are CCS intrinsics. Each combinator wraps an upstream iterator. The `(|SeqCombinator|_|)` Active Pattern matches map/filter/take nodes. Alex witnesses the combinator and emits a composed iterator struct that delegates MoveNext to the upstream.
+**Owning contract**: CCS/Baker operation recipes compose the shared producer/consumer protocol, preserving deferred operands, callback identity, pull order and stopping. Frame and backing-storage premises settle before publication. Alex does not recognize combinators to synthesize wrappers or delegate algorithms.
 
 ---
 
@@ -120,7 +120,7 @@ let first5 = Seq.take 5 numbers
 
 Implement `lazy` thunks - frozen computation that executes at most once.
 
-Lazy is the simplest codata: you observe by forcing. The thunk either yields a cached value or runs the computation. No runtime scheduler, no GC - just a struct with a flag and a function pointer.
+A Lazy value retains a separate thunk and typed memo environment. CCS/Baker establishes first successful force, cached reads, shared instance identity and covering storage. Its normal memoization contract is distinct from ordinary demand, concurrent force and reentry.
 
 #### C.1: Sample 16 - LazyValues
 
@@ -140,15 +140,15 @@ let value1 = Lazy.force expensive  // Prints "Computing..."
 let value2 = Lazy.force expensive  // No print, cached
 ```
 
-**Implementation**: CCS recognizes the Lazy builder. The lazy body becomes a thunk closure (coeffect-tagged with captures). Alex witnesses `LazyExpr` nodes and emits `{ Computed: bool; Value: 'T; Thunk: unit -> 'T }`. The `LazyForce` template emits: check flag, branch, call thunk, store result, set flag. Thread-safe version deferred.
+**Owning contract**: CCS/Baker constructs the guard, cold computation, typed cache store, completion publication and hot read as PSG structure, with exact capture and memo-instance identities. Alex passively witnesses those operations. The witness contains no force algorithm or invented cache representation.
 
 ---
 
-### Phase D: Async (LLVM Coroutines)
+### Phase D: Async
 
-Implement Clef async using LLVM coroutine intrinsics - no runtime library.
+Async admission follows the source suspension, scheduling, effect and lifetime contracts.
 
-Async is codata with suspension points. The coroutine frame is the "frozen computation" that resumes on demand. LLVM's `coro.*` intrinsics compile to state machines at compile time - zero runtime overhead.
+CCS/Baker settles suspension and resumption structure, frame storage, ownership and progress premises. A backend may realize an admitted target protocol only while preserving those facts; this document establishes no runtime-cost claim.
 
 See: [Async_LLVM_Coroutines.md](./Async_LLVM_Coroutines.md)
 
@@ -168,7 +168,7 @@ let result = Async.RunSynchronously simple
 Console.writeln (Format.int result)
 ```
 
-**Implementation**: CCS recognizes the Async builder. A trivial async (no suspension) compiles to an immediate return. The `(|AsyncReturn|_|)` Active Pattern matches the simple case. Alex witnesses and emits direct value return - no coroutine frame needed.
+**Owning contract**: CCS/Baker settles the computation's activation, effects and return form. Frame elision requires source-owned premises. Alex consumes the published result without choosing an async strategy.
 
 #### D.2: Sample 18 - AsyncAwait
 
@@ -189,7 +189,7 @@ let process = async {
 }
 ```
 
-**Implementation**: Each `let!` is a suspension point. A nanopass tags suspension points with state indices (coeffect). Alex folds over the async body - at each `AwaitPoint`, the `CoroSuspend` template emits `llvm.coro.suspend`. The frame struct captures variables live across suspension. Resume/cleanup branches handle continuation.
+**Owning contract**: CCS/Baker elaborates cuts, resumes, liveness, cleanup, frame layout and declaration/call relationships. Alex witnesses that settled structure; target-specific coroutine instructions belong to the backend.
 
 #### D.3: Sample 19 - AsyncParallel
 
@@ -207,7 +207,7 @@ let results = Async.Parallel [task1; task2; task3]
               |> Async.RunSynchronously
 ```
 
-**Implementation**: `Async.Parallel` is a CCS intrinsic. In single-threaded mode, it executes sequentially (parallel semantics, sequential execution). The `(|AsyncParallel|_|)` lens matches the combinator. Alex witnesses and emits a loop that runs each async to completion, collecting results.
+**Owning contract**: CCS/Baker establishes the admitted execution, result, effect, resource and progress relationships of parallel composition. Alex witnesses published structure and cannot replace concurrency with an inferred sequential loop. The selected backend realizes the declared execution capabilities.
 
 ---
 
@@ -215,7 +215,7 @@ let results = Async.Parallel [task1; task2; task3]
 
 Implement compiler-inferred deterministic memory regions - dynamic allocation without runtime overhead.
 
-Region is a coeffect - the compiler knows Region-typed values need cleanup. Disposal flows from scope analysis, not interface dispatch. Alex witnesses Region nodes and emits platform-specific page allocation via Bindings (mmap/VirtualAlloc). The mise-en-place is complete before code generation - we just plate what the nanopasses prepared.
+CCS/Baker settles region ownership, scope, escape, placement, capacity and release, retaining the actual declarations and uses. Alex reads those facts. Platform-specific allocation and release APIs are backend realization under the declared storage contract.
 
 **Stack-first proof**: Phases B-D prove Seq/Lazy/Async with stack-only allocation. Regions unlock realistic I/O workloads.
 
@@ -255,7 +255,7 @@ let main () =
 Sum: 999000
 ```
 
-**Implementation**: `Region` is a CCS intrinsic type with coeffect `NeedsCleanup`. A nanopass performs scope analysis and tags each Region binding's exit points. Alex witnesses `RegionCreate` and emits via the `PageAlloc` Binding template (platform-aware: mmap on Linux, VirtualAlloc on Windows). At scope exits, the `PageFree` template emits deallocation. No `IDisposable`, no `use` - the compiler knows.
+**Owning contract**: CCS/Baker establishes allocation and release sites, source lifetimes, initialization, capacity and cleanup on every admitted exit. Alex witnesses those explicit operations; the backend realizes the selected platform allocation protocol.
 
 #### E.2: Sample 21 - RegionPassing
 
@@ -288,7 +288,7 @@ let main () =
     // Compiler inserts: Region.release region
 ```
 
-**Implementation**: Region parameters carry the `BorrowedRegion` coeffect - the function can allocate but doesn't own lifetime. Alex witnesses allocations and emits bump-pointer arithmetic (increment offset, return pointer). The `RegionAlloc` template is parameterized by element type and count.
+**Owning contract**: CCS/Baker establishes borrowed authority, exact allocation extent/alignment, capacity and lifetime. Any allocation algorithm is elaborated above Alex's boundary. Alex composes the published physical operations; it supplies no allocator or storage policy.
 
 #### E.3: Sample 22 - RegionEscape
 
@@ -320,7 +320,7 @@ let main () =
         Console.writeln (Format.int squares.[i])
 ```
 
-**Implementation**: A nanopass performs escape analysis - tracking which region-allocated values flow to return positions. Implicit escape is a compile error. `Region.copyOut` is the explicit escape hatch. Alex witnesses `CopyOut` and emits memcpy to caller's context (stack or caller's region).
+**Owning contract**: CCS/Baker analyzes escape and proves the admitted destination, extent, sharing and covering lifetime for any transfer. Alex reads the settled transfer and actual storage identities; it does not select a caller allocation or invent a copy to repair a lifetime.
 
 ---
 
@@ -351,7 +351,7 @@ let server () =
     Sys.close sock
 ```
 
-**Implementation**: Socket operations are CCS Sys module intrinsics. The `(|SysCall|_|)` Active Pattern matches syscall nodes. Alex witnesses and emits via platform Bindings - each syscall number is data in the Binding, not routing logic. The buffer comes from a Region, giving proper I/O workspace.
+**Owning contract**: CCS/Baker settles typed declarations, demand/effect order, buffer access, extent and residence. Alex witnesses the published call; the backend realizes the selected syscall ABI.
 
 #### F.2: Sample 24 - WebSocketEcho
 
@@ -370,7 +370,7 @@ let wsServer () =
         WebSocket.writeFrame sock frame
 ```
 
-**Implementation**: Uses Fidelity.Platform WebSocket module (Layer 3, built on Sys intrinsics). Frame buffers allocated in Regions. The WebSocket protocol logic lives in the library - Alex just witnesses the calls and emits via standard function call templates.
+**Owning contract**: Protocol logic remains library source. CCS/Baker settles its calls, buffers and proof premises; Alex passively composes the published operations, with platform calls realized by the backend.
 
 ---
 
@@ -396,7 +396,7 @@ let main () =
     GTK.main ()
 ```
 
-**Implementation**: GTK bindings are Layer 2 (Farscape-generated FFI). The `(|FFICall|_|)` Active Pattern matches external function calls. Alex witnesses and emits via the `ExternCall` template with the appropriate calling convention. No special GTK logic in the compiler.
+**Owning contract**: Farscape declarations provide typed foreign boundaries. CCS/Baker settles declaration identity, ABI and joint callback/storage premises. Alex reads the published convention; the backend realizes it without toolkit-specific semantic repair.
 
 #### G.2: Sample 26 - WebViewBasic
 
@@ -462,7 +462,7 @@ Worker thread done
 All done
 ```
 
-**Implementation**: `Thread.create` is a CCS intrinsic. The closure passed becomes the thread entry point - its capture set is coeffect-tagged. Alex witnesses `ThreadCreate` and emits via platform Bindings: `pthread_create` on POSIX, `CreateThread` on Windows. The closure's environment struct is passed as the thread argument.
+**Owning contract**: CCS/Baker settles the admitted thread entry, actual environment, shared-storage permissions, lifetime and completion/release premises. Alex witnesses the published calls and storage. Target thread APIs and adapters belong to backend realization.
 
 #### H.2: Sample 28 - MutexSync
 
@@ -492,7 +492,7 @@ let main () =
     Console.writeln (Format.int counter)  // Should be 2000
 ```
 
-**Implementation**: Mutex operations are CCS intrinsics with `SyncPrimitive` coeffect. Alex witnesses mutex nodes and emits platform-specific syscalls via Bindings. The mutable variable capture is coeffect-tagged as `SharedMutable` - the compiler knows it crosses thread boundaries.
+**Owning contract**: CCS/Baker establishes synchronization operations and their actual shared-storage, ordering and lifetime premises. Alex passively composes those operations. The backend realizes the selected platform synchronization mechanism.
 
 ---
 
@@ -552,7 +552,7 @@ Hello, Bob!
 Shutting down
 ```
 
-**Implementation**: `MailboxProcessor.Start` is a CCS intrinsic that synthesizes: Thread (for actor thread), Async (for message loop), Closure (for behavior), Queue (mutex + condvar + buffer). The `(|ActorStart|_|)` Active Pattern matches the Start call. Alex witnesses and emits via composition of existing templates - `ThreadCreate` for the actor thread, `CoroFrame` for the async loop, `MutexQueue` for the message buffer. The actor struct: `{ Thread; Queue; Behavior }`.
+**Owning contract**: CCS/Baker elaborates admitted actor behavior, mailbox, activation and resource protocols through reusable ingredients and recipes. It settles all scheduling, layout, publication and lifetime premises. Alex consumes the resulting structure; it does not synthesize an actor from templates.
 
 #### I.2: Sample 30 - ActorReply
 
@@ -600,7 +600,7 @@ let main () =
 Counter value: 2
 ```
 
-**Implementation**: `AsyncReplyChannel` is a struct with `{ Mutex; CondVar; ResultSlot }`. `PostAndReply` creates the channel, posts the message, and waits on the condvar. `Reply` fills the slot and signals. Alex witnesses `ReplyChannel` nodes and emits the synchronization struct via `SyncChannel` template.
+**Owning contract**: CCS/Baker settles request/reply identity, result publication, waiting, completion and storage lifetime under the admitted protocol. Alex witnesses the explicit structure, and the backend realizes selected synchronization primitives.
 
 #### I.3: Sample 31 - ParallelActors
 
@@ -668,7 +668,7 @@ let main () =
 Total: 1400
 ```
 
-**Implementation**: Each actor is an OS thread with its own Region for scratch memory. The Region's lifetime is tied to the actor's lifetime - when the actor terminates, its region is released. This gives each worker isolated, deterministic memory without GC. Alex witnesses the actor + region composition and emits thread creation with region allocation in the entry point.
+**Owning contract**: Actor scheduling and storage follow their declared source/platform contracts. CCS/Baker retains exact activation, allocation, use, completion and release participants. Alex witnesses their settled composition; neither one thread per actor nor an implicit region is selected during emission.
 
 ---
 
@@ -729,17 +729,13 @@ cd /home/hhh/repos/Composer/samples/console/FidelityHelloWorld/20_BasicRegion
 
 ## Dependencies by Phase
 
-| Phase | CCS Additions | Nanopass Enrichment | Alex Templates |
-|-------|----------------|---------------------|----------------|
-| A | None | Pattern binding coeffects | RecordFieldAccess |
-| B | Seq module intrinsics | Yield state indices | SeqStateMachine |
-| C | Lazy module intrinsics | Thunk capture coeffects | LazyThunk, LazyForce |
-| D | Async module intrinsics | Suspension state indices | CoroFrame, CoroSuspend |
-| E | Region intrinsics | Scope exit points, escape analysis | PageAlloc, PageFree, RegionAlloc |
-| F | Socket syscall intrinsics | None | SysCall (platform Bindings) |
-| G | None | None | ExternCall (FFI) |
-| H | Thread/Mutex intrinsics | Thread capture coeffects | ThreadCreate, MutexOps |
-| **I** | **MailboxProcessor intrinsics** | **Actor composition coeffects** | **Composed from D, E, H** |
+| Feature | CCS/Baker settlement | Passive witnessing and backend realization |
+|---|---|---|
+| Records and callables | Pattern/capture identity, typed access/application, declaration scope and residence | Alex consumes published fields, calls and placements |
+| Seq and Lazy | Demand, memoization or enumeration, control, typed storage and complete-use premises | Alex witnesses explicit operations; backend preserves the realized protocol |
+| Async, regions and threading | Suspension, ownership, scheduling, allocation, synchronization and release premises | Alex reads immutable publication; backend realizes selected platform operations |
+| Foreign and platform calls | Declaration identity, typed ABI, materialization/effect order and joint lifetime premises | Passive calls carry settled facts into backend ABI realization |
+| Actors and reply protocols | Exact activation, mailbox, request/reply, resource and publication relationships | No actor synthesis or scheduling analysis in Alex |
 
 ### Capstone Feature Dependencies
 

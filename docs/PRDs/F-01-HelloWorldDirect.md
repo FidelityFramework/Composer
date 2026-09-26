@@ -58,7 +58,9 @@ UTF-8 Fat Pointer
 **Lowering Path**:
 1. CCS recognizes `Console.writeln` as intrinsic
 2. PSG marks node with `SemanticKind.Intrinsic`
-3. Alex emits platform-specific syscall sequence via Bindings
+3. CCS/Baker constructs and settles the console protocol, declarations and ABI
+4. Alex witnesses the settled operations
+5. Composer's backend realizes the selected platform's syscall boundary
 
 ### 3.3 Platform Syscall Binding
 
@@ -75,7 +77,9 @@ The syscall is wrapped with newline handling for `writeln`.
 
 ### 3.4 Entry Point Generation
 
-Alex generates the native entry point:
+CCS/Baker settles the entry declaration, module initialization, call order and
+return contract. Alex witnesses that settled structure; the backend realizes the
+native entry ABI. The following sketch illustrates the resulting shape:
 
 ```mlir
 func.func @main() -> i32 {
@@ -121,9 +125,10 @@ PSG Structure
 
 | Coeffect | Purpose |
 |----------|---------|
-| NodeSSAAllocation | Pre-computed SSA assignments for all PSG nodes |
+| Settled publication | Immutable source-owned types, declarations, storage, control and call facts |
 
-This sample establishes the fundamental coeffect pattern: metadata computed before emission, observed by witnesses during traversal.
+CCS/Baker owns the analysis behind this publication. Witnesses observe settled
+facts during traversal; physical SSA naming is emission bookkeeping.
 
 ---
 

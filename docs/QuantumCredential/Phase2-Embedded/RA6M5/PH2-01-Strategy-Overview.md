@@ -48,7 +48,7 @@ FSP is mined as a domain map, then replaced — "keep the map, redraw the roads"
 
 The concrete keep/reimplement/discard breakdown and the agent-driven port workflow are in [PH2-05-Taxonomy-and-Farscape-Plan.md](./PH2-05-Taxonomy-and-Farscape-Plan.md). The Clef-native register surface this targets is in [PH2-03-Binding-Surface.md](./PH2-03-Binding-Surface.md). Farscape's role on this device is narrowed to ingesting the Renesas **SVD / CMSIS-Device** for register address and bitfield constants — not FSP headers.
 
-A separate interop story applies where the source is a large, well-factored C library rather than vendor glue: such libraries (e.g. a USB device stack, or LVGL on display-equipped targets) are **bound** via the Farscape membrane → matched Clef binding + Alex lowering witness pairs, not ported. The RA6M5 itself is headless — status LEDs plus a phone acting as its display surface over USB (see [D-02-Mobile-Companion](../../Demo/D-02-Mobile-Companion.md)) — so its own bind surface is the host/USB link, not a GUI. Bind-vs-port is the device's two-sided interop posture.
+A separate interop story applies where the source is a large, well-factored C library rather than vendor glue: such libraries (e.g. a USB device stack, or LVGL on display-equipped targets) are **bound** via the Farscape membrane. CCS/Baker settles the generated declarations and any semantic adapters; Alex passively witnesses the admitted contract and Composer's backend realizes it. The RA6M5 itself is headless — status LEDs plus a phone acting as its display surface over USB (see [D-02-Mobile-Companion](../../Demo/D-02-Mobile-Companion.md)) — so its own bind surface is the host/USB link, not a GUI. Bind-vs-port is the device's two-sided interop posture.
 
 ## Reactive Runtime
 

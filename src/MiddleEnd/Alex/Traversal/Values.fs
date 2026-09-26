@@ -56,18 +56,28 @@ let private callableFacts graph =
 
 /// Name the source-admitted alias endpoint or formal. Resolving aliases and
 /// classifying parameter/environment conventions belong to source settlement.
-let valuesOf (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (nodeId: NodeId) : SSA list =
+/// Only the current emitted function supplies block arguments. A lexical outer
+/// formal requires its witnessed capture; it is never another local Arg value.
+let valuesOf (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (owners: NodeId list) (nodeId: NodeId) : SSA list =
     let facts = callableFacts graph
     match facts.AliasTargets.TryFind nodeId with
     | None -> invalidOp (sprintf "Source value %d has no admitted alias endpoint." (NodeId.value nodeId))
     | Some target ->
-        match facts.Arguments.TryFind target with
-        | Some ordinal -> [Arg ordinal]
+        let components =
+            owners |> List.tryHead |> Option.bind (fun owner -> facts.Arguments.TryFind owner |> Option.bind (Map.tryFind target))
+        match components with
+        | Some ordinals -> List.map Arg ordinals
+        | None when facts.Arguments.Values |> Seq.exists (Map.containsKey target) ->
+            invalidOp (sprintf "Source formal %d has no admitted owner at this Huet occurrence." (NodeId.value target))
         | None -> values target
 
 /// The result value of a node: the last of its values.
-let resultOf (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (nodeId: NodeId) : SSA =
-    valuesOf platform graph nodeId |> List.last
+let resultOf (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (owners: NodeId list) (nodeId: NodeId) : SSA =
+    match valuesOf platform graph owners nodeId with
+    | [] -> invalidOp "A source-omitted formal has no physical operand."
+    | [Arg ordinal] -> Arg ordinal
+    | Arg _ :: _ -> invalidOp "A multi-component formal must be recalled with all of its physical operands."
+    | values -> List.last values
 
 /// A unit-typed body: the function returns no value and its return needs a zero constant.
 let isUnitTyped (graph: SemanticGraph) (nodeId: NodeId) : bool =

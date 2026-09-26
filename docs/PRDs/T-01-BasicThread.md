@@ -128,54 +128,20 @@ let pthread_join (thread: int64) (retval: nativeint) : int = Unchecked.defaultof
 let pthread_detach (thread: int64) : int = Unchecked.defaultof<int>
 ```
 
-## 5. Composer/Alex Layer Implementation
+## 5. Source Settlement and Passive Witnessing
 
-### 5.1 Thread Handle Structure
+CCS/Baker constructs the thread entry adapter and settles the closure's code
+and environment, result publication, join/detach protocol, storage ownership
+and lifetime. Entry adapter declarations and physical signatures are settled
+before witness publication.
 
-```fsharp
-type ThreadHandle<'T> = {
-    OsHandle: int64          // pthread_t or HANDLE
-    ResultSlot: nativeptr<'T>  // Where result will be stored
-    Closure: ClosureStruct     // The function to run
-}
-```
+The selected threading boundary supplies the external call contract. The
+source-owned recipe expresses the adapter and create/join operations in the
+PSG; it retains their complete premises and rewrite history.
 
-### 5.2 Thread Entry Wrapper
-
-pthreads expects `void* (*)(void*)`. Alex generates a wrapper:
-
-```fsharp
-let threadEntryWrapper (arg: nativeptr<byte>) : nativeptr<byte> =
-    let handle = NativePtr.read<ThreadHandle> arg
-    let result = handle.Closure.CodePtr(handle.Closure.EnvPtr)
-    NativePtr.write handle.ResultSlot result
-    NativePtr.zero
-```
-
-### 5.3 Thread.create Witness
-
-The witness calls into `Fidelity.Pthread.Thread.pthread_create` via ExternCall:
-
-```fsharp
-// Thread.create generates:
-// 1. Allocate ThreadHandle (stack or region)
-// 2. Store closure into handle
-// 3. Allocate result slot
-// 4. Call pthread_create (via ExternCall to Fidelity.Pthread)
-// 5. Return handle as Thread<'T>
-```
-
-The `pthread_create` call itself goes through the standard ExternCall pathway — same `pExternCallResolved` witness as GTK functions (D-01).
-
-### 5.4 Thread.join Witness
-
-```fsharp
-// Thread.join generates:
-// 1. Extract OS handle from ThreadHandle
-// 2. Call pthread_join (via ExternCall to Fidelity.Pthread)
-// 3. Read result from result slot
-// 4. Return typed result
-```
+Alex passively witnesses these settled declarations, calls and storage
+operations. It does not generate an unaccounted wrapper or choose stack/region
+residence. Composer's backend realizes the selected target's threading ABI.
 
 ## 6. MLIR Output Specification
 
@@ -275,10 +241,11 @@ All threads completed
 - [ ] Confirm `pthread.pilot.toml` includes thread functions
 - [ ] Run `farscape generate` — verify Fidelity.Pthread output
 
-### Phase 3: Alex Implementation
-- [ ] Create thread entry wrapper generation
-- [ ] Implement Thread.create witness (calls pthread_create via ExternCall)
-- [ ] Implement Thread.join witness (calls pthread_join via ExternCall)
+### Phase 3: Settlement and Witnessing
+- [ ] Construct the thread entry adapter in CCS/Baker
+- [ ] Settle captures, result publication, signatures and lifetimes
+- [ ] Passively witness settled Thread.create/join operations
+- [ ] Realize declared thread ABI calls through Composer's backend
 
 ### Phase 4: Validation
 - [ ] Sample 27 compiles

@@ -47,7 +47,10 @@ let private fixture saturated =
                 |> Map.ofList
             { Codata.empty with Curry = { Codata.empty.Curry with SaturatedCalls = calls } }
         else Codata.empty
-    { raw with Codata = lazy codata }, [first; second]
+    let carriers, residuals = Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.settle
+                                { Layouts = Map.empty; Origins = Map.empty; Known = Map.empty } raw
+    Assert.Empty residuals
+    prepareSource { raw with Codata = lazy { codata with CallableCarriers = carriers } }, [first; second]
 
 let private context (graph: SemanticGraph) site operands =
     let rootScope = ref (ScopeContext.root ())
@@ -90,26 +93,26 @@ let ``module and external spellings and anonymous closure identities are preserv
     let builder = NodeBuilder()
     let moduleNode = builder.Create(SemanticKind.ModuleDef("Library", [fn.Binding]), Types.unitType, dummyRange)
     let binding = graph.Nodes[fn.Binding]
-    let moduleGraph = { graph with Nodes = graph.Nodes.Add(moduleNode.Id, moduleNode).Add(fn.Binding, { binding with Parent = Some moduleNode.Id }) }
+    let moduleGraph = { graph with Nodes = graph.Nodes.Add(moduleNode.Id, moduleNode).Add(fn.Binding, { binding with Parent = Some moduleNode.Id }) } |> prepareSource
     Assert.Equal(Some "Library.read", tryBinding moduleGraph fn.Binding)
     Assert.Equal("Library.read", lambda moduleGraph moduleGraph.Nodes[fn.Lambda] false)
     Assert.Equal(Some "Library.read", Alex.Patterns.HardwareModulePatterns.resolveStepFunctionName moduleGraph fn.Reference)
-    let externalGraph = { graph with Nodes = graph.Nodes.Add(fn.Binding, { binding with Parent = None }) }
+    let externalGraph = { graph with Nodes = graph.Nodes.Add(fn.Binding, { binding with Parent = None }) } |> prepareSource
     Assert.Equal(Some "read", tryBinding externalGraph fn.Binding)
     Assert.Equal("read", lambda externalGraph externalGraph.Nodes[fn.Lambda] false)
     let original = graph.Nodes[fn.Lambda]
     for key in [ClosureMetadata.LambdaExpression; ClosureMetadata.RequiresClosurePair] do
         let anonymous = { original with Metadata = original.Metadata.Add(key, MetadataValue.Bool true) }
-        Assert.Equal(sprintf "lambda_%d" (NodeId.value fn.Lambda), lambda graph anonymous true)
+        let anonymousGraph = { graph with Nodes = graph.Nodes.Add(fn.Lambda, anonymous) } |> prepareSource
+        Assert.Equal(sprintf "lambda_%d" (NodeId.value fn.Lambda), lambda anonymousGraph anonymous true)
 
     // Native address plans are already settled by CCS. The witness retains that
     // symbol; this local-name projection does not re-resolve native entry plans.
     let addresses = Map.ofList [fn.Call, FunctionPointerPlan.Address("Library.read", fn.Lambda)]
-    let addressGraph = { moduleGraph with Codata = lazy { Codata.empty with FunctionPointers = addresses } }
+    let addressGraph = { moduleGraph with Codata = lazy { moduleGraph.Codata.Value with FunctionPointers = addresses } } |> prepareSource
     let ctx = context addressGraph fn.Call (MLIRAccumulator.empty ())
     let output = Alex.Witnesses.FunctionPointerWitness.nanopass.Witness ctx addressGraph.Nodes[fn.Call]
     match output.Result with
-    | TRValue _ -> ()
-    | other -> failwithf "Native address was not witnessed: %A" other
-    let targets = output.InlineOps |> List.choose (function MLIROp.FuncOp(FuncOp.FuncConstant(_, target, _)) -> Some target | _ -> None)
-    Assert.Equal("Library.read", Assert.Single targets)
+    | TRError reason -> Assert.Contains("native function address", reason.Message)
+    | other -> failwithf "Native address was emitted without a target ABI contract: %A" other
+    Assert.Empty output.InlineOps

@@ -107,106 +107,22 @@ type ScopeExitCoeffect = {
 }
 ```
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.0 OS Memory via Farscape-Generated Bindings
+CCS/Baker owns region identity and authority, allocation extent, capacity,
+alignment, placement, borrow/lifetime relationships and every required cleanup
+edge. Owning recipes construct allocation and release operations in the PSG,
+including release at all applicable scope exits.
 
-The raw `mmap`/`munmap`/`mremap` functions are accessed via Farscape-generated `Fidelity.Libc.Memory` bindings:
+Platform memory declarations provide page size, allocation capabilities and
+physical call signatures. Neither a guessed page size nor emitter-generated
+bump-pointer arithmetic establishes a safe allocation. Missing extent, capacity
+or lifetime premises prevent the commitment that requires them.
 
-```clef
-module Fidelity.Libc.Memory
-
-[<FidelityExtern("c", "mmap")>]
-let mmap (addr: nativeint) (length: int64) (prot: int) (flags: int) (fd: int) (offset: int64) : nativeint = Unchecked.defaultof<nativeint>
-
-[<FidelityExtern("c", "munmap")>]
-let munmap (addr: nativeint) (length: int64) : int = Unchecked.defaultof<int>
-```
-
-These go through the standard ExternCall pathway (D-01). The `Region.create` intrinsic witness calls `mmap` via ExternCall — same `pExternCallResolved` pattern as GTK, Wayland, or pthread functions.
-
-### 4.1 Region Struct
-
-```fsharp
-type Region = {
-    Base: nativeptr<byte>    // mmap'd memory
-    Capacity: int64          // Total bytes
-    Used: int64              // Bump pointer offset
-    Growable: bool           // Can expand?
-}
-```
-
-### 4.2 Region.create Witness
-
-The witness calls `mmap` via ExternCall to `Fidelity.Libc.Memory`:
-
-```fsharp
-let witnessRegionCreate z pagesSSA =
-    let regionSSA = freshSSA ()
-
-    // Calculate size
-    emit $"  %%size = arith.muli %%{pagesSSA}, 4096 : i64"
-
-    // mmap via ExternCall (addr=0 means OS chooses address)
-    // func.call @mmap(0, size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)
-    // ↑ This goes through pExternCallResolved — same pathway as all Farscape bindings
-
-    // Allocate Region struct and populate fields
-    // ...
-
-    TRValue { SSA = regionSSA; Type = TRegion }
-```
-
-### 4.3 Region.alloc Witness
-
-```fsharp
-let witnessRegionAlloc z regionSSA countSSA elemSize =
-    let resultSSA = freshSSA ()
-
-    // Calculate byte size
-    emit $"  %%bytes = arith.muli %%{countSSA}, {elemSize} : i64"
-
-    // Get current used offset
-    emit $"  %%used_ptr = llvm.getelementptr %%{regionSSA}[0, 2]"
-    emit "  %used = llvm.load %used_ptr : i64"
-
-    // Bump pointer
-    emit "  %new_used = arith.addi %used, %bytes : i64"
-    emit "  llvm.store %new_used, %used_ptr"
-
-    // Calculate result pointer
-    emit $"  %%base_ptr = llvm.getelementptr %%{regionSSA}[0, 0]"
-    emit "  %base = llvm.load %base_ptr : !llvm.ptr"
-    emit $"  %%{resultSSA} = llvm.getelementptr %%base[%%used]"
-
-    TRValue { SSA = resultSSA; Type = TNativePtr elemType }
-```
-
-### 4.4 Region.release Witness
-
-```fsharp
-let witnessRegionRelease z regionSSA =
-    // Get base and capacity from Region struct
-    // ...
-
-    // munmap via ExternCall to Fidelity.Libc.Memory
-    // func.call @munmap(%base, %cap) — same ExternCall pathway as D-01
-
-    TRVoid
-```
-
-### 4.5 Automatic Release Insertion
-
-The `ScopeExitInsertion` nanopass adds `Region.release` calls:
-
-```fsharp
-let insertScopeExits (graph: SemanticGraph) =
-    for scope in allScopes graph do
-        for (regionName, regionNodeId) in scope.LinearResources do
-            // For each exit point of scope, insert release
-            for exitPoint in scope.ExitPoints do
-                insertBefore exitPoint (RegionRelease regionNodeId)
-```
+Alex witnesses the settled storage, control and external calls from immutable
+codata. It does not insert cleanup, choose placement or construct a region
+allocator. Composer's backend realizes admitted OS memory operations and their
+target ABI.
 
 ## 5. MLIR Output Specification
 
@@ -329,8 +245,8 @@ Sum of squares 0-99: 328350
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Preprocessing/ScopeExitInsertion.fs` | CREATE | Insert Region.release at exits |
-| `src/Alex/Witnesses/RegionWitness.fs` | CREATE | Emit region MLIR |
+| CCS/Baker scope-exit recipe | CREATE | Settle lifetime and construct required Region.release operations |
+| Alex region witnesses | CREATE | Passively compose settled region operations |
 
 ## 8. Implementation Checklist
 
@@ -340,10 +256,11 @@ Sum of squares 0-99: 328350
 - [ ] Implement linear resource tracking
 - [ ] Create ScopeAnalysis pass
 
-### Phase 2: Alex Implementation
-- [ ] Create ScopeExitInsertion nanopass
-- [ ] Create RegionWitness
-- [ ] Implement mmap/munmap platform bindings
+### Phase 2: Settlement and Witnessing
+- [ ] Construct required scope-exit releases in CCS/Baker
+- [ ] Settle allocation extent, capacity, layout and lifetime
+- [ ] Publish immutable facts for passive region witnesses
+- [ ] Realize declared memory boundaries through Composer's backend
 
 ### Phase 3: Validation
 - [ ] Sample 20 compiles without errors

@@ -28,6 +28,7 @@ type SampleDef = {
     StdinFile: string option
     ExpectedOutput: string
     TimeoutSeconds: int
+    CompileTimeoutSeconds: int
     Skip: bool
     SkipReason: string option
 }
@@ -287,10 +288,11 @@ let loadManifest manifestPath =
         match Map.tryFind key table with
         | Some (Fidelity.Data.TOML.TomlValue.String s) -> s
         | _ -> ""
-    let getInt key def table =
+    let getTimeout key def table =
         match Map.tryFind key table with
-        | Some (Fidelity.Data.TOML.TomlValue.Integer i) -> int i
-        | _ -> def
+        | None -> def
+        | Some (Fidelity.Data.TOML.TomlValue.Integer i) when i > 0L && i <= int64 Int32.MaxValue / 1000L -> int i
+        | _ -> failwithf "Manifest %s must be a positive integer number of seconds within the process deadline range." key
     let getBool key def table =
         match Map.tryFind key table with
         | Some (Fidelity.Data.TOML.TomlValue.Boolean b) -> b
@@ -301,7 +303,7 @@ let loadManifest manifestPath =
         | Some (Fidelity.Data.TOML.TomlValue.Table t) ->
             { SamplesRoot = Path.GetFullPath(Path.Combine(manifestDir, getString "samples_root" t))
               CompilerPath = Path.GetFullPath(Path.Combine(manifestDir, getString "compiler" t))
-              DefaultTimeoutSeconds = getInt "default_timeout_seconds" 30 t
+              DefaultTimeoutSeconds = getTimeout "default_timeout_seconds" 30 t
               PruneIntermediates = false }
         | _ -> failwith "Missing [config] section"
 
@@ -310,13 +312,15 @@ let loadManifest manifestPath =
         | Some (Fidelity.Data.TOML.TomlValue.Array items) ->
             items |> List.choose (function
                 | Fidelity.Data.TOML.TomlValue.Table t ->
+                    let timeout = getTimeout "timeout_seconds" config.DefaultTimeoutSeconds t
                     Some {
                         Name = getString "name" t
                         ProjectFile = getString "project" t
                         BinaryName = getString "binary" t
                         StdinFile = match getString "stdin_file" t with "" -> None | s -> Some s
                         ExpectedOutput = getString "expected_output" t
-                        TimeoutSeconds = getInt "timeout_seconds" config.DefaultTimeoutSeconds t
+                        TimeoutSeconds = timeout
+                        CompileTimeoutSeconds = getTimeout "compile_timeout" timeout t
                         Skip = getBool "skip" false t
                         SkipReason = match getString "skip_reason" t with "" -> None | s -> Some s
                     }
@@ -398,7 +402,7 @@ let compileSamplePhaseAsync config (artifactsDirectory: string option) sample = 
         return (sample, CompileSkipped (sample.SkipReason |> Option.defaultValue "marked skip"), None)
     else
         let sampleDir = Path.Combine(config.SamplesRoot, sample.Name)
-        let timeoutMs = sample.TimeoutSeconds * 1000
+        let timeoutMs = sample.CompileTimeoutSeconds * 1000
         let outputPath =
             match artifactsDirectory with
             | Some dir -> Path.Combine(dir, Path.GetFileName sample.BinaryName)
@@ -540,7 +544,7 @@ let rec parseArgs args opts =
         printfn "Usage: dotnet fsi Runner.fsx [options]"
         printfn "  --sample NAME    Run specific sample(s)"
         printfn "  --verbose        Show detailed output"
-        printfn "  --timeout SEC    Override timeout for all samples"
+        printfn "  --timeout SEC    Override compile and runtime timeouts for all samples"
         printfn "  --jobs N         At most N compiler/native jobs per phase (default: 1)"
         printfn "  --results DIR    Parent directory for a unique run and its retained artifacts"
         printfn "  --prune-intermediates  Keep live PSG nodes and complete joint evidence (default: full dumps)"
@@ -648,7 +652,7 @@ let private execute argv =
     else
         let (config, allSamples) = loadManifest opts.ManifestPath
         let config = { config with PruneIntermediates = opts.PruneIntermediates }
-        let samples = match opts.TimeoutOverride with Some t -> allSamples |> List.map (fun s -> { s with TimeoutSeconds = t }) | None -> allSamples
+        let samples = match opts.TimeoutOverride with Some t -> allSamples |> List.map (fun s -> { s with TimeoutSeconds = t; CompileTimeoutSeconds = t }) | None -> allSamples
         match selectSamples opts.TargetSamples samples with
         | Error message ->
             eprintfn "ERROR: %s" message
@@ -663,7 +667,7 @@ let private execute argv =
             printfn "Jobs: %d\nArtifacts: %s\n" opts.Jobs runDirectory
             File.Copy(opts.ManifestPath, Path.Combine(runDirectory, "Manifest.toml"))
             File.WriteAllLines(Path.Combine(runDirectory, "selection.txt"), samplesToRun |> List.mapi (fun i sample ->
-                sprintf "%04d\t%s\ttimeout=%ds" (i + 1) sample.Name sample.TimeoutSeconds))
+                sprintf "%04d\t%s\tcompile_timeout=%ds\trun_timeout=%ds" (i + 1) sample.Name sample.CompileTimeoutSeconds sample.TimeoutSeconds))
             let provenance =
                 {| Manifest = opts.ManifestPath; SamplesRoot = config.SamplesRoot
                    CompilerSourceOutput = config.CompilerPath; Jobs = opts.Jobs
@@ -671,6 +675,7 @@ let private execute argv =
                    Samples = samplesToRun |> List.mapi (fun i sample ->
                        {| Name = sample.Name; Project = Path.GetFullPath(Path.Combine(config.SamplesRoot, sample.Name, sample.ProjectFile))
                           Artifacts = jobDirectory runDirectory i; TimeoutSeconds = sample.TimeoutSeconds
+                          CompileTimeoutSeconds = sample.CompileTimeoutSeconds
                           ExpectedOutput = sample.ExpectedOutput; Skipped = sample.Skip |}) |> List.toArray |}
             let jsonOptions = System.Text.Json.JsonSerializerOptions(WriteIndented = true)
             File.WriteAllText(Path.Combine(runDirectory, "run.json"), System.Text.Json.JsonSerializer.Serialize(provenance, jsonOptions))

@@ -123,7 +123,12 @@ The immediate language work is a compositional functional core. Application, bin
 
 Application has three related outcomes. A fully supplied known call can become a direct call. A local partial application can be absorbed into a later saturation when doing so preserves evaluation. A residual function that escapes must remain a first-class callable value. The residual function's type, supplied arguments, original captures, and evaluation history must survive. A missing runtime result cannot be represented as an empty witness merely because a local optimization once permitted that treatment. [Currying and lambdas](PRDs/F-04-CurryingLambdas.md), [partial-application analysis](Partial_Application_Closure_Reification.md).
 
-The architecture determines where any reification belongs. If a forwarding body is required, Baker establishes that body and its captures on the graph. Alex then witnesses an ordinary settled function form. The older partial-application document contains alternatives that place semantic synthesis in Alex; the current ownership doctrine resolves that placement without asking for a new policy decision.
+The [residual-callable contract](Partial_Application_Closure_Reification.md)
+places reification in CCS/Baker. If a forwarding body is required, Baker
+establishes that body, its actual callee/environment and supplied argument
+identities on the graph, preserving source demand and sharing. Alex witnesses
+the ordinary settled function form through Huet Elements, Patterns and
+Witnesses. It performs no callable synthesis or semantic repair.
 
 Recursion must follow Clef's own source rules. Current module semantics remove the requirement for `let rec`, `and` groups, recursive module syntax, and developer-managed source ordering. Dependency analysis and strongly connected components establish recursive groups. Older PRD examples remain useful behavioral cases, but their spelling must follow the current language contract. [Program structure](../../clef-lang-spec/spec/program-structure.md), [namespaces and modules](../../clef-lang-spec/spec/namespaces-and-modules.md).
 

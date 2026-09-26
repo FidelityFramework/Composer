@@ -104,60 +104,20 @@ type DataProvenance =
             NativeType.TFun(NativeType.TRegion, NativeType.TNativePtr(tVar))))
 ```
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.1 Escape Analysis Nanopass
+CCS/Baker owns escape analysis across complete use, return, capture, borrow and
+lifetime relationships. An unsafe escape prevents the affected commitment; a
+warning emitted from Alex is not an escape proof.
 
-**File**: `src/Alex/Preprocessing/EscapeAnalysis.fs`
+Source-owned recipes construct `copyOut` and `copyTo` operations with actual
+source and destination identity, backing storage, extent, capacity, alignment
+and lifetime premises. A byte count alone does not establish either endpoint's
+validity.
 
-```fsharp
-type EscapeAnalysisCoeffect = {
-    EscapingExpressions: (NodeId * string) list  // Expr and reason
-}
-
-let analyzeEscapes (graph: SemanticGraph) =
-    for scope in allScopes graph do
-        let localRegions = scope.LocalRegions
-        for returnExpr in scope.Returns do
-            match provenance returnExpr with
-            | RegionAllocated r when Set.contains r localRegions ->
-                emit Warning "Potential escape from local region"
-```
-
-### 4.2 copyOut Witness
-
-```fsharp
-let witnessCopyOut z srcPtrSSA countSSA elemSize =
-    let resultSSA = freshSSA ()
-
-    // Calculate byte size
-    emit $"  %%bytes = arith.muli %%{countSSA}, {elemSize} : i64"
-
-    // Allocate destination array (or region allocation)
-    emit $"  %%{resultSSA} = llvm.call @array_create(%%{countSSA})"
-
-    // Get destination data pointer
-    emit $"  %%dest = llvm.call @array_data_ptr(%%{resultSSA})"
-
-    // memcpy
-    emit $"  llvm.call @llvm.memcpy.p0.p0.i64(%%dest, %%{srcPtrSSA}, %%bytes, i1 false)"
-
-    TRValue { SSA = resultSSA; Type = TArray elemType }
-```
-
-### 4.3 copyTo Witness (Region-to-Region)
-
-```fsharp
-let witnessCopyTo z srcPtrSSA countSSA destRegionSSA elemSize =
-    // Allocate in destination region
-    let destPtrSSA = emitRegionAlloc z destRegionSSA countSSA elemSize
-
-    // memcpy
-    emit $"  %%bytes = arith.muli %%{countSSA}, {elemSize} : i64"
-    emit $"  llvm.call @llvm.memcpy.p0.p0.i64(%%{destPtrSSA}, %%{srcPtrSSA}, %%bytes, i1 false)"
-
-    TRValue { SSA = destPtrSSA; Type = TNativePtr elemType }
-```
+Alex witnesses the resulting settled allocation, copy and control operations.
+It neither searches scopes for escapes nor invents destination allocation.
+Composer's backend realizes the admitted physical copy operations.
 
 ## 5. MLIR Output Specification
 
@@ -274,8 +234,8 @@ Squared: 1 4 9 16 25
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Preprocessing/EscapeAnalysis.fs` | CREATE | Escape analysis nanopass |
-| `src/Alex/Witnesses/RegionWitness.fs` | MODIFY | Add copyOut/copyTo witnesses |
+| CCS/Baker escape analysis | CREATE | Prove escape/lifetime relationships before commitment |
+| Alex region witnesses | MODIFY | Passively witness settled copy operations |
 
 ## 8. Implementation Checklist
 
@@ -284,10 +244,10 @@ Squared: 1 4 9 16 25
 - [ ] Detect escaping region pointers
 - [ ] Add copyOut/copyTo intrinsics
 
-### Phase 2: Alex Implementation
-- [ ] Create EscapeAnalysis nanopass
-- [ ] Implement copyOut witness
-- [ ] Implement copyTo witness
+### Phase 2: Settlement and Witnessing
+- [ ] Complete escape analysis in CCS/Baker
+- [ ] Construct and settle copyOut/copyTo storage and lifetime through Baker recipes
+- [ ] Passively witness published copy operations
 
 ### Phase 3: Validation
 - [ ] Sample 22 compiles without errors
@@ -295,15 +255,16 @@ Squared: 1 4 9 16 25
 - [ ] Compiler rejects unsafe escapes
 - [ ] Samples 01-21 still pass
 
-## 9. Escape Analysis Complexity
+## 9. Complete Escape Premises
 
-This is **simple escape analysis** - lexical scope based:
+CCS/Baker must account for actual storage, uses, return paths, captures, borrows,
+aliases and release relationships. Lexical scope containment alone does not
+establish escape safety. A required copy must settle both endpoints' extent,
+capacity, alignment and lifetime before commitment.
 
-```
-Escapes if: data.region.scope ⊂ return.scope
-```
-
-NOT full Rust-style borrow checking. Simpler, but requires explicit copyOut for any potential escape.
+An unresolved obligation is useful failure evidence. Preserve the failing case
+and repair its owning source contract rather than reducing the proof to a
+scope-only check.
 
 ## 10. Related PRDs
 

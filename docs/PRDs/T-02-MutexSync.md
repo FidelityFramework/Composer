@@ -148,44 +148,17 @@ let pthread_cond_wait (cond: nativeint) (mutex: nativeint) : int = Unchecked.def
 let pthread_cond_signal (cond: nativeint) : int = Unchecked.defaultof<int>
 ```
 
-## 5. Composer/Alex Layer Implementation
+## 5. Source Settlement and Passive Witnessing
 
-### 5.1 Mutex.create Witness
+CCS/Baker settles synchronization identity, initialization, access ordering,
+wait/signal relationships, destruction and lifetime in the PSG. Opaque storage
+size, alignment and external signatures come from the selected boundary
+declarations; an emitter literal for `sizeof(pthread_mutex_t)` is not authority.
 
-The witness allocates opaque storage and calls `pthread_mutex_init` via ExternCall:
-
-```mlir
-// Mutex.create() generates:
-%mutex = memref.alloca() : memref<40xi8>  // sizeof(pthread_mutex_t)
-%mutex_ptr = memref.extract_aligned_pointer_as_index %mutex : memref<40xi8> -> index
-%null = arith.constant 0 : index
-func.call @pthread_mutex_init(%mutex_ptr, %null) : (index, index) -> i32
-```
-
-### 5.2 Mutex.lock/unlock Witness
-
-```mlir
-// Mutex.lock mutex
-func.call @pthread_mutex_lock(%mutex_ptr) : (index) -> i32
-
-// ... critical section ...
-
-// Mutex.unlock mutex
-func.call @pthread_mutex_unlock(%mutex_ptr) : (index) -> i32
-```
-
-### 5.3 pthread declarations via ExternCall
-
-```mlir
-// Generated from [<FidelityExtern>] metadata — same pathway as D-01
-func.func private @pthread_mutex_init(index, index) -> i32 attributes { "link" = "pthread" }
-func.func private @pthread_mutex_lock(index) -> i32 attributes { "link" = "pthread" }
-func.func private @pthread_mutex_unlock(index) -> i32 attributes { "link" = "pthread" }
-func.func private @pthread_mutex_destroy(index) -> i32 attributes { "link" = "pthread" }
-func.func private @pthread_cond_init(index, index) -> i32 attributes { "link" = "pthread" }
-func.func private @pthread_cond_wait(index, index) -> i32 attributes { "link" = "pthread" }
-func.func private @pthread_cond_signal(index) -> i32 attributes { "link" = "pthread" }
-```
+Source-owned recipes construct the required storage and call sequence with
+complete premises. Alex witnesses the published operations and signatures,
+without inferring layout or inserting synchronization algorithms. Composer's
+backend realizes the admitted target synchronization ABI.
 
 ## 6. Validation
 
@@ -252,10 +225,10 @@ With mutex (expect 200000): 200000
 - [ ] Confirm `pthread.pilot.toml` includes mutex/condvar functions
 - [ ] Run `farscape generate` — verify Fidelity.Pthread output
 
-### Phase 3: Alex Implementation
-- [ ] Implement Mutex.create witness (alloc + ExternCall pthread_mutex_init)
-- [ ] Implement Mutex.lock/unlock witnesses (ExternCall pthread_mutex_lock/unlock)
-- [ ] Implement CondVar witnesses
+### Phase 3: Settlement and Witnessing
+- [ ] Settle opaque storage layout and signatures from boundary declarations in CCS/Baker
+- [ ] Construct initialization, wait/signal and cleanup protocols through Baker recipes
+- [ ] Passively witness published Mutex and CondVar operations
 
 ### Phase 4: Validation
 - [ ] Sample 28 compiles

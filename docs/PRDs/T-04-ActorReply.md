@@ -93,94 +93,21 @@ let balance = bank.PostAndReply(fun reply -> GetBalance reply)
         NativeType.TFun(replyVar, env.Globals.UnitType))
 ```
 
-## 4. Composer/Alex Layer Implementation
+## 4. Source Settlement and Passive Witnessing
 
-### 4.1 Reply Channel Structure
+CCS/Baker owns reply-channel identity, message-builder activation, publication,
+waiting, result delivery, completion and cleanup. It settles the actual actor,
+channel, result storage and participating call occurrences, including their
+lifetime and synchronization premises.
 
-> **Membrane note.** The `nativeptr` and `nativeint` appearances in this PRD are membrane plumbing recorded point-in-time, internal `TNativePtr` surface governed by the exit in `Closure_Nanopass_Architecture.md` Section 4 ("Why Flat: the Finiteness Lemma") and the boundary contract of C-01 Section 6.7.
+The source-owned synchronous RPC and liveness contracts govern blocking waits.
+Owning recipes express the protocol and callable declarations in the PSG before
+publication; a witness cannot infer a wait loop or choose result-slot residence.
 
-```fsharp
-type AsyncReplyChannel<'Reply> = {
-    ResultSlot: nativeptr<'Reply>  // Where result is stored
-    Mutex: Mutex                    // Protects completion state
-    CondVar: CondVar                // Signals completion
-    Completed: bool                 // Has Reply been called?
-}
-```
-
-### 4.2 PostAndReply Witness
-
-```fsharp
-let witnessPostAndReply z actorSSA msgBuilderClosureSSA =
-    let resultSSA = freshSSA ()
-
-    // 1. Allocate reply channel
-    emit "  %channel = llvm.alloca 1 x !reply_channel"
-    emit "  %result_slot = llvm.alloca 1 x %reply_type"
-    emit "  %slot_ptr = llvm.getelementptr %channel[0, 0]"
-    emit "  llvm.store %result_slot, %slot_ptr"
-
-    // Initialize mutex and condvar
-    emit "  %mutex = llvm.getelementptr %channel[0, 1]"
-    emit "  llvm.call @pthread_mutex_init(%mutex, %null)"
-    emit "  %cond = llvm.getelementptr %channel[0, 2]"
-    emit "  llvm.call @pthread_cond_init(%cond, %null)"
-    emit "  %completed = llvm.getelementptr %channel[0, 3]"
-    emit "  llvm.store %false, %completed"
-
-    // 2. Call message builder with channel
-    emit "  %code = llvm.extractvalue %msgBuilder[0]"
-    emit "  %env = llvm.extractvalue %msgBuilder[1]"
-    emit "  %message = llvm.call %code(%env, %channel)"
-
-    // 3. Post message
-    emit "  llvm.call @actor_post(%actor, %message)"
-
-    // 4. Wait for reply
-    emit "  llvm.call @pthread_mutex_lock(%mutex)"
-    emit "  llvm.br ^wait_check"
-
-    emit "^wait_check:"
-    emit "  %is_done = llvm.load %completed : i1"
-    emit "  llvm.cond_br %is_done, ^done, ^wait"
-
-    emit "^wait:"
-    emit "  llvm.call @pthread_cond_wait(%cond, %mutex)"
-    emit "  llvm.br ^wait_check"
-
-    emit "^done:"
-    emit "  llvm.call @pthread_mutex_unlock(%mutex)"
-
-    // 5. Read result
-    emit $"  %%{resultSSA} = llvm.load %%result_slot"
-
-    // 6. Cleanup
-    emit "  llvm.call @pthread_mutex_destroy(%mutex)"
-    emit "  llvm.call @pthread_cond_destroy(%cond)"
-
-    TRValue { SSA = resultSSA; Type = replyType }
-```
-
-### 4.3 Reply Witness
-
-```fsharp
-let witnessReply z channelSSA valueSSA =
-    // Store result
-    emit "  %slot_ptr = llvm.getelementptr %channel[0, 0]"
-    emit "  %slot = llvm.load %slot_ptr"
-    emit $"  llvm.store %%{valueSSA}, %%slot"
-
-    // Mark completed and signal
-    emit "  %mutex = llvm.getelementptr %channel[0, 1]"
-    emit "  llvm.call @pthread_mutex_lock(%mutex)"
-    emit "  %completed = llvm.getelementptr %channel[0, 3]"
-    emit "  llvm.store %true, %completed"
-    emit "  %cond = llvm.getelementptr %channel[0, 2]"
-    emit "  llvm.call @pthread_cond_signal(%cond)"
-    emit "  llvm.call @pthread_mutex_unlock(%mutex)"
-
-    TRVoid
-```
+Alex witnesses immutable settled control, storage and calls. Composer's backend
+realizes the selected target's synchronization operations while preserving the
+source-to-artifact correspondence. Missing channel or lifetime settlement fails
+at its source owner.
 
 ## 5. MLIR Output Specification
 
@@ -298,19 +225,20 @@ let main _ =
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/Alex/Witnesses/ActorWitness.fs` | MODIFY | Add PostAndReply, Reply witnesses |
+| Alex actor witnesses | MODIFY | Passively compose settled reply-channel operations |
 
 ## 8. Implementation Checklist
 
-### Phase 1: Reply Channel
+### Phase 1: CCS/Baker Reply-Channel Settlement
 - [ ] Add TAsyncReplyChannel type
 - [ ] Implement Reply intrinsic
 - [ ] Generate reply channel struct
 
-### Phase 2: PostAndReply
+### Phase 2: CCS/Baker PostAndReply Construction
 - [ ] Implement PostAndReply intrinsic
 - [ ] Implement blocking wait
 - [ ] Implement channel cleanup
+- [ ] Publish immutable facts for passive reply-channel witnesses
 
 ### Phase 3: Validation
 - [ ] Sample 30 compiles

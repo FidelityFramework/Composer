@@ -37,14 +37,13 @@ WRENStack is the paved path for building native desktop applications with Clef. 
 
 ## Implementation Philosophy
 
-Every feature follows the **Photographer Principle**:
+CCS/Baker owns semantic analysis, elaboration, saturation, representation,
+layout, lifetime, declarations and ABI settlement. Ingredients and recipes
+retain scope, joint premises and the intermediate rewrite record.
 
-1. **Nanopasses build the scene** - Enrich the PSG with coeffects (metadata the Zipper will observe)
-2. **The Zipper moves attention** - Navigate the graph structure, never dispatch
-3. **Active Patterns focus the lens** - Semantic classification, not string matching
-4. **Transfer snaps the picture** - Emit MLIR via parameterized Templates
-
-If you find yourself computing metadata during code generation, stop - that belongs in a nanopass. The mise-en-place is complete before Transfer begins.
+Alex reads the immutable settled publication through the Huet zipper and
+composes Elements through Patterns and Witnesses. Composer's backend owns
+target-specific realization. Missing premises fail at the source owner.
 
 ## Key Architectural Decisions
 
@@ -54,7 +53,10 @@ The MLIR async dialect requires linking against `mlir-async-runtime`, which brin
 
 **Decision**: Use LLVM coroutine intrinsics (`llvm.coro.*`) which compile to state machines at compile time - no runtime library needed.
 
-Async is codata - defined by observation (resume/suspend), not construction. A nanopass tags suspension points with state indices (coeffect). Alex folds over the async body; at each `AwaitPoint`, the `CoroSuspend` template emits the LLVM intrinsic. The coroutine frame is the "frozen computation."
+CCS/Baker constructs and settles async activation, suspension, continuation,
+frame, lifetime and cleanup. Alex passively witnesses published operations;
+Composer's backend realizes admitted coroutine operations. A state-index tag
+alone does not establish the continuation or storage contract.
 
 See: [Async_LLVM_Coroutines.md](./Async_LLVM_Coroutines.md)
 
@@ -74,7 +76,10 @@ GTK bindings are Layer 2 (Farscape-generated FFI). The `(|FFICall|_|)` Active Pa
 
 **Decision**: Implement `seq` and `lazy` as struct-based state machines (MoveNext pattern). This is the interim approach; DCont-style (delimited continuations) is the future path.
 
-Seq and Lazy are codata - defined by observation (MoveNext/Current, Force), not construction. A nanopass tags each `yield` with its state index (coeffect). Alex folds over the seq body; at each `YieldPoint`, the `SeqStateMachine` template emits the state transition. No central seq dispatcher.
+CCS/Baker constructs and settles sequence continuations and lazy memoization,
+including demand, captures, storage, lifetime and cleanup. Alex witnesses the
+published control and storage operations; it does not reconstruct state machines
+or force protocols from source bodies.
 
 ### 4. Scoped Regions for Dynamic Memory
 
@@ -86,7 +91,9 @@ Seq and Lazy are codata - defined by observation (MoveNext/Current, Force), not 
 - **Passable to functions**: Region parameters carry `BorrowedRegion` coeffect - can allocate but doesn't own lifetime.
 - **Growable by default**: `Region.create` allows growth; `Region.createFixed` for embedded/MCU targets.
 
-Alex witnesses `RegionCreate` and emits via platform Bindings (`PageAlloc` template: mmap on Linux, VirtualAlloc on Windows). This is NOT a runtime - the compiler manages allocation, scope determines disposal.
+CCS/Baker settles allocation extent, capacity, alignment, lifetime and disposal
+with the declared memory boundary. Alex passively witnesses the settled
+operations; Composer's backend realizes target-specific page allocation.
 
 See: Serena memory `scoped_regions_architecture`
 
@@ -101,7 +108,10 @@ See: Serena memory `scoped_regions_architecture`
 
 **Foundational Implementation**: OS thread per actor + mutex-protected queue + LLVM coroutine for async loop. No DCont, no Olivier/Prospero supervision - just the core actor semantics compiled to native.
 
-The `(|ActorStart|_|)` Active Pattern matches `MailboxProcessor.Start`. Alex witnesses and emits via composition of existing templates - `ThreadCreate` for the actor thread, `CoroFrame` for the async loop, `MutexQueue` for the message buffer. The actor struct: `{ Thread; Queue; Behavior }`.
+CCS/Baker recipes construct the actor, queue, worker and synchronization protocol,
+then settle layouts, callable declarations, publication and lifetime. Alex
+passively witnesses that structure; the backend realizes admitted threading and
+synchronization operations.
 
 This foundation works for desktop AND embedded/MCU/unikernel targets. True parallel worker threads can process compute-heavy tasks while the main thread handles WebView communication.
 

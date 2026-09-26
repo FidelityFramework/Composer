@@ -10,28 +10,37 @@ module Zipper = Alex.Traversal.PSGZipper
 
 let require label = Option.defaultWith (fun () -> failwith label)
 
-/// Complete only the demand owner's source step after a fixture intentionally
-/// transforms its graph. Other codata and proof relations remain untouched, so
-/// their independent retraction assertions still exercise stale evidence.
+/// Source edits invalidate the publication before any new zipper is created.
+/// All semantic premises remain present for source revalidation or refusal.
+let unpublished (graph: SemanticGraph) =
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.invalidate graph
+
+/// A component fixture publishes through the same source owner as compilation.
+/// Callers must use the returned graph when constructing their zipper/context.
+let prepareSource (graph: SemanticGraph) =
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare (unpublished graph) with
+    | Result.Ok prepared -> prepared
+    | Result.Error failures ->
+        failures |> List.map (fun failure -> sprintf "%A: %s" failure.Occurrence failure.Reason)
+        |> String.concat "\n" |> failwith
+
+/// Complete the demand owner's source step after a deliberate fixture edit,
+/// then publish every domain. This never repairs other owners' proof relations.
 let settleDemand (graph: SemanticGraph) =
-    let graph = Clef.Compiler.Nanopass.OrdinaryDemand.normalize graph
-    let projection = Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.project graph
-    let codata = graph.Codata.Value
-    let graph = { graph with Codata = lazy { codata with OrdinaryDemand = projection } }
-    match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.sealEmission graph with
-    | Result.Ok () -> graph
-    | Result.Error reason -> failwith ("Component source demand settlement failed: " + reason)
+    graph |> unpublished |> Clef.Compiler.Nanopass.OrdinaryDemand.normalize |> prepareSource
+
+/// Retraction tests must establish the actual source refusal before exercising
+/// passive consumers with the unpublished graph. No empty authority is supplied.
+let refusePublication (reasonFragment: string) (graph: SemanticGraph) =
+    let graph = graph |> unpublished |> Clef.Compiler.Nanopass.OrdinaryDemand.normalize
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare graph with
+    | Result.Ok _ -> failwith "An invalid component fixture was accepted by source publication"
+    | Result.Error failures ->
+        if not (failures |> List.exists (fun failure -> failure.Reason.Contains(reasonFragment, System.StringComparison.OrdinalIgnoreCase))) then
+            failwithf "Expected source refusal containing '%s', got %A" reasonFragment failures
+        graph
 
 let coeffects (graph: SemanticGraph) pointerBits : TransferCoeffects =
-    // Hand-built component graphs do not pass through NativeService. Establish
-    // their source-owned seal explicitly; its projection must already agree
-    // with the fixture's codata. Production traversal never performs this step.
-    match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.tryEmission graph with
-    | Result.Ok _ -> ()
-    | Result.Error _ ->
-        match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.sealEmission graph with
-        | Result.Ok () -> ()
-        | Result.Error reason -> failwith ("Component fixture lacks settled source demand: " + reason)
     { Platform =
         { TargetArch = { Isa = (if pointerBits = 32 then ARM32_Thumb else X86_64)
                          Register = Ok pointerBits; Pointer = Ok pointerBits }
@@ -91,6 +100,7 @@ let arrayRead unsigned =
             Edges =
                 [{ Sources = [index.Id]; Target = proof.Id; Class = EdgeClass.Obligation
                    Role = EdgeRole.Constrains; Ordinal = 0 }] }
+        |> prepareSource
     let position =
         Zipper.create graph binding.Id |> require "Missing fixture binding"
         |> atChild lambda.Id |> atChild call.Id

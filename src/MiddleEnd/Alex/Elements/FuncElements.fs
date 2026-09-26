@@ -51,7 +51,7 @@ let pFuncDeclResults (name: string) (argTypes: MLIRType list) (resultTypes: MLIR
                   (visibility: FuncVisibility) : PSGParser<MLIROp> =
     parser {
         do! pResultTypes resultTypes
-        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, resultTypes, visibility, []))
+        return! fail (Message (sprintf "External declaration '%s' requires a source-published module import ABI (%A -> %A, %A); nested declaration repair is retired" name argTypes resultTypes visibility))
     }
 
 let pFuncDecl name argTypes retTy visibility =
@@ -61,7 +61,7 @@ let pFuncDeclByvalResults (name: string) (argTypes: MLIRType list) (resultTypes:
                        (visibility: FuncVisibility) (byvalParams: ByvalParam list) : PSGParser<MLIROp> =
     parser {
         do! pResultTypes resultTypes
-        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, resultTypes, visibility, byvalParams))
+        return! fail (Message (sprintf "External declaration '%s' requires a source-published module import ABI (%A -> %A, %A, %A); nested declaration repair is retired" name argTypes resultTypes visibility byvalParams))
     }
 
 let pFuncDeclByval name argTypes retTy visibility byvalParams =

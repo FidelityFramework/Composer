@@ -112,8 +112,14 @@ nested regions, results or block arguments. The standard `func`/`memref`/`arith`
 dialects is implemented or every target uses identical forms. Further forms
 need the M-01 operation/profile admission and preservation contract.
 
-The current middle-end post-witness pass collects and validates function
-declarations. Static-storage correspondence is checked before serialization.
+There is no authorized post-witness MLIR semantic pass. Function declarations,
+signatures and other required facts settle in the PSG; Alex composes their
+physical declarations through its existing Huet Element/Pattern/Witness path.
+Physical emission correspondence may be checked before serialization, but such
+a check cannot infer, repair or transform language semantics. All MLIR plugin
+dependencies are to be removed immediately; consumer migration is not a
+precondition for retirement. This requirement is distinct from recorded build
+and regression results.
 The [closure settlement contract](Closure_Settlement_Contract.md) connects exact
 formation, capture, invocation and residence evidence to the separate function
 and environment operands witnessed at each callable occurrence.
