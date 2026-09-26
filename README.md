@@ -252,6 +252,7 @@ status records; the February snapshot above is preserved as history.
 | [Workbench](docs/Interactive_Compiler_Workbench.md) | Planned resident compiler and native REPL bridge. |
 | [LLVM backend](docs/LLVM_Backend.md) | Direct LLVM/LLD realization and native runtime inputs. |
 | [PRD index](docs/PRDs/README.md) | Feature statuses with scoped evidence. |
+| [C/F checkpoint](docs/C_F_Checkpoint_2026-09-26.md) | Verified September 26 scope, remaining work by C/F owner, and estimate provenance. |
 
 ## Recent Changes (February 2026)
 

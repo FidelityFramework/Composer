@@ -72,8 +72,11 @@ acceptance supplies it implicitly.
 
 The integrated eager syntax and conditional source-demand relations remain
 distinct from ordinary call-by-need storage and native demand delivery. Continue
-the ledger's G0 and every C/F gate after the checkpoint; none of these bounded
-results marks a C PRD Complete.
+implementing the specification's [ordinary call-by-need](../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing)
+and [explicit eager](../../clef-lang-spec/spec/expressions.md#eager-expressions)
+requirements within the existing C/F PRDs, alongside every other C/F acceptance
+criterion recorded in the ledger. None of these bounded results marks a C PRD
+Complete.
 
 ## Pruned artifacts and complete callable consumption — 2026-09-26
 
@@ -181,10 +184,14 @@ Source verification on this isolated worktree:
 | Actual continuation rewrite | Included in that cohort at declared **32-bit and 64-bit** profiles. Both cloned markers cite their actual frame operands; retired markers retain no demand authority. |
 | Full foundation assembly | **1,111 passed**, `/tmp/clef-eager-foundation-full-v3.log`. |
 
-These are source-graph gates. G0 delivery continues through the shared deferred
-storage mechanism, operation-specific demand saturation, passive Alex witnessing,
-native effect traces and editor invalidation specified by the
-[completion ledger](C_F_Completion_Ledger.md). The source cohort does not stand in
+These are source-graph gates. Delivery of the specification's
+[ordinary call-by-need](../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing)
+and [explicit eager](../../clef-lang-spec/spec/expressions.md#eager-expressions)
+requirements continues through shared deferred storage, operation-specific Baker
+demand saturation, passive Alex witnessing, native effect traces and editor
+invalidation. These obligations belong to the existing C/F PRDs, as mapped in the
+[evaluation contract](Evaluation_Strategy_Contract.md#evaluation-requirements-through-the-owning-stages)
+and recorded in the [completion ledger](C_F_Completion_Ledger.md). The source cohort does not stand in
 for those executable acceptance gates. The source foundation is now integrated
 with main's callable/sequence/Lazy protocols as recorded in the checkpoint above;
 source/Alex/editor/live-LSP and the selected native gates pass on v19. The later
@@ -263,8 +270,13 @@ A separate positive case still requires a genuinely pure stateless callable
 to use plain code without an invented environment. Sequence-result destination
 preparation likewise retains each original ordinary actual, introducing only
 destination storage before the actual invocation. Native event-order and
-unused-argument observations belong to the combined G0 runtime gate; the
-earlier native sample pass above does not prove these corrected demand rules.
+unused-argument observations must verify the specification's
+[ordinary call-by-need](../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing)
+and [explicit eager](../../clef-lang-spec/spec/expressions.md#eager-expressions)
+rules through the application and sequence contracts in
+[C-02](PRDs/C-02-HigherOrderFunctions.md), [F-04](PRDs/F-04-CurryingLambdas.md)
+and [C-07](PRDs/C-07-SeqOperations.md). The earlier native sample pass above does
+not prove these corrected demand rules.
 
 ## Callable settlement and coordinated verification — 2026-09-26
 

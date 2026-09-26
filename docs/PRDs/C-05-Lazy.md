@@ -63,8 +63,9 @@ references name the actual admitted static allocation; two factory instances
 cannot substitute for one another because they share a schema.
 
 The [closure retooling plan](../../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md)
-and C-01 retain the shared callable obligations. Required continuation work
-includes deferred immutable capture identities under G0, nested/forwarded views,
+and [C-01](C-01-Closures.md) retain the shared callable obligations. Required continuation work
+includes deferred immutable capture identities under the specification's
+[ordinary call-by-need rules](../../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing), nested/forwarded views,
 the remaining result families, and additional storage/control-flow cases. The
 passing scalar gate does not establish these cases by analogy.
 
@@ -235,7 +236,8 @@ in `/tmp/composer-lazy-components-v6.log`. The subsequent full Alex gate passed
 
 The source fixtures containing `ignore (Lazy.force ...)` are graph/proof tests,
 not runtime effect-demand oracles: `ignore` does not demand its argument under
-G0. Sample 14 demands results through output operations. This checkpoint does
+the [ordinary call-by-need rules](../../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing).
+Sample 14 demands results through output operations. This checkpoint does
 not close the broader C-05 acceptance table.
 
 **2026-09-26 typed scalar checkpoint.** Registered
@@ -282,7 +284,8 @@ output/exit oracles, with zero skips and at most three independent compiler
 processes. Evidence is `/tmp/composer-lazy-main-v14.log` and the per-job artifacts
 under `/tmp/composer-lazy-main-v14`. This snapshot also includes the exact thunk
 formal, immutable alias, declared annotation type and all structural occurrence
-checks for capture access. These results precede the subsequent G0 eager-demand
+checks for capture access. These results precede the subsequent
+[explicit eager](../../../clef-lang-spec/spec/expressions.md#eager-expressions)
 source integration; they do not claim execution of that later combined state.
 
 ## 9. Implementation Checklist

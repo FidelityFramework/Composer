@@ -6,6 +6,13 @@ inspection, not a new compiler run. It makes the existing
 [C-series acceptance contract](PRDs/C-Series-Acceptance.md) actionable without
 replacing any PRD criterion or advancing a status.
 
+This ledger is a dependency view of the existing C/F PRDs. Each work item below
+names its owning PRD; shared implementation work is accounted for once under
+those owners. It creates no additional PRD category, acceptance authority or
+separate prerequisite project. The [PRD index](PRDs/README.md) is the entry point;
+the [shared evaluation traceability](PRDs/C-Series-Acceptance.md#12-shared-evaluation-requirements-within-existing-prds)
+links the governing spec clauses to the affected C/F acceptance cases.
+
 The earlier committed checkpoint, Composer `db4bc8b01bb6` and Clef
 `f898c97e11c5`, passed 1,058 CCS tests, 124 Alex tests, the default editor suite
 and four native controls; native16h had not yet passed. Subsequent main-v19
@@ -16,7 +23,7 @@ recorded cohorts: final source v20 passes 1,355/1,355, Alex v20 passes 223/223,
 and default editor, analyzer and live LSP gates pass. The eager-callee eta-wrapper
 defect and closure/Lazy source-projection defects are resolved. Final v20 native
 14 and 16h both pass; the broader v19 native results retain their actual labels.
-Clef `14fb7c7` and the Composer commit containing this report are the coordinated
+Clef `14fb7c7` and Composer `f6d391d` are the coordinated
 main-branch checkpoint; exact companion revisions and hashes are in the report.
 
 **Governing correction, 2026-09-26:** Clef is lazy by default with call-by-need
@@ -36,36 +43,38 @@ positive case, and a historical F status does not excuse a new regression.
 Explicit foreign/target horizons retain their owning contracts; they are not
 silently counted as implemented or used to defer required interior behavior.
 
-## 1. Dependency order and closure conditions
+## 1. Work by owning C/F PRD
 
 The order expresses prerequisites, not relative importance. Independent source
 fixtures, contract reconciliation and artifact checks can proceed alongside the
 current implementation. Coordinate builds sharing CCS/Composer outputs.
 
-| Gate | Required work and completion observation | Owners, existing checks and next decisive oracle |
+| Owning PRD and work | Required work and completion observation | Dependencies, existing checks and next decisive oracle |
 |---|---|---|
-| **G0 — default demand and shared computation** | Establish call-by-need for ordinary bindings, arguments, captures and payloads. Unused effectful operands remain deferred; repeated demands share; selected branches and operation-specific strictness determine what executes. Preserve explicit sequential, entry/startup and foreign/resource activation contracts. Prove any earlier evaluation or thunk elimination preserves effects, termination, identity and lifetime. | All C/F gates use these semantics. Source demand/effect owners, Baker nanopasses and admission settle the plan; Alex witnesses it without choosing eagerness. Add source, graph, native and editor cases for unused effectful argument/binding (zero traces), two uses of one binding (one trace), two separately created computations (two traces when demanded), branch/short circuit, unused Option/Result fallback, bare/stored partials, ignored fold state, zero-take input and retained deferred payloads. Audit existing `OptionEvaluation`, `Result*`, `SequenceApplicationCases`, `FunctionSnapshots` and native16 traces before treating them as current oracles. |
-| **G1 — canonical callable transport** | Finish separate code/environment operands through parameters, results, aliases, annotations, sequential results, branches and stored values. Physical arity comes from actual formals, not all arrows in a source type. Preserve source signatures and actual environments; no packed function address, invented empty environment or witness inference. | [C-01 §8](PRDs/C-01-Closures.md#8-validation), [C-02 §6](PRDs/C-02-HigherOrderFunctions.md#6-validation); Clef `CallableCarriers`, `CallableOrigins`, `CallableApplications`, environment recipes/result destinations; Alex `CallableOperands`, function operations and owning Patterns/Witnesses. Existing `SequenceApplicationCases`, `EnvironmentFactoryResultsCases`, `CallableOperandTests`, `FunctionResultTests`, `CallableTransportTests`. First native gate: unchanged **16h**, with **16a**, **11**, **12** controls. |
-| **G2 — mutable identity and general storage** | Complete mutable callable cells, selection snapshots, direct mutable capture signatures, joins and function payloads in records/tuples/DUs/collections. Preserve the actual activation's cell and both callable components across overwrite, recursive forwarding and return. Distinct formations sharing code remain distinct; equal layouts do not imply equal implementations. | G1; [direct-cell contract](Direct_Capture_Cell_Contract.md), [closure settlement](Closure_Settlement_Contract.md). Existing `ClosureEnvironmentCases`, `ClosureEnvironmentRangeCases`, `CallEffectRangeCases`, `DirectCaptureCases`, `MutableClosureTests`; native `FunctionSnapshots`, `FunctionFields`, `CapturedRecords`, `CapturedBuffers`, `OptionFunctionPayloads`, `DirectCaptures`, `CallEffects`. Add returned mutable-counter, conditional/DU join and independent-factory tests where existing cases lack actual retained-lifetime evidence. |
-| **G3 — complete sequence identity and residence** | Transport multiple legitimate sequence origins without selecting one code/frame arbitrarily. Admit closed formal uses and returned templates with caller/parent/program storage, exact child destinations and retained backing allocations. Independent/interleaved enumerators share external cells but not progress. Aggregate/callable current values remain valid after later pulls, exhaustion and child return. | G1/G2 for callable values; owning `SequenceOrigins`, `SequenceResidence`, `SequenceFactoryResults`, `ProgramActivation`, evaluation/control and continuation settlement. Existing source `Sequence*Cases`, especially origins, residence, aggregate/current, region and factory cases. Native **15a–d**, **16a–h**, then unchanged **16_SeqOperations**; **16g** preserves full-profile startup. A scalar Option-current pass is not general aggregate transport. |
-| **G4 — recursion and numeric recurrence** | Close self/nested/mutual function groups, captures, generalization, recursive effects and returned/partial uses. Settle original13's numeric boundary and original15's coupled/multiplicative recurrences from actual guards, intermediates and stores. Establish bounded stack behavior for every claimed tail form with structural lowering evidence and deep execution. | [C-03 §§5–7](PRDs/C-03-Recursion.md#5-recursive-groups-and-unsettled-source-contracts); binding/group checking, direct captures, `RangeAnalysis`, loop/recurrence and selected backend owners. Existing direct-capture, call-effect, counted/range-loop and sequence-range cases. Native **13_Recursion** (including factorial 120 and sum 55), **15_SimpleSeq**, `DirectCaptures`, `CallEffects`, `CountedLoops`, `RangeLoops`. Add explicit mutual-tail, cleanup/effect and recursive-cell oracles; existing small outputs do not prove bounded stack. |
-| **G5 — common collection storage** | Settle immutable sentinel authority, hosting-arena zero slot/floor, arena-relative links, exact same-node payload guards, extent/alignment/capacity and covering lifetimes. Persistent versions share only admitted backing storage. Preserve/reset the floor and reject cross-arena links, sentinel writes, insufficient capacity and absent authority. | [C-04 §5](PRDs/C-04-CoreCollections.md#5-representation-and-storage-acceptance), List/Map/Set representation chapters, placement/obligations and declared BAREWire/Platform storage. Existing generic DU construction in `CollectionPatterns` is an implementation starting point, not sentinel conformance. Add source, graph, actual-artifact and native storage oracles before operation-family acceptance. G5 can develop independently of G4, then join it for traversals. |
-| **G6 — Lists, ranges, Array and support operations** | Complete the exact inventories in §2, shared deferred operands, stable demanded traversal, guarded extraction, fold direction, short circuit and resource-safe conversion. Collection and sequence ranges include steps, endpoint demand/order, exact counts and final-step overflow. Tuple destructuring shares its RHS and leaves unused payloads deferred while preserving nested names/types. | G0 for demand; G1/G2 for callbacks and payloads, G4/G5 for recursion/storage, G3 for sequence ranges/conversions. Existing `ListRecipes`, `OptionRecipes`, loop recipes, Array/source primitives and `20_ArraySurface`; original **13a** fixtures need audit, exact oracles and manifest registration. Add stepped/materialized range, overlap/bounds, string capacity, persistence and deep traversal tests. |
-| **G7 — persistent Map/Set** | Complete insertion/replacement, all AVL rotations, every deletion shape, ordering/height consistency, retained earlier roots, transforms, folds, set algebra and conversions in §2. Re-establish Set-map uniqueness after collisions. | G4–G6, `MapRecipes`, `SetRecipes`, reusable tree ingredients and admitted collection Patterns/Witnesses. `SetRecipes` still contains a simplified two-child removal merge: replace it with correct persistent deletion and rebalance. Existing `TreeSequenceRecipeCases` establishes recipe shape, not AVL behavior. Add independent reference-result and structural invariant oracles; retain old roots during native checks. |
-| **G8 — canonical lazy values** | Complete `(thunk, env)` acceptance across computed/result/capture storage, once-only normal force and the remaining result/residence families. Aliases share a cache; separate factories do not. Preserve shared deferred immutable bindings, shared mutable cells and retained aggregate/callable values. | G1/G2 and applicable G5 storage; [C-05 §§8–9](PRDs/C-05-Lazy.md#8-validation), [lazy representation §§9/11](../../clef-lang-spec/spec/lazy-representation.md#9-memoization-strategy). Canonical typed storage and passive witnessing now replace inherited placeholder/code-field/force-SSA assumptions. Corrected **14**, scalar **14a** and static-string **14b** pass together on main v19. Preserve those oracles while delivering deferred capture, nested/forwarded view and aggregate/callable cache gates. |
-| **G9 — full Seq operation surface** | After unchanged original16/16h and the eleven core operations pass, implement and gate every successor in §2. Materializers preserve output order, independent types, capacity and lifetime after input exhaustion. Consumers count actual demand and key/callback effects. | G3/G4, G5–G7 for materialization; `SeqRecipes` and owning iterator ingredients. Add native successor cases and source admission for dormant/unregistered names. A recipe branch alone is not public operation support. |
-| **G10 — cross-family delivery** | Reconcile every row, affected F behavior, actual tool projections, graph-to-artifact preservation and reachable Framework consumers on one coordinated cohort. Run the expanded full manifest and specialized gates; report every failed/skipped/unregistered promised case. | All applicable gates above; §3–§5 below and the shared acceptance contract. Close a PRD only when its entire required inventory is accounted for. Required work discovered during these gates becomes an owning-stage implementation task and is rerun; it is not moved to a permanent bookmark. |
+| [C-01](PRDs/C-01-Closures.md), [C-02](PRDs/C-02-HigherOrderFunctions.md), [F-03](PRDs/F-03-PipeOperators.md), [F-04](PRDs/F-04-CurryingLambdas.md) — shared binding, capture and argument demand | Establish call-by-need for ordinary bindings, arguments, captures and payloads. Unused effectful operands remain deferred; repeated demands share; selected branches and operation-specific strictness determine what executes. Preserve explicit sequential, entry/startup and foreign/resource activation contracts. Prove any earlier evaluation or thunk elimination preserves effects, termination, identity and lifetime. | All C/F gates use these semantics. Source demand/effect owners, Baker nanopasses and admission settle the plan; Alex witnesses it without choosing eagerness. Add source, graph, native and editor cases for unused effectful argument/binding (zero traces), two uses of one binding (one trace), two separately created computations (two traces when demanded), branch/short circuit, unused Option/Result fallback, bare/stored partials, ignored fold state, zero-take input and retained deferred payloads. Audit existing `OptionEvaluation`, `Result*`, `SequenceApplicationCases`, `FunctionSnapshots` and native16 traces before treating them as current oracles. |
+| [C-01](PRDs/C-01-Closures.md), [C-02](PRDs/C-02-HigherOrderFunctions.md) — canonical callable transport | Finish separate code/environment operands through parameters, results, aliases, annotations, sequential results, branches and stored values. Physical arity comes from actual formals, not all arrows in a source type. Preserve source signatures and actual environments; no packed function address, invented empty environment or witness inference. | [C-01 §8](PRDs/C-01-Closures.md#8-validation), [C-02 §6](PRDs/C-02-HigherOrderFunctions.md#6-validation); Clef `CallableCarriers`, `CallableOrigins`, `CallableApplications`, environment recipes/result destinations; Alex `CallableOperands`, function operations and owning Patterns/Witnesses. Existing `SequenceApplicationCases`, `EnvironmentFactoryResultsCases`, `CallableOperandTests`, `FunctionResultTests`, `CallableTransportTests`. First native gate: unchanged **16h**, with **16a**, **11**, **12** controls. |
+| [C-01](PRDs/C-01-Closures.md), [C-02](PRDs/C-02-HigherOrderFunctions.md); affected [F-05](PRDs/F-05-DiscriminatedUnions.md), [F-10](PRDs/F-10-RecordTypes.md) — mutable identity and callable storage | Complete mutable callable cells, selection snapshots, direct mutable capture signatures, joins and function payloads in records/tuples/DUs/collections. Preserve the actual activation's cell and both callable components across overwrite, recursive forwarding and return. Distinct formations sharing code remain distinct; equal layouts do not imply equal implementations. | C-01/C-02 callable transport; [direct-cell contract](Direct_Capture_Cell_Contract.md), [closure settlement](Closure_Settlement_Contract.md). Existing `ClosureEnvironmentCases`, `ClosureEnvironmentRangeCases`, `CallEffectRangeCases`, `DirectCaptureCases`, `MutableClosureTests`; native `FunctionSnapshots`, `FunctionFields`, `CapturedRecords`, `CapturedBuffers`, `OptionFunctionPayloads`, `DirectCaptures`, `CallEffects`. Add returned mutable-counter, conditional/DU join and independent-factory tests where existing cases lack actual retained-lifetime evidence. |
+| [C-06](PRDs/C-06-SimpleSeq.md), [C-07](PRDs/C-07-SeqOperations.md) — sequence identity and residence | Transport multiple legitimate sequence origins without selecting one code/frame arbitrarily. Admit closed formal uses and returned templates with caller/parent/program storage, exact child destinations and retained backing allocations. Independent/interleaved enumerators share external cells but not progress. Aggregate/callable current values remain valid after later pulls, exhaustion and child return. | C-01/C-02 callable transport and mutable storage for callable values; owning `SequenceOrigins`, `SequenceResidence`, `SequenceFactoryResults`, `ProgramActivation`, evaluation/control and continuation settlement. Existing source `Sequence*Cases`, especially origins, residence, aggregate/current, region and factory cases. Native **15a–d**, **16a–h**, then unchanged **16_SeqOperations**; **16g** preserves full-profile startup. A scalar Option-current pass is not general aggregate transport. |
+| [C-03](PRDs/C-03-Recursion.md), [C-06](PRDs/C-06-SimpleSeq.md) — recursion and numeric recurrence | Close self/nested/mutual function groups, captures, generalization, recursive effects and returned/partial uses. Settle original13's numeric boundary and original15's coupled/multiplicative recurrences from actual guards, intermediates and stores. Establish bounded stack behavior for every claimed tail form with structural lowering evidence and deep execution. | [C-03 §§5–7](PRDs/C-03-Recursion.md#5-recursive-groups-and-unsettled-source-contracts); binding/group checking, direct captures, `RangeAnalysis`, loop/recurrence and selected backend owners. Existing direct-capture, call-effect, counted/range-loop and sequence-range cases. Native **13_Recursion** (including factorial 120 and sum 55), **15_SimpleSeq**, `DirectCaptures`, `CallEffects`, `CountedLoops`, `RangeLoops`. Add explicit mutual-tail, cleanup/effect and recursive-cell oracles; existing small outputs do not prove bounded stack. |
+| [C-04](PRDs/C-04-CoreCollections.md#5-representation-and-storage-acceptance) — common collection storage | Settle immutable sentinel authority, hosting-arena zero slot/floor, arena-relative links, exact same-node payload guards, extent/alignment/capacity and covering lifetimes. Persistent versions share only admitted backing storage. Preserve/reset the floor and reject cross-arena links, sentinel writes, insufficient capacity and absent authority. | [C-04 §5](PRDs/C-04-CoreCollections.md#5-representation-and-storage-acceptance), List/Map/Set representation chapters, placement/obligations and declared BAREWire/Platform storage. Existing generic DU construction in `CollectionPatterns` is an implementation starting point, not sentinel conformance. Add source, graph, actual-artifact and native storage oracles before operation-family acceptance. C-04 storage can develop independently of C-03 recurrence, then join it for traversals. |
+| [C-04](PRDs/C-04-CoreCollections.md#3-ccs-intrinsics-and-promised-operation-inventory) — Lists, ranges, Array and support operations | Complete the exact inventories in §2, shared deferred operands, stable demanded traversal, guarded extraction, fold direction, short circuit and resource-safe conversion. Collection and sequence ranges include steps, endpoint demand/order, exact counts and final-step overflow. Tuple destructuring shares its RHS and leaves unused payloads deferred while preserving nested names/types. | Specified ordinary call-by-need; C-01/C-02 callable transport and mutable storage for callbacks and payloads; C-03 recursion; C-04 storage; C-06 sequence residence for ranges/conversions. Existing `ListRecipes`, `OptionRecipes`, loop recipes, Array/source primitives and `20_ArraySurface`; original **13a** fixtures need audit, exact oracles and manifest registration. Add stepped/materialized range, overlap/bounds, string capacity, persistence and deep traversal tests. |
+| [C-04](PRDs/C-04-CoreCollections.md#3-ccs-intrinsics-and-promised-operation-inventory) — persistent Map/Set | Complete insertion/replacement, all AVL rotations, every deletion shape, ordering/height consistency, retained earlier roots, transforms, folds, set algebra and conversions in §2. Re-establish Set-map uniqueness after collisions. | C-03 recursion and C-04 storage/List operations, `MapRecipes`, `SetRecipes`, reusable tree ingredients and admitted collection Patterns/Witnesses. `SetRecipes` still contains a simplified two-child removal merge: replace it with correct persistent deletion and rebalance. Existing `TreeSequenceRecipeCases` establishes recipe shape, not AVL behavior. Add independent reference-result and structural invariant oracles; retain old roots during native checks. |
+| [C-05](PRDs/C-05-Lazy.md) — canonical lazy values | Complete `(thunk, env)` acceptance across computed/result/capture storage, once-only normal force and the remaining result/residence families. Aliases share a cache; separate factories do not. Preserve shared deferred immutable bindings, shared mutable cells and retained aggregate/callable values. | C-01/C-02 callable transport and mutable storage, plus applicable C-04 storage; [C-05 §§8–9](PRDs/C-05-Lazy.md#8-validation), [lazy representation §§9/11](../../clef-lang-spec/spec/lazy-representation.md#9-memoization-strategy). Canonical typed storage and passive witnessing now replace inherited placeholder/code-field/force-SSA assumptions. Corrected **14**, scalar **14a** and static-string **14b** pass together on main v19. Preserve those oracles while delivering deferred capture, nested/forwarded view and aggregate/callable cache gates. |
+| [C-07](PRDs/C-07-SeqOperations.md) — full Seq operation surface | After unchanged original16/16h and the eleven core operations pass, implement and gate every successor in §2. Materializers preserve output order, independent types, capacity and lifetime after input exhaustion. Consumers count actual demand and key/callback effects. | C-06 sequence residence and C-03 recurrence, C-04 storage and collection operations for materialization; `SeqRecipes` and owning iterator ingredients. Add native successor cases and source admission for dormant/unregistered names. A recipe branch alone is not public operation support. |
+| [C-01–C-07 and affected F-series acceptance](PRDs/C-Series-Acceptance.md#4-evidence-required-to-close-a-row) — cross-family delivery | Reconcile every row, affected F behavior, actual tool projections, graph-to-artifact preservation and reachable Framework consumers on one coordinated cohort. Run the expanded full manifest and specialized gates; report every failed/skipped/unregistered promised case. | All applicable gates above; §3–§5 below and the shared acceptance contract. Close a PRD only when its entire required inventory is accounted for. Required work discovered during these gates becomes an owning-stage implementation task and is rerun; it is not moved to a permanent bookmark. |
 
-G0 is a semantic prerequisite, not a later optimization.
-Its graph and native acceptance must distinguish construction from demand,
+The specification's [default demand and sharing](../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing)
+rules apply within the owning C/F PRDs. Their graph and native acceptance must
+distinguish construction from demand,
 yield/union-tag observation from payload demand, a mutable cell from an immutable
 binding that shares a read, and call-by-need from explicit Lazy/Incremental cache
 policies. Existing scalar-only physical layouts do not prove strictness. Required
 deferred representations and their lifetime evidence are implementation work.
 
 The subsequently authorized [explicit `eager` expression](../../clef-lang-spec/spec/expressions.md#eager-expressions)
-is an additional G0 surface gate: implement lexical/parser admission, source
-demand facts, Baker elaboration and native behavior together. Test reached unused
+is part of the same PRDs' applicable evaluation requirements: implement
+lexical/parser admission, source demand facts, Baker elaboration and native
+behavior together. Test reached unused
 eager bindings, eager actuals at activated complete/partial boundaries, source
 order, later function-result application, transparent grouping/annotations,
 direct eager aggregate components and sharing without replay. Negative-demand
@@ -75,7 +84,7 @@ ordinary payloads, force an explicit Lazy or enumerate a sequence. Correct eager
 idioms are not automatic warnings; optional cost advice needs established facts
 or clearly identified target/profile assumptions.
 
-### G0 foundation integration inventory — 2026-09-26
+### C-01/C-02 and F-03/F-04 demand integration inventory — 2026-09-26
 
 Clef foundation commit `d8effc6` added eager syntax, local demand relations,
 real declared callable boundaries and source tests. These changes are now
@@ -85,9 +94,10 @@ and Alex v20 passes 223/223. The eager-callee factory regression's unnecessary
 Baker eta wrapper is corrected. Default editor, analyzer and actual live LSP
 gates pass, including closure/Lazy source identity and clean shutdown; live
 evidence is `/tmp/composer-checkpoint-live-v20/evidence.json`.
-Native G0 acceptance is the next required delivery gate, including ordinary
-call-by-need storage and its executable traces. The earlier read-only inventory identified seven textual merge
-sites, retained here as a verification checklist:
+The next C-01/C-02 and F-03/F-04 acceptance slice covers ordinary call-by-need
+storage and its executable traces under the specification. The earlier read-only
+inventory identified seven textual merge sites, retained here as a verification
+checklist:
 `Nanopass/FoldIn.fs`, `Nanopass/Monomorphization.fs`,
 `NativeTypedTree/ClefExpr.fs`, `NativeTypedTree/NativeService.fs`,
 `PSGSaturation/SemanticGraph/CallableOrigins.fs`,
@@ -186,10 +196,12 @@ their own contribution to whole-image resource accounting through the owning
 Platform/backend contract. Passing source storage proofs and native diagnostics
 does not establish that accounting; it is not an F-07 bitwise responsibility.
 
-G2 direct mutable-cell signatures and G8 reentrancy/failure semantics have explicit
-contract decisions below. G1/G3 must continue with already settled semantics while
-those decisions are resolved. G5 storage, G4 recurrence and missing oracle work are
-parallel work packages once their edited-file and build ownership is assigned.
+C-01 direct mutable-cell signatures and C-05 Lazy reentrancy/failure semantics
+have explicit contract decisions below. C-01/C-02 callable transport and
+C-06/C-07 sequence residence must continue with already settled semantics while
+those decisions are resolved. C-04 storage, C-03 recurrence and missing oracle
+work are parallel work packages once their edited-file and build ownership is
+assigned.
 
 ## 2. Operation inventory that must survive the campaign
 
@@ -202,19 +214,19 @@ the operation's type permits them, with independent payload/state dimensions.
 
 | Family | Required operations and forms | Distinguishing oracle / dependency |
 |---|---|---|
-| **List — C-04 §3.1** | `empty`, literals, `cons`/`::`, cons patterns, `isEmpty`, `head`, `tail`, `length`, `rev`, `append`/`@`, `map`, `filter`, `fold`, `foldBack`, `tryHead`, `tryFind`, `forall`, `exists` | Empty/singleton/many; repeated empty tail; same-node guarded head; both fold orders; stable transforms; short circuit; sharing and stack/resource behavior. G5/G6. |
+| **List — C-04 §3.1** | `empty`, literals, `cons`/`::`, cons patterns, `isEmpty`, `head`, `tail`, `length`, `rev`, `append`/`@`, `map`, `filter`, `fold`, `foldBack`, `tryHead`, `tryFind`, `forall`, `exists` | Empty/singleton/many; repeated empty tail; same-node guarded head; both fold orders; stable transforms; short circuit; sharing and stack/resource behavior. C-04 storage and List/range operations. |
 | **List — C-04 §3.8** | `collect`, `reduce`, `contains`, `tryPick`, `minBy`, `maxBy`, `min`, `max`, `last`, `forall2`, `sum`, `sumBy`, `average`, iteration, `toSeq`, `ofSeq` | Add explicit empty/nonempty, comparison/tie, mismatched-length and numeric contracts where needed; observe key/callback count, ordered results and conversion residence. These rows remain in this execution inventory, not silently outside full-family acceptance. |
-| **Map — C-04 §3.2** | `empty`, `isEmpty`, `add`, `remove`, `tryFind`, `find`, `containsKey`, `count`, `keys`, `values`, `toList`, `ofList`, `map`, `filter`, `fold` | Duplicate-key replacement; sorted and reverse insertion; four rotations; absent/leaf/one-child/two-child/root/last deletion; compare contents/order/heights and preserved old roots. G7. |
+| **Map — C-04 §3.2** | `empty`, `isEmpty`, `add`, `remove`, `tryFind`, `find`, `containsKey`, `count`, `keys`, `values`, `toList`, `ofList`, `map`, `filter`, `fold` | Duplicate-key replacement; sorted and reverse insertion; four rotations; absent/leaf/one-child/two-child/root/last deletion; compare contents/order/heights and preserved old roots. C-04 persistent Map/Set. |
 | **Map — C-04 §3.8** | `toSeq`, `iter`, `forall`, `exists`, `ofSeq`, `ofArray` | Comparison-order traversal, decisive stopping and conversions retaining key/value types and storage. |
-| **Set — C-04 §3.3** | `empty`, `isEmpty`, `add`, `remove`, `contains`, `count`, `union`, `intersect`, `difference`, `isSubset`, `toList`, `ofList`, `map`, `filter`, `fold` | All empty algebra combinations, duplicate insertion, mapping collisions, ordered traversal and persistent AVL deletion. G7. |
+| **Set — C-04 §3.3** | `empty`, `isEmpty`, `add`, `remove`, `contains`, `count`, `union`, `intersect`, `difference`, `isSubset`, `toList`, `ofList`, `map`, `filter`, `fold` | All empty algebra combinations, duplicate insertion, mapping collisions, ordered traversal and persistent AVL deletion. C-04 persistent Map/Set. |
 | **Set — C-04 §3.8** | `isSuperset`, `forall`, `exists`, `iter`, `toSeq`, `toArray`, `ofSeq`, `ofArray`, `singleton` | Empty truth laws, stopping and ordered/deduplicated conversions with exact capacity. |
-| **Option — C-04 §3.4, F-08** | `None`, `Some`, matching; `map`, `bind`, `defaultValue`, `defaultWith`, `orElse`, `orElseWith`, `iter`, `fold`, `foldBack`, `filter`, `exists`, `forall`, `isSome`, `isNone`, `get`, `toList` | Reconcile existing `Option*Cases` and NativeCallbacks with G0. Unselected fallback/callback computations stay deferred; tag checks do not force payloads; function-valued results apply only after the operation boundary. Preserve valid identity/typing/storage oracles. `get` requires the admission reconciliation below; `toList` requires G5/G6. |
+| **Option — C-04 §3.4, F-08** | `None`, `Some`, matching; `map`, `bind`, `defaultValue`, `defaultWith`, `orElse`, `orElseWith`, `iter`, `fold`, `foldBack`, `filter`, `exists`, `forall`, `isSome`, `isNone`, `get`, `toList` | Reconcile existing `Option*Cases` and NativeCallbacks with ordinary call-by-need. Unselected fallback/callback computations stay deferred; tag checks do not force payloads; function-valued results apply only after the operation boundary. Preserve valid identity/typing/storage oracles. `get` requires the admission reconciliation below; `toList` requires C-04 storage and List/range operations. |
 | **Option — C-04 §3.8** | `map2`, `map3`, `flatten`, `toArray`; account explicitly for `toNullable`/`ofNullable` at an admitted boundary/profile | Nested tags cannot erase `Some None`; independent payload dimensions and argument effects survive multiple-input selection. Nullable conversion cannot introduce interior null; settle and test its actual boundary before advertising it. |
 | **Result — F-09 and C-02 transport** | `Ok`, `Error`, matching; `map`, `mapError`, `bind`, `defaultValue`, `defaultWith`, `iter`, `isOk`, `isError` | [Native Result operations](../../clef-lang-spec/spec/error-handling.md#native-result-operations) fix independent success/error types. Preserve `ResultOperationCases`, `ResultEliminationCases`, `ResultPredicateCases`, native `ResultCallbacks`, `ResultElimination`, `ResultCases` and **09/09a–c** under canonical transport. Tag tests must not extract/invoke payloads. |
 | **Array — C-04 §3.5 and supporting consumers** | `blit`, `map`, `fold`, `init`, `sum`, `sumBy`; preserve literals, `zeroCreate`, indexing/get/set/length and existing **20_ArraySurface** behavior | No dedicated array-operation representation chapter is assumed: reconcile actual source schemes, selected NTU/storage rules and each promised operation. `blit` needs overlap and both bounds; callback/order, accumulator widths, empty input, count/extent and retained array-of-record/function behavior need explicit cases. **20** alone does not cover these HOFs or overlap. |
 | **Ranges, tuples, helpers — C-04 §§3.5–3.7** | Inclusive List/Array/Seq ranges with implicit/explicit step; nested tuple lets, wildcards, `fst`, `snd`, `min`, `max`, list-based `String.concat` | First/step/last evaluation once; positive/negative/zero-trip/zero-step and final-step limits; independent component types; RHS once; string separator/order/empty/capacity. Existing counted/unstepped loop tests do not establish all six range intentions. |
-| **Seq core — C-07 §1** | `map`, `filter`, `collect`, `append`, `take`, `fold`, `iter`, `exists`, `forall`, `tryHead`, `tryPick` | Both fold frontiers; callback factories/snapshots; repeated enumeration; shared cells; short inputs/nonpositive take; no post-decision pull/callback; empty effects; independent Option result types. Preserve **16a–h** and **original16**, not just totals. G1–G4. |
-| **Seq successors — C-07 §8** | `empty`, `length`, `isEmpty`, `head`, `min`, `max`, `minBy`, `maxBy`, `toList`, `toArray` | `isEmpty` demands one pull including empty-body effects; `length` exhausts exactly; extrema require nonempty/comparison/tie/key-effect contracts; materializers require G5–G7. Establish source admission for `maxBy` before claiming the dormant recipe. |
+| **Seq core — C-07 §1** | `map`, `filter`, `collect`, `append`, `take`, `fold`, `iter`, `exists`, `forall`, `tryHead`, `tryPick` | Both fold frontiers; callback factories/snapshots; repeated enumeration; shared cells; short inputs/nonpositive take; no post-decision pull/callback; empty effects; independent Option result types. Preserve **16a–h** and **original16**, not just totals. C-01/C-02/C-03/C-06. |
+| **Seq successors — C-07 §8** | `empty`, `length`, `isEmpty`, `head`, `min`, `max`, `minBy`, `maxBy`, `toList`, `toArray` | `isEmpty` demands one pull including empty-body effects; `length` exhausts exactly; extrema require nonempty/comparison/tie/key-effect contracts; materializers require C-04 storage and collection operations. Establish source admission for `maxBy` before claiming the dormant recipe. |
 
 The [C-04 inventory](PRDs/C-04-CoreCollections.md#3-ccs-intrinsics-and-promised-operation-inventory)
 and [C-07 successor table](PRDs/C-07-SeqOperations.md#8-completion-record) remain
@@ -232,7 +244,7 @@ implementation changes; keep valid source/native expectations.
 | Affected PRD | C change that can break it | Existing controls and required extension |
 |---|---|---|
 | **F-01**, **F-06** | Entry/startup, source-gate ordering, unit/native ABI, format/parse and effectful full-platform dependencies | **01**, **06** with manifest stdin; **19_ModuleValues**, **16g** and `IgnoreValues`. Retain exact startup order and prevent accepted artifacts after effective source errors. |
-| **F-02** | Environment/collection/cache allocation, writable authority, bounds and lifetime | **02** plus program-lifetime, foreign-reference/array, capture-buffer and storage negatives. Its historical heap bridge is not evidence of current arena conformance. Actual declared authority/capacity and backing lifetime are needed in G2/G5/G8. |
+| **F-02** | Environment/collection/cache allocation, writable authority, bounds and lifetime | **02** plus program-lifetime, foreign-reference/array, capture-buffer and storage negatives. Its historical heap bridge is not evidence of current arena conformance. Actual declared authority/capacity and backing lifetime are needed in C-01 captured storage, C-04 collections and C-05 memoization. |
 | **F-03**, **F-04** | Both pipe directions, partial formation, actual versus curried arity, function results and generic aliases | **03**, **04**, **18_Generalization**, **12**, native `OptionEvaluation`, `OptionPartials`, `FunctionSnapshots`, `UnitExpressions`. Preserve order/once-only effects and subsequent application of callable results. Reconcile F-04's historical packed closure/thunk account with the delivered canonical form. |
 | **F-05**, **F-08**, **F-09** | Case tags, typed payloads, selected-arm guards, callable/aggregate payload copying and branch results | **05**, **08/08a–e**, **09/09a–c**, **21_RecordsAndTags**, **22_UnionPayloads** and all Option/Result native callback cases. Preserve inactive cases and nested tags, heterogeneous/measured/unit payloads and actual retained function environments. F-08's old unchecked/undefined wording does not settle current absent-payload admission. |
 | **F-07** | Range-selected widths, bit representation, shifts and byte-order behavior changed by common scalar/layout work | **07_BitsTest** and relevant bit/cast source and component tests; preserve the operation's declared bit contract rather than substituting a convenient callback carrier. |
@@ -251,8 +263,9 @@ These are implementation tasks in the owning tranche, not exemptions:
    and register both. Their comments saying “full coverage” do not supply it.
 2. **Add resource and persistent-structure oracles.** Native totals alone miss
    dropped AVL subtrees, mutated old roots, a copied shared cell, expired views,
-   excess allocation or unbounded stack. Add the G2/G4–G8 discriminating cases
-   and inspect actual storage/guard/call artifacts against settled participants.
+   excess allocation or unbounded stack. Add the C-01 mutable-storage, C-03
+   recurrence, C-04 collection and C-05 Lazy discriminating cases and inspect
+   actual storage/guard/call artifacts against settled participants.
    Keep altered offset, signature, guard, capacity and origin controls red.
 3. **Preserve the corrected lazy oracle.** Sample14 and its manifest now require
    one computation effect across repeated force, as specified by first-force
@@ -272,9 +285,10 @@ These are implementation tasks in the owning tranche, not exemptions:
 5. **Do not freeze implementation limitations as language negatives.** The
    [SourceAdmission harness](../tests/SourceAdmission/README.md) includes unknown
    sequence-input and escaping factory-cell cases. Keep unsafe/missing-premise
-   negatives. When G2/G3 establishes a formerly missing valid home or complete
-   use, add its positive counterpart and migrate only the obsolete limitation
-   expectation, with the changed proof recorded. Never accept an unrelated error.
+   negatives. When C-01 mutable-storage or C-06 sequence-residence work establishes
+   a formerly missing valid home or complete use, add its positive counterpart
+   and migrate only the obsolete limitation expectation, with the changed proof
+   recorded. Never accept an unrelated error.
 6. **Extend real tooling clients.** The default CCS.Editor suite now includes
    staged sequence projections, but analyzer/live-LSP coverage must be inventoried
    for each newly admitted form. Exercise measured hovers, exact source alias and
@@ -320,20 +334,20 @@ runner's selected entries. Add missing cases before treating a full run as full
 coverage. New 13a selectors are executable only after manifest registration.
 
 ```sh
-# G1–G3 focused source/graph and physical composition.
+# C-01/C-02/C-06 focused source/graph and physical composition.
 dotnet test ../clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --filter 'FullyQualifiedName~SequenceApplicationCases|FullyQualifiedName~ClosureEnvironmentCases|FullyQualifiedName~EnvironmentFactoryResultsCases|FullyQualifiedName~SequenceOriginCases|FullyQualifiedName~SequenceResidenceCases'
 dotnet test tests/Alex.Tests/Alex.Tests.fsproj --filter 'FullyQualifiedName~Callable|FullyQualifiedName~FunctionResult|FullyQualifiedName~LambdaOccurrence|FullyQualifiedName~MutableClosure|FullyQualifiedName~SequenceBoundary'
 dotnet run --project tests/CCS.Editor.Tests/CCS.Editor.Tests.fsproj -- --sequence-applications
 dotnet fsi tests/regression/Runner.fsx -- --sample 16h_SequenceApplications --sample 16a_SequenceOperations --jobs 2 --results /tmp/composer-callable-gates
 dotnet run --project tests/NativeSequences/NativeSequences.Tests.fsproj -- src/bin/Debug/net10.0/Composer --sample 16h_SequenceApplications
 
-# Discriminating canonical-storage/callback controls; expand to all cases at G10.
+# Discriminating canonical-storage/callback controls; expand to all cases at full C/F acceptance.
 dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj -- src/bin/Debug/net10.0/Composer FunctionSnapshots FunctionFields CapturedRecords CapturedBuffers OptionFunctionPayloads DirectCaptures CallEffects
 
-# G4 original recursive and recurrence cases, without replacing their sources.
+# C-03/C-06 original recursive and recurrence cases, without replacing their sources.
 dotnet fsi tests/regression/Runner.fsx -- --sample 13_Recursion --sample 15_SimpleSeq --sample 15d_SequenceAdditive --jobs 3 --results /tmp/composer-recurrence-gates
 
-# G10 coordinated broad baseline, after missing native entries are registered.
+# Full C/F acceptance: coordinated broad baseline, after missing native entries are registered.
 dotnet test ../clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj
 dotnet test tests/Alex.Tests/Alex.Tests.fsproj
 dotnet run --project tests/CCS.Editor.Tests/CCS.Editor.Tests.fsproj

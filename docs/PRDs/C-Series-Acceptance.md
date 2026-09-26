@@ -96,6 +96,37 @@ reconstructing missing source semantics. A new form needs its owning Baker
 contract where semantics change, Element/Pattern/Witness coverage where physical
 expression changes, and backend admission where realization changes.
 
+### 1.2 Shared evaluation requirements within existing PRDs
+
+Ordinary call-by-need and explicit `eager` are language requirements under
+[Default Demand and Sharing](../../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing),
+[Eager Expressions](../../../clef-lang-spec/spec/expressions.md#eager-expressions)
+and [Evaluating Function Applications](../../../clef-lang-spec/spec/expressions.md#evaluating-function-applications).
+They belong to the existing feature PRDs below. This mapping adds no numbered
+gate series or separate prerequisite project, and changes no recorded PRD status.
+
+| Owning PRDs | Governing contract and observable acceptance |
+|---|---|
+| [C-01](C-01-Closures.md#22-capture-modes) | [Capture semantics](../../../clef-lang-spec/spec/closure-representation.md#22-capture-semantics): immutable captures retain the original deferred binding; aliases share a result; separate dynamic formations and original mutable cells preserve their identities. |
+| [C-02](C-02-HigherOrderFunctions.md#6-validation), [F-03](F-03-PipeOperators.md#8-validation), [F-04](F-04-CurryingLambdas.md#8-validation) | Default demand and application rules: an unused ordinary argument produces zero effects; repeated demand of one actual computes once; an explicit eager actual runs at its activated declared boundary. Direct, piped, partial and returned-callable forms preserve those same rules and source signatures. |
+| [C-03](C-03-Recursion.md#6-verification) | Recursive initialization, recursive calls and tail behavior retain the specified demand, effects, identity and stack obligations; moving demand cannot introduce divergence or reorder effects. |
+| [C-04](C-04-CoreCollections.md#7-required-acceptance-cases), [F-05](F-05-DiscriminatedUnions.md), [F-08](F-08-OptionType.md), [F-09](F-09-ResultType.md), [F-10](F-10-RecordTypes.md) | [Union evaluation](../../../clef-lang-spec/spec/expressions.md#evaluating-union-cases) and [record evaluation](../../../clef-lang-spec/spec/expressions.md#evaluating-record-expressions): tag/outer-value observation does not demand every payload; unused defaults and callbacks remain deferred; selected projections preserve shared identity and retained backing. |
+| [C-05](C-05-Lazy.md#8-validation) | [Explicit Lazy memoization](../../../clef-lang-spec/spec/lazy-representation.md#91-memoization-semantics) remains a distinct force/cache protocol. Capturing an ordinary binding preserves its specified deferred identity; forming `eager (lazy expr)` does not force `expr`. |
+| [C-06](C-06-SimpleSeq.md#7-completion-gates), [C-07](C-07-SeqOperations.md#7-coverage-commitments) | [Sequence ownership and evaluation](../../../clef-lang-spec/spec/seq-representation.md#6-psg-ownership-evaluation-cuts-and-evidence): formation, fresh enumeration, pulls and successful Current are distinct; count actual pulls/callbacks and verify no work after a deciding short circuit. |
+
+CCS/Baker owns semantic elaboration and saturation of these requirements,
+including occurrence/scope context, fan-out/fold-in and complete invalidation
+premises. Alex consumes settled facts through the actual Huet-zipper occurrence
+and Element/Pattern/Witness composition. Target realization remains in the
+backend. This mapping grants no authority to choose demand or reconstruct source
+algorithms inside Alex, or to move FPGA lowering mechanisms into the middle end.
+
+The [completion ledger](../C_F_Completion_Ledger.md#1-work-by-owning-cf-prd)
+lists implementation dependencies under these owners. The
+[checkpoint report](../C_F_Checkpoint_2026-09-26.md) records demonstrated evidence
+separately from planning estimates; shared work is not an additional charge
+outside those C/F work items.
+
 ## 2. Established work and the next unsettled contract
 
 These are dated recorded observations, not a fresh baseline. Consult the linked

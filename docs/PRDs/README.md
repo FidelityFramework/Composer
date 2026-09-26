@@ -2,6 +2,14 @@
 
 > **Purpose**: Category-prefixed PRD organization enabling modular growth across platform targets
 
+For the September 26 C/F work, start with the
+[checkpoint report and estimate provenance](../C_F_Checkpoint_2026-09-26.md),
+[work inventory by owning C/F PRD](../C_F_Completion_Ledger.md#1-work-by-owning-cf-prd)
+and [shared evaluation requirements with spec links](C-Series-Acceptance.md#12-shared-evaluation-requirements-within-existing-prds).
+These are views of the existing PRDs, not additional PRD categories. Planning
+estimates do not change the feature statuses or authorize a separate prerequisite
+project. C-driven extensions and regressions retain their explicit C/F owners.
+
 Status reconciliation, 2026-09-20: operational capability, PRD completion and
 regression evidence are recorded separately. The foundation is implemented and
 operational within the scope below; **Retrospective** describes how its documents

@@ -121,8 +121,9 @@ oracles prevent a shared implementation from changing the protocol:
 C-01–C-07 must preserve their applicable formation, capture, invocation, lazy
 and sequence behavior now. Reactive, cold and scheduling successors add their
 own executable gates; a C component pass does not establish those successor
-protocols. The [completion ledger](C_F_Completion_Ledger.md) retains that ownership
-while requiring shared C/F machinery to support the compositions.
+protocols. The [completion ledger](C_F_Completion_Ledger.md) records these existing
+PRD requirements and their shared C/F machinery; it does not establish a separate
+source of requirements.
 
 ## Realization cost and coordination
 
@@ -199,12 +200,22 @@ effects or an intentional readiness boundary may be its purpose. A lazy value
 that is eventually demanded is likewise not automatically a poor choice. Advice
 explains the specific tradeoff and respects both forms as intentional designs.
 
-## Foundation delivery through the owning stages
+## Evaluation requirements through the owning stages
 
-The completion ledger's G0 demand gate precedes language-surface closure. Its
-implementation must replace blanket eager assumptions rather than merely add a
-keyword to an otherwise eager evaluator. The following contracts define the
-delivery order:
+The specification's [ordinary call-by-need and sharing rules](../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing)
+and [explicit eager frontiers](../../clef-lang-spec/spec/expressions.md#eager-expressions)
+apply to the existing PRDs: capture identity in [C-01](PRDs/C-01-Closures.md),
+application and partial-application boundaries in [C-02](PRDs/C-02-HigherOrderFunctions.md),
+[F-03](PRDs/F-03-PipeOperators.md) and [F-04](PRDs/F-04-CurryingLambdas.md),
+recursive demand in [C-03](PRDs/C-03-Recursion.md), collection and payload demand
+in [C-04](PRDs/C-04-CoreCollections.md), [F-05](PRDs/F-05-DiscriminatedUnions.md),
+[F-08](PRDs/F-08-OptionType.md), [F-09](PRDs/F-09-ResultType.md) and
+[F-10](PRDs/F-10-RecordTypes.md), and the explicit lazy and sequence protocols in
+[C-05](PRDs/C-05-Lazy.md), [C-06](PRDs/C-06-SimpleSeq.md) and
+[C-07](PRDs/C-07-SeqOperations.md). These are shared requirements of those PRDs,
+not a separate planning gate. Their implementation must replace blanket eager
+assumptions rather than merely add a keyword to an otherwise eager evaluator.
+The following contracts define the delivery order through the owning stages:
 
 1. **Source construction.** Parsing and checking retain an explicit eager marker,
    its operand type, source range and activated binding/application/construction
@@ -263,7 +274,7 @@ need semantic review. Where the intended example requires eager ordering, make
 that intent explicit in source and gate the marker through the compiler. Where
 the example is intended to demonstrate ordinary lazy behavior, use the specified
 demand trace. Neither changing an expected string alone nor preserving an old
-eager trace establishes this foundation gate.
+eager trace satisfies these source demand requirements.
 
 ## Runtime incrementality and compiler incrementality
 
