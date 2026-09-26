@@ -1,0 +1,58 @@
+{
+  "AlexFailures": 0,
+  "AlexTests": 223,
+  "CcsSha256": "f92df8c23061302f4090f887e83658d2241264caeef5ae092dac5775c0ee5b08",
+  "ClefCommit": "f65907e",
+  "ComposerSha256": "6dce64dc8019a4d5929d27611fb9b41f140d25af9ac1f87c313b80f15af43da4",
+  "ComposerSourceCommit": "6d54764",
+  "EvidenceRoot": "/tmp/composer-direct-capture-repair/20260926T172339-4f03d2348982440e81680520ff2e7293",
+  "Jobs": 3,
+  "Outcomes": [
+    {
+      "Compile": "CompileFailed",
+      "ExactNativeStreams": false,
+      "Name": "08e_OptionFolds",
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "ExactNativeStreams": true,
+      "Name": "11a_DirectCaptures",
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "ExactNativeStreams": false,
+      "Name": "11b_LoopCaptures",
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "ExactNativeStreams": true,
+      "Name": "12_HigherOrderFunctions",
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "ExactNativeStreams": false,
+      "Name": "13_Recursion",
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "ExactNativeStreams": false,
+      "Name": "16b_SequenceCallbacks",
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "ExactNativeStreams": true,
+      "Name": "16h_SequenceApplications",
+      "Run": "RunSuccess"
+    }
+  ],
+  "PruneIntermediates": true,
+  "SourceFailures": 0,
+  "SourceTests": 1371,
+  "TimeoutSeconds": 180
+}

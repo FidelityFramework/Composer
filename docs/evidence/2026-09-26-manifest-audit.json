@@ -1,0 +1,308 @@
+{
+  "CcsSha256": "24d09cca20f19dd9caddae088fb7359e32d68f65fdf4cca05c2a276979ce126e",
+  "CompileFailed": 27,
+  "CompilePassed": 21,
+  "CompileSkipped": 0,
+  "ComposerSha256": "6dce64dc8019a4d5929d27611fb9b41f140d25af9ac1f87c313b80f15af43da4",
+  "EvidenceRoot": "/tmp/claude-1000/-home-hhh-repos-clef/402241eb-a4c4-43b3-9a24-eeb5e3905ddb/scratchpad/baseline/20260926T170046-6106d4f275d44281b1e7ce131b4a130a",
+  "Jobs": 6,
+  "Outcomes": [
+    {
+      "Compile": "CompileSuccess",
+      "Name": "01_HelloWorldDirect",
+      "Ordinal": 1,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "02_HelloWorldSaturated",
+      "Ordinal": 2,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "03_HelloWorldHalfCurried",
+      "Ordinal": 3,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "04_HelloWorldFullCurried",
+      "Ordinal": 4,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "05_AddNumbers",
+      "Ordinal": 5,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "06_AddNumbersInteractive",
+      "Ordinal": 6,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "07_BitsTest",
+      "Ordinal": 7,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "08_Option",
+      "Ordinal": 8,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "08a_OptionDefaults",
+      "Ordinal": 9,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "08b_OptionDefaultWith",
+      "Ordinal": 10,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "08c_OptionAlternatives",
+      "Ordinal": 11,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "08d_OptionIteration",
+      "Ordinal": 12,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "08e_OptionFolds",
+      "Ordinal": 13,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "09_Result",
+      "Ordinal": 14,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "09a_ResultCallbacks",
+      "Ordinal": 15,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "09b_ResultElimination",
+      "Ordinal": 16,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "09c_ResultCases",
+      "Ordinal": 17,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "10_Records",
+      "Ordinal": 18,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "10a_ImperativeControl",
+      "Ordinal": 19,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "11_Closures",
+      "Ordinal": 20,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "11a_DirectCaptures",
+      "Ordinal": 21,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "11b_LoopCaptures",
+      "Ordinal": 22,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "12_HigherOrderFunctions",
+      "Ordinal": 23,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "13_Recursion",
+      "Ordinal": 24,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "14_Lazy",
+      "Ordinal": 25,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "14a_LazyScalarResults",
+      "Ordinal": 26,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "14b_LazyStringViews",
+      "Ordinal": 27,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "15_SimpleSeq",
+      "Ordinal": 28,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "15a_SequenceSemantics",
+      "Ordinal": 29,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "15b_SequenceElements",
+      "Ordinal": 30,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "15c_SequenceTemplateBorrows",
+      "Ordinal": 31,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "15d_SequenceAdditive",
+      "Ordinal": 32,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "16a_SequenceOperations",
+      "Ordinal": 33,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "16b_SequenceCallbacks",
+      "Ordinal": 34,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "16c_SequenceComposition",
+      "Ordinal": 35,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "16d_SequenceCollect",
+      "Ordinal": 36,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "16e_SequenceSearch",
+      "Ordinal": 37,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "16f_SequenceOptions",
+      "Ordinal": 38,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "16g_SequenceStartup",
+      "Ordinal": 39,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileSuccess",
+      "Name": "16h_SequenceApplications",
+      "Ordinal": 40,
+      "Run": "RunSuccess"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "16_SeqOperations",
+      "Ordinal": 41,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "17_ExternCall",
+      "Ordinal": 42,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "18_Generalization",
+      "Ordinal": 43,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "19_ModuleValues",
+      "Ordinal": 44,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "20_ArraySurface",
+      "Ordinal": 45,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "21_RecordsAndTags",
+      "Ordinal": 46,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "22_UnionPayloads",
+      "Ordinal": 47,
+      "Run": "NotRun"
+    },
+    {
+      "Compile": "CompileFailed",
+      "Name": "23_RecordSurface",
+      "Ordinal": 48,
+      "Run": "NotRun"
+    }
+  ],
+  "OutputOracle": "Normalized stdout and zero exit status; stderr retained, not asserted empty.",
+  "Provenance": "Summary extracted from another agent\u0027s saved native run; this extraction did not execute tests.",
+  "PruneIntermediates": false,
+  "ResultsSha256": "a26524183434b19450cc9e72711dd4de8cf3a96f69dd8d8130e01189d02a4e87",
+  "RunPassed": 21,
+  "Selected": 48,
+  "TimeoutSeconds": [
+    300
+  ]
+}

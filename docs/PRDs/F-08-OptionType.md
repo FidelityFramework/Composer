@@ -2,6 +2,15 @@
 
 > **Sample**: `08_Option` | **Status**: Retrospective | **Category**: Foundation
 
+> **Current acceptance, 2026-09-26: In-Progress.** The
+> [full-manifest audit](../C_F_Checkpoint_2026-09-26.md#subsequent-full-manifest-audit--2026-09-26)
+> records08 passing and08a–e failing compilation. Restore valid defaults,
+> alternatives, iteration and fold oracles through the owning C-01/C-02/C-04
+> contracts. Obsolete eager-default expectations require an explicit migration
+> justified by the current demand specification and its implementation; an
+> expected-output edit alone is insufficient. Earlier six-sample passes remain
+> dated evidence.
+
 ## 1. Executive Summary
 
 This sample implements the canonical Clef `Option<'T>` type as a homogeneous discriminated union. Option represents nullable values without null references, using `Some` and `None` constructors.

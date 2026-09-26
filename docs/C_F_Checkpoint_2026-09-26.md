@@ -1,8 +1,10 @@
 # Clef / Composer checkpoint: C-series coverage and affected F-series gates
 
-**Verified integration checkpoint, 2026-09-26.** This
+**Scoped integration checkpoint, 2026-09-26.** This
 records delivered changes and their actual source, tooling and native cohorts.
 **It does not mark any C PRD Complete.**
+The subsequent full-manifest audit below found 27 compilation failures. This
+checkpoint is not evidence of a clean F/C regression handoff.
 C and F have equal delivery standing; the order below expresses dependencies.
 The current implementation is substantially beyond the initial PRD review, but
 specification agreement, source proof, physical composition and native behavior
@@ -37,7 +39,107 @@ projection correction. Its separate snapshot is
 The final v20 native confirmation repeats Lazy memoization and 16h transport;
 earlier executions below retain their actual cohort labels.
 
+## Subsequent full-manifest audit — 2026-09-26
+
+An independent agent ran the complete 48-entry native manifest after the
+checkpoint. Inspection of its saved `results.json` confirms **21 compiled and
+ran successfully, 27 failed compilation, zero skipped**. The 27 failures did
+not proceed to native execution. The runner checked normalized stdout and zero
+exit status for the 21 successes; this is not a byte-exact stderr assertion.
+The [repository outcome summary](evidence/2026-09-26-manifest-audit.json) retains
+all 48 sample names/results, compiler hashes and a hash of the original result
+file. It is an extraction of that run, not a second execution.
+
+The evidence root is
+`/tmp/claude-1000/-home-hhh-repos-clef/402241eb-a4c4-43b3-9a24-eeb5e3905ddb/scratchpad/baseline/20260926T170046-6106d4f275d44281b1e7ce131b4a130a`.
+It retains the manifest, selected expectations, run settings, compiler hashes,
+all job logs and results. It used six independent jobs, full intermediates and
+a 300-second per-job timeout. Its compiler snapshot hashes are:
+
+- CCS: `24d09cca20f19dd9caddae088fb7359e32d68f65fdf4cca05c2a276979ce126e`.
+- Composer: `6dce64dc8019a4d5929d27611fb9b41f140d25af9ac1f87c313b80f15af43da4`.
+
+These are a separate build cohort from the v19/v20 binaries below. The saved
+compiler banner identifies Composer `6d54764`; the aggregate failure count
+does not by itself identify which earlier change introduced each defect.
+
+| Failed samples | Existing acceptance owners |
+|---|---|
+| 04 | F-04, C-01/C-02 callable application and results |
+| 06 | F-06 interactive parsing; the legacy platform conversion rejection was already recorded |
+| 08a–e | F-08 and C-04 Option operations, with C-01/C-02 callback and environment dependencies |
+| 09a–c | F-09 Result operations, with C-01/C-02 callback and selected-branch dependencies |
+| 11, 11a, 11b | C-01 closures, direct captures and loop captures |
+| 13 | C-03 recursion |
+| 15 | C-06 sequence recurrence and frame settlement |
+| 16b, 16c, 16e, 16g, original16 | C-06/C-07 sequence composition, callbacks, demand and startup; C-01/C-02 callable dependencies |
+| 18 Generalization, 19 ModuleValues | F-04/C-02 generalization and F-01/C-01 program initialization and captured storage |
+| 20 ArraySurface | C-04 Array and supporting operations |
+| 21 RecordsAndTags, 22 UnionPayloads, 23 RecordSurface | F-05/F-08/F-09/F-10 aggregate and selected payload behavior, with C-04 supporting operations |
+| 17 ExternCall | Foreign binding/ABI fixture reconciliation, with C-01 foreign-boundary and F-08 optional-result overlap; retired integer-as-pointer types must not be re-admitted to make this sample pass |
+
+Thus **26 failures directly exercise C/F contracts**; 17 needs its distinct
+foreign-boundary contract. The actual samples 18–23 are not the planned A-series
+examples which reuse those numbers in the PRD index. Scope must follow the
+source program and owning contract, not the numeric prefix alone.
+
+The earlier native successes recorded below did not include any of these 27
+failed samples. Several have older passing evidence, so their present failures
+reopen the affected regression gates; others were already recorded acceptance
+gaps. Neither category can be called a newly introduced defect solely from this
+one run. F-04, F-08 and F-09 must not retain an unqualified current passing claim.
+
+One concrete cause is confirmed by code inspection: direct-capture elaboration
+prepends physical capture formals and preserves the source signature, while
+`CallableCarriers.settle` excludes only environment/result formals when comparing
+that signature. It omits proved direct-capture formals. The same omission exists
+in Clef `14fb7c7` and its parent `f898c97`; attributing its introduction to the
+last commit alone is unsupported. The correction belongs in CCS settlement,
+with typed provenance and invalidation checks, followed by unchanged native
+direct-capture and neighboring controls. No Alex semantic workaround is licensed.
+
+The handoff wording overstated the evidence. A successful compiler build, clean
+worktree and selected passing tests establish those observations only. Shared
+callable/closure changes require the affected F/C native baseline to be run and
+reported before describing the handoff as regression-clean.
+
+### Direct-capture correction and neighboring checks
+
+Clef `f65907e` corrects the direct-capture public/physical signature distinction.
+The reader validates the actual capture origin, immutable source, typed formal,
+parameter incidence and leading position. The callable retains every physical
+parameter. Removed, duplicated or altered premises retract admission; Alex does
+not infer the missing source contract.
+
+The new source regression failed before the repair, including both declared
+32-bit and 64-bit platform cases. After the repair, **85 focused tests and all
+1,371 CCS tests pass**, with zero skips. The rebuilt Alex suite passes **223/223**.
+Logs: `/tmp/clef-direct-capture-carrier-red.log`,
+`/tmp/clef-direct-capture-platform-red.log`,
+`/tmp/clef-direct-capture-carrier-green.log`,
+`/tmp/clef-direct-capture-full.log`, `/tmp/composer-direct-capture-alex.log`.
+
+The fresh [seven-sample native result](evidence/2026-09-26-direct-capture-repair.json)
+is **3 compiled and ran successfully, 4 failed compilation, zero skipped**.
+Original 11a now passes unchanged, alongside 12 and 16h. Their stdout additionally
+matches the manifest byte-for-byte, with empty stderr. 08e, 11b, 13 and 16b still
+fail; this run is not reported as a clean cohort. It used three jobs, pruned
+intermediates and a 180-second per-job limit. The JSON records exact compiler
+hashes and every selected outcome; full logs remain at its evidence root.
+
+The remaining 13/16b signature failures concern generic and measure instantiation,
+not missing direct-capture formals. Correct their owning source contracts rather
+than widening the hidden-formal exception. 11b retains a storage residence failure;
+08e retains returned-environment and callable-instantiation failures. These remain
+within their existing C/F acceptance obligations.
+
 ## Planning estimates and their limits
+
+The owner has requested completion and architectural verification of all F/C
+acceptance areas, rather than revised percentages. The conversational estimates
+below are withdrawn as a planning basis: they did not systematically account
+for the failed regressions now observed. They are retained solely as the record
+of what was previously claimed, not replaced with new guesses.
 
 The following numbers preserve the assistant's conversational estimates of
 remaining effort, made without a new code review. They were not calculated from

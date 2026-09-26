@@ -1,8 +1,14 @@
 # F-04: Currying & Lambdas
 
-> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
+> **Layout note (2026-09).** The packed environment layouts below (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq) are historical sketches. The current contract is the two-value pair `(fn, env)` with no function address stored in the environment as data — [closure representation](../../../clef-lang-spec/spec/closure-representation.md), [lazy representation](../../../clef-lang-spec/spec/lazy-representation.md) and [sequence representation](../../../clef-lang-spec/spec/seq-representation.md). The [C-01 contract](C-01-Closures.md) and recorded implementation evidence govern current lowering; these sketches do not describe current representation authority.
 
 > **Sample**: `04_HelloWorldFullCurried` | **Status**: Retrospective | **Category**: Foundation
+
+> **Current acceptance, 2026-09-26: In-Progress.** The
+> [full-manifest audit](../C_F_Checkpoint_2026-09-26.md#subsequent-full-manifest-audit--2026-09-26)
+> records original04 failing callable declaration/result/storage witnessing.
+> Earlier passing evidence is historical. Restore the existing oracle through
+> the C-01/C-02 contracts; the retrospective label is not a current pass.
 
 ## 1. Executive Summary
 

@@ -88,7 +88,14 @@ the design and current implementation boundary.
 
 ### Foundation (F-xx) - Core Compilation
 
-The latest recorded foundation-wide native run is the
+The [September 26 full-manifest audit](../C_F_Checkpoint_2026-09-26.md#subsequent-full-manifest-audit--2026-09-26)
+records 21 native passes and 27 compilation failures. F-04, F-08 and F-09 have
+observed failures in their original acceptance samples and are reopened below;
+F-06 retains its previously recorded failure. The earlier selected v19/v20 passes
+did not rerun these failed samples. A clean worktree or successful compiler build
+does not establish a clean native regression baseline.
+
+The earlier foundation-wide native baseline is the
 [C-06 regression checkpoint](../Language_Coverage_Waypoints.md#c-06-native-continuation-settlement--2026-09-20)
 on CCS `08d54752…84482`: 01–04, 07–10 and every 08a–e / 09a–c variant compiled,
 ran and matched expected output. Sample 05's formatter regression is now closed
@@ -104,12 +111,12 @@ run.
 | [F-01](F-01-HelloWorldDirect.md) | HelloWorldDirect | 01 | Complete | Native pipeline, static strings and console output are operational; 01 passes. |
 | [F-02](F-02-ArenaAllocation.md) | Arena Allocation | 02 | Complete | The PRD's input/string-allocation sample passes. Its explicit future arena/region extension belongs to A-04; this status does not close that contract. |
 | [F-03](F-03-PipeOperators.md) | Pipe Operators | 03 | Complete | Pipe normalization and function application are operational; 03 passes. |
-| [F-04](F-04-CurryingLambdas.md) | Currying & Lambdas | 04 | Complete | Curried calls, lambdas and the sample's partial application pass. Broader returned/retained callable environments remain C-01/C-02 work. |
+| [F-04](F-04-CurryingLambdas.md) | Currying & Lambdas | 04 | In-Progress | September 26 audit: original04 fails callable declaration/result/storage witnessing. Its earlier native pass remains dated evidence; restore the unchanged F-04 oracle through the owning C-01/C-02 contracts. |
 | [F-05](F-05-DiscriminatedUnions.md) | Discriminated Unions | 05 | Complete | Original 05 again passes stock MLIR and exact native output after Baker settles integer/UTF-8 storage and snapshot ownership; the separate 22-case formatter and encoding oracle also passes. |
 | [F-06](F-06-InteractiveParsing.md) | Interactive Parsing | 06 | In-Progress | Implemented interactive parsing/mixed numeric DU baseline; original 06 has a recorded source-admission regression on three legacy `int` conversion calls in platform Parse (`CCS8009`). |
 | [F-07](F-07-BitwiseOperators.md) | Bitwise Operators | 07 | Complete | AND/OR/XOR/complement/shifts, comparisons and Boolean composition pass. The surface is native operators, not the retired `Bits.*` byte-order/bitcast API. |
-| [F-08](F-08-OptionType.md) | Option Type | 08, 08a–e | Complete | Some/None and matching, plus tested defaults, alternatives, iteration and folds; all six samples pass. Wider collection/callable contracts remain separately scoped. |
-| [F-09](F-09-ResultType.md) | Result Type | 09, 09a–c | Complete | Ok/Error and matching, map/mapError/bind, defaults, iteration and predicates; all four samples pass. Historical unchecked `get`/`getError` sketches are not admitted native operations. |
+| [F-08](F-08-OptionType.md) | Option Type | 08, 08a–e | In-Progress | September 26 audit:08 passes;08a–e fail compilation. Restore defaults, alternatives, iteration and fold acceptance through their C-01/C-02/C-04 dependencies; earlier six-sample passes are historical. |
+| [F-09](F-09-ResultType.md) | Result Type | 09, 09a–c | In-Progress | September 26 audit:09 passes;09a–c fail compilation. Restore callbacks, elimination and predicates through the owning callable/selected-branch contracts. Historical unchecked `get`/`getError` sketches are not admitted native operations. |
 | [F-10](F-10-RecordTypes.md) | Record Types | 10 | Complete | Construction, field access, copy/update, nested records and guarded/nested/wildcard record patterns are operational; 10 passes with exact output. |
 
 The foundation PRDs mostly document completed work retrospectively. Their old
@@ -135,8 +142,8 @@ in either group preserve affected accepted behavior in the other.
 
 Use the [shared criteria and continuation order](C-Series-Acceptance.md) with each
 PRD. Original and lettered source oracles remain acceptance assets. The known
-exception is sample14's obsolete recomputation expectation: C-05 requires an
-explicit migration to normative memoization alongside its implementation.
+exception was sample14's obsolete recomputation expectation: it has been
+migrated to normative memoization alongside the C-05 implementation.
 
 | PRD | Title | Sample | Status | Note |
 |-----|-------|--------|--------|------|
@@ -144,11 +151,16 @@ explicit migration to normative memoization alongside its implementation.
 | [C-02](C-02-HigherOrderFunctions.md) | Higher-Order Functions | 12 | In-Progress | Native callback paths tested; stored/bare Seq operation partials expose remaining callable admission work. |
 | [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | In-Progress | Implementation exists; original 13 has a recorded generic integer-width failure. Full PRD acceptance is not established by C-07. |
 | [C-04](C-04-CoreCollections.md) | Core Collections | 13a | In-Progress | Option/range work and collection recipes exist; canonical List/Map/Set storage, bounded extent/capacity and registered 13a native gates remain open. |
-| [C-05](C-05-Lazy.md) | Lazy Evaluation and Memoization | 14 | In-Progress | Checking and legacy realization exist; canonical typed storage/force behavior remains open. The old sample expects recomputation and must be corrected to the normative cache contract. |
+| [C-05](C-05-Lazy.md) | Lazy Evaluation and Memoization | 14 | In-Progress | Canonical Baker memoization and typed storage are implemented for the recorded14/14a/14b cases, which pass again in the September26 audit. The sample oracle now requires memoization. Broader capture/result/residence and force-control acceptance remains open. |
 | [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–d | In-Progress | Native core and bounded scalar/Option transport tested; original recurrence/aggregate and broader residence gates remain separate. |
-| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | 16a–g have recorded passes; original16/16h remain open. Eleven-operation core acceptance and listed successor consumers/materializers have separate gates. |
+| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | September26 audit:16a/16d/16f/16h pass;16b/16c/16e/16g and original16 fail compilation. Restore those controls and close the full eleven-operation and successor inventories. Older16a–g passes remain dated evidence. |
 
 ### Async (A-xx) - Asynchronous Programming
+
+The sample numbers in this planned table are historical roadmap placeholders.
+The current manifest's17–23 programs are ExternCall, Generalization, ModuleValues,
+ArraySurface, RecordsAndTags, UnionPayloads and RecordSurface. Classify their
+acceptance scope by the actual programs and contracts, not these reused numbers.
 
 Before advancing this family, reconcile the inherited implementation sketches
 with the Clef CE/delimited-continuation contracts. C-07 does not establish actor
@@ -177,7 +189,7 @@ M-01 records target-aware expression and information-preservation gates.
 | C-01 / C-02 | Reuse staged operand snapshots for Seq partial/bare values; admit actual retained environments and canonical multi-value transport with exact residence/use evidence. `16h_SequenceApplications` is the unchanged first gate; original16 exercises returned factory/capture uses. |
 | C-03 with C-06 numeric prerequisites | Preserve recursive binding/capture implementation; close original13's generic-width gap and admit sound recurrence rules for original15's coupled/multiplicative state, including intermediate updates. |
 | C-04 with remaining C-07 consumers | Complete collection storage, sentinel/bounded links, extent/capacity and guarded access from declared platform authority, then the promised List/Map/Set operations and materializers. Register 13a native oracles and use current BAREWire consumers. |
-| C-05 | Reuse the shared environment contract for typed cache storage and once-only force. Correct the stale sample14 oracle transparently; stable scoped/program storage does not wait for every A-series PRD. |
+| C-05 | Extend the shared environment contract from the passing typed cache and once-only force cases to the complete result/capture/residence matrix. Preserve the corrected sample14 memoization oracle; stable scoped/program storage does not wait for every A-series PRD. |
 | C-06 / C-07 | Preserve 15a–d and 16a–g; close original15/original16/16h with aggregate retention, full callable origins, residence and demand evidence, then listed successor operations. |
 | A / T families and added dialects | Follow [M-01](M-01-DialectAdmission.md): numeric selection and construction govern arith/math forms; RPC wait relationships and scheduler manifests govern async/control forms. Alex selects witnesses from settled facts for the actual target. Require graph, backend and design-time gates for each admitted operation/profile. |
 | R-04 first within Reactive, with R-01/R-02 | After the preceding Async/Threading work, lead with the static incremental core on C-01/C-05: tracked inputs, cached `return`/`map`/`map2`, demand and cutoff. Develop typed Observable delivery and matched operators alongside it, with shared versioned invalidation and an event-to-cache native gate. |

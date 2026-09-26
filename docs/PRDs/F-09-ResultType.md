@@ -2,6 +2,12 @@
 
 > **Sample**: `09_Result` | **Status**: Retrospective | **Category**: Foundation
 
+> **Current acceptance, 2026-09-26: In-Progress.** The
+> [full-manifest audit](../C_F_Checkpoint_2026-09-26.md#subsequent-full-manifest-audit--2026-09-26)
+> records09 passing and09a–c failing compilation. Restore the existing callback,
+> elimination and predicate oracles through their owning callable and selected
+> branch contracts. Earlier four-sample passes remain dated evidence.
+
 > **Current contract (2026-09):** this retrospective's fixed byte sizes and
 > allocation-by-payload-size descriptions are historical. Current placement is
 > governed by the [DU lifetime contract](../../../clef-lang-spec/spec/discriminated-union-representation.md),
