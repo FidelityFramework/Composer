@@ -13,6 +13,9 @@ type BackEndInput = {
     PointerBits: Result<int, string>
     ModuleName: string option
     Text: string
+    /// Exact source writable objects and the witnessed symbol that realizes
+    /// each one. A backend still owes placement/capacity correspondence.
+    WritableStorage: (string * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry) list
 }
 
 /// Result of a backend compilation pass

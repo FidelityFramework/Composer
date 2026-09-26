@@ -74,15 +74,37 @@ boundaries. They preserve original operand identities through Baker fan-out/fold
 tracing an alias to a source expression does not authorize forcing it, replaying
 it, or moving its effects ahead of its demand frontier.
 
-Known-callee environment admission supports bounded scalar captures and complete
-direct uses in sequence producers. Stored/bare Seq operations and broader
-returned, opaque, aggregate or nested callable captures retain open contracts.
-[Closure values as data](../Closure_As_Data.md) and [C-07](C-07-SeqOperations.md)
-identify the boundaries; later waypoints supersede interim native-status prose.
-
 Front-end/Baker work is more than checking an existing `TFun`: callable origins,
 stage frontiers, shared demand, environments, types, effects and residence must survive
 each transformation.
+
+### 3.1 Ordinary demand and physical call conventions
+
+Every deferred binding or actual retains its logical source type, including its
+inferred dimensions and recorded scheme instance. Baker establishes its producer,
+shared result storage, captured identities, activation scope and demand accesses.
+The first successful demand computes the result, stores it and publishes completion;
+later demands of the same instance read that result. Storage and publication require
+their own lifetime, layout and access evidence.
+
+The shared [memoization ingredient](../../../clef/src/Compiler/Baker/Ingredients/Memoization.fs)
+constructs the computation/store/publication graph. Each source owner supplies its
+admitted accesses and invocation. Ordinary demand has its own source contract;
+explicit `Lazy<'T>` retains the [C-05](C-05-Lazy.md) formation and force contract.
+
+Callable settlement records an ordered correspondence from each logical formal
+and supplied actual to its physical components. The correspondence retains the
+actual producer and memo environment across captures, partial applications,
+returns and aliases. Scheme instantiation validates the logical types before
+physical signature projection. Equal layouts or implementation identities alone
+cannot identify a memo instance. Alex consumes this correspondence at the actual
+Huet occurrence through Elements, Patterns and Witnesses.
+
+The registered native `04c_DefaultDemand` oracle observes unused effectful bindings
+and arguments, first and repeated demand, body-before-argument effects, explicit
+eager boundaries, captured sharing and delayed reads of a mutable cell.
+`04a_ProgramClosures` separately checks startup activation and ordinary argument
+deferral within activated program initializers.
 
 ## 4. Composer/Alex Layer Implementation
 
@@ -91,10 +113,9 @@ ordinary lambda/application witnesses. Alex pulls at the actual Huet position;
 it does not reconstruct partial applications, discover captures or select source
 algorithms by library spelling.
 
-General pair support still needs multi-value recall/signatures, call/return
-results, branch joins, stored values and target lowering. The single-result model
-and legacy packed closure-call path are migration work, not source restrictions
-or evidence of canonical general HOF acceptance.
+Pair transport carries the producer/code and actual environment operands through
+recall, signatures, calls, returns, branch joins and storage. Each witness checks
+the current source-owned convention and composes the corresponding operations.
 
 ## 5. MLIR Output Specification
 

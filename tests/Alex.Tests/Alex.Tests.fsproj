@@ -27,11 +27,14 @@
     <Compile Include="ControlFlowOccurrenceTests.fs" />
     <Compile Include="TraversalOccurrenceTests.fs" />
     <Compile Include="RequirementTests.fs" />
+    <Compile Include="EagerWitnessTests.fs" />
     <Compile Include="RawConstantMatchTests.fs" />
     <Compile Include="LLVMRequirementTests.fs" />
+    <Compile Include="WritableStorageTests.fs" />
     <Compile Include="AggregatePatternTests.fs" />
     <Compile Include="UnionLayoutPatternTests.fs" />
     <Compile Include="ProgramValuePatternTests.fs" />
+    <Compile Include="ProgramSequencePatternTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
     <Compile Include="CallableSymbolTests.fs" />
     <Compile Include="SequenceBoundaryTests.fs" />

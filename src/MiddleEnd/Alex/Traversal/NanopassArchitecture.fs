@@ -122,6 +122,9 @@ let rec visitAllNodes
            && isDefinitionOnlyLambda currentNode visitedCtx.Graph) then
         ()
     else
+        let priorErrors = visitedCtx.Accumulator.Errors
+        let priorDeferredEmission = visitedCtx.Accumulator.DeferredEmissionStamp
+        MLIRAccumulator.forgetVoid currentNode.Id visitedCtx.Accumulator
         // Mark as visited in traversal scope
         visited := Set.add currentNode.Id !visited
         // Also track in global visited for coverage validation
@@ -256,6 +259,10 @@ let rec visitAllNodes
             | Result.Error reason ->
                 Diagnostic.error (Some currentNode.Id) (Some "Lazy") (Some "operand transport") reason
                 |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+        | TRVoid when obj.ReferenceEquals(priorErrors, visitedCtx.Accumulator.Errors)
+                      && obj.ReferenceEquals(priorDeferredEmission, visitedCtx.Accumulator.DeferredEmissionStamp)
+                      && not (isDeferredArg && not output.InlineOps.IsEmpty) ->
+            MLIRAccumulator.completeVoid visitedCtx.Zipper visitedCtx.ScopeContext visitedCtx.Accumulator
         | TRVoid -> ()
         | TRError diag ->
             MLIRAccumulator.addError diag visitedCtx.Accumulator

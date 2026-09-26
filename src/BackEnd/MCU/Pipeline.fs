@@ -31,6 +31,8 @@ let backend: BackEnd = {
             |> Result.map (fun () ->
                 if ctx.EmitIntermediateOnly then IntermediateOnly "LLVM IR"
                 else
+                    if not witnessed.WritableStorage.IsEmpty then
+                        failwith "MCU writable program storage requires an exact source-inventory correspondence in its image layout contract"
                     if ctx.DeploymentMode <> Core.Types.Dialects.DeploymentMode.Embedded then failwith "MCU image requires output_kind = embedded"
                     match ctx.EmbeddedTarget, ctx.XtensaTarget with
                     | Some target, None ->

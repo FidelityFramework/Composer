@@ -34,6 +34,8 @@ let backend : BackEnd = {
             if ctx.EmitIntermediateOnly then
                 printfn "Stopped after CIRCT optimization"
                 Ok (IntermediateOnly "CIRCT hw/comb/seq optimized")
+            elif not witnessed.WritableStorage.IsEmpty then
+                Error "CIRCT writable program storage requires a target allocation commitment for the source inventory"
             else
                 // Step 2: Export to SystemVerilog
                 let svPath =

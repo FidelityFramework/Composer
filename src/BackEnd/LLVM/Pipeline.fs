@@ -46,6 +46,6 @@ let backend : BackEnd = {
             else
                 // Phase 2: LLVM IR → native binary (target bitcode + LLD)
                 timePhase "BackEnd.Link" "Linking to native binary" (fun () ->
-                    Codegen.compileToNative llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink ctx.TargetCpu)
+                    Codegen.compileToNativeWithStorage llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink ctx.TargetCpu witnessed.WritableStorage)
                 |> Result.map (fun () -> NativeBinary ctx.OutputPath))
 }

@@ -1,0 +1,35 @@
+module DimensionalClosures
+
+[<Measure>] type m
+[<Measure>] type s
+
+type Quantity<[<Measure>] 'u> = { Value: float<'u> }
+
+[<EntryPoint>]
+let main _ =
+    let scale = 2
+    let mutable calls = 0
+    let mapper = fun value ->
+        calls <- (calls + 1) % 100
+        value * scale
+    let alias = mapper
+    let length = alias 3<m>
+    if length = 6<m> then Console.writeln "length" else Console.writeln "FAIL length"
+    if length + length = 12<m> then Console.writeln "shared demand" else Console.writeln "FAIL shared demand"
+    let time = alias 4<s>
+    if time = 8<s> then Console.writeln "time" else Console.writeln "FAIL time"
+    let velocity = alias 5<m/s>
+    if velocity = 10<m/s> then Console.writeln "velocity" else Console.writeln "FAIL velocity"
+    if calls = 3 then Console.writeln "one shared cell" else Console.writeln "FAIL shared cell"
+
+    let mutable projections = 0
+    let project = fun (value: Quantity<'u>) ->
+        projections <- (projections + 1) % 100
+        value.Value
+    let projectAlias = project
+    let measuredLength = projectAlias { Value = 3.0<m> }
+    if measuredLength = 3.0<m> then Console.writeln "length record" else Console.writeln "FAIL length record"
+    let measuredTime = projectAlias { Value = 4.0<s> }
+    if measuredTime = 4.0<s> then Console.writeln "time record" else Console.writeln "FAIL time record"
+    if projections = 2 then Console.writeln "one projection cell" else Console.writeln "FAIL projection cell"
+    0

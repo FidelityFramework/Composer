@@ -105,7 +105,7 @@ let realize (runtime: LinuxX64Process option) (input: BackEndInput) : Result<Bac
             | MLIROp.MemRefOp(GetGlobal(_, name, _))
             | MLIROp.GlobalString(name, _, _, _)
             | MLIROp.GlobalBytePool(name, _, _, _)
-            | MLIROp.GlobalMemref(name, _) -> names.Add name |> ignore
+            | MLIROp.GlobalMemref(name, _, _) -> names.Add name |> ignore
             | MLIROp.HWOp(HWModule(name, _, _, body)) ->
                 names.Add name |> ignore
                 List.iter inspect body

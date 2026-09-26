@@ -317,3 +317,121 @@ let ``cyclic callable signature references fail without recursive emission or a 
     Assert.Empty ctx.Accumulator.AllOps
     Assert.Empty ctx.Accumulator.NodeAssoc
     Assert.Empty ctx.Accumulator.CallableAssoc
+
+/// Component fixture for a checker-quantified, representation-neutral measure.
+/// The code and capture layout stay shared; each alias retains its exact unit.
+let private measuredFixture () =
+    let existing = fixture true
+    let graph = existing.Graph
+    let variable = Clef.Compiler.NativeTypedTree.UnionFind.freshMeasureVar (Some "u")
+    let parameter = Clef.Compiler.NativeTypedTree.UnionFind.measureCellOf variable
+    let measure = Clef.Compiler.NativeTypedTree.DimensionAlgebra.Dimension.ofVar variable
+    let measured dimension = NativeType.TNum(CarrierRef.Carrier Types.floatTyCon, dimension)
+    let functionOf dimension = NativeType.TFun(measured dimension, measured dimension)
+    let genericType = functionOf measure
+    let scheme = NativeType.TForall([parameter], genericType)
+    let declarationId = NodeId.fresh()
+    let code = graph.Nodes[existing.Implementation]
+    let parameters, body =
+        match code.Kind with
+        | SemanticKind.Lambda(parameters, body, [], _, _) -> parameters, body
+        | _ -> failwith "Expected fixture code"
+    let name, _, argument = List.last parameters
+    let parameters = [List.head parameters; name, measured measure, argument]
+    let code =
+        { code with Kind = SemanticKind.Lambda(parameters, body, [], None, LambdaContext.RegularClosure)
+                    Type = NativeType.TFun(graph.Nodes[existing.Formal].Type, genericType)
+                    Metadata = code.Metadata.Add(ClosureMetadata.SourceSignature, MetadataValue.Type genericType)
+                                             .Add(SchemeMetadata.Declaration, MetadataValue.Type scheme)
+                                             .Add(SchemeMetadata.ImplementationDeclaration, MetadataValue.NodeId declarationId) }
+    let owner = { graph.Nodes[existing.Owner] with Type = genericType; Parent = Some declarationId }
+    let declaration =
+        { owner with Id = declarationId; Kind = SemanticKind.Binding("measured", false, false, None)
+                     Parent = None; Children = [owner.Id]
+                     Metadata = Map.ofList [SchemeMetadata.Declaration, MetadataValue.Type scheme] }
+    let alias id unitName =
+        let dimension = Clef.Compiler.NativeTypedTree.DimensionAlgebra.Dimension.ofBase { Name = unitName; Module = ["Fixture"] }
+        { graph.Nodes[id] with Kind = SemanticKind.VarRef("measured", Some declarationId); Type = functionOf dimension
+                               Metadata = Map.ofList [SchemeMetadata.Definition, MetadataValue.NodeId declarationId
+                                                      SchemeMetadata.Declaration, MetadataValue.Type scheme
+                                                      SchemeMetadata.argument 0, MetadataValue.Type(NativeType.TMeasure dimension)] }
+    let nodes =
+        graph.Nodes.Add(code.Id, code).Add(owner.Id, owner).Add(declarationId, declaration)
+            .Add(argument, { graph.Nodes[argument] with Type = measured measure })
+            .Add(body, { graph.Nodes[body] with Type = measured measure })
+            .Add(existing.Alias, alias existing.Alias "m")
+            .Add(existing.Other, alias existing.Other "s")
+    let inputs =
+        { existing.Inputs with Known = existing.Inputs.Known.Add(declarationId, existing.Inputs.Known[owner.Id])
+                               Origins = existing.Inputs.Origins.Add(declarationId, owner.Id) }
+    let raw = { graph with Nodes = nodes }
+    let carriers, residuals = Carriers.settle inputs raw
+    Assert.Empty residuals
+    let graph = { raw with Codata = lazy { graph.Codata.Value with CallableCarriers = carriers; KnownCallables = inputs.Known; EnvironmentOrigins = inputs.Origins } }
+    graph, declarationId, existing.Alias, existing.Other, code.Id
+
+[<Fact>]
+let ``quantified measure aliases forward the exact recalled code and environment without erasing units`` () =
+    let graph, declaration, metre, second, _ = measuredFixture ()
+    let ctx = context graph declaration
+    let sourceShape = Operands.project ctx declaration |> ok
+    Operands.bind ctx declaration (code sourceShape (Arg 0)) (Some(environment sourceShape (Arg 1))) |> ok
+    for destination in [metre; second] do
+        let value = Operands.reproject ctx declaration destination |> ok
+        Assert.Equal(Arg 0, (Operands.code value).SSA)
+        Assert.Equal(Arg 1, (heldEnvironment value).SSA)
+        Assert.Equal(graph.Nodes[destination].Type, (Operands.carrier value).SourceType)
+    Assert.NotEqual(graph.Nodes[metre].Type, graph.Nodes[second].Type)
+    Operands.copy ctx declaration metre |> ok
+    Operands.reproject ctx metre second |> failure |> ignore
+
+[<Fact>]
+let ``unquantified dimensions cannot borrow the shared signature permission`` () =
+    let graph, declaration, _, _, implementation = measuredFixture ()
+    let changedCode = { graph.Nodes[implementation] with Metadata = graph.Nodes[implementation].Metadata.Remove SchemeMetadata.Declaration }
+    let changed = { graph with Nodes = graph.Nodes.Add(implementation, changedCode) }
+    Operands.project (context changed declaration) declaration |> failure |> ignore
+    let carrier = graph.Codata.Value.CallableCarriers[declaration]
+    Operands.components (context graph declaration) (List.last carrier.ParameterShapes) |> failure |> ignore
+
+let private measuredCallFixture () =
+    let graph, _, occurrence, _, implementation = measuredFixture ()
+    let code = graph.Nodes[implementation]
+    let parameters, _ = match code.Kind with SemanticKind.Lambda(parameters, body, _, _, _) -> parameters, body | _ -> failwith "Missing code"
+    let valueType = match graph.Nodes[occurrence].Type with NativeType.TFun(input, _) -> input | _ -> failwith "Missing public signature"
+    let model = graph.Nodes[occurrence]
+    let fresh kind ty children = { model with Id = NodeId.fresh(); Kind = kind; Type = ty; Children = children; Metadata = Map.empty; Parent = None }
+    let binding = fresh (SemanticKind.Binding("physical", false, false, None)) code.Type [implementation]
+    let callee = fresh (SemanticKind.VarRef("physical", Some binding.Id)) code.Type []
+    let environment = fresh (SemanticKind.EnvironmentReference occurrence) (List.head parameters |> fun (_, ty, _) -> ty) [occurrence]
+    let argument = fresh (SemanticKind.Literal(NativeLiteral.Float(3.0, NTUKind.NTUfloat(NTUWidth.Fixed 64)))) valueType []
+    let call = fresh (SemanticKind.Application(callee.Id, [environment.Id; argument.Id])) valueType [callee.Id; environment.Id; argument.Id]
+    let nodes = [binding; callee; environment; argument; call] |> List.fold (fun nodes node -> Map.add node.Id node nodes) graph.Nodes
+    let row = { Sources = [occurrence; implementation; environment.Id; argument.Id]; Target = call.Id
+                Class = EdgeClass.Provenance; Role = EdgeRole.EnvironmentInvocation; Ordinal = 0 }
+    { graph with Nodes = nodes; Edges = row :: graph.Edges }, call.Id, implementation, parameters, row
+
+[<Fact>]
+let ``direct physical parameters require the current instantiated call and retain symbolic shared code`` () =
+    let graph, site, implementation, parameters, _ = measuredCallFixture ()
+    let projected = Operands.parametersAtCall (context graph site) site implementation parameters |> ok
+    Assert.Equal(2, projected.Length)
+    Assert.Equal<MLIRType list>([TFloat F64], List.last projected)
+    Assert.NotEmpty(Clef.Compiler.NativeTypedTree.UnionFind.freeMeasureVars (List.last parameters |> fun (_, ty, _) -> ty))
+    Operands.parametersAtCall (context graph implementation) site implementation parameters |> failure |> ignore
+
+[<Theory>]
+[<InlineData("missing source call")>]
+[<InlineData("wrong source callable")>]
+[<InlineData("changed argument dimension")>]
+let ``direct parameter projection refuses broken instance correspondence`` change =
+    let graph, site, implementation, parameters, row = measuredCallFixture ()
+    let graph =
+        match change with
+        | "missing source call" -> { graph with Edges = List.tail graph.Edges }
+        | "wrong source callable" -> { graph with Edges = { row with Sources = implementation :: List.tail row.Sources } :: List.tail graph.Edges }
+        | "changed argument dimension" ->
+            let argument = graph.Nodes[List.last row.Sources]
+            { graph with Nodes = graph.Nodes.Add(argument.Id, { argument with Type = Types.floatType }) }
+        | _ -> failwith "Unknown mutation"
+    Operands.parametersAtCall (context graph site) site implementation parameters |> failure |> ignore

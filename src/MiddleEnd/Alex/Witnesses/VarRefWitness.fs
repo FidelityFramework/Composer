@@ -74,7 +74,10 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 | SemanticKind.Binding(_, true, _, _) ->
                     WitnessOutput.error $"Sequence reference '{name}' requires an admitted pair storage read."
                 | _ ->
-                    match tryMatchWithDiagnostics (pSequenceForward ctx bindingId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    let pattern =
+                        if ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode then pProgramSequenceReference ctx bindingId
+                        else pSequenceForward ctx bindingId
+                    match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error reason -> WitnessOutput.error $"Sequence reference '{name}': {reason}"
             | Some bindingNode when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
@@ -104,6 +107,8 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     // The direct invocation consumes the settled declaration
                     // symbol. This actual callee occurrence needs no SSA value.
                     { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                | _ when ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode ->
+                    callable (pProgramCallableReference ctx bindingId)
                 | _ ->
                     match MLIRAccumulator.recallCallable bindingId ctx.Accumulator with
                     | Some _ -> callable (pCallableForward ctx bindingId)

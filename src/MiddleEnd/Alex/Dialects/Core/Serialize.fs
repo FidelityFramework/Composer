@@ -655,12 +655,13 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             | names -> sprintf ", clef.obligations = [%s]" (names |> List.map (sprintf "\"%s\"") |> String.concat ", ")
         sprintf "memref.global \"private\" constant @%s : memref<%dxi8> = dense<[%s]> {alignment = %d : i64%s}"
             name bytes.Length dense alignment anchors
-    | MLIROp.GlobalMemref (name, memrefType) ->
+    | MLIROp.GlobalMemref (name, memrefType, authority) ->
         // Zero-initialized static storage for a program-lifetime value (the program-lifetime
         // point of the lifetime lattice). Not `constant`: the closure struct is written into
         // this storage at construction. `uninitialized` is correct because every read is
         // preceded by the construction store; a heap-free target places this in .bss/Sram.
-        sprintf "memref.global \"private\" @%s : %s = uninitialized" name (typeToString pointer memrefType)
+        let alignment = authority |> Option.map (fun entry -> sprintf " {alignment = %d : i64}" entry.Alignment) |> Option.defaultValue ""
+        sprintf "memref.global \"private\" @%s : %s = uninitialized%s" name (typeToString pointer memrefType) alignment
     | MLIROp.IndexOp iop ->
         match iop with
         | IndexOp.IndexConst (result, value) ->

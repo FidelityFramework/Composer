@@ -22,7 +22,7 @@ let private declaration (ctx: WitnessContext) binding =
             | SemanticKind.TypeAnnotation(inner, _) -> ctx.Graph.Nodes[inner]
             | _ -> ctx.Graph.Nodes[child]
         match child.Kind with
-        | SemanticKind.Lambda(parameters, body, [], _, _) -> Some(parameters, body)
+        | SemanticKind.Lambda(parameters, body, [], _, _) -> Some(parameters, body, child.Id)
         | _ -> None
     | _ -> None
 
@@ -106,10 +106,10 @@ let private invoke (ctx: WitnessContext) (node: SemanticNode) invocation sources
 let private direct (ctx: WitnessContext) (node: SemanticNode) binding (sources: NodeId list) =
     let declared =
         match Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph binding, declaration ctx binding with
-        | Some symbol, Some(parameters, body) -> Some(symbol, parameters, body)
-        | _ -> Operands.tryThunkDeclaration ctx binding
+        | Some symbol, Some(parameters, body, implementation) -> Some(symbol, parameters, body, implementation)
+        | _ -> Operands.tryThunkDeclaration ctx binding |> Option.map (fun (symbol, parameters, body) -> symbol, parameters, body, binding)
     match declared with
-    | Some(symbol, parameters, body) ->
+    | Some(symbol, parameters, body, implementation) ->
         if parameters.Length <> sources.Length then
             failure node "declared boundary" "Settled direct call does not supply its actual declared parameters"
         else
@@ -123,14 +123,10 @@ let private direct (ctx: WitnessContext) (node: SemanticNode) binding (sources: 
                     | CallableValueShape.Sequence _ -> [name + "_pull"; name + "_environment"]
                     | CallableValueShape.Lazy _ -> [name + "_thunk"; name + "_environment"]
                     | _ -> [name])
-            let components =
-                parameters |> List.map (fun (_, _, formal) ->
-                    Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph ctx.Graph.Nodes[formal]
-                    |> Operands.components ctx)
-            match components |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
-            | Some reason -> failure node "parameter boundary" reason
-            | None ->
-                let expected = components |> List.collect (function Result.Ok types -> types | _ -> [])
+            match Operands.parametersAtCall ctx node.Id implementation parameters with
+            | Result.Error reason -> failure node "parameter boundary" reason
+            | Result.Ok components ->
+                let expected = List.concat components
                 invoke ctx node (Direct symbol) sources (Some body) (Some names) None (Some expected)
     | _ -> failure node "declaration identity" "Direct call lacks its settled declaration symbol and actual lambda boundary"
 

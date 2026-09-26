@@ -57,7 +57,7 @@ let ``ordered source requirement retains its diagnostic through backend realizat
           NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
           EmbeddedTarget = None; XtensaTarget = None; Deploy = false }
     let witnessed: Core.Types.Pipeline.BackEndInput =
-        { Operations = [declaration]; PointerBits = Ok 64; ModuleName = Some "requirement_component"; Text = text }
+        { Operations = [declaration]; PointerBits = Ok 64; ModuleName = Some "requirement_component"; Text = text; WritableStorage = [] }
     let realized =
         BackEnd.LLVM.RequirementRealization.realize
             (BackEnd.LLVM.RequirementRealization.selectRuntime backendContext triple) witnessed

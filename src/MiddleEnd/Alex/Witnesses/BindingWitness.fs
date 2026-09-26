@@ -58,10 +58,13 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | Result.Error reason -> WitnessOutput.error $"Lazy binding '{name}': {reason}"
                 | _ when isSequenceValue ctx node ->
-                    if isMut || ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then
+                    if isMut then
                         WitnessOutput.error $"Sequence binding '{name}' requires an admitted pair storage contract."
                     else
-                        match tryMatchWithDiagnostics (pSequenceForward ctx valueId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        let pattern =
+                            if ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then pProgramSequenceBinding ctx valueId
+                            else pSequenceForward ctx valueId
+                        match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                         | Result.Error reason -> WitnessOutput.error $"Sequence binding '{name}': {reason}"
                 | Some { Kind = SemanticKind.Lambda _ } when not isMut ->
@@ -82,7 +85,10 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                             | Result.Error reason -> WitnessOutput.error $"Mutable callable binding '{name}': {reason}"
                     elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then
-                        WitnessOutput.error $"Program callable binding '{name}' requires an admitted callable storage contract."
+                        match tryMatchWithDiagnostics (pProgramCallableBinding ctx valueId)
+                                      ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error reason -> WitnessOutput.error $"Program callable binding '{name}': {reason}"
                     else forward valueId
                 | _ ->
                     // Check if this binding holds a partial application (curry flattening)

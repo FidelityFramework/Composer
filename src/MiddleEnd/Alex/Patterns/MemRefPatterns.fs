@@ -8,6 +8,7 @@
 module Alex.Patterns.MemRefPatterns
 
 open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
@@ -145,7 +146,8 @@ let pGlobalSlotInit (nodeId: NodeId) (globalName: string) (valueSSA: SSA) (value
         let! state = getUserState
         let elemTy = slotElementType state.Platform.TargetArch valueTy
         let slotTy = TMemRefStatic (1, elemTy)
-        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy state.Accumulator
+        let! authority = Alex.Patterns.MemoryPatterns.pProgramStorageDeclaration (ProgramStorageIdentity.BindingSlot nodeId) slotTy
+        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy (Some authority) state.Accumulator
         let! getOp = pMemRefGetGlobal ssas.[0] globalName slotTy
         let! zeroOp = pIndexConst ssas.[1] 0L
         let! storeOp = pStore valueSSA ssas.[0] [ssas.[1]] elemTy slotTy
@@ -163,7 +165,8 @@ let pGlobalSlotLoad (bindingId: NodeId) (nodeId: NodeId) (globalName: string) (v
         let! state = getUserState
         let elemTy = slotElementType state.Platform.TargetArch valueTy
         let slotTy = TMemRefStatic (1, elemTy)
-        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy state.Accumulator
+        let! authority = Alex.Patterns.MemoryPatterns.pProgramStorageDeclaration (ProgramStorageIdentity.BindingSlot bindingId) slotTy
+        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy (Some authority) state.Accumulator
         let! getOp = pMemRefGetGlobal ssas.[0] globalName slotTy
         let! zeroOp = pIndexConst ssas.[1] 0L
         let! loadOp = pLoadFrom ssas.[2] ssas.[0] [ssas.[1]] elemTy
@@ -181,7 +184,8 @@ let pGlobalSlotStore (bindingId: NodeId) (nodeId: NodeId) (globalName: string) (
         let! state = getUserState
         let elemTy = slotElementType state.Platform.TargetArch valueTy
         let slotTy = TMemRefStatic (1, elemTy)
-        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy state.Accumulator
+        let! authority = Alex.Patterns.MemoryPatterns.pProgramStorageDeclaration (ProgramStorageIdentity.BindingSlot bindingId) slotTy
+        MLIRAccumulator.tryEmitGlobalMemref globalName slotTy (Some authority) state.Accumulator
         let! getOp = pMemRefGetGlobal ssas.[0] globalName slotTy
         let! zeroOp = pIndexConst ssas.[1] 0L
         let! storeOp = pStore valueSSA ssas.[0] [ssas.[1]] elemTy slotTy

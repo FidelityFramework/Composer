@@ -375,7 +375,9 @@ type MLIROp =
     | GlobalString of name: string * content: string * byteLength: int * obligations: string list  // obligations: anchor names of the obligations constraining this storage (PHG 2.4b), reified as {clef.obligations = [...]}
     /// One immutable allocation whose bytes and alignment were settled in the PSG.
     | GlobalBytePool of name: string * bytes: byte list * alignment: int * obligations: string list
-    | GlobalMemref of string * MLIRType                             // name, memrefType — zero-initialized static storage for a program-lifetime value (referenced via memref.get_global)
+    /// Exact source inventory accompanies writable storage. None identifies a
+    /// legacy unowned declaration; it cannot pass storage correspondence.
+    | GlobalMemref of string * MLIRType * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry option
     // CIRCT hardware dialects (FPGA targets)
     | CombOp of CombOp
     | HWOp of HWOp

@@ -100,9 +100,12 @@ let private generateCore
                     | Core.Types.Dialects.TargetPlatform.MCU, MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
                     | _ -> op)
 
-            match Alex.Traversal.StaticStorageValidation.validate graph transformedOps with
+            let storageValidation =
+                Alex.Traversal.StaticStorageValidation.validate graph transformedOps
+                |> Result.bind (fun () -> Alex.Traversal.StaticStorageValidation.validateWritable arch graph transformedOps)
+            match storageValidation with
             | Result.Error message -> Result.Error message
-            | Result.Ok () ->
+            | Result.Ok writableStorage ->
                 // Serialize the portable module; retain these exact operations
                 // at the backend boundary alongside this diagnostic artifact.
                 // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
@@ -143,7 +146,7 @@ let private generateCore
                 | _ -> ()
 
                 let witnessed =
-                    { Operations = transformedOps; PointerBits = arch.Pointer; Text = mlirText
+                    { Operations = transformedOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
                       ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
                 Result.Ok (witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
         | Result.Error msg -> Result.Error msg

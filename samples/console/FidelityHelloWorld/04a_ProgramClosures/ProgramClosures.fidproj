@@ -1,0 +1,15 @@
+[package]
+name = "ProgramClosures"
+version = "0.1.0"
+description = "Measured program closures preserve distinct instances, shared aliases and startup demand"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["ProgramClosures.clef"]
+output = "program_closures"
+output_kind = "console"

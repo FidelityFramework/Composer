@@ -1,0 +1,34 @@
+module DefaultDemand
+
+[<Measure>] type m
+
+let discard (value: int<m>) = 0
+
+let twiceAfter (value: int<m>) =
+    Console.writeln "body"
+    value + value
+
+[<EntryPoint>]
+let main _ =
+    Console.writeln "start"
+    let unused = Console.writeln "FAIL unused binding"; 1<m>
+    let shared = Console.writeln "binding demand"; 4<m>
+    Console.writeln "before demand"
+    if shared + shared = 8<m> then Console.writeln "shared binding" else Console.writeln "FAIL binding result"
+    if discard (Console.writeln "FAIL unused argument"; 2<m>) = 0 then Console.writeln "unused argument deferred"
+    let forced = eager (Console.writeln "eager binding"; 9<m>)
+    if discard (eager (Console.writeln "eager argument"; 2<m>)) = 0 then Console.writeln "eager boundary"
+    if twiceAfter (Console.writeln "argument demand"; 3<m>) = 6<m> then Console.writeln "shared argument" else Console.writeln "FAIL argument result"
+
+    let captured = Console.writeln "captured demand"; 5<m>
+    let read = fun () -> captured
+    Console.writeln "closure formed"
+    if read () + read () = 10<m> then Console.writeln "shared capture" else Console.writeln "FAIL capture result"
+
+    let mutable current = 1<m>
+    let snapshot = current
+    current <- 2<m>
+    if snapshot = 2<m> then Console.writeln "first demand observes cell" else Console.writeln "FAIL early cell read"
+    current <- 3<m>
+    if snapshot = 2<m> then Console.writeln "later demand shares value" else Console.writeln "FAIL repeated cell read"
+    0

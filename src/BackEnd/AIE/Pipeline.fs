@@ -23,6 +23,8 @@ let backend : BackEnd = {
         if ctx.EmitIntermediateOnly then
             printfn "Stopped after MLIR-AIE generation (--emit-mlir)"
             Ok (IntermediateOnly "MLIR-AIE")
+        elif not witnessed.WritableStorage.IsEmpty then
+            Error "AIE writable program storage requires a target allocation commitment for the source inventory"
         else
             // Derive output paths from the target output path
             // ctx.OutputPath is the project output (e.g., targets/HelloNappyKernel)

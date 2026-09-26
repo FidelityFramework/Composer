@@ -225,6 +225,38 @@ let extractMemRefShape (arch: Architecture) (ty: MLIRType) =
 /// One symbol convention for a source-admitted static allocation and its reads.
 let staticValueName (nodeId: NodeId) = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
 
+/// A writable declaration consumes its exact source inventory entry. It cannot
+/// infer residence from a symbol name or turn individual fit into pool capacity.
+let programStorageType arch graph (entry: ProgramStorageEntry) =
+    match entry.Shape with
+    | ProgramStorageShape.Bytes -> Some(TMemRefStatic(entry.Bytes, TInt(IntWidth 8)))
+    | ProgramStorageShape.Scalar slot ->
+        let scalar =
+            match slot with
+            | SettledSlot.Pointer 1 -> Some TIndex
+            | _ -> settledScalarType slot
+        scalar |> Option.map (fun scalar -> TMemRefStatic(1, scalar))
+    | ProgramStorageShape.ValueView ty ->
+        mapNativeTypeWithGraphForArch arch graph ty
+        |> physicalStorageType arch
+        |> fun value -> Some(TMemRefStatic(1, value))
+
+let pProgramStorageDeclaration identity storageTy : PSGParser<ProgramStorageEntry> =
+    parser {
+        let! state = getUserState
+        let reading = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramStorage.read state.Graph
+        do! ensure reading.IsSome "Writable program inventory is absent or stale"
+        let inventory = reading.Value
+        do! ensure inventory.Unresolved.IsEmpty
+                ("Writable program inventory is unresolved: " + (inventory.Unresolved.Values |> String.concat "; "))
+        let entry = inventory.Entries.TryFind identity
+        do! ensure entry.IsSome (sprintf "Writable declaration has no source inventory entry for %A" identity)
+        let entry = entry.Value
+        let expected = programStorageType state.Platform.TargetArch state.Graph entry
+        do! ensure (expected = Some storageTy) (sprintf "Writable declaration %A disagrees with its source-held physical shape" identity)
+        return entry
+    }
+
 /// Allocate memory for a constructed value — queries escape analysis coeffect
 /// PULL model: pattern pulls allocation decision from pre-computed coeffects.
 /// Four-point lifetime lattice (closure-representation.md §3.3):
@@ -251,7 +283,8 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
             let count, elemType = extractMemRefShape state.Platform.TargetArch ty
             let storageTy = TMemRefStatic (count, elemType)
             let globalName = staticValueName nodeId
-            MLIRAccumulator.tryEmitGlobalMemref globalName storageTy state.Accumulator
+            let! authority = pProgramStorageDeclaration (ProgramStorageIdentity.Allocation nodeId) storageTy
+            MLIRAccumulator.tryEmitGlobalMemref globalName storageTy (Some authority) state.Accumulator
             return! pMemRefGetGlobal ssa globalName storageTy
         | EscapeKind.EscapesViaReturn | EscapeKind.EscapesViaClosure _ | EscapeKind.EscapesViaByRef ->
             let count, elemType = extractMemRefShape state.Platform.TargetArch ty

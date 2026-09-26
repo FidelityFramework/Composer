@@ -133,7 +133,7 @@ let fibonacci (count: int) = seq {
     let mutable i = 0
     while i < count do
         yield a
-        let temp = a + b
+        let temp = eager (a + b)
         a <- b
         b <- temp
         i <- i + 1
@@ -161,10 +161,10 @@ let main _ =
     // ----- Part 1: Basic Sequences -----
     Console.writeln "--- Part 1: Basic Sequences ---"
 
-    Console.write "threeNumbers: "
+    Console.write "threeNumbers:"
     for x in threeNumbers do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
     Console.write "singleElement: "
@@ -181,86 +181,86 @@ let main _ =
     // ----- Part 2: While Loop Sequences -----
     Console.writeln "--- Part 2: While Loop Sequences ---"
 
-    Console.write "countUp 5 10: "
+    Console.write "countUp 5 10:"
     for x in countUp 5 10 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
-    Console.write "countDown 10 5: "
+    Console.write "countDown 10 5:"
     for x in countDown 10 5 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
     Console.writeln ""
 
     // ----- Part 3: Conditional Sequences -----
     Console.writeln "--- Part 3: Conditional Yields ---"
 
-    Console.write "evenNumbersUpTo 10: "
+    Console.write "evenNumbersUpTo 10:"
     for x in evenNumbersUpTo 10 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
-    Console.write "oddNumbersUpTo 10: "
+    Console.write "oddNumbersUpTo 10:"
     for x in oddNumbersUpTo 10 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
-    Console.write "nonFizzBuzzUpTo 15: "
+    Console.write "nonFizzBuzzUpTo 15:"
     for x in nonFizzBuzzUpTo 15 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
     Console.writeln ""
 
     // ----- Part 4: Sequences with Captures -----
     Console.writeln "--- Part 4: Sequences with Captures ---"
 
-    Console.write "multiplesOf 3 5: "
+    Console.write "multiplesOf 3 5:"
     for x in multiplesOf 3 5 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
-    Console.write "rangeWithStep 0 20 4: "
+    Console.write "rangeWithStep 0 20 4:"
     for x in rangeWithStep 0 20 4 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
     Console.writeln ""
 
     // ----- Part 5: Computed Sequences -----
     Console.writeln "--- Part 5: Computed Sequences ---"
 
-    Console.write "squares 6: "
+    Console.write "squares 6:"
     for x in squares 6 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
-    Console.write "triangularNumbers 6: "
+    Console.write "triangularNumbers 6:"
     for x in triangularNumbers 6 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
     Console.writeln ""
 
     // ----- Part 6: Classic Sequences -----
     Console.writeln "--- Part 6: Classic Sequences ---"
 
-    Console.write "fibonacci 10: "
+    Console.write "fibonacci 10:"
     for x in fibonacci 10 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
 
-    Console.write "powersOfTwo 8: "
+    Console.write "powersOfTwo 8:"
     for x in powersOfTwo 8 do
-        Console.write (Format.int x)
         Console.write " "
+        Console.write (Format.int x)
     Console.writeln ""
     Console.writeln ""
 

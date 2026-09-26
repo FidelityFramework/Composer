@@ -81,8 +81,9 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
                 sourceShape body = Some carrier.ResultShape
             if not shapesAgree then Result.Error "Callable component references do not match its exact formal and body participants."
             else
-            let parameterTypes = carrier.ParameterShapes |> List.map (componentsSeen ctx seen) |> collect
-            let resultTypes = componentsSeen ctx seen carrier.ResultShape
+            let permitted = Clef.Compiler.PSGSaturation.SemanticGraph.CallableInstantiations.allowsSignatureData ctx.Graph carrier
+            let parameterTypes = carrier.ParameterShapes |> List.map (componentsSeen ctx seen permitted) |> collect
+            let resultTypes = componentsSeen ctx seen permitted carrier.ResultShape
             match parameterTypes, resultTypes with
             | Result.Error reason, _ | _, Result.Error reason -> Result.Error reason
             | Result.Ok groups, Result.Ok results ->
@@ -106,7 +107,7 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
                       ParameterTypes = groups; ResultTypes = results })
         | _ -> Result.Error "Callable carrier no longer agrees with its source and physical implementation."
 
-and private componentsSeen (ctx: WitnessContext) seen value : Result<MLIRType list, string> =
+and private componentsSeen (ctx: WitnessContext) seen permitted value : Result<MLIRType list, string> =
     match value with
     | CallableValueShape.Lazy occurrence ->
         LazyOperands.project ctx occurrence |> Result.map LazyOperands.componentTypes
@@ -119,7 +120,9 @@ and private componentsSeen (ctx: WitnessContext) seen value : Result<MLIRType li
         | Some node ->
             match applySubst node.Type with
             | NativeType.TFun _ | NativeType.TForall _ -> Result.Error "Callable component cannot be read as a scalar data operand."
-            | ty when hasUnboundVars ty || not (List.isEmpty (freeMeasureVars ty)) ->
+            | ty when hasUnboundVars ty ||
+                      (not (List.isEmpty (freeMeasureVars ty)) &&
+                       not (permitted id)) ->
                 Result.Error "Callable signature data participant still has unresolved type or dimension variables."
             | _ ->
                 try
@@ -129,7 +132,26 @@ and private componentsSeen (ctx: WitnessContext) seen value : Result<MLIRType li
         | None -> Result.Error "Callable signature data participant is absent."
 
 let project ctx occurrence = projectSeen ctx Set.empty occurrence
-let components ctx value = componentsSeen ctx Set.empty value
+let components ctx value = componentsSeen ctx Set.empty (fun _ -> false) value
+
+/// Shared physical parameters retain their symbolic measure variables. Only
+/// the current source-owned call instance can authorize that signature here.
+let parametersAtCall (ctx: WitnessContext) site implementation parameters =
+    if ctx.Zipper.Focus.Id <> site || not (obj.ReferenceEquals(ctx.Zipper.Focus, ctx.Graph.Nodes[site])) then
+        Result.Error "Direct call signature projection requires its current Huet occurrence."
+    else
+    let shapes = parameters |> List.map (fun (_, ty, id) ->
+        match ctx.Graph.Nodes.TryFind id with
+        | Some node when applySubst node.Type = applySubst ty ->
+            Result.Ok(Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph node)
+        | _ -> Result.Error "Direct call formal no longer has its declared source type.")
+    shapes |> collect |> Result.bind (fun shapes ->
+        let needsInstance = parameters |> List.exists (fun (_, ty, _) -> not (List.isEmpty (freeMeasureVars ty)))
+        if not needsInstance then shapes |> List.map (components ctx) |> collect else
+        match Clef.Compiler.PSGSaturation.SemanticGraph.CallableInstantiations.callReader ctx.Graph site implementation with
+        | Some proof when proof.Parameters = parameters ->
+            shapes |> List.map (componentsSeen ctx Set.empty proof.SignatureData.Contains) |> collect
+        | _ -> Result.Error "Direct call lacks its exact source scheme instance and actual environment correspondence.")
 let functionType shape = shape.FunctionType
 let environmentType shape = shape.EnvironmentType
 let parameterTypes shape = shape.ParameterTypes
@@ -187,7 +209,10 @@ let reproject (ctx: WitnessContext) source destination =
                     not sources.IsEmpty && not destinations.IsEmpty &&
                     (sources |> List.forall (fun source -> destinations |> List.exists (sameExact source)))
                 | _ -> false
-            if not sameOrigin || applySubst value.Carrier.SourceType <> applySubst shape.Contract.SourceType then
+            let sameSourceType =
+                applySubst value.Carrier.SourceType = applySubst shape.Contract.SourceType ||
+                Clef.Compiler.PSGSaturation.SemanticGraph.CallableInstantiations.canTransport ctx.Graph source destination
+            if not sameOrigin || not sameSourceType then
                 Result.Error "Callable copy does not preserve its settled code, environment owner, and source type."
             else create shape value.Code value.Environment)
 

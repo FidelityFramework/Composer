@@ -11,6 +11,7 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.XParsec.PSGCombinators
 open Alex.Elements.IndexElements
+open Alex.Elements.MemRefElements
 open Alex.Patterns.ControlFlowPatterns
 module Operands = Alex.Traversal.SequenceOperands
 module Values = Alex.Traversal.Values
@@ -32,6 +33,48 @@ let pSequenceForward (ctx: WitnessContext) source : PSGParser<MLIROp list * Tran
     match Operands.reproject ctx source occurrence with
     | Result.Ok value -> return [], TRSequence value
     | Result.Error reason -> return! fail (Message reason)
+}
+
+let private pProgramInstance (ctx: WitnessContext) binding = parser {
+    let! occurrence = atOccurrence ctx
+    let! state = getUserState
+    do! ensure (obj.ReferenceEquals(state.Graph, ctx.Graph) && obj.ReferenceEquals(ctx.Graph, ctx.Zipper.Graph) &&
+                (ctx.Graph.Nodes.TryFind occurrence |> Option.exists (fun current -> obj.ReferenceEquals(current, state.Current))))
+            "Program sequence evidence belongs to a different graph occurrence."
+    let! instance =
+        match Clef.Compiler.Nanopass.SequenceProgramInstances.programInstance state.Graph binding with
+        | Some instance -> preturn instance
+        | None -> fail (Message "Program sequence lacks its exact initialized template and writable storage authority.")
+    let! shape =
+        match Operands.project ctx occurrence with
+        | Result.Ok shape -> preturn shape
+        | Result.Error reason -> fail (Message reason)
+    do! ensure ((Operands.flow shape).Owners = Set.singleton instance.Owner && not (Operands.flow shape).IsEnumerator)
+            "Program sequence occurrence differs from its original template."
+    return instance, shape
+}
+
+let pProgramSequenceBinding (ctx: WitnessContext) source = parser {
+    let! state = getUserState
+    do! ensure (state.Current.Children = [source]) "Program sequence binding lacks its actual initializer."
+    let! _ = pProgramInstance ctx state.Current.Id
+    return! pSequenceForward ctx source
+}
+
+/// Read only the initialized template descriptor. A later acquisition owns
+/// its fresh frame and copy; this reference never resets or runs the generator.
+let pProgramSequenceReference (ctx: WitnessContext) binding = parser {
+    let! state = getUserState
+    let occurrence = state.Current.Id
+    do! ensure (match state.Current.Kind with SemanticKind.VarRef(_, Some source) -> source = binding | _ -> false)
+            "Program sequence reference lacks its actual declaration."
+    let! instance, shape = pProgramInstance ctx binding
+    let environment = { SSA = Values.value occurrence 0; Type = Operands.environmentType shape }
+    let! access = pMemRefGetGlobal environment.SSA (Alex.Patterns.MemoryPatterns.staticValueName instance.Allocation) environment.Type
+    let generator = state.Graph.Nodes[instance.Generator]
+    let symbol = Alex.CodeGeneration.CallableSymbols.lambda state.Graph generator false
+    let! operations, value = Alex.Patterns.ContinuationPatterns.pSequenceValue occurrence shape symbol environment
+    return access :: operations, value
 }
 
 /// One structured switch yields both actual components from its selected arm.

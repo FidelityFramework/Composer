@@ -1,0 +1,21 @@
+module ProgramClosures
+
+[<Measure>] type m
+
+let make (offset: int<m>) (unused: int) =
+    Console.writeln "formed"
+    fun (value: int<m>) -> value + offset
+
+let first = make 3<m> (Console.writeln "FAIL unused argument"; 0)
+let second = make 4<m> 0
+let alias = first
+let unused = make 99<m> 0
+
+[<EntryPoint>]
+let main _ =
+    Console.writeln "start"
+    if first 1<m> = 4<m> then Console.writeln "first" else Console.writeln "FAIL first"
+    if second 2<m> = 6<m> then Console.writeln "second" else Console.writeln "FAIL second"
+    if alias 3<m> = 6<m> then Console.writeln "alias" else Console.writeln "FAIL alias"
+    if first 5<m> = 8<m> then Console.writeln "shared" else Console.writeln "FAIL shared"
+    0

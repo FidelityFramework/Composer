@@ -22,7 +22,7 @@ let private context =
 
 let private input operations =
     { Operations = operations; PointerBits = Ok 64; ModuleName = Some "requirement_backend"
-      Text = moduleToString (Ok 64) "requirement_backend" operations }
+      Text = moduleToString (Ok 64) "requirement_backend" operations; WritableStorage = [] }
 
 let private required message =
     input [MLIROp.FuncOp(FuncDef("check", [(Arg 0, TInt(IntWidth 1))], [],

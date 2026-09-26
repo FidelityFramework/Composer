@@ -10,6 +10,22 @@
 > Earlier passing evidence is historical. Restore the existing oracle through
 > the C-01/C-02 contracts; the retrospective label is not a current pass.
 
+The companion native gate `04a_ProgramClosures` exercises two program-lifetime
+closures from one measured `int<m>` factory, an immutable alias, repeated use,
+an unused factory result and an effectful unused ordinary argument. Its ordered
+output requires each observable module initializer to run once before entry,
+under the [startup contract](../../../clef-lang-spec/spec/program-structure-and-execution.md#execution-of-static-initializers).
+The two used environments remain distinct; the alias shares the first instance.
+The unused argument's effects remain deferred under the
+[ordinary demand contract](../../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing).
+These are F-04 and C-01 acceptance obligations.
+
+`04b_DimensionalClosures` exercises one captured callable at `int<m>`,
+`int<s>` and `int<m/s>`, with a shared mutation counter and repeated demand
+of one result. Its measured `Quantity<'u>` record projections also exercise
+F-10. The native oracle requires correct dimensional computations and one
+shared cell per closure across its checked scheme instances.
+
 ## 1. Executive Summary
 
 This sample introduces curried functions, lambda expressions (`fun`), and partial application. These are the building blocks for closures (C-01), but this sample focuses on the structural representation without capture analysis.
@@ -253,4 +269,4 @@ This sample's infrastructure enables:
 
 - [F-03-PipeOperators](F-03-PipeOperators.md) - Pipes with curried functions
 - [C-01-Closures](C-01-Closures.md) - Full closure implementation
-- [PSG_architecture.md](../PSG_architecture.md) - SemanticKind definitions
+- [PSG Nanopass Architecture](../PSG_Nanopass_Architecture.md) - Semantic graph elaboration

@@ -23,6 +23,8 @@ let backend : BackEnd = {
         if ctx.EmitIntermediateOnly then
             printfn "Stopped after MLIR generation (--emit-llvm)"
             Ok (IntermediateOnly "MLIR-GPU")
+        elif not witnessed.WritableStorage.IsEmpty then
+            Error "GPU writable program storage requires a target allocation commitment for the source inventory"
         else
             // Derive the code object path as a sibling of the requested output
             let outputDir = Path.GetDirectoryName(ctx.OutputPath)

@@ -117,14 +117,15 @@ let private linkArguments target mode libraries (options: NativeLinkOptions) bit
     @ (libraries |> Set.toList |> List.map (fun name -> "-l" + name))
     @ endFiles
 
-let compileToNative
+let compileToNativeWithStorage
     (llvmPath: string)
     (outputPath: string)
     (targetTriple: string)
     (deploymentMode: DeploymentMode)
     (externLibraries: Set<string>)
     (linkOptions: NativeLinkOptions)
-    (cpu: string option) : Result<unit, string> =
+    (cpu: string option)
+    (storage: (string * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry) list) : Result<unit, string> =
     try
         if not (elfTarget targetTriple) then
             Error (sprintf "The direct LLVM backend currently emits ELF. Target %s requires a separate LLD PE/COFF, Mach-O or Wasm link profile." targetTriple)
@@ -140,11 +141,28 @@ let compileToNative
             | Some target when target <> targetTriple ->
                 failwithf "LLVM IR declares target %s, but the backend selected %s. Regenerate the IR for the selected target." target targetTriple
             | _ -> ()
+            let plans =
+                match StorageCommitment.plan targetTriple storage with
+                | Ok plans -> plans
+                | Error reason -> failwith reason
+            let linkOptions =
+                if linkOptions.LinkerScript.IsSome then linkOptions else
+                { linkOptions with LinkerScript = StorageCommitment.linkerScript (Path.ChangeExtension(llvmPath, ".storage.ld")) plans }
             let bitcodePath = Path.ChangeExtension(llvmPath, ".bc")
             let arguments = linkArguments targetTriple deploymentMode externLibraries linkOptions bitcodePath outputPath @ (cpu |> Option.map (fun c -> ["--plugin-opt=mcpu=" + c]) |> Option.defaultValue [])
             // TargetMachine supplies missing DataLayout from the selected triple.
             // This verifies and serializes IR without running an optimization pipeline.
             // Keep the bitcode beside retained LLVM IR for inspecting the exact LLD input.
             run "opt" ["-mtriple=" + targetTriple; "-passes=no-op-module"; llvmPath; "-o"; bitcodePath]
+            |> Result.bind (fun () -> StorageCommitment.realizeBitcode bitcodePath plans)
             |> Result.bind (fun () -> run "ld.lld" arguments)
+            |> Result.bind (fun () -> StorageCommitment.verifyNative outputPath plans)
+            |> Result.map (fun commitments ->
+                if not commitments.IsEmpty then
+                    File.WriteAllText(Path.ChangeExtension(llvmPath, ".storage.json"), System.Text.Json.JsonSerializer.Serialize commitments))
     with ex -> Error (sprintf "Native compilation failed: %s" ex.Message)
+
+/// Components with no source-owned writable objects retain the same backend
+/// entry point. Real compilation always supplies its checked inventory.
+let compileToNative llvmPath outputPath targetTriple deploymentMode externLibraries linkOptions cpu =
+    compileToNativeWithStorage llvmPath outputPath targetTriple deploymentMode externLibraries linkOptions cpu []

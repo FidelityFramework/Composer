@@ -58,6 +58,68 @@ Enter your name: Hello, Houston!
 """
 
 # =============================================================================
+# F-04 / C-01: measured program closures, distinct instances and call-by-need
+# =============================================================================
+[[samples]]
+name = "04a_ProgramClosures"
+project = "ProgramClosures.fidproj"
+binary = "targets/program_closures"
+expected_output = """
+formed
+formed
+formed
+start
+first
+second
+alias
+shared
+"""
+
+# =============================================================================
+# F-04 / F-10 / C-01: dimensional instances share closures and demanded results
+# =============================================================================
+[[samples]]
+name = "04b_DimensionalClosures"
+project = "DimensionalClosures.fidproj"
+binary = "targets/dimensional_closures"
+expected_output = """
+length
+shared demand
+time
+velocity
+one shared cell
+length record
+time record
+one projection cell
+"""
+
+# =============================================================================
+# F-04 / C-01 / C-02: ordinary demand, sharing and explicit eager frontiers
+# =============================================================================
+[[samples]]
+name = "04c_DefaultDemand"
+project = "DefaultDemand.fidproj"
+binary = "targets/default_demand"
+expected_output = """
+start
+before demand
+binding demand
+shared binding
+unused argument deferred
+eager binding
+eager argument
+eager boundary
+body
+argument demand
+shared argument
+closure formed
+captured demand
+shared capture
+first demand observes cell
+later demand shares value
+"""
+
+# =============================================================================
 # Sample 05: AddNumbers
 # Discriminated unions, pattern matching
 # =============================================================================

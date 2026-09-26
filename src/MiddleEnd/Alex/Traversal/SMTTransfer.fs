@@ -158,6 +158,115 @@ let private scope (ob: ObligationInfo) : MLIROp list =
                                           cmp SmtLe lower upper; cmp SmtLe lower lo; cmp SmtLe hi upper
                                           implies domain enclosed; implies stepDomain preserved]
             anchor conclusion (List.ofSeq statements)
+        | ObligationBody.FiniteAdditiveEffects(initial, contributions, lower, upper) ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let output = v ()
+                statements.Add(smt (SMTBigIntConstant(output, value)))
+                output
+            let binary make left right =
+                let output = v ()
+                statements.Add(smt (make(output, left, right)))
+                output
+            let cmp predicate left right =
+                let output = v ()
+                statements.Add(smt (SMTIntCmp(output, predicate, left, right)))
+                output
+            let conjunction values =
+                let output = v ()
+                statements.Add(smt (SMTAnd(output, values)))
+                output
+            let zero = constant 0I
+            let mutable total = constant initial
+            let mutable domain = [cmp SmtLe zero zero]
+            let mutable counts = []
+            for index, (maximum, delta) in List.indexed contributions do
+                let actual = v ()
+                statements.Add(smt (SMTDeclareFun(actual, sprintf "effect_count_%d" index, SMTInt)))
+                let maximum, delta = constant maximum, constant delta
+                counts <- cmp SmtGe maximum zero :: counts
+                domain <- cmp SmtLe zero actual :: cmp SmtLe actual maximum :: domain
+                total <- binary SMTIntAdd total (binary SMTIntMul actual delta)
+            let enclosed = conjunction [cmp SmtLe (constant lower) total; cmp SmtLe total (constant upper)]
+            let premise = conjunction domain
+            let negated, implication = v (), v ()
+            statements.Add(smt (SMTNot(negated, premise)))
+            statements.Add(smt (SMTOr(implication, [negated; enclosed])))
+            let conclusion = conjunction (implication :: counts)
+            anchor conclusion (List.ofSeq statements)
+        | ObligationBody.FiniteLinearRecurrence model ->
+            let dimension = model.InitialLower.Length
+            let vectorShape values = List.length values = dimension
+            let matrixShape rows = List.length rows = dimension && List.forall vectorShape rows
+            let wellShaped =
+                (dimension = 1 || dimension = 2) && vectorShape model.InitialUpper &&
+                vectorShape model.Lower && vectorShape model.Upper &&
+                matrixShape model.CoefficientLower && matrixShape model.CoefficientUpper &&
+                (model.Powers |> List.forall (fun step -> matrixShape step.Matrix))
+            if not wellShaped then integerComparisons [1I, 0I]
+            else
+                let statements = ResizeArray<MLIROp>()
+                let constant value =
+                    let output = v ()
+                    statements.Add(smt (SMTBigIntConstant(output, value)))
+                    output
+                let binary make left right =
+                    let output = v ()
+                    statements.Add(smt (make (output, left, right)))
+                    output
+                let compare pred left right =
+                    let output = v ()
+                    statements.Add(smt (SMTIntCmp(output, pred, left, right)))
+                    output
+                let equal left right =
+                    let output = v ()
+                    statements.Add(smt (SMTEq(output, left, right, SMTInt)))
+                    output
+                let vector values = values |> List.map constant |> List.toArray
+                let matrix rows = rows |> List.map vector |> List.toArray
+                let dot (left: SSA array) (right: SSA array) =
+                    Array.map2 (binary SMTIntMul) left right |> Array.reduce (binary SMTIntAdd)
+                let multiply (left: SSA array array) (right: SSA array array) =
+                    Array.init dimension (fun row ->
+                        Array.init dimension (fun column ->
+                            dot left.[row] (Array.init dimension (fun k -> right.[k].[column]))))
+                let zero, one, two = constant 0I, constant 1I, constant 2I
+                let count = constant model.MaximumIterations
+                let initialLo, initialHi = vector model.InitialLower, vector model.InitialUpper
+                let coefficientLo, coefficientHi = matrix model.CoefficientLower, matrix model.CoefficientUpper
+                let lower, upper = vector model.Lower, vector model.Upper
+                let clauses = ResizeArray<SSA>()
+                clauses.Add(compare SmtGe count zero)
+                for row in 0 .. dimension - 1 do
+                    clauses.Add(compare SmtLe zero initialLo.[row])
+                    clauses.Add(compare SmtLe initialLo.[row] initialHi.[row])
+                    clauses.Add(compare SmtLe lower.[row] zero)
+                    clauses.Add(compare SmtLe initialHi.[row] (dot coefficientHi.[row] initialHi))
+                    for column in 0 .. dimension - 1 do
+                        clauses.Add(compare SmtLe zero coefficientLo.[row].[column])
+                        clauses.Add(compare SmtLe coefficientLo.[row].[column] coefficientHi.[row].[column])
+                let mutable previousExponent = zero
+                let mutable previousMatrix =
+                    Array.init dimension (fun row -> Array.init dimension (fun column -> if row = column then one else zero))
+                for step in model.Powers do
+                    let squared = multiply previousMatrix previousMatrix
+                    let expected = if step.Odd then multiply squared coefficientHi else squared
+                    let supplied = matrix step.Matrix
+                    let exponent = constant step.Exponent
+                    clauses.Add(equal exponent (binary SMTIntAdd (binary SMTIntMul two previousExponent) (if step.Odd then one else zero)))
+                    for row in 0 .. dimension - 1 do
+                        for column in 0 .. dimension - 1 do
+                            clauses.Add(equal supplied.[row].[column] expected.[row].[column])
+                    previousExponent <- exponent
+                    previousMatrix <- supplied
+                clauses.Add(equal previousExponent count)
+                for row in 0 .. dimension - 1 do
+                    clauses.Add(compare SmtLe (dot previousMatrix.[row] initialHi) upper.[row])
+                let conclusion = v ()
+                statements.Add(smt (SMTAnd(conclusion, List.ofSeq clauses)))
+                // Malformed or false supplied certificates remain refutable;
+                // no global assumption can conceal an inconsistent premise.
+                anchor conclusion (List.ofSeq statements)
         | ObligationBody.MappedElementSpan model ->
             let statements = ResizeArray<MLIROp>()
             let declare name =

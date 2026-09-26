@@ -291,6 +291,14 @@ type LazyOperand = internal {
     Environment: Val
 }
 
+/// A successfully witnessed void result at one graph occurrence and operation
+/// scope. This is emission completion, not source demand or global visitation.
+type VoidCompletion = internal {
+    Graph: SemanticGraph
+    Path: (NodeId * NodeId list * NodeId list) list
+    Scope: ScopeContext ref
+}
+
 /// One operation scope's complete operand reading. All three maps must move
 /// together when a shared graph body is witnessed at a different occurrence.
 type OperandSnapshot = {
@@ -299,6 +307,7 @@ type OperandSnapshot = {
     CallableCells: Map<NodeId, CallableCellOperand>
     Sequences: Map<NodeId, SequenceOperand>
     Lazies: Map<NodeId, LazyOperand>
+    Voids: Map<NodeId, VoidCompletion>
     Types: Map<SSA, MLIRType>
 }
 
@@ -315,17 +324,21 @@ type MLIRAccumulator() =
     member val CallableCellAssoc: Map<NodeId, CallableCellOperand> = Map.empty with get, set
     member val SequenceAssoc: Map<NodeId, SequenceOperand> = Map.empty with get, set
     member val LazyAssoc: Map<NodeId, LazyOperand> = Map.empty with get, set
+    member val VoidAssoc: Map<NodeId, VoidCompletion> = Map.empty with get, set
     member val SSATypes: Map<SSA, MLIRType> = Map.empty with get, set            // SSA → type reverse index (for monadic type derivation in Elements)
 
     // Witnessing Coordination State (Dependent Transparency)
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)
-    member val EmittedStaticGlobals: Set<string> = Set.empty with get, set        // Track emitted memref.global static-storage decls (program-lifetime values)
+    member val EmittedStaticGlobals: Map<string, MLIRType * ProgramStorageEntry option> = Map.empty with get, set
     member val PendingStaticGlobals: MLIROp list = [] with get, set                // memref.global decls emitted by a parser, awaiting drain to TopLevelOps by the witness (module-scope placement)
     // NOTE: Function declarations now handled by MLIR Declaration Collection Pass (no coordination needed)
 
     // Deferred InlineOps: Partial app arguments whose InlineOps are suppressed at their
     // original scope and re-emitted at the saturated call site (MLIR region isolation)
     member val DeferredInlineOps: System.Collections.Generic.Dictionary<int, MLIROp list> = System.Collections.Generic.Dictionary<int, MLIROp list>() with get
+    // Emission history is not operand state: restoring a value scope must not
+    // hide an operation withheld anywhere while a subtree was witnessed.
+    member val DeferredEmissionStamp: obj = obj() with get, set
 
 module MLIRAccumulator =
     let empty () : MLIRAccumulator =
@@ -346,6 +359,7 @@ module MLIRAccumulator =
     /// Bind a PSG node to its SSA value (global binding)
     /// Also populates SSATypes reverse index for monadic type derivation in Elements
     let bindNode (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
+        acc.VoidAssoc <- acc.VoidAssoc.Remove nodeId
         acc.CallableAssoc <- acc.CallableAssoc.Remove nodeId
         acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
         acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
@@ -400,6 +414,7 @@ module MLIRAccumulator =
             acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
             acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
             acc.CallableAssoc <- acc.CallableAssoc.Add(nodeId, value)
+            acc.VoidAssoc <- acc.VoidAssoc.Remove nodeId
             for value in operands do acc.SSATypes <- acc.SSATypes.Add(value.SSA, value.Type)
             Result.Ok ()
 
@@ -421,6 +436,7 @@ module MLIRAccumulator =
             acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
             acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
             acc.CallableCellAssoc <- acc.CallableCellAssoc.Add(nodeId, value)
+            acc.VoidAssoc <- acc.VoidAssoc.Remove nodeId
             for value in operands do acc.SSATypes <- acc.SSATypes.Add(value.SSA, value.Type)
             Result.Ok ()
 
@@ -439,6 +455,7 @@ module MLIRAccumulator =
             acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
             acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
             acc.SequenceAssoc <- acc.SequenceAssoc.Add(nodeId, value)
+            acc.VoidAssoc <- acc.VoidAssoc.Remove nodeId
             for operand in operands do acc.SSATypes <- acc.SSATypes.Add(operand.SSA, operand.Type)
             Result.Ok ()
 
@@ -457,14 +474,35 @@ module MLIRAccumulator =
             acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
             acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
             acc.LazyAssoc <- acc.LazyAssoc.Add(nodeId, value)
+            acc.VoidAssoc <- acc.VoidAssoc.Remove nodeId
             for operand in operands do acc.SSATypes <- acc.SSATypes.Add(operand.SSA, operand.Type)
             Result.Ok ()
 
     let recallLazy nodeId (acc: MLIRAccumulator) = acc.LazyAssoc.TryFind nodeId
 
+    let private occurrencePath (position: PSGZipper) =
+        position.Path |> List.map (fun step -> step.Parent.Id, step.LeftSiblings, step.RightSiblings)
+
+    let forgetVoid nodeId (acc: MLIRAccumulator) = acc.VoidAssoc <- acc.VoidAssoc.Remove nodeId
+
+    let completeVoid (position: PSGZipper) scope (acc: MLIRAccumulator) =
+        let nodeId = position.Focus.Id
+        // Transparent witnesses may bind a value directly and return TRVoid to
+        // indicate that they emitted no operations. Preserve that result.
+        if not (acc.NodeAssoc.ContainsKey nodeId || acc.CallableAssoc.ContainsKey nodeId ||
+                acc.CallableCellAssoc.ContainsKey nodeId || acc.SequenceAssoc.ContainsKey nodeId ||
+                acc.LazyAssoc.ContainsKey nodeId) then
+            acc.VoidAssoc <- acc.VoidAssoc.Add(nodeId, { Graph = position.Graph; Path = occurrencePath position; Scope = scope })
+
+    let completedVoid (position: PSGZipper) scope (acc: MLIRAccumulator) =
+        acc.VoidAssoc.TryFind position.Focus.Id |> Option.exists (fun completion ->
+            obj.ReferenceEquals(completion.Graph, position.Graph) &&
+            obj.ReferenceEquals(completion.Scope, scope) &&
+            completion.Path = occurrencePath position)
+
     let snapshotOperands (acc: MLIRAccumulator) =
         { Scalars = acc.NodeAssoc; Callables = acc.CallableAssoc; CallableCells = acc.CallableCellAssoc
-          Sequences = acc.SequenceAssoc; Lazies = acc.LazyAssoc; Types = acc.SSATypes }
+          Sequences = acc.SequenceAssoc; Lazies = acc.LazyAssoc; Voids = acc.VoidAssoc; Types = acc.SSATypes }
 
     let restoreOperands (snapshot: OperandSnapshot) (acc: MLIRAccumulator) =
         acc.NodeAssoc <- snapshot.Scalars
@@ -472,6 +510,7 @@ module MLIRAccumulator =
         acc.CallableCellAssoc <- snapshot.CallableCells
         acc.SequenceAssoc <- snapshot.Sequences
         acc.LazyAssoc <- snapshot.Lazies
+        acc.VoidAssoc <- snapshot.Voids
         acc.SSATypes <- snapshot.Types
 
     /// Recall the type of an SSA value (reverse index lookup)
@@ -504,10 +543,13 @@ module MLIRAccumulator =
     /// in PendingStaticGlobals on the shared accumulator; the owning witness drains it to its
     /// WitnessOutput.TopLevelOps (which the nanopass driver places at module root). The caller
     /// emits the matching memref.get_global inline. Idempotent per symbol name.
-    let tryEmitGlobalMemref (name: string) (declType: MLIRType) (acc: MLIRAccumulator) : unit =
-        if not (Set.contains name acc.EmittedStaticGlobals) then
-            acc.EmittedStaticGlobals <- Set.add name acc.EmittedStaticGlobals
-            acc.PendingStaticGlobals <- MLIROp.GlobalMemref (name, declType) :: acc.PendingStaticGlobals
+    let tryEmitGlobalMemref (name: string) (declType: MLIRType) (authority: ProgramStorageEntry option) (acc: MLIRAccumulator) : unit =
+        match acc.EmittedStaticGlobals.TryFind name with
+        | Some(oldType, oldAuthority) when oldType = declType && oldAuthority = authority -> ()
+        | Some _ -> failwithf "Writable global '%s' has conflicting type or source storage identity" name
+        | None ->
+            acc.EmittedStaticGlobals <- acc.EmittedStaticGlobals.Add(name, (declType, authority))
+            acc.PendingStaticGlobals <- MLIROp.GlobalMemref (name, declType, authority) :: acc.PendingStaticGlobals
 
     /// Drain any pending memref.global decls queued during parser emission, clearing the queue.
     /// The witness routes the returned ops into WitnessOutput.TopLevelOps for module-scope placement.
@@ -520,6 +562,7 @@ module MLIRAccumulator =
     let deferInlineOps (nodeId: NodeId) (ops: MLIROp list) (acc: MLIRAccumulator) =
         let key = NodeId.value nodeId
         acc.DeferredInlineOps.[key] <- ops
+        if not ops.IsEmpty then acc.DeferredEmissionStamp <- obj()
 
     /// Retrieve deferred InlineOps for a node (returns empty list if none)
     let getDeferredInlineOps (nodeId: NodeId) (acc: MLIRAccumulator) : MLIROp list =

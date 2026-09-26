@@ -18,6 +18,70 @@ The ledger is an implementation inventory, not an additional source of language
 requirements or a separately authorized prerequisite project. The correction
 changes no compiler behavior, acceptance result or feature status.
 
+## Subsequent dimensional, trace and bounded-storage checkpoint
+
+September 26, source commit Clef `d5ae0d9` on `main`; corresponding Composer
+source is committed with this entry. This cohort extends the earlier evidence
+below. It advances no whole-feature completion status and is not a rerun of the
+complete native manifest.
+
+Delivered source changes preserve quantified dimensional schemes through aliases,
+specialization and recursive instances; infer actual tuple formals and contextual
+record owners; retain immutable specialization history through successive
+fold-ins; and settle finite recurrence and actual Lazy-formation effects without
+invented widths. Historical specialization parents remain inspectable without
+owning current lexical children. Full/pruned serialization retains the derivation.
+Program storage is tied to declared authority, exact backing and actual native
+placement. Alex consumes those facts through its existing Patterns/Witnesses;
+LLVM checks the actual ABI extents and writable, non-executable ELF coverage.
+
+| Observed gate | Result and evidence |
+|---|---|
+| Full CCS test assembly, including registered inference, specialization tape and finite-effect cases | **1,499/1,499**, zero skips; `/tmp/clef-full-lazy-effect-v13.log` |
+| Full Alex tests | **274/274**, zero skips; `/tmp/composer-lazy-effect-alex-v13.log` |
+| Source/native SMT transfer parity | **128 cases**, including signed all-prefix contributions, refusals and arbitrary-precision finite-effect counts; `/tmp/composer-smt-effect-parity-v13.log` |
+| Unchanged native14,14a,14b | **3/3**, exact stdout and empty stderr; `/tmp/composer-lazy-effect-native-v13.log`; source/dependency hash comparison empty |
+| Prior v11 native cohort | 04,04b,13,14,15,16b passed exact output; `/tmp/composer-writable-native-v11.log`. These retain their v11 identity. |
+
+The new native cohort uses `/tmp/composer-lazy-effect-v13/compiler`, with inventory
+`/tmp/composer-lazy-effect-v13/compiler.sha256`. SHA-256 identities are:
+
+- Composer.dll: `0F2FA9EC9463C8D3CD88A203721E91DE5815F14933031AADFCCB7FD18B3C3687`
+- CCS: `2FE2AE680266F5754784C7D2340571FCAF22776955FC5BF14D174479777CB571`
+- BAREWire: `FCC595BC8B38127E0930209CCF6B91CB73E1EDD81F55FD5696CC991D26E3FBB1`
+
+Per-job streams, expected results, `inputs.json`, `results.json` and the empty
+`changed-inputs.json` are in
+`/tmp/composer-lazy-effect-v13/native/20260926T193409-eff2a75484744c918bafd40bfa50d5ec`.
+Observed compilation times were 47.16s, 48.69s and 33.60s respectively; execution
+was 31ms, 31ms and 30ms. These are end-to-end sample compilation observations,
+not Composer's own build time or a proven latency budget.
+
+Reproduction uses the ordinary projects and .NET harness:
+
+```sh
+dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-build --no-restore
+dotnet build src/Composer.fsproj -p:BuildProjectReferences=false --no-restore
+dotnet test tests/Alex.Tests/Alex.Tests.fsproj -p:BuildProjectReferences=false --no-restore
+dotnet fsi /tmp/SMTTransferRegression-v13.fsx
+dotnet fsi /tmp/run-lazy-effect-native-v13.fsx 14_Lazy 14a_LazyScalarResults 14b_LazyStringViews
+```
+
+The first command runs in Clef against the freshly built test assembly; the next
+two run in Composer. The private FSI drivers pin the recorded snapshot; the
+source parity cases live in `tests/SMTTransferRegression.fsx`. Before independent
+jobs start, build the coordinated outputs once and freeze their dependency set.
+
+Explicit next defects retain their owning implementation tasks: native04a still
+evaluates an unused ordinary argument, and native04c exposes unused-binding
+demand. The newly isolated unresolved-record-member scheme case must retain its
+constraint rather than generalizing an unconstrained function. These are
+C-01/C-02/F-04 and source-inference obligations, respectively. Passing explicit
+Lazy memoization does not establish ordinary call-by-need. The accepted F-11/C-08
+numeric expansion has its own registered validation inventory.
+
+## Earlier checkpoint and audit evidence
+
 Clef: `14fb7c7`; Composer: `f6d391d` on `main`.
 Companion revisions: specification `586010e`, site `8b6bd57`, BAREWire `f7d4693`,
 analyzer projection `b987570`; unchanged Platform baseline `d42c9988f7fd`.

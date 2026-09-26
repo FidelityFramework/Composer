@@ -135,6 +135,110 @@ for index, (body, expected) in List.indexed loopCases do
     if source <> expected || native <> expected then
         failwithf "Loop %d: expected %s, source=%s native=%s for %A" index expected source native body
 printfn "PASS %d loop-range source/native parity cases" loopCases.Length
+// Certificates are input data: both dispatches must check every provided power,
+// the exponent chain, monotonic upper trajectory, and the final enclosure.
+// Ground bigint equations avoid selecting any machine-width representation.
+let recurrencePowers (coefficients: bigint list list) (count: bigint) =
+    let dimension = coefficients.Length
+    let multiply (left: bigint list list) (right: bigint list list) =
+        List.init dimension (fun row ->
+            List.init dimension (fun column ->
+                [0 .. dimension-1] |> List.sumBy(fun k -> left[row][k] * right[k][column])))
+    let rec bits count found =
+        if count = 0I then found else bits (count / 2I) ((count % 2I = 1I) :: found)
+    let identity = List.init dimension (fun row -> List.init dimension (fun column -> if row = column then 1I else 0I))
+    let _, _, certificate =
+        bits count [] |> List.fold(fun (exponent, power, steps) odd ->
+            let nextExponent = 2I * exponent + (if odd then 1I else 0I)
+            let squared = multiply power power
+            let nextPower = if odd then multiply squared coefficients else squared
+            let step: RecurrencePowerStep = {Odd=odd; Exponent=nextExponent; Matrix=nextPower}
+            nextExponent, nextPower, step :: steps) (0I, identity, [])
+    List.rev certificate
+let finiteLinear: FiniteLinearRecurrenceModel =
+    { MaximumIterations=3I; InitialLower=[1I]; InitialUpper=[3I]
+      CoefficientLower=[[2I]]; CoefficientUpper=[[2I]]
+      Powers=recurrencePowers [[2I]] 3I; Lower=[0I]; Upper=[24I] }
+let fibonacci: FiniteLinearRecurrenceModel =
+    { MaximumIterations=6I; InitialLower=[0I; 1I]; InitialUpper=[0I; 1I]
+      CoefficientLower=[[0I; 1I]; [1I; 1I]]; CoefficientUpper=[[0I; 1I]; [1I; 1I]]
+      Powers=recurrencePowers [[0I; 1I]; [1I; 1I]] 6I; Lower=[0I; 0I]; Upper=[8I; 13I] }
+let beyondWord = 1I <<< 160
+let hugeCount = 1I <<< 80
+let invalidFirst alter = {finiteLinear with Powers=alter finiteLinear.Powers.Head :: finiteLinear.Powers.Tail}
+let linearCases = [
+    "scalar", finiteLinear, "unsat"
+    "coupled", fibonacci, "unsat"
+    "asymmetric-coupling", {fibonacci with MaximumIterations=3I; InitialLower=[1I; 2I]; InitialUpper=[1I; 2I]; CoefficientLower=[[1I; 2I]; [0I; 1I]]; CoefficientUpper=[[1I; 2I]; [0I; 1I]]; Powers=recurrencePowers [[1I; 2I]; [0I; 1I]] 3I; Upper=[13I; 2I]}, "unsat"
+    "coefficient-interval", {fibonacci with CoefficientLower=[[0I; 0I]; [0I; 0I]]}, "unsat"
+    "zero-iterations", {finiteLinear with MaximumIterations=0I; Powers=[]; Upper=[3I]}, "unsat"
+    "big-values", {finiteLinear with MaximumIterations=7I; InitialLower=[beyondWord]; InitialUpper=[beyondWord]; Powers=recurrencePowers [[2I]] 7I; Upper=[128I*beyondWord]}, "unsat"
+    "big-count", {finiteLinear with MaximumIterations=hugeCount; CoefficientLower=[[1I]]; CoefficientUpper=[[1I]]; Powers=recurrencePowers [[1I]] hugeCount; Upper=[3I]}, "unsat"
+    "negative-count", {finiteLinear with MaximumIterations= -1I}, "sat"
+    "negative-seed", {finiteLinear with InitialLower=[-1I]}, "sat"
+    "inverted-seed", {finiteLinear with InitialLower=[4I]}, "sat"
+    "negative-coefficient", {finiteLinear with CoefficientLower=[[-1I]]}, "sat"
+    "inverted-coefficient", {finiteLinear with CoefficientLower=[[3I]]}, "sat"
+    "unproved-positive-lower", {finiteLinear with Lower=[1I]}, "sat"
+    "final-store-excluded", {finiteLinear with Upper=[23I]}, "sat"
+    "zero-iteration-seed-excluded", {finiteLinear with MaximumIterations=0I; Powers=[]; Upper=[2I]}, "sat"
+    // M*x < x would let a final-only check omit the larger initial/prefix state.
+    "nonmonotone-initial", {finiteLinear with CoefficientLower=[[0I]]; CoefficientUpper=[[0I]]; Powers=recurrencePowers [[0I]] 3I; Upper=[0I]}, "sat"
+    "changed-power", invalidFirst (fun step -> {step with Matrix=[[3I]]}), "sat"
+    "forged-final-power", {finiteLinear with Powers=[finiteLinear.Powers.Head; {finiteLinear.Powers[1] with Matrix=[[0I]]}]; Upper=[0I]}, "sat"
+    "changed-exponent", invalidFirst (fun step -> {step with Exponent=2I}), "sat"
+    "changed-bit", invalidFirst (fun step -> {step with Odd=false}), "sat"
+    "missing-power", {finiteLinear with Powers=[]}, "sat"
+    "count-disagrees", {finiteLinear with MaximumIterations=4I}, "sat"
+    "coupled-last-component", {fibonacci with Upper=[8I; 12I]}, "sat"
+    "coupled-negative-entry", {fibonacci with CoefficientLower=[[0I; 1I]; [-1I; 1I]]}, "sat"
+    "empty-vector", {finiteLinear with InitialLower=[]}, "sat"
+    "zero-state", {finiteLinear with MaximumIterations=0I; InitialLower=[]; InitialUpper=[]; Lower=[]; Upper=[]; CoefficientLower=[]; CoefficientUpper=[]; Powers=[]}, "sat"
+    "wrong-vector-size", {finiteLinear with Upper=[24I; 24I]}, "sat"
+    "ragged-coefficient", {fibonacci with CoefficientUpper=[[0I; 1I]; [1I]]}, "sat"
+    "wrong-power-shape", invalidFirst (fun step -> {step with Matrix=[]}), "sat"
+    "extra-power-column", invalidFirst (fun step -> {step with Matrix=[[2I; 0I]]}), "sat"
+    "unsupported-dimension", {finiteLinear with MaximumIterations=0I; InitialLower=[0I; 0I; 0I]; InitialUpper=[0I; 0I; 0I]; Lower=[0I; 0I; 0I]; Upper=[0I; 0I; 0I]; CoefficientLower=List.replicate 3 [0I; 0I; 0I]; CoefficientUpper=List.replicate 3 [0I; 0I; 0I]; Powers=[]}, "sat"
+]
+for name, model, expected in linearCases do
+    let ob =
+        { Id="linear_" + name.Replace('-', '_'); Kind="finite-linear-recurrence"; Logic="QF_LIA"
+          Statement="nonnegative recurrence prefixes"; Source="test"; Refs=[]
+          Body=ObligationBody.FiniteLinearRecurrence model }
+    let source = run "cvc5" "--lang=smt2" (Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob])
+    let smt = run "mlir-translate" "--export-smtlib" (Alex.Traversal.SMTTransfer.transfer [ob])
+    if not (smt.Contains ob.Id) then failwithf "Recurrence anchor %s did not survive transfer" ob.Id
+    let native = run "cvc5" "--lang=smt2" smt
+    if source <> expected || native <> expected then
+        failwithf "Recurrence %s: expected %s, source=%s native=%s" name expected source native
+printfn "PASS %d finite-linear recurrence source/native parity cases" linearCases.Length
+// Each prefix may contain any count of each admitted store up to its proved
+// activation bound. Mixed signs must enclose intermediate values, not only a net sum.
+let effectCases = [
+    "two-instances", 0I, [2I,1I], 0I, 2I, "unsat"
+    "mixed-sign-prefixes", 10I, [1I,5I; 1I,-3I; 1I,2I; 1I,-7I], 0I, 17I, "unsat"
+    "initial-only", 7I, [], 7I, 7I, "unsat"
+    "zero-activations", 7I, [0I,beyondWord], 7I, 7I, "unsat"
+    "big-positive", beyondWord, [hugeCount,beyondWord], beyondWord, beyondWord*(hugeCount+1I), "unsat"
+    "big-negative", -beyondWord, [hugeCount,-beyondWord], -beyondWord*(hugeCount+1I), -beyondWord, "unsat"
+    "negative-count", 0I, [-1I,1I], 0I, 0I, "sat"
+    "final-excluded", 0I, [2I,1I], 0I, 1I, "sat"
+    "negative-prefix-excluded", 10I, [1I,5I; 1I,-7I], 4I, 15I, "sat"
+    "net-sum-is-insufficient", 10I, [1I,5I; 1I,-3I; 1I,2I; 1I,-7I], 7I, 10I, "sat"
+    "reversed-bounds", 0I, [1I,0I], 1I, -1I, "sat"
+    "initial-excluded", 7I, [], 8I, 8I, "sat"
+]
+for index, (name, initial, contributions, lower, upper, expected) in List.indexed effectCases do
+    let ob = { Id = sprintf "effect_check_%d" index; Kind = "finite-additive-effects"; Logic = "QF_LIA"
+               Statement = name; Source = "test"; Refs = []
+               Body = ObligationBody.FiniteAdditiveEffects(initial, contributions, lower, upper) }
+    let source = run "cvc5" "--lang=smt2" (Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob])
+    let smt = run "mlir-translate" "--export-smtlib" (Alex.Traversal.SMTTransfer.transfer [ob])
+    if not (smt.Contains(ob.Id)) then failwithf "Effect anchor %s did not survive transfer" ob.Id
+    let native = run "cvc5" "--lang=smt2" smt
+    if source <> expected || native <> expected then
+        failwithf "Effect %s: expected %s, source=%s native=%s" name expected source native
+printfn "PASS %d finite-effect source/native parity cases" effectCases.Length
 let applicationCases = [
     ["argument", Some m, Some m; "result", Some (quotient m s), Some (quotient m s)], "unsat"
     [("argument", Some m, Some s)], "sat"

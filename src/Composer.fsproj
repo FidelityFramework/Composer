@@ -104,6 +104,7 @@
       <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/CallablePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/SequencePatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/EagerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MutableCallablePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MmioPatterns.fs" />
@@ -113,6 +114,7 @@
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="MiddleEnd/Alex/Witnesses/LiteralWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/RequirementWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/EagerWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/TypeAnnotationWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/IntrinsicWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/FunctionPointerWitness.fs" />
@@ -166,6 +168,7 @@
       <!-- BackEnd - LLVM -->
       <Compile Include="BackEnd/LLVM/RequirementRealization.fs" />
       <Compile Include="BackEnd/LLVM/Lowering.fs" />
+      <Compile Include="BackEnd/LLVM/StorageCommitment.fs" />
       <Compile Include="BackEnd/LLVM/Codegen.fs" />
       <Compile Include="BackEnd/LLVM/Pipeline.fs" />
       <!-- MCU: in-process BAREWire layout, owned assembly, vendor tools and probe SDK -->

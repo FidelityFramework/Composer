@@ -86,3 +86,40 @@ let validate (graph: SemanticGraph) (ops: MLIROp list) : Result<unit, string> =
             | _ -> errors.Add "pool get_global is not attached to a source literal"
     if errors.Count = 0 then Result.Ok ()
     else Result.Error ("BAREWire storage correspondence failed: " + String.concat "; " errors)
+
+/// Compare the complete emitted writable inventory before a backend can place
+/// it. This proves identity/type correspondence only, not linked-region fit.
+let validateWritable arch (graph: SemanticGraph) (ops: MLIROp list) =
+    let all = flatten ops
+    let declarations = all |> List.choose (function MLIROp.GlobalMemref(name, ty, authority) -> Some(name, ty, authority) | _ -> None)
+    let errors = ResizeArray<string>()
+    let observed = ResizeArray<string * ProgramStorageEntry>()
+    let current = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramStorage.read graph
+    match current with
+    | None -> errors.Add "the source program-storage inventory is stale"
+    | Some inventory ->
+        for KeyValue(_, reason) in inventory.Unresolved do errors.Add reason
+        let mutable names = Set.empty
+        let mutable identities = Set.empty
+        for name, ty, authority in declarations do
+            if names.Contains name then errors.Add ("duplicate writable declaration: " + name)
+            names <- names.Add name
+            match authority with
+            | None -> errors.Add ("writable declaration lacks source allocation authority: " + name)
+            | Some entry ->
+                if identities.Contains entry.Identity then errors.Add (sprintf "source storage %A was emitted more than once" entry.Identity)
+                identities <- identities.Add entry.Identity
+                if inventory.Entries.TryFind entry.Identity <> Some entry then
+                    errors.Add ("writable declaration carries a stale or foreign inventory entry: " + name)
+                elif Alex.Patterns.MemoryPatterns.programStorageType arch graph entry <> Some ty then
+                    errors.Add ("writable declaration type disagrees with source storage: " + name)
+                else observed.Add(name, entry)
+                let reads = all |> List.choose (function
+                    | MLIROp.MemRefOp(MemRefOp.GetGlobal(_, symbol, actual)) when symbol = name -> Some actual
+                    | _ -> None)
+                if reads.IsEmpty || reads |> List.exists ((<>) ty) then
+                    errors.Add ("writable allocation views disagree with its declaration: " + name)
+        for KeyValue(identity, _) in inventory.Entries do
+            if not (identities.Contains identity) then errors.Add (sprintf "source writable allocation %A has no emitted declaration" identity)
+    if errors.Count = 0 then Ok(List.ofSeq observed)
+    else Error("Writable storage correspondence failed: " + String.concat "; " errors)

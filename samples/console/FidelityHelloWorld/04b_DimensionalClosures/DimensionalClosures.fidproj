@@ -1,0 +1,15 @@
+[package]
+name = "DimensionalClosures"
+version = "0.1.0"
+description = "Native measured closure instances and record projections preserve dimensions and sharing"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "/home/hhh/repos/Fidelity.Platform/Profiles/Linux_x86_64_Default/Fidelity.Platform.fidproj" }
+
+[build]
+sources = ["DimensionalClosures.clef"]
+output = "dimensional_closures"
+output_kind = "console"

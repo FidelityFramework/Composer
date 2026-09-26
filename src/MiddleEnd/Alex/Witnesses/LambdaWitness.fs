@@ -548,7 +548,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         | EscapeKind.StackScoped ->
                             MLIROp.MemRefOp (MemRefOp.Alloca (own.[2], closureTy, None))
                         | EscapeKind.StaticLifetime ->
-                            staticGlobalDecls <- staticGlobalDecls @ [ MLIROp.GlobalMemref (closureGlobalName, closureTy) ]
+                            staticGlobalDecls <- staticGlobalDecls @ [ MLIROp.GlobalMemref (closureGlobalName, closureTy, None) ]
                             MLIROp.MemRefOp (MemRefOp.GetGlobal (own.[2], closureGlobalName, closureTy))
                         | EscapeKind.EscapesViaReturn | EscapeKind.EscapesViaClosure _ | EscapeKind.EscapesViaByRef ->
                             MLIROp.MemRefOp (MemRefOp.AllocStatic (own.[2], closureTy, None))
@@ -674,7 +674,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         | EscapeKind.StackScoped ->
                             MLIROp.MemRefOp (MemRefOp.Alloca (own.[5], pairTy, None))
                         | EscapeKind.StaticLifetime ->
-                            staticGlobalDecls <- staticGlobalDecls @ [ MLIROp.GlobalMemref (pairGlobalName, pairTy) ]
+                            staticGlobalDecls <- staticGlobalDecls @ [ MLIROp.GlobalMemref (pairGlobalName, pairTy, None) ]
                             MLIROp.MemRefOp (MemRefOp.GetGlobal (own.[5], pairGlobalName, pairTy))
                         | EscapeKind.EscapesViaReturn | EscapeKind.EscapesViaClosure _ | EscapeKind.EscapesViaByRef ->
                             MLIROp.MemRefOp (MemRefOp.AllocStatic (own.[5], pairTy, None))
