@@ -123,7 +123,9 @@ let slotElementType (arch: Architecture) (ty: MLIRType) : MLIRType =
 let pProgramValueAuthority (bindingId: NodeId) : PSGParser<unit> =
     parser {
         let! state = getUserState
-        let admitted = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.tryValueAuthority state.Graph bindingId |> Option.isSome
+        let admitted =
+            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph
+            |> Result.toOption |> Option.exists (fun projection -> projection.SlotAuthorities.Contains bindingId)
         do! ensure admitted $"Program value {NodeId.value bindingId} lacks its settled startup and writable-space authority"
         return ()
     }

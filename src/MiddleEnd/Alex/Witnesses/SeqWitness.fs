@@ -53,9 +53,11 @@ let private accessSlot (ctx: WitnessContext) (node: SemanticNode) frameId slotId
                 | Some value -> pWithUnitResult node.Id (pWriteContinuationSlot node.Id frameId value bytes slot)
                 | None when borrow -> pBorrowContinuationSlot node.Id frameId bytes slot
                 | None -> pReadContinuationSlot node.Id frameId bytes slot
-            match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type, write, borrow with
-            | (NativeType.TSeq _ | NativeType.TSeqEnumerator _), None, false
-                when Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph node = CallableValueShape.Sequence node.Id ->
+            let sourceShape =
+                Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+                |> Result.toOption |> Option.bind (fun projection -> projection.ValueShapes.TryFind node.Id)
+            match sourceShape, write, borrow with
+            | Some(CallableValueShape.Sequence _), None, false ->
                 match ctx.Graph.Codata.Value.SequenceOrigins.TryFind node.Id, Sequences.project ctx node.Id with
                 | Some owner, Result.Ok shape when (Sequences.flow shape).Owners = Set.singleton owner ->
                     let family = Sequences.family shape
@@ -72,7 +74,7 @@ let private accessSlot (ctx: WitnessContext) (node: SemanticNode) frameId slotId
                     observe ctx node sequence
                 | _, Result.Error reason -> failure node "sequence frame carrier" reason
                 | _ -> failure node "sequence slot identity" "Descriptor-only sequence capture lacks its exact source-proved function half"
-            | NativeType.TFun _, None, false ->
+            | Some(CallableValueShape.Callable _), None, false ->
                 match slot.Holds, ctx.Graph.Codata.Value.CallableCarriers.TryFind node.Id with
                 | CaptureSlotKind.EnvironmentView owner, Some { Environment = Some expected } when expected.Owner = owner ->
                     match Operands.project ctx node.Id with

@@ -109,24 +109,12 @@ let requireNodeWidth (graph: SemanticGraph) (nodeId: NodeId) : IntWidth =
             | None -> sprintf "node %d (not in the graph)" (NodeId.value nodeId)
         failwithf "TypeMapping: %s has no width to hold its value at: it is not a word integer, or its range has no width on a substrate that holds no interim word (CCS8011 reports that before Composer runs)" describe
 
-/// The rendered key of a type in `Layouts` and `ElementRanges`: the same rendering CCS keys by.
-let layoutKey (ty: NativeType) : string = formatType (applySubst ty)
+/// Exact CCS type-instance identity. The subsequent emission projection replaces this
+/// transitional source read with an immutable occurrence representation.
+let layoutKey = Clef.Compiler.NativeTypedTree.TypeIdentities.ofType
 
-/// The settled layout of an aggregate type, read from the graph: a record by its CCS instance
-/// identity, a union by its constructor's name, a tuple, an option or a Result by its rendered form.
 let settledLayout (graph: SemanticGraph) (ty: NativeType) : SettledLayout option =
-    match applySubst ty with
-    | NativeType.TApp (tycon, _) as t when tycon.Name = "option" || tycon.Name = "voption" || tycon.Name = "Result" || tycon.Name = "result" ->
-        Map.tryFind (layoutKey t) graph.Layouts.Value
-    | NativeType.TApp (tycon, _) as t ->
-        match RecordInstances.tryFields t graph with
-        | Some _ -> Map.tryFind (RecordInstances.layoutKey t) graph.Layouts.Value
-        | None ->
-            match Map.tryFind tycon.Name graph.Layouts.Value with
-            | Some layout -> Some layout
-            | None -> Map.tryFind (layoutKey t) graph.Layouts.Value
-    | NativeType.TUnion (tycon, _) -> Map.tryFind tycon.Name graph.Layouts.Value
-    | t -> Map.tryFind (layoutKey t) graph.Layouts.Value
+    Map.tryFind (layoutKey ty) graph.Layouts.Value
 
 /// The width an array element of the bare kind is held at: the settled range of its element type
 /// (`ElementRanges`), or the range of a type nothing reachable stores into (unbounded, which the
@@ -135,7 +123,7 @@ let elementWidth (graph: SemanticGraph) (elemTy: NativeType) : IntWidth =
     let range = Map.tryFind (layoutKey elemTy) graph.ElementRanges.Value |> Option.defaultValue ValueRange.Unbounded
     match RangeAnalysis.heldWidthOf graph range with
     | Some bits -> IntWidth bits
-    | None -> failwithf "TypeMapping: the element type %s has the range %s, which has no width on this substrate (CCS8011)" (layoutKey elemTy) (ValueRange.render range)
+    | None -> failwithf "TypeMapping: the element type %s has the range %s, which has no width on this substrate (CCS8011)" (formatType elemTy) (ValueRange.render range)
 
 /// The MLIR type of a settled scalar slot; None for a slot the mapping keeps as the field's own
 /// mapped type (a pointer-sized field, an opaque one).
@@ -288,16 +276,8 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
 
 /// Case payloads of a user union type, from its TypeDef node (None for records, options,
 /// abbreviations and primitives).
-let private tryGetUnionCases (typeName: string) (graph: SemanticGraph) : (string * (string option * NativeType) list) list option =
-    match SemanticGraph.recallType typeName graph with
-    | Some nodeId ->
-        match SemanticGraph.tryGetNode nodeId graph with
-        | Some node ->
-            match node.Kind with
-            | SemanticKind.TypeDef (_, TypeDefKind.UnionDef cases, _) -> Some cases
-            | _ -> None
-        | None -> None
-    | None -> None
+let private tryGetUnionCases (ty: NativeType) (graph: SemanticGraph) =
+    RecordInstances.tryUnionCases ty graph
 
 /// The physical storage of a value held in a container (an array element, a slot): a record or
 /// tuple is a semantic `TStruct` whose storage is a byte memref of its settled size; every other
@@ -397,7 +377,7 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
                     | _ -> mapNativeTypeForArch arch ty
                 | _ -> mapNativeTypeForArch arch ty
             | _ ->
-                match tryGetUnionCases tycon.Name graph with
+                match tryGetUnionCases ty graph with
                 | Some cases when not (List.isEmpty cases) ->
                     // User union: its settled size, or an enumeration tag
                     settledUnion (sprintf "the union '%s'" tycon.Name) (layoutOf ty) cases.Length
@@ -411,15 +391,15 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
                         | TInt (IntWidth 0) -> TInt (elementWidth graph elemTy)
                         | mapped -> physicalStorageType arch mapped
                     TMemRef elem
-                | ("option" | "voption"), [_] -> settledUnion (sprintf "the option '%s'" (layoutKey ty)) (layoutOf ty) 2
-                | ("Result" | "result"), [_; _] -> settledUnion (sprintf "the Result '%s'" (layoutKey ty)) (layoutOf ty) 2
+                | ("option" | "voption"), [_] -> settledUnion (sprintf "the option '%s'" (formatType ty)) (layoutOf ty) 2
+                | ("Result" | "result"), [_; _] -> settledUnion (sprintf "the Result '%s'" (formatType ty)) (layoutOf ty) 2
                 | _ -> mapNativeTypeForArch arch ty
     | NativeType.TTuple(elements, _) ->
         // Tuples are materialized as TStruct with positional field names on all platforms.
         // CPU uses memref alloca + byte-offset stores; FPGA uses hw.struct_create.
         // Both need TStruct for field-level access (pRecordFieldGet, TupleGet extraction).
         let fields = elements |> List.mapi (fun i e -> sprintf "Item%d" (i + 1), e)
-        settledStruct platform arch graph (sprintf "the tuple '%s'" (layoutKey ty)) fields (layoutOf ty)
+        settledStruct platform arch graph (sprintf "the tuple '%s'" (formatType ty)) fields (layoutOf ty)
     | NativeType.TAnon(fields, _) ->
         // Anonymous records → TStruct with named fields (no settled layout: a stop where sized)
         TStruct (fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy)), None)

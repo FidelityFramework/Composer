@@ -52,6 +52,79 @@ let ``driver rejects a zipper from another graph snapshot before witnessing`` ()
     Assert.Empty visited.Value
     Assert.Single ctx.Accumulator.Errors |> ignore
 
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``source-only deferred helpers emit nothing and stale source authority refuses traversal`` removeAuthority =
+    let source = """module DeferredHelper
+let helper () = "COLD-HELPER-BODY"
+let discard (value: string) = 0
+[<EntryPoint>]
+let main _ = discard (helper ())
+"""
+    let graph =
+        match Clef.Compiler.NativeService.parseAndCheck source "deferred-helper.clef" with
+        | Clef.Compiler.NativeService.Success result -> result.Graph
+        | result -> failwithf "Expected checked helper source: %A" result
+    let helper =
+        graph.Nodes.Values |> Seq.find (fun node ->
+            node.IsReachable && (match node.Kind with SemanticKind.Binding("helper", false, _, _) -> true | _ -> false))
+    let projection =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.tryEmission graph with
+        | Result.Ok projection -> projection
+        | Result.Error reason -> failwith reason
+    Assert.Contains(helper.Id, projection.DeferredOnly)
+    let originalPosition = Zipper.create graph helper.Id |> require "Missing original helper declaration"
+    let visited = ref Set.empty
+    let originalContext = context graph originalPosition visited
+    let graph =
+        if removeAuthority then
+            { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.OrdinaryUnusedActual) }
+        else graph
+    let position = Zipper.create graph helper.Id |> require "Missing actual helper declaration"
+    // Intentionally withhold source resealing: emission cannot use the old
+    // projection, or infer an eager fallback, after its graph was replaced.
+    let ctx = { originalContext with Graph = graph; Zipper = position }
+    let observed = ResizeArray<NodeId>()
+    let witness (_: WitnessContext) (node: SemanticNode) =
+        observed.Add node.Id
+        WitnessOutput.empty
+    visitAllNodes witness ctx position.Focus visited
+    if removeAuthority then Assert.Single ctx.Accumulator.Errors |> ignore
+    else Assert.Empty ctx.Accumulator.Errors
+    Assert.Empty observed
+    Assert.Empty visited.Value
+    Assert.Empty ctx.GlobalVisited.Value
+    Assert.Empty (ScopeContext.getOps ctx.ScopeContext.Value)
+    Assert.True graph.Nodes[helper.Id].IsReachable
+
+[<Fact>]
+let ``a copied source projection cannot enter production transfer or claim coverage`` () =
+    let builder = NodeBuilder()
+    let value = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
+    let original = builder.Build []
+    let supplied = coeffects original 64
+    let graph = { original with Nodes = original.Nodes }
+    Assert.False(obj.ReferenceEquals(original, graph))
+    let position = Zipper.create graph value.Id |> require "Missing copied occurrence"
+    let accumulator = MLIRAccumulator.empty ()
+    let scope = ref (ScopeContext.root ())
+    let visited = ref Set.empty
+    let ctx =
+        { Coeffects = supplied; Accumulator = accumulator; RootAccumulator = accumulator
+          ScopeContext = scope; RootScopeContext = scope; Graph = graph; Zipper = position
+          GlobalVisited = visited; TraversalVisited = visited }
+    let mutable witnessed = false
+    visitAllNodes (fun _ _ -> witnessed <- true; WitnessOutput.empty) ctx position.Focus visited
+    Assert.False witnessed
+    Assert.Empty visited.Value
+    Assert.Single accumulator.Errors |> ignore
+    Assert.Empty (ScopeContext.getOps scope.Value)
+    match Alex.Traversal.MLIRTransfer.transferWithCorrespondence graph value.Id supplied None with
+    | Result.Error reason -> Assert.Contains("Source emission admission", reason)
+    | Result.Ok _ -> failwith "An unsealed graph entered production witnessing"
+    Assert.Single(Alex.Traversal.CoverageValidation.validateCoverage graph Set.empty) |> ignore
+
 [<Fact>]
 let ``match scrutinee bindings guard and body retain the declared structural occurrence`` () =
     let builder = NodeBuilder()

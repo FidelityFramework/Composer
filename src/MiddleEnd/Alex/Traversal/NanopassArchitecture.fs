@@ -51,34 +51,23 @@ let private isScopeBoundary (node: SemanticNode) : bool =
     | _ -> false
 
 /// Debug tracing flag for visitAllNodes — set to true for detailed traversal logging
-let mutable private traceTraversal = System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1"
+let private traceTraversal = System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1"
 
 /// Check if a binding is a function definition (first child is a Lambda).
 /// Used on FPGA to distinguish function bindings (compiled once as hw.module)
 /// from value bindings (re-emitted per hw.module scope).
+let private callableFacts graph =
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable graph
+    |> Result.defaultWith (fun reason -> invalidOp ("Source declaration projection: " + reason))
+
 let private isFunctionBinding (bindingId: NodeId) (graph: SemanticGraph) : bool =
-    match SemanticGraph.tryGetNode bindingId graph with
-    | Some bindingNode ->
-        match bindingNode.Kind with
-        | SemanticKind.Binding _ ->
-            bindingNode.Children
-            |> List.tryHead
-            |> Option.bind (fun cid -> SemanticGraph.tryGetNode cid graph)
-            |> Option.map (fun cn -> match cn.Kind with SemanticKind.Lambda _ -> true | _ -> false)
-            |> Option.defaultValue false
-        | _ -> false
-    | None -> false
+    (callableFacts graph).FunctionBindings.Contains bindingId
 
 /// A direct function declaration contributes only a module-level definition.
 /// Closure-valued and mutable bindings also form local values, so their global
 /// coverage does not make their construction available in another occurrence.
 let private isDefinitionOnlyBinding (bindingId: NodeId) (graph: SemanticGraph) : bool =
-    match SemanticGraph.tryGetNode bindingId graph with
-    | Some { Kind = SemanticKind.Binding (_, false, _, _); Children = [valueId] } ->
-        match SemanticGraph.tryGetNode valueId graph with
-        | Some { Kind = SemanticKind.Lambda _ } -> not (Map.containsKey valueId graph.Codata.Value.Closures)
-        | _ -> false
-    | _ -> false
+    (callableFacts graph).DefinitionOnlyBindings.Contains bindingId
 
 /// A materialized code Lambda can be a structural child of its source
 /// ClosureValue as well as its canonical named declaration. Local body walks
@@ -86,18 +75,10 @@ let private isDefinitionOnlyBinding (bindingId: NodeId) (graph: SemanticGraph) :
 /// one module definition. Legacy closure Lambdas also construct a value and do
 /// not qualify for this reuse.
 let private isDefinitionOnlyLambda (node: SemanticNode) (graph: SemanticGraph) : bool =
-    match node.Kind, node.Parent with
-    | SemanticKind.Lambda (_, _, [], _, LambdaContext.LazyThunk), _
-        when not (Map.containsKey node.Id graph.Codata.Value.Closures) ->
-        graph.Codata.Value.LazyLayouts.Values |> Seq.exists (fun layout ->
-            layout.Thunk = node.Id && Clef.Compiler.Nanopass.LazyRuntime.validate graph layout)
-    | SemanticKind.Lambda (_, _, [], _, _), Some bindingId
-        when not (Map.containsKey node.Id graph.Codata.Value.Closures) ->
-        match SemanticGraph.tryGetNode bindingId graph with
-        | Some { Kind = SemanticKind.Binding (_, false, _, _); Children = [valueId] } ->
-            valueId = node.Id
-        | _ -> false
-    | _ -> false
+    let storage =
+        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph
+        |> Result.defaultWith (fun reason -> invalidOp ("Source thunk projection: " + reason))
+    (callableFacts graph).DefinitionOnlyLambdas.Contains node.Id || storage.DefinitionOnlyThunks.Contains node.Id
 
 /// Visit all nodes in post-order (children before parents)
 /// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
@@ -112,11 +93,20 @@ let rec visitAllNodes
     // A fresh function-body scope deliberately drops local value coverage.
     // Named code declarations retain their global identity even when reached
     // through a structural occurrence rather than a VarRef dependency.
+    // This lookup reads an eagerly settled CCS projection for this exact graph;
+    // it performs no source incidence analysis or hyperedge query.
+    let demand = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary visitedCtx.Graph
     if currentNode.Id <> visitedCtx.Zipper.Focus.Id
        || not (obj.ReferenceEquals(visitedCtx.Graph, visitedCtx.Zipper.Graph)) then
         Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "zipper occurrence")
             "The traversal node and zipper must identify the same occurrence in the current graph"
         |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+    elif Result.isError demand then
+        let reason = match demand with Result.Error reason -> reason | Result.Ok _ -> invalidOp "Expected absent source demand seal"
+        Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "source demand projection") reason
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+    elif demand |> Result.exists (fun projection -> projection.DeferredOnly.Contains currentNode.Id) then
+        ()
     elif Set.contains currentNode.Id !visited
        || (Set.contains currentNode.Id !(visitedCtx.GlobalVisited)
            && isDefinitionOnlyLambda currentNode visitedCtx.Graph) then
@@ -139,7 +129,15 @@ let rec visitAllNodes
         // Navigate down to each child via PSGZipper.down — preserves breadcrumbs.
         if not (isScopeBoundary currentNode) then
             if traceTraversal then printfn "[visitAllNodes] Node %A: visiting %d children" currentNode.Id currentNode.Children.Length
+            let omittedActuals =
+                match demand with
+                | Result.Ok projection ->
+                    projection.Calls.TryFind currentNode.Id
+                    |> Option.map (fun call -> Set.difference call.Omitted call.Eager)
+                    |> Option.defaultValue Set.empty
+                | Result.Error _ -> invalidOp "Traversal requires its admitted source demand projection"
             currentNode.Children |> List.iteri (fun childIndex childId ->
+                if childIndex > 0 && omittedActuals.Contains(childIndex - 1) then () else
                 match SemanticGraph.tryGetNode childId visitedCtx.Graph with
                 | Some childNode when not childNode.IsReachable ->
                     // Reachability is CCS's decision, read here: a child the graph marks unreachable
@@ -215,6 +213,7 @@ let rec visitAllNodes
 
         // TopLevelOps go to ROOT scope (module level: GlobalString, nested FuncDef)
         if not (List.isEmpty output.TopLevelOps) then
+            EmissionCorrespondence.record visitedCtx output.TopLevelOps
             if traceTraversal then
                 let funcDefCount = output.TopLevelOps |> List.filter (fun op -> match op with MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> true | _ -> false) |> List.length
                 printfn "[visitAllNodes] Node %d: Adding %d TopLevelOps (%d FuncDefs) to RootScopeContext" (NodeId.value currentNode.Id) (List.length output.TopLevelOps) funcDefCount
@@ -228,6 +227,7 @@ let rec visitAllNodes
         // (DU, Option, List, Map, Set, Result) without each witness having to remember.
         let pendingStaticGlobals = MLIRAccumulator.drainPendingStaticGlobals visitedCtx.Accumulator
         if not (List.isEmpty pendingStaticGlobals) then
+            EmissionCorrespondence.record visitedCtx pendingStaticGlobals
             let updatedRootScope = ScopeContext.addOps pendingStaticGlobals !visitedCtx.RootScopeContext
             visitedCtx.RootScopeContext := updatedRootScope
 

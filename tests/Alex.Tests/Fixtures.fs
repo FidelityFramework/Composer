@@ -10,7 +10,28 @@ module Zipper = Alex.Traversal.PSGZipper
 
 let require label = Option.defaultWith (fun () -> failwith label)
 
+/// Complete only the demand owner's source step after a fixture intentionally
+/// transforms its graph. Other codata and proof relations remain untouched, so
+/// their independent retraction assertions still exercise stale evidence.
+let settleDemand (graph: SemanticGraph) =
+    let graph = Clef.Compiler.Nanopass.OrdinaryDemand.normalize graph
+    let projection = Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.project graph
+    let codata = graph.Codata.Value
+    let graph = { graph with Codata = lazy { codata with OrdinaryDemand = projection } }
+    match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.sealEmission graph with
+    | Result.Ok () -> graph
+    | Result.Error reason -> failwith ("Component source demand settlement failed: " + reason)
+
 let coeffects (graph: SemanticGraph) pointerBits : TransferCoeffects =
+    // Hand-built component graphs do not pass through NativeService. Establish
+    // their source-owned seal explicitly; its projection must already agree
+    // with the fixture's codata. Production traversal never performs this step.
+    match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.tryEmission graph with
+    | Result.Ok _ -> ()
+    | Result.Error _ ->
+        match Clef.Compiler.PSGSaturation.SemanticGraph.OrdinaryDemand.sealEmission graph with
+        | Result.Ok () -> ()
+        | Result.Error reason -> failwith ("Component fixture lacks settled source demand: " + reason)
     { Platform =
         { TargetArch = { Isa = (if pointerBits = 32 then ARM32_Thumb else X86_64)
                          Register = Ok pointerBits; Pointer = Ok pointerBits }

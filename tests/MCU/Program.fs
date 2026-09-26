@@ -61,6 +61,7 @@ let main args =
             "}" ])
         let output = Path.Combine(temporary,"unsupported.elf")
         let ctx: Core.Types.Pipeline.BackEndContext = {
+            Timing = Core.Timing.silent()
             OutputPath = output; IntermediatesDir = None
             TargetTripleOverride = Some "thumbv8m.main-none-eabi"; TargetPointerBits = Some 32; TargetCpu = Some "cortex-m33"
             PlatformOS = None; RuntimeModel = Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Bare

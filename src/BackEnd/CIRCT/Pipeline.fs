@@ -13,7 +13,7 @@ open Core.Types.Pipeline
 open Core.Timing
 
 /// The CIRCT backend: hw/comb/seq MLIR → SystemVerilog
-let backend : BackEnd = {
+let private implementation : BackEnd = {
     Name = "CIRCT"
     Compile = fun witnessed ctx ->
         let mlirText = witnessed.Text
@@ -28,7 +28,7 @@ let backend : BackEnd = {
 
         // Step 1: Optimize hw/comb/seq (canonicalize + CSE)
         let optimizedPath = intermediateFile "output.opt.mlir"
-        timePhase "BackEnd.CIRCTOptimize" "Optimizing hardware MLIR" (fun () ->
+        timePhase ctx.Timing "BackEnd.CIRCTOptimize" "Optimizing hardware MLIR" (fun () ->
             Lowering.optimizeHW mlirPath optimizedPath)
         |> Result.bind (fun () ->
             if ctx.EmitIntermediateOnly then
@@ -43,7 +43,11 @@ let backend : BackEnd = {
                     | Some dir -> Path.Combine(dir, "output.sv")
                     | None -> Path.ChangeExtension(ctx.OutputPath, ".sv")
 
-                timePhase "BackEnd.VerilogExport" "Exporting SystemVerilog" (fun () ->
+                timePhase ctx.Timing "BackEnd.VerilogExport" "Exporting SystemVerilog" (fun () ->
                     Lowering.exportToVerilog optimizedPath svPath)
                 |> Result.map (fun () -> Verilog svPath))
 }
+
+/// Current source/witness ownership is validated before target realization.
+let backend: BackEnd =
+    { implementation with Compile = WitnessedInput.compile implementation.Compile }

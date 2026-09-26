@@ -45,15 +45,6 @@ open XParsec.Combinators
 // CURRY FLATTENING SUPPORT
 // ═══════════════════════════════════════════════════════════
 
-/// Unroll through N levels of TFun to find the innermost return type.
-/// For a flattened Lambda with N params: TFun(t1, TFun(t2, ... TFun(tN, retType)...)) → retType
-let rec private unrollReturnType (nParams: int) (ty: NativeType) : NativeType =
-    if nParams <= 0 then ty
-    else
-        match ty with
-        | NativeType.TFun (_, inner) -> unrollReturnType (nParams - 1) inner
-        | _ -> ty
-
 /// Structural membership of this occurrence, without following binding references.
 /// Already witnessed dependencies outside the body remain available; a shared
 /// body must still be observed in each function's operation/operand scope.
@@ -72,26 +63,32 @@ let private structuralMembers (position: PSGZipper) =
 
 /// Each real formal owns one scalar or a settled callable's separate operand
 /// components. This reads a signature; it neither visits nor emits a body.
-type private ParameterShape = Scalar | Callable of CallableOperands.Shape | Sequence of Alex.Traversal.SequenceOperands.Shape | Lazy of Alex.Traversal.LazyOperands.Shape
+type private ParameterShape = Scalar | Omitted | Callable of CallableOperands.Shape | Sequence of Alex.Traversal.SequenceOperands.Shape | Lazy of Alex.Traversal.LazyOperands.Shape
 
 let private parameterComponents (ctx: WitnessContext) parameters =
-    let groups = parameters |> List.map (fun (_, ty, id) ->
-        match Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph ctx.Graph.Nodes[id] with
-        | CallableValueShape.Callable _ ->
-            CallableOperands.project ctx id |> Result.map (fun shape ->
-                (CallableOperands.functionType shape :: Option.toList (CallableOperands.environmentType shape)), Callable shape)
-        | CallableValueShape.Sequence _ ->
-            Alex.Traversal.SequenceOperands.project ctx id |> Result.map (fun shape ->
-                Alex.Traversal.SequenceOperands.componentTypes shape, Sequence shape)
-        | CallableValueShape.Lazy _ ->
-            Alex.Traversal.LazyOperands.project ctx id |> Result.map (fun shape ->
-                Alex.Traversal.LazyOperands.componentTypes shape, Lazy shape)
-        | CallableValueShape.Data _ ->
-            try Result.Ok([mapTypeAt id ty ctx |> narrowType ctx.Coeffects ctx.Graph id], Scalar)
-            with ex -> Result.Error ex.Message)
-    match groups |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
-    | Some reason -> Result.Error reason
-    | None -> Result.Ok(groups |> List.choose (function Result.Ok group -> Some group | _ -> None))
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph with
+    | Result.Error reason -> Result.Error reason
+    | Result.Ok projection ->
+        let omitted = projection.Parameters.TryFind ctx.Zipper.Focus.Id |> Option.defaultValue Set.empty
+        let groups = parameters |> List.map (fun (_, ty, id) ->
+            if omitted.Contains id then Result.Ok([], Omitted) else
+            match CallableOperands.valueShape ctx id with
+            | Result.Error reason -> Result.Error reason
+            | Result.Ok(CallableValueShape.Callable _) ->
+                CallableOperands.project ctx id |> Result.map (fun shape ->
+                    (CallableOperands.functionType shape :: Option.toList (CallableOperands.environmentType shape)), Callable shape)
+            | Result.Ok(CallableValueShape.Sequence _) ->
+                Alex.Traversal.SequenceOperands.project ctx id |> Result.map (fun shape ->
+                    Alex.Traversal.SequenceOperands.componentTypes shape, Sequence shape)
+            | Result.Ok(CallableValueShape.Lazy _) ->
+                Alex.Traversal.LazyOperands.project ctx id |> Result.map (fun shape ->
+                    Alex.Traversal.LazyOperands.componentTypes shape, Lazy shape)
+            | Result.Ok(CallableValueShape.Data _) ->
+                try Result.Ok([mapTypeAt id ty ctx |> narrowType ctx.Coeffects ctx.Graph id], Scalar)
+                with ex -> Result.Error ex.Message)
+        match groups |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
+        | Some reason -> Result.Error reason
+        | None -> Result.Ok(groups |> List.choose (function Result.Ok group -> Some group | _ -> None))
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -115,7 +112,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
         match declRootOpt with
         | Some DeclRoot.EntryPoint when
-            Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.read ctx.Graph
+            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+            |> Result.toOption |> Option.bind _.Startup
             |> Option.forall (fun plan -> plan.EntryLambda <> node.Id) ->
             WitnessOutput.error "Entry lambda lacks Baker's settled program-initialization relation"
 
@@ -189,7 +187,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Definitions, direct calls and closure code addresses share the same
             // resolved binding identity; equal local source names remain distinct.
             let funcName =
-                match Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.read ctx.Graph with
+                match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+                      |> Result.toOption |> Option.bind _.Startup with
                 | Some plan when plan.EntryLambda = node.Id -> plan.Symbol
                 | _ -> Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node closureLayoutOpt.IsSome
 
@@ -231,6 +230,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // The complete operand scope is restored after the body is witnessed.
             for ((_, _, paramId), ((_, shape), values)) in List.zip params' (List.zip parameterTypes parameterValues) do
                 match shape, values with
+                | Omitted, [] -> ()
                 | Scalar, [value] -> MLIRAccumulator.bindNode paramId value.SSA value.Type ctx.Accumulator
                 | Callable shape, code :: environment ->
                     match CallableOperands.create shape code (List.tryHead environment)
@@ -422,7 +422,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // the body node's width (the width every caller reads for the call); the last value
             // is brought to it by the return meet SSAAssignment derived, the last value of this
             // scope (an escaping lambda's body sits at the declared Register width, ruling 1).
-            let innerReturnNativeType2 = unrollReturnType (List.length params') node.Type
+            let innerReturnNativeType2 = ctx.Graph.Nodes[bodyId].Type
             if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
                 printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
                     funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
@@ -431,8 +431,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some values -> (List.head values).Type
                 | None -> mapTypeAt bodyId innerReturnNativeType2 ctx
             let nativeVoid =
-                Clef.Compiler.PSGSaturation.SemanticGraph.CallbackDeclarations.forLambda ctx.Graph node.Id
-                |> Option.exists (fun callback -> callback.ReturnsVoid)
+                Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+                |> Result.toOption |> Option.exists (fun projection -> projection.VoidCallbacks.Contains node.Id)
             let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
             let returnType =
                 match bodyComponents, returnMeet, bodyResult with
@@ -490,24 +490,31 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some values -> values |> List.map _.Type
                 | None -> [returnType]
             let definition =
-                match bodyComponents, Clef.Compiler.NativeTypedTree.UnionFind.applySubst innerReturnNativeType2 with
+                match bodyComponents, CallableOperands.valueShape ctx bodyId with
                 | Some values, _ -> pFunctionDefResults visibility funcName funcParams (Some paramNames) resultTypes bodyOps values
-                | None, (NativeType.TFun _ | NativeType.TSeq _ | NativeType.TSeqEnumerator _ | NativeType.TLazy _) -> fail (Message "Body result has no witnessed canonical function/environment operands")
+                | None, Result.Error reason -> fail (Message reason)
+                | None, Result.Ok(CallableValueShape.Callable _ | CallableValueShape.Sequence _ | CallableValueShape.Lazy _) -> fail (Message "Body result has no witnessed canonical function/environment operands")
                 | None, _ ->
                     pFunctionDef visibility funcName funcParams (Some paramNames) returnType bodyOps returnSSA
-                        (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)
+                        (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped ctx.Graph b.Id -> Some (Values.unitReturnValue node.Id) | _ -> None)
             match tryMatchWithDiagnostics definition ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (funcDefOp, _) ->
+                EmissionCorrespondence.record ctx [funcDefOp]
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
 
                 if nativeVoid then
-                    let entry = Clef.Compiler.PSGSaturation.SemanticGraph.FunctionPointers.nativeEntrySymbol node.Id
+                    let entry =
+                        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+                        | Result.Ok projection when projection.NativeEntries.ContainsKey node.Id -> projection.NativeEntries[node.Id]
+                        | _ -> invalidOp "Native callback lacks its source-published entry symbol."
                     let arguments = funcParams |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
                     let call = MLIROp.FuncOp (FuncOp.FuncCall ([{ SSA = own.[0]; Type = returnType }], funcName, arguments))
                     let body = [call; MLIROp.FuncOp (FuncOp.Return [])]
                     match tryMatchWithDiagnostics (pFuncDef entry funcParams TVoid body FuncVisibility.Private) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Result.Ok (thunk, _) -> ctx.RootScopeContext := ScopeContext.addOp thunk !ctx.RootScopeContext
+                    | Result.Ok (thunk, _) ->
+                        EmissionCorrespondence.record ctx [thunk]
+                        ctx.RootScopeContext := ScopeContext.addOp thunk !ctx.RootScopeContext
                     | Result.Error message -> MLIRAccumulator.addError (Diagnostic.error (Some node.Id) (Some "Lambda") (Some "Native callback thunk") message) ctx.Accumulator
 
                 // ═══ CLOSURE CONSTRUCTION (parent scope) ═══

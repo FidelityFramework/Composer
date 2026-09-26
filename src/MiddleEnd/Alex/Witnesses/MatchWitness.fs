@@ -22,7 +22,6 @@ open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
 
 open Alex.Patterns.ControlFlowPatterns
-module Requirements = Clef.Compiler.PSGSaturation.SemanticGraph.Requirements
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BRANCH REGION COLLECTION THROUGH THE SCOPE TRAVERSAL DRIVER
@@ -52,7 +51,11 @@ let private witnessBranchScope (rootId: NodeId) (ctx: WitnessContext) (combinato
 let private terminalAdmitted (ctx: WitnessContext) (node: SemanticNode) arms =
     match arms with
     | [{ Pattern = Pattern.Const _ | Pattern.Union _ }] ->
-        match Requirements.tryPatternRequirement ctx.Graph node.Id, ctx.Zipper.Path with
+        let requirement =
+            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+            |> Result.toOption |> Option.bind (fun projection ->
+                projection.PatternRequirements.TryFind node.Id |> Option.bind projection.Requirements.TryFind)
+        match requirement, ctx.Zipper.Path with
         | Some contract, step :: _ ->
             step.Parent.Id = contract.Frontier && step.LeftSiblings = [contract.Site] && step.RightSiblings.IsEmpty
             && Set.contains contract.Site ctx.TraversalVisited.Value
@@ -97,7 +100,7 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
             // Step 3: Determine if expression-valued
             // TVar means CCS didn't resolve the match result type — treat as void
             // (if arms are side-effect-only, the match result type stays unresolved)
-            let isUnit = Alex.Traversal.Values.isUnitTyped node.Type
+            let isUnit = Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id
             let isExpressionValued =
                 not isUnit && (match node.Type with NativeType.TVar _ -> false | _ -> true)
 

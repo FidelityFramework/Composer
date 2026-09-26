@@ -29,14 +29,11 @@ let pIntrinsicCalleeAnnotation : PSGParser<MLIROp list * TransferResult> = parse
             | SemanticKind.TypeAnnotation(inner, _) when inner = position.Focus.Id -> callee parent
             | _ -> false
         | None -> false
-    let rec intrinsic seen id =
-        if Set.contains id seen then false
-        else
-            match state.Graph.Nodes.TryFind id with
-            | Some { Kind = SemanticKind.Intrinsic _ } -> true
-            | Some { Kind = SemanticKind.TypeAnnotation(inner, _) } -> intrinsic (Set.add id seen) inner
-            | _ -> false
-    do! ensure (state.Current.Id = state.Zipper.Focus.Id && callee state.Zipper && intrinsic Set.empty state.Current.Id)
+    let! projection =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph with
+        | Result.Ok projection -> preturn projection
+        | Result.Error reason -> fail (Message reason)
+    do! ensure (state.Current.Id = state.Zipper.Focus.Id && callee state.Zipper && projection.IntrinsicAliases.Contains state.Current.Id)
             "Annotation does not occupy an applied intrinsic's transparent callee position."
     return [], TRVoid
 }
@@ -76,9 +73,12 @@ let private pProgramInstance (ctx: WitnessContext) binding = parser {
                     |> Option.exists (fun current -> obj.ReferenceEquals(state.Current, current))))
             "Program callable evidence must belong to the current graph occurrence."
     let! instance =
-        match Clef.Compiler.Nanopass.ClosureEnvironmentSettlement.programInstance state.Graph binding with
-        | Some instance -> preturn instance
-        | None -> fail (Message "Program callable lacks its exact initialized instance and static storage authority.")
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph with
+        | Result.Error reason -> fail (Message reason)
+        | Result.Ok projection ->
+            match projection.ProgramInstances.TryFind binding with
+            | Some instance -> preturn instance
+            | None -> fail (Message "Program callable lacks its source-published initialized instance and static storage authority.")
     let! shape =
         match Operands.project ctx state.Current.Id with
         | Result.Ok shape -> preturn shape
@@ -138,16 +138,9 @@ let pNamedCallable (ctx: WitnessContext) : PSGParser<MLIROp list * TransferResul
         | Result.Ok _ -> fail (Message "A capturing callable requires its actual witnessed environment.")
         | Result.Error reason -> fail (Message reason)
     let carrier = state.Graph.Codata.Value.CallableCarriers[state.Current.Id]
-    let implementation = state.Graph.Nodes[carrier.Implementation]
     let! symbol =
-        match implementation.Parent |> Option.bind (fun id -> state.Graph.Nodes.TryFind id) with
-        | Some ({ Kind = SemanticKind.Binding(_, false, _, _); Children = [code] } as binding) when code = implementation.Id ->
-            match Alex.CodeGeneration.CallableSymbols.tryBinding state.Graph binding.Id with
-            | Some symbol -> preturn symbol
-            | None -> fail (Message "Callable implementation has no resolved declaration symbol.")
-        | _ ->
-            match Operands.tryThunkDeclaration ctx implementation.Id with
-            | Some (symbol, _, _) -> preturn symbol
-            | None -> fail (Message "Callable implementation is not an admitted named code declaration.")
+        match Alex.CodeGeneration.CallableSymbols.tryBinding state.Graph carrier.Implementation with
+        | Some symbol -> preturn symbol
+        | None -> fail (Message "Callable implementation has no source-published declaration symbol.")
     return! pCallableValue state.Current.Id shape symbol None
 }

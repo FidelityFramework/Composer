@@ -1,0 +1,11 @@
+module NominalIdentity
+
+[<EntryPoint>]
+let main _ =
+    if not (Left.read ()) then 1
+    elif Right.read () <> 2.0 then 2
+    elif not Left.cell.Value then 3
+    elif Right.cell.Value <> 2.0 then 4
+    else
+        let local: Left.Cell = { Value = false }
+        if local.Value then 5 else 0

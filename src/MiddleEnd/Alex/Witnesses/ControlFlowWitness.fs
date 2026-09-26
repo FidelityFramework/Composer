@@ -115,7 +115,7 @@ let private witnessContinuationDispatch getCombinator (ctx: WitnessContext) (nod
             if isLazyValue ctx node then pLazyDispatch ctx selector branches fallback
             elif isSequenceValue ctx node then pSequenceDispatch ctx selector branches fallback
             else
-                let isUnit = Alex.Traversal.Values.isUnitTyped node.Type
+                let isUnit = Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id
                 let result =
                     if isUnit then None
                     else Some (Alex.Traversal.Values.value node.Id 0, mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id)
@@ -187,7 +187,7 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                         pSequenceConditional ctx { SSA = condSSA; Type = condType } thenId thenOps elseId operations
                     | _ -> XParsec.Parsers.fail (XParsec.Message "Sequence conditional requires both settled branches.")
                 else
-                    let isUnit = Alex.Traversal.Values.isUnitTyped node.Type
+                    let isUnit = Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id
                     let result =
                         if isUnit then None
                         else
@@ -221,7 +221,7 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                 trace "[ControlFlowWitness] WhileLoop: Building scf.while with condition SSA %A" condSSA
                 let loop = pBuildWhileLoop condSSA condOps bodyOps
                 let pattern =
-                    if Alex.Traversal.Values.isUnitTyped node.Type then
+                    if Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id then
                         Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id loop
                     else loop
                 match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

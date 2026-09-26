@@ -9,6 +9,7 @@
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Fixtures.fs" />
     <Compile Include="ZipperTests.fs" />
+    <Compile Include="WitnessRegistryTests.fs" />
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
     <Compile Include="FunctionResultTests.fs" />
@@ -26,6 +27,7 @@
     <Compile Include="LambdaOccurrenceTests.fs" />
     <Compile Include="ControlFlowOccurrenceTests.fs" />
     <Compile Include="TraversalOccurrenceTests.fs" />
+    <Compile Include="WitnessArtifactTests.fs" />
     <Compile Include="RequirementTests.fs" />
     <Compile Include="EagerWitnessTests.fs" />
     <Compile Include="RawConstantMatchTests.fs" />

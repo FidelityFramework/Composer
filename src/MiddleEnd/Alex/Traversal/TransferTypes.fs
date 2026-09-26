@@ -317,6 +317,8 @@ type OperandSnapshot = {
 /// CRITICAL: This is a CLASS (reference type) not a record, so mutations propagate correctly
 [<AllowNullLiteral>]
 type MLIRAccumulator() =
+    member val WitnessScope: Core.Types.WitnessArtifacts.SemanticScope option = None with get, set
+    member val EmittedDefinitions: Core.Types.WitnessArtifacts.EmittedDefinition list = [] with get, set
     member val AllOps: MLIROp list = [] with get, set                      // Flat operation stream with markers
     member val Errors: Diagnostic list = [] with get, set
     member val NodeAssoc: Map<NodeId, SSA * MLIRType> = Map.empty with get, set  // Global SSA bindings (PSG nodes)
@@ -680,6 +682,35 @@ type WitnessContext = {
     GlobalVisited: ref<Set<NodeId>>  // Global visited set (shared across all nanopasses and function bodies)
     TraversalVisited: ref<Set<NodeId>>  // Traversal visited set: global on CPU, per-function on FPGA
 }
+
+/// Capture already emitted declarations at the actual witness occurrence.
+/// This bookkeeping never reconstructs or emits source computation.
+module EmissionCorrespondence =
+    let record (ctx: WitnessContext) operations =
+        let owned = operations |> List.filter Core.WitnessArtifacts.isOwnedOperation
+        if not owned.IsEmpty then
+            let acc = ctx.RootAccumulator
+            let scope =
+                match acc.WitnessScope with
+                | Some scope -> scope
+                | None ->
+                    let scope = Core.WitnessArtifacts.beginWholeGraphWitness ctx.Graph
+                    acc.WitnessScope <- Some scope
+                    scope
+            let occurrence: Core.Types.WitnessArtifacts.Occurrence =
+                { Scope = scope; Focus = ctx.Zipper.Focus
+                  Anchor = ctx.Zipper.Path |> List.tryLast |> Option.map _.Parent |> Option.defaultValue ctx.Zipper.Focus
+                  Path = ctx.Zipper.Path |> List.map (fun step -> step.Parent, step.LeftSiblings, step.RightSiblings) }
+            let validation =
+                if not (System.Object.ReferenceEquals(ctx.Graph, ctx.Zipper.Graph)) then
+                    Result.Error "Witness zipper and context refer to different checked graphs"
+                else Core.WitnessArtifacts.validateOccurrence scope occurrence
+            match validation with
+            | Result.Error message -> MLIRAccumulator.addError (Diagnostic.errorSimple message) acc
+            | Result.Ok () ->
+                acc.EmittedDefinitions <-
+                    (owned |> List.map (fun operation -> { Core.Types.WitnessArtifacts.EmittedDefinition.Operation = operation; Occurrence = occurrence }))
+                    @ acc.EmittedDefinitions
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODULE-LEVEL VALUE SLOTS

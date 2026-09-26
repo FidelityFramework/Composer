@@ -73,7 +73,7 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                     match MLIRAccumulator.recallCallable valueId ctx.Accumulator with
                     | Some _ -> forward valueId
                     | None -> { InlineOps = []; TopLevelOps = []; Result = TRVoid }
-                | _ when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
+                | _ when Alex.Traversal.CallableOperands.valueShape ctx node.Id = Result.Ok(CallableValueShape.Callable node.Id) ->
                     if Set.contains node.Id ctx.Graph.Codata.Value.Curry.PartialAppBindings then
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                     elif isMut then

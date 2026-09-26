@@ -96,13 +96,14 @@ settlement. Source and generated identity correspondence must survive that
 reconciliation. Deterministic allocation in today's complete run does not supply
 stable identity across an edit or across independently scheduled regions.
 
-A proposed `full`/`reachable` intermediate-dump option is a serialization policy.
-It must leave the compiler graph, reachability judgments and admission unchanged.
-A filtered dump declares its selection policy and omitted-node counts and either
-retains supporting evidence/participants or explicitly identifies external
-references. Full dumps remain available for investigating lost support and
-tree-shaking mistakes. Compact diagnostic output cannot serve as the dependency
-closure for incremental compilation merely because it contains the live nodes.
+The implemented [`--prune-intermediates`](Regression_Check_Policy.md#pruned-diagnostic-artifacts)
+option is a serialization policy. It leaves the compiler graph, reachability
+judgments and admission unchanged; the full view remains the default. A pruned
+dump declares its selection policy and omitted-node counts and retains the
+complete participant closure of joint evidence. Full dumps remain available for
+investigating lost support and tree-shaking mistakes. Compact diagnostic output
+cannot serve as the dependency closure for incremental compilation merely because
+it contains the live nodes.
 
 ### 2.2 Settled regions through segmented MLIR, objects and ELF
 
@@ -249,6 +250,11 @@ over settled facts; target realization remains below that boundary.
 
 ### 2.5 Edit transactions, proof reuse and segmented publication
 
+The normative [PHG scoped preservation contract](../../clef-lang-spec/spec/program-hypergraph.md#51-scoped-re-evaluation-and-witness-authorization)
+governs revision authorization, complete dependencies, scope transport,
+replacement and retained evidence. The following records the implementation
+ownership and executable acceptance procedure.
+
 The September 26 direction makes segmented compilation a delivery objective for
 the existing compiler/workbench contracts. Establish the dependency and evidence
 structure while the graph families are small; extend that same structure as
@@ -274,6 +280,23 @@ dependencies. Symbol resolution by the linker alone does not establish that
 equivalence. The publication service performs the derived rebuild/relink actions.
 Partitioning a fully emitted module establishes artifact organization only; the
 scoped-recompilation gate requires actual selective Baker work and Alex re-witnessing.
+
+The handoff is a versioned **worklist of witness scopes**. Each entry identifies
+the accepted PSG revision, its affected region and authorized occurrences/paths,
+settled boundary imports/exports and supporting obligations, and prior regions
+to retain, replace or retire. Readiness announces an established graph judgment.
+Alex uses the Huet zipper as structural attention over these entries; dependency
+discovery and retraction remain in CCS/Baker. A whole-program check supplies the
+whole-program entry. A selective check can supply several justified entries,
+including a widened or merged region when crossing constraints require it.
+
+Carry an opaque generation token with that scope contract and its resulting
+proof/witness/artifact observations. A session identity plus monotonic revision
+or an opaque identifier can serve; wall-clock ordering is unnecessary. A local
+witness-run identifier identifies that traversal, not automatically the source
+check revision. The accepting service validates the actual source generation
+before publication. Reused contents acquire authorization for the new generation
+through dependency revalidation; their old production token alone grants none.
 
 Keep semantic identity, partition identity and artifact content identity distinct.
 An edit can split, merge or replace a partition even when some source declarations
@@ -320,6 +343,83 @@ without a direct call edge. Capture that joint support before enabling selective
 reuse of its consumers. An analysis whose read footprint is not established
 retains the conservative whole-input dependency; merely traversing existing
 hyperedges cannot certify that every analysis read was recorded.
+
+#### Current-code findings and first scoped reevaluation acceptance
+
+The September 26 code audit found no accepted-check revision or stable
+cross-check node identity in CCS. [`CheckResult`](../../clef/src/Compiler/PSGSaturation/SemanticGraph/Diagnostics.fs)
+contains the graph, diagnostics and platform context.
+[`NativeService.checkParsedInputsWithPlatformAndSources`](../../clef/src/Compiler/NativeTypedTree/NativeService.fs)
+resets the process-global `NodeId` counter and rebuilds all inputs;
+[`ProjectChecker.checkProjectWithVolatile`](../../clef/src/Compiler/Project/ProjectChecker.fs)
+reparses and rechecks the ordered project inputs. Repeated numeric IDs therefore
+do not identify retained semantic nodes. Type parameters also contain mutable
+constraint and union-find cells. A retained checking session must isolate those
+cells and allocation supplies before reusing a graph across checks.
+[`EditorSession`](../src/CCS.Editor/Session.fs) already reserves request revisions
+and excludes superseded publication, but retains projected editor values rather
+than the typed graph and its derivations. Its request counter alone is not the
+missing compiler state.
+
+The implementation seams are the existing
+[`FanOut` recipe selection](../../clef/src/Compiler/Nanopass/FanOut.fs),
+[`FoldIn` replacement/derivation handling](../../clef/src/Compiler/Nanopass/FoldIn.fs)
+and [`RangeAnalysis`](../../clef/src/Compiler/PSGSaturation/SemanticGraph/RangeAnalysis.fs)
+transfer, ascent and narrowing functions. Fold-in currently clears all range,
+layout, pool and codata analyses. Range analysis currently reads a whole-program
+index and starts its fixed point from an empty state. Reuse these owning
+algorithms with explicit supports and a dirty-component worklist; do not write
+an alternate semantic evaluator in Alex or in the publication service.
+
+Support must include complete lookup/bucket membership and negative observations:
+
+- Reachability consumes declaration roots, structural/reference incidence,
+  type-name and qualified-symbol lookups, mapped bindings and retained Lazy
+  declarations. Adding a previously absent match can change its result.
+- Range analysis consumes all actual supplies of a formal, mutable assignments,
+  escapes, effects, guarded refinements, record constructions, array stores and
+  declared boundary seeds. Its widening additionally reads `constantsOf` over
+  **every singleton range in the current state**; an otherwise unrelated literal
+  can change a widening component's precision. That bucket needs its own support.
+- Placement joins tuple construction ranges and collects aggregate instances;
+  static-string placement depends on the complete demanded literal set, ordering
+  and deduplication plus the declared space. Writable storage groups all owned
+  allocations by space for capacity reservation. A new member can invalidate a
+  prior fit even when each old member is unchanged.
+- Callable origins, complete ingress/use censuses, mutable writers, closure/Seq/
+  Lazy residence and their joint proofs consume alternatives and absence of
+  unsupported uses. Existing participant edges do not establish that these
+  censuses were complete for a later revision.
+
+The first bounded implementation should accept a **validated edit transaction
+against a retained CCS checked revision**, initially a scalar literal replacement
+inside a closed monomorphic pure body whose logical type and dimensions, lexical
+incidence and call/capture/storage membership remain established. This is an
+initial admitted edit family, not a permanent restriction on incremental
+compilation. Preserve explicit old/new node correspondence; do not match fresh
+graphs by numeric ID, source line or symbol spelling. Invalidate the changed
+facts and their supported consumers, retract affected derivations, and run the
+owning transfers/recipes on the dirty components. Revalidate the consumed export
+contract before stopping propagation. Any changed or incomplete global support
+must widen work to its complete owning bucket or to the full source pipeline.
+In particular, a closed scalar body does not justify ignoring an unrelated
+widening consumer of the shared constant set.
+
+Acceptance must demonstrate actual work, rather than a reduced manifest after a
+full compilation: change one body in a program with independent functions and
+record **zero transfer, recipe and witness executions for the unaffected
+function**. Exercise an edit within the same admitted representation, one that
+changes a consumer's range/representation, deletion/restoration of support,
+addition of a previously absent bucket member and a stale result arriving after
+a newer edit. CCS supplies the resulting authorized occurrence roots and full
+enclosing paths with settled boundary imports/exports and obligations. Alex
+enters those scopes with fresh operand/scope state and validated imports; it does
+not obtain authority by arbitrary zipper re-rooting or reuse old SSA bindings.
+Compare the resulting graph facts, diagnostics, emitted interfaces and native
+behavior with a fresh check of the same inputs. The fresh run is the independent
+oracle, not a hidden producer of the supposedly incremental result. These are
+implementation and acceptance requirements; scoped reevaluation is not yet
+established by the current whole-graph witness catalog.
 
 The first CPU realization uses separately realized object units and LLD to form
 an ELF. A later release mode may coalesce units or apply whole-program optimization;
@@ -372,6 +472,77 @@ generation. Runtime tests cover REPL redefinition, explicit effects, retained
 closures/callbacks and safe retirement. The concrete numeric cases belong to
 [F-11(d) and C-08(c/d)](PRDs/Numeric_Validation_Cases.md); workbench integration
 uses the [registered WB milestones](Interactive_Compiler_Workbench.md#milestones).
+
+### 2.6 Parallel full builds and comparative timing
+
+Parallel execution applies to a complete compilation as well as an edit. The
+full-build worklist covers every demanded region; the incremental worklist covers
+the regions whose supported judgments require renewal. Both use the same source
+settlement, witness and realization contracts. CCS/Baker establish independent
+work and reconcile nanopass proposals. Alex receives sealed occurrence scopes and
+settled imports/exports, then uses a separate Huet traversal, operand state and
+operation accumulator for each admitted witness unit. Backend workers realize
+those units in private artifact directories. The host bounds concurrency across
+all levels so a group of segment workers cannot each allocate another full-machine
+worker pool.
+
+The .NET host may schedule independent in-memory work on multiple cores. Its
+mutable state must belong to a compilation or worker, including identity supplies,
+solver cells, witness registration, target selection, diagnostics and timing.
+Process isolation remains an execution option for tool invocations and checks;
+parallel independent regression jobs do not demonstrate parallelism inside one
+compilation. Target-specific realization stays in the backend. Each CPU segment
+can proceed through witnessing, `mlir-opt`, translation and LLVM object production
+once its semantic dependencies are sealed. Final LLD linking consumes reconciled
+objects and explicit link inputs, not partial worker output.
+
+Reconciliation verifies the accepted source revision; exact required unit set;
+source occurrence and interface correspondence; imported/exported symbol and ABI
+compatibility; storage/startup ownership; proof dependencies; artifact hashes and
+tool/configuration identities. Repartitioned or retired units cannot leak into
+the accepted object set. Failed, cancelled or superseded work cannot publish a
+mixed executable. Record reconciliation and final link/publication time as part
+of end-to-end latency, including when little source work changes.
+
+The evaluation compares the following modes on identical accepted inputs and
+realization settings:
+
+| Mode | Source and witness work | Purpose |
+|---|---|---|
+| Serial full | Complete demanded program; one worker | Correctness and elapsed-time baseline |
+| Parallel full | Same complete demanded program; bounded worker count | Benefit and cost of concurrent execution |
+| Serial incremental | Admitted edit and its complete affected closure; one worker | Benefit and cost of avoiding unaffected work |
+| Parallel incremental | Same admitted edit and affected closure; bounded worker count | Combined reuse and concurrency |
+
+Use unchanged input, a local same-representation edit, a representation-changing
+edit, a spanning constraint, region split/merge and a deliberately broad edit.
+Include small programs where worker overhead may dominate. An unchanged-input
+result measures validation/reuse cost and is not a substitute for a changed-input
+case. Baseline and candidate both include the same diagnostic artifact policy:
+compare full and pruned intermediates as separate conditions, with semantic and
+native equivalence required in each.
+
+Retain raw observations before preparing a table for **Fearless parallelism in
+the Composer compiler**. Each row identifies source/project contents, compiler
+and toolchain contents/configuration, platform, physical/logical core counts,
+worker bounds, cache condition, serialization policy, warm-up procedure and
+repetition count. Report elapsed median and tail with the raw sample range;
+keep first-run/cold observations separate from warmed runs. Alternating run order
+reduces systematic bias from heating and caches. Define the compared boundary
+explicitly: compiler process start, accepted edit, or explicit REPL run.
+
+| Workload/edit | Workers | Serial full | Parallel full | Serial incremental | Parallel incremental | Regions/objects rebuilt and reused | Equivalence |
+|---|---|---|---|---|---|---|---|
+| One row per measured workload, edit and cache/artifact condition | Declared bound | Measured elapsed | Measured elapsed | Measured elapsed | Measured elapsed | Actual work counters and artifact identities | Diagnostics, proofs, interfaces and native behavior |
+
+Time queue/debounce, checking, proof, witness, serialization, backend tools,
+reconciliation and linking separately. Record CPU usage and peak memory as
+separate resource measures. Summed overlapping phase spans are neither wall time
+nor CPU time; report them under their own label. Speedup uses the paired measured
+baseline, with no inferred percentage from core count or reused-node count. A
+failure or missing comparison remains visible in the evaluation and cannot supply
+a performance claim. The fresh full run is the independent correctness oracle;
+its work must not produce the incremental candidate under measurement.
 
 ## 3. Direction for nanopass input and output
 

@@ -17,8 +17,8 @@ module Operands = Alex.Traversal.SequenceOperands
 module Values = Alex.Traversal.Values
 
 let isSequenceValue (ctx: WitnessContext) (node: SemanticNode) =
-    match Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph node with
-    | CallableValueShape.Sequence _ -> true
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+    | Result.Ok projection when projection.ValueShapes.TryFind node.Id = Some(CallableValueShape.Sequence node.Id) -> true
     | _ -> false
 
 let private atOccurrence (ctx: WitnessContext) = parser {
@@ -42,9 +42,12 @@ let private pProgramInstance (ctx: WitnessContext) binding = parser {
                 (ctx.Graph.Nodes.TryFind occurrence |> Option.exists (fun current -> obj.ReferenceEquals(current, state.Current))))
             "Program sequence evidence belongs to a different graph occurrence."
     let! instance =
-        match Clef.Compiler.Nanopass.SequenceProgramInstances.programInstance state.Graph binding with
-        | Some instance -> preturn instance
-        | None -> fail (Message "Program sequence lacks its exact initialized template and writable storage authority.")
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph with
+        | Result.Ok projection ->
+            match projection.SequencePrograms.TryFind binding with
+            | Some instance -> preturn instance
+            | None -> fail (Message "Program sequence lacks its source-published instance and storage authority.")
+        | Result.Error reason -> fail (Message reason)
     let! shape =
         match Operands.project ctx occurrence with
         | Result.Ok shape -> preturn shape

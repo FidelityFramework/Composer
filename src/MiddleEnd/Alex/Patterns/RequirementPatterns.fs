@@ -10,7 +10,6 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.CFElements
 open Alex.Patterns.LiteralPatterns
-module Requirements = Clef.Compiler.PSGSaturation.SemanticGraph.Requirements
 
 let pRequirement (ctx: WitnessContext) = parser {
     let! state = getUserState
@@ -19,9 +18,12 @@ let pRequirement (ctx: WitnessContext) = parser {
                 && state.Current.Id = ctx.Zipper.Focus.Id)
             "Requirement must be witnessed at its actual zipper occurrence."
     let! contract =
-        match Requirements.tryRequirement ctx.Graph state.Current.Id with
-        | Some contract -> preturn contract
-        | None -> fail (Message "Requirement has no current ordered source contract.")
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+        | Result.Ok projection ->
+            match projection.Requirements.TryFind state.Current.Id with
+            | Some contract -> preturn contract
+            | None -> fail (Message "Requirement has no source-published ordered contract.")
+        | Result.Error reason -> fail (Message reason)
     do! ensure (match ctx.Zipper.Path with
                 | step :: _ -> step.Parent.Id = contract.Frontier
                                && step.LeftSiblings.IsEmpty

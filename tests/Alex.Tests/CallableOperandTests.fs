@@ -80,6 +80,13 @@ let private fixture captured =
       Implementation = implementation.Id; Formal = formal.Id }
 
 let private context graph occurrence =
+    // Component publication is a source operation performed before choosing the
+    // Huet occurrence. Deliberately malformed source remains unsealed: its
+    // negative tests must observe refusal, never a repaired carrier contract.
+    let graph =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare graph with
+        | Result.Ok prepared -> prepared
+        | Result.Error _ -> graph
     let accumulator = MLIRAccumulator.empty ()
     let scope = ref (Alex.Traversal.ScopeContext.ScopeContext.root ())
     let visited = ref Set.empty
@@ -140,7 +147,14 @@ let ``source carrier rejects changed signature and environment participants`` de
 [<Fact>]
 let ``same code with different environments survives recall and alias copy without a scalar fallback`` () =
     let fixture = fixture true
-    let ctx = context fixture.Graph fixture.Owner
+    // This copy really forwards the second occurrence. Merely sharing its code
+    // and environment schema would not establish that source relationship.
+    let alias = { fixture.Graph.Nodes[fixture.Alias] with Kind = SemanticKind.VarRef("second", Some fixture.Other) }
+    let edges = fixture.Graph.Edges |> List.map (fun edge ->
+        if edge.Target = fixture.Alias && edge.Role = EdgeRole.Definition then { edge with Sources = [fixture.Other] }
+        else edge)
+    let graph = { fixture.Graph with Nodes = fixture.Graph.Nodes.Add(fixture.Alias, alias); Edges = edges }
+    let ctx = context graph fixture.Owner
     let shape = Operands.project ctx fixture.Owner |> ok
     let fn = code shape (Arg 0)
     Operands.bind ctx fixture.Owner fn (Some(environment shape (Arg 1))) |> ok
@@ -152,6 +166,16 @@ let ``same code with different environments survives recall and alias copy witho
     Assert.Equal(Arg 0, (Operands.code (recalled fixture.Alias)).SSA)
     Assert.True((MLIRAccumulator.recallNode fixture.Alias ctx.Accumulator).IsNone)
     Assert.Equal(Some fn.Type, MLIRAccumulator.recallSSAType fn.SSA ctx.Accumulator)
+
+[<Fact>]
+let ``equal code and environment schema cannot authorize copying an unrelated source occurrence`` () =
+    let fixture = fixture true
+    let ctx = context fixture.Graph fixture.Owner
+    let shape = Operands.project ctx fixture.Other |> ok
+    Operands.bind ctx fixture.Other (code shape (Arg 0)) (Some(environment shape (Arg 2))) |> ok
+    Operands.reproject ctx fixture.Other fixture.Alias |> failure |> ignore
+    Assert.True((MLIRAccumulator.recallCallable fixture.Alias ctx.Accumulator).IsNone)
+    Assert.Equal(Arg 2, (heldEnvironment (MLIRAccumulator.recallCallable fixture.Other ctx.Accumulator).Value).SSA)
 
 [<Fact>]
 let ``operation scope restore keeps callable pairs and physical SSA types together`` () =
@@ -221,7 +245,12 @@ let private higherOrder captured returnsCallable =
     let parameter = builder.Create(SemanticKind.PatternBinding "input", parameterType, dummyRange)
     let body =
         if returnsCallable then builder.Create(SemanticKind.VarRef("returned", Some fixture.Owner), callableType, dummyRange)
-        else builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
+        else
+            // This fixture tests transported callable components. Make its
+            // formal genuinely demanded; an unused argument is lawfully omitted.
+            let callback = builder.Create(SemanticKind.VarRef("input", Some parameter.Id), callableType, dummyRange)
+            let actual = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
+            builder.Create(SemanticKind.Application(callback.Id, [actual.Id]), Types.boolType, dummyRange)
     let ty = NativeType.TFun(parameterType, body.Type)
     let implementation = builder.Create(SemanticKind.Lambda(["input", parameterType, parameter.Id], body.Id,
                                                             [], None, LambdaContext.RegularClosure), ty, dummyRange)
@@ -249,6 +278,7 @@ let private higherOrder captured returnsCallable =
                              DeclarationRoots = roots }
     let raw, startupErrors = Clef.Compiler.Nanopass.ProgramInitialization.normalize (Option.toList main) raw
     Assert.Empty startupErrors
+    let raw = settleDemand raw
     let callable = if returnsCallable then body.Id else parameter.Id
     let inputs =
         if captured then

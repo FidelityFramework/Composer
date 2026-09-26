@@ -9,7 +9,7 @@ open Core.Types.Pipeline
 open Core.Timing
 
 /// The GPU backend: portable MLIR text → .hsaco code object
-let backend : BackEnd = {
+let private implementation : BackEnd = {
     Name = "GPU"
     Compile = fun witnessed ctx ->
         let mlirText = witnessed.Text
@@ -34,7 +34,11 @@ let backend : BackEnd = {
             // artifact directory is not guaranteed to exist yet.
             Directory.CreateDirectory(outputDir) |> ignore
 
-            timePhase "BackEnd.GPUCompile" "Compiling MLIR to AMDGPU code object" (fun () ->
+            timePhase ctx.Timing "BackEnd.GPUCompile" "Compiling MLIR to AMDGPU code object" (fun () ->
                 Lowering.lowerToCodeObject mlirPath hsacoPath)
             |> Result.map (fun () -> GpuCodeObject hsacoPath)
 }
+
+/// Current source/witness ownership is validated before target realization.
+let backend: BackEnd =
+    { implementation with Compile = WitnessedInput.compile implementation.Compile }

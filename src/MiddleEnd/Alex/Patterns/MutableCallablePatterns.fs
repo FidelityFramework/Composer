@@ -18,13 +18,15 @@ open Alex.Elements.FuncElements
 open Alex.Patterns.ControlFlowPatterns
 module Values = Alex.Traversal.Values
 module Operands = Alex.Traversal.CallableOperands
-module Storage = Clef.Compiler.PSGSaturation.SemanticGraph.MutableCallableStorage
 
 let private pStorage binding = parser {
     let! state = getUserState
-    match state.Graph.Codata.Value.MutableCallableStorage.TryFind binding with
-    | Some storage when Storage.validate state.Graph storage -> return storage
-    | _ -> return! fail (Message "Mutable callable storage lacks its complete source protocol.")
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph with
+    | Result.Error reason -> return! fail (Message reason)
+    | Result.Ok projection ->
+        match projection.MutableStorage.TryFind binding with
+        | Some storage -> return storage
+        | _ -> return! fail (Message "Mutable callable storage lacks its source-published complete protocol.")
 }
 
 let private pValue (ctx: WitnessContext) (storage: MutableCallableStorage) (write: MutableCallableWrite) = parser {
@@ -33,7 +35,7 @@ let private pValue (ctx: WitnessContext) (storage: MutableCallableStorage) (writ
         match MLIRAccumulator.recallCallable write.Value state.Accumulator with
         | Some value -> preturn value
         | None -> fail (Message "Initial or assigned callable value has not been witnessed.")
-    let! expected =
+    let! _ =
         match state.Graph.Codata.Value.CallableCarriers.TryFind write.Value, Operands.exactCarrier value with
         | Some expected, Some actual when expected = actual &&
                                         List.tryItem write.Alternative storage.Alternatives = Some write.Value -> preturn expected
@@ -47,12 +49,8 @@ let private pValue (ctx: WitnessContext) (storage: MutableCallableStorage) (writ
                 "Callable write lost its exact physical operands."
     // This first retained-environment admission is program-long storage. Local
     // retained views require the complete covering proof, never a stack label.
-    do! ensure (expected.Environment |> Option.forall (fun environment ->
-        match state.Graph.Nodes.TryFind environment.Owner with
-        | Some { Kind = SemanticKind.ClosureValue(_, allocation) }
-            when not (state.Graph.Codata.Value.EnvironmentDestinations.ContainsKey allocation) ->
-                state.Graph.Codata.Value.Escapes.TryFind allocation = Some EscapeKind.StaticLifetime
-        | _ -> false))
+    do! ensure (Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph
+                |> Result.toOption |> Option.exists (fun projection -> projection.MutableRetentions.Contains write.Value))
             "Mutable callable environment retention requires a covering source lifetime proof."
     return value
 }

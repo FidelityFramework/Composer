@@ -439,6 +439,7 @@ let private witnessKernelModule
 
         // Add as RawMLIR op to root scope
         let rawOp = MLIROp.RawMLIR aieModule
+        EmissionCorrespondence.record ctx [rawOp]
         let updatedRootScope = ScopeContext.addOp rawOp !ctx.RootScopeContext
         ctx.RootScopeContext := updatedRootScope
 

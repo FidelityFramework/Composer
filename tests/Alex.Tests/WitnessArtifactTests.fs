@@ -1,0 +1,213 @@
+module Alex.Tests.WitnessArtifactTests
+
+open System
+open Xunit
+open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.PSGSaturation.SemanticGraph.Types
+open Clef.Compiler.PSGSaturation.SemanticGraph.NodeBuilder
+open Alex.Dialects.Core.Types
+open Alex.Traversal.TransferTypes
+open Alex.Traversal.ScopeContext
+open Core.Types.WitnessArtifacts
+open Core.Types.Pipeline
+open Alex.Tests.Fixtures
+module Catalog = Core.WitnessArtifacts
+module Zipper = Alex.Traversal.PSGZipper
+
+let private definition name body = MLIROp.FuncOp(FuncDef(name, [], [], body @ [MLIROp.FuncOp(Return [])], FuncVisibility.Private))
+let private text ops = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "catalog" ops
+let private good result = Result.defaultWith failwith result
+let private refused (part: string) (result: Result<'a, string>) =
+    match result with
+    | Result.Error message -> Assert.Contains(part, message)
+    | Result.Ok _ -> failwith "Expected exact correspondence to be refused"
+
+let private fixture () =
+    let builder = NodeBuilder()
+    let first = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
+    let sibling = builder.Create(SemanticKind.Literal(NativeLiteral.Bool false), Types.boolType, dummyRange)
+    let root = builder.Create(SemanticKind.Sequential [first.Id; sibling.Id], Types.boolType, dummyRange)
+    let graph = builder.Build []
+    let position = Zipper.create graph root.Id |> require "Missing fixture root" |> Zipper.down 0 |> require "Missing child"
+    let accumulator = MLIRAccumulator.empty ()
+    let rootScope = ref (ScopeContext.root ())
+    let visited = ref Set.empty
+    let context: WitnessContext =
+        { Graph = graph; Zipper = position; Accumulator = accumulator; RootAccumulator = accumulator
+          Coeffects = coeffects graph 64; ScopeContext = rootScope; RootScopeContext = rootScope
+          GlobalVisited = visited; TraversalVisited = visited }
+    context
+
+let private recorded ctx operations =
+    EmissionCorrespondence.record ctx operations
+    Assert.Empty ctx.Accumulator.Errors
+    let scope = ctx.Accumulator.WitnessScope |> require "Missing witness scope"
+    let rows = ctx.Accumulator.EmittedDefinitions
+    let catalog = Catalog.create scope CheckedProgramStartup rows operations (text operations) [] |> good
+    scope, rows, catalog
+
+[<Fact>]
+let ``actual witness occurrence survives declaration relocation and exact import collection`` () =
+    let ctx = fixture ()
+    let external = MLIROp.FuncOp(FuncDecl("foreign", [], [], FuncVisibility.Private, []))
+    let op = definition "body" [external; MLIROp.FuncOp(FuncCall([], "foreign", []))]
+    EmissionCorrespondence.record ctx [op]
+    let scope = ctx.Accumulator.WitnessScope.Value
+    let operations = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [op]
+    let rows = ctx.Accumulator.EmittedDefinitions |> List.map (fun row ->
+        { row with Operation = Alex.Pipeline.MLIRNanopass.relocateDefinition row.Operation |> require "Missing relocated definition" })
+    let catalog = Catalog.create scope CheckedProgramStartup rows operations (text operations) [] |> good
+    Assert.Equal("foreign", (Assert.Single catalog.Units.Head.Imports).Symbol)
+    let row = Assert.Single catalog.Units.Head.Definitions
+    Assert.Same(ctx.Zipper.Focus, row.Occurrence.Focus)
+    Assert.Same(ctx.Zipper.Path.Head.Parent, row.Occurrence.Anchor)
+    Assert.Equal<NodeId list>(ctx.Zipper.Path.Head.RightSiblings, (List.head row.Occurrence.Path |> fun (_, _, right) -> right))
+
+[<Theory>]
+[<InlineData(0)>]
+[<InlineData(1)>]
+[<InlineData(2)>]
+let ``missing duplicate or changed definition ownership is refused`` mutation =
+    let ctx = fixture ()
+    let operations = [definition "body" []]
+    let scope, rows, catalog = recorded ctx operations
+    let changed =
+        match mutation with
+        | 0 -> []
+        | 1 -> rows @ rows
+        | _ -> [{ rows.Head with Operation = definition "different" [] }]
+    let catalog = { catalog with Units = [{ catalog.Units.Head with Definitions = changed }] }
+    Catalog.validate scope operations (text operations) [] catalog |> refused "definition correspondence"
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``same numeric ids do not authorize stale graph or mixed generation occurrences`` changedGraph =
+    let ctx = fixture ()
+    let operations = [definition "body" []]
+    let scope, _, catalog = recorded ctx operations
+    let graph = if changedGraph then { ctx.Graph with DeclarationRoots = [] } else ctx.Graph
+    let foreignScope = Catalog.beginWholeGraphWitness graph
+    let row = catalog.Units.Head.Definitions.Head
+    let foreign = { row with Occurrence = { row.Occurrence with Scope = foreignScope } }
+    let changed = { catalog with Units = [{ catalog.Units.Head with Definitions = [foreign] }] }
+    Catalog.validate scope operations (text operations) [] changed |> refused "different checked graph snapshot or witness run"
+
+[<Theory>]
+[<InlineData(0)>]
+[<InlineData(1)>]
+[<InlineData(2)>]
+let ``shared occurrence rejects truncated path wrong siblings or copied focus`` mutation =
+    let ctx = fixture ()
+    let operations = [definition "body" []]
+    let scope, _, catalog = recorded ctx operations
+    let row = catalog.Units.Head.Definitions.Head
+    let occurrence =
+        match mutation with
+        | 0 -> { row.Occurrence with Path = [] }
+        | 1 ->
+            let parent, _, right = row.Occurrence.Path.Head
+            { row.Occurrence with Path = [parent, [ctx.Zipper.Focus.Id], right] }
+        | _ -> { row.Occurrence with Focus = { row.Occurrence.Focus with IsReachable = not row.Occurrence.Focus.IsReachable } }
+    let changed = { catalog with Units = [{ catalog.Units.Head with Definitions = [{ row with Occurrence = occurrence }] }] }
+    Catalog.validate scope operations (text operations) [] changed |> refused "actual current PSG focus and Huet path"
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``global reference needs actual data owner and exact view type`` useFunction =
+    let ctx = fixture ()
+    let owner = if useFunction then definition "data" [] else MLIROp.GlobalBytePool("data", [1uy; 0uy], 1, [])
+    let read = MLIROp.MemRefOp(MemRefOp.GetGlobal(V(100, 0), "data", TMemRefStatic(1, TInt(IntWidth 8))))
+    let operations = [owner; definition "read" [read]]
+    EmissionCorrespondence.record ctx operations
+    Catalog.create ctx.Accumulator.WitnessScope.Value CheckedProgramStartup ctx.Accumulator.EmittedDefinitions operations (text operations) []
+    |> refused "mistyped global reference"
+
+[<Fact>]
+let ``identical duplicate typed imports are refused as duplicate inventory`` () =
+    let ctx = fixture ()
+    let declared = MLIROp.FuncOp(FuncDecl("foreign", [], [], FuncVisibility.Private, []))
+    let operations = [declared; declared; definition "body" []]
+    EmissionCorrespondence.record ctx operations
+    Catalog.create ctx.Accumulator.WitnessScope.Value CheckedProgramStartup ctx.Accumulator.EmittedDefinitions operations (text operations) []
+    |> refused "duplicate typed import inventory"
+
+[<Theory>]
+[<InlineData(0)>]
+[<InlineData(1)>]
+[<InlineData(2)>]
+[<InlineData(3)>]
+let ``relocation rejects duplicate imports with conflicting byval or visibility`` mutation =
+    let descriptor = TMemRefStatic(2, TInt(IntWidth 32))
+    let actual = { ParamIndex = 0; SizeBytes = 8; AlignBytes = 4 }
+    let altered =
+        match mutation with
+        | 0 -> { actual with SizeBytes = 16 }
+        | 1 -> { actual with AlignBytes = 8 }
+        | 2 -> { actual with ParamIndex = 1 }
+        | _ -> actual
+    let first = MLIROp.FuncOp(FuncDecl("foreign_record", [descriptor; descriptor], [], FuncVisibility.Private, [actual]))
+    let second =
+        MLIROp.FuncOp(FuncDecl("foreign_record", [descriptor; descriptor], [],
+            (if mutation = 3 then FuncVisibility.Public else FuncVisibility.Private), [altered]))
+    let error = Assert.ThrowsAny<Exception>(fun () ->
+        Alex.Pipeline.MLIRNanopass.declarationCollectionPass [first; definition "body" [second]] |> ignore)
+    Assert.Contains("Conflicting external declaration ABI or visibility", error.Message)
+
+[<Fact>]
+let ``relocation preserves one exactly equivalent repeated import including byval`` () =
+    let descriptor = TMemRefStatic(2, TInt(IntWidth 32))
+    let declaration = MLIROp.FuncOp(FuncDecl("foreign_record", [descriptor], [], FuncVisibility.Private,
+                                          [{ ParamIndex = 0; SizeBytes = 8; AlignBytes = 4 }]))
+    let operations = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [declaration; definition "body" [declaration]]
+    let imports = operations |> List.collect (Catalog.flatten >> Seq.toList) |> List.filter (function MLIROp.FuncOp(FuncDecl _) -> true | _ -> false)
+    Assert.Equal(declaration, Assert.Single imports)
+
+[<Fact>]
+let ``planned startup cannot disappear from the emitted unit`` () =
+    let builder = NodeBuilder()
+    let parameter = builder.Create(SemanticKind.PatternBinding "argument", Types.unitType, dummyRange)
+    let body = builder.Create(SemanticKind.Literal(NativeLiteral.Int(0L, NTUKind.NTUint(NTUWidth.Fixed 64))), Types.intType, dummyRange)
+    let lambda = builder.Create(SemanticKind.Lambda(["argument", Types.unitType, parameter.Id], body.Id, [], None, LambdaContext.RegularClosure),
+                                NativeType.TFun(Types.unitType, Types.intType), dummyRange)
+    let entry = builder.Create(SemanticKind.Binding("main", false, false, Some DeclRoot.EntryPoint), lambda.Type, dummyRange, children = [lambda.Id])
+    let graph, errors = Clef.Compiler.Nanopass.ProgramInitialization.normalize [entry.Id] (builder.Build [entry.Id, DeclRoot.EntryPoint])
+    Assert.Empty errors
+    let plan = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.read graph |> require "Missing fixture startup"
+    let scope = Catalog.beginWholeGraphWitness graph
+    let operation = definition plan.Symbol []
+    let occurrence = { Scope = scope; Focus = graph.Nodes[plan.EntryLambda]; Anchor = graph.Nodes[plan.EntryLambda]; Path = [] }
+    let row = { Operation = operation; Occurrence = occurrence }
+    Catalog.create scope CheckedProgramStartup [row] [operation] (text [operation]) [] |> good |> ignore
+    Catalog.create scope CheckedProgramStartup [] [] (text []) [] |> refused "planned startup"
+
+[<Fact>]
+let ``backend entry rejects missing catalog changed text and changed content`` () =
+    let ctx = fixture ()
+    let operations = [definition "body" []]
+    let _, _, catalog = recorded ctx operations
+    let input: BackEndInput =
+        { Operations = operations; PointerBits = Ok 64; ModuleName = Some "catalog"
+          Text = text operations; WritableStorage = []; Catalog = Some catalog }
+    WitnessedInput.validate input |> good
+    WitnessedInput.validate { input with Catalog = None } |> refused "requires a current source"
+    WitnessedInput.validate { input with Text = input.Text + "\n" } |> refused "portable text differs"
+    let changed = [definition "replacement" []]
+    WitnessedInput.validate { input with Operations = changed; Text = text changed } |> refused "definition correspondence"
+
+[<Fact>]
+let ``queued globals retain the draining witness occurrence`` () =
+    let ctx = fixture ()
+    let visited = ctx.GlobalVisited
+    let globalOp = MLIROp.GlobalMemref("queued", TMemRefStatic(1, TInt(IntWidth 8)), None)
+    let witness (current: WitnessContext) (_: SemanticNode) =
+        MLIRAccumulator.tryEmitGlobalMemref "queued" (TMemRefStatic(1, TInt(IntWidth 8))) None current.Accumulator
+        WitnessOutput.empty
+    Alex.Traversal.NanopassArchitecture.visitAllNodes witness ctx ctx.Zipper.Focus visited
+    Assert.Empty ctx.Accumulator.Errors
+    let row = Assert.Single ctx.Accumulator.EmittedDefinitions
+    Assert.Equal(globalOp, row.Operation)
+    Assert.Same(ctx.Zipper.Focus, row.Occurrence.Focus)
+    Assert.Equal(1, row.Occurrence.Path.Length)
+    Assert.Empty ctx.Accumulator.PendingStaticGlobals

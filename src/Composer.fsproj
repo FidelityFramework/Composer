@@ -32,6 +32,8 @@
       <!-- Alex MLIR Type System (used by TypeMapping and Elements) -->
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Types.fs" />
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Serialize.fs" />
+      <Compile Include="Core/Types/WitnessArtifacts.fs" />
+      <Compile Include="Core/WitnessArtifacts.fs" />
       <Compile Include="Core/Types/Pipeline.fs" />
 
       <!-- CCS Integration (thin layer receiving SemanticGraph) -->

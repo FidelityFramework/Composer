@@ -135,6 +135,9 @@ let pBorrowContinuationSlot nodeId frameId bytes (slot: ContinuationSlot) : PSGP
 let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot) : PSGParser<MLIROp list * TransferResult> = parser {
     let! frameSSA, frameType, offset, fieldType = pPlacedSlot frameId bytes slot
     let! state = getUserState
+    let sourceShape id =
+        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph
+        |> Result.toOption |> Option.bind (fun projection -> projection.ValueShapes.TryFind id)
     let! rawValue, rawType =
         match slot.Holds with
         | CaptureSlotKind.EnvironmentView owner ->
@@ -158,8 +161,8 @@ let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot)
             | Some sequence when state.Graph.Codata.Value.SequenceOrigins.TryFind valueId |> Option.exists (fun owner -> sequence.Flow.Owners = Set.singleton owner) ->
                 preturn (sequence.Environment.SSA, sequence.Environment.Type)
             | None when
-                Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape state.Graph state.Graph.Nodes[valueId] = CallableValueShape.Data valueId &&
-                Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape state.Graph state.Graph.Nodes[slot.Source] = CallableValueShape.Data slot.Source &&
+                sourceShape valueId = Some(CallableValueShape.Data valueId) &&
+                sourceShape slot.Source = Some(CallableValueShape.Data slot.Source) &&
                 state.Graph.Codata.Value.SequenceOrigins.TryFind valueId = state.Graph.Codata.Value.SequenceOrigins.TryFind slot.Source &&
                 state.Graph.Codata.Value.SequenceOrigins.ContainsKey valueId -> pRecallNode valueId
             | _ -> fail (Message "Descriptor-only sequence store requires the exact source-proved function half and actual environment")

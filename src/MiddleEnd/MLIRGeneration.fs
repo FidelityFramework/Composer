@@ -74,31 +74,39 @@ let private generateCore
         TargetPlatform = targetPlatform
     }
 
-    // Execute Alex transfer (parallel nanopasses)
+    // Execute the current whole-graph Alex traversal, retaining actual source
+    // occurrences. This is not a source invalidation/partition decision.
     match graph.DeclarationRoots with
     | [] -> Result.Error "No declaration roots found in PSG"
     | (entryId, _) :: _ ->
-        match transfer graph entryId coeffects intermediatesDir with
-        | Result.Ok (topLevelOps, _) ->
+        match transferWithCorrespondence graph entryId coeffects intermediatesDir with
+        | Result.Ok (topLevelOps, scope, definitions) ->
             // Filter ops by target platform — FPGA/NPU exclude CPU-only func.func ops
-            let platformOps =
-                match targetPlatform with
-                | Core.Types.Dialects.TargetPlatform.FPGA ->
-                    topLevelOps |> List.filter (fun op ->
-                        match op with MLIROp.FuncOp _ -> false | _ -> true)
-                | Core.Types.Dialects.TargetPlatform.NPU ->
-                    // NPU: keep only RawMLIR (the aie.device block from KernelModuleWitness)
-                    topLevelOps |> List.filter (fun op ->
-                        match op with MLIROp.RawMLIR _ -> true | _ -> false)
-                | _ -> topLevelOps
+            let retainedOperation op =
+                match targetPlatform, op with
+                | Core.Types.Dialects.TargetPlatform.FPGA, MLIROp.FuncOp _ -> false
+                | Core.Types.Dialects.TargetPlatform.NPU, MLIROp.RawMLIR _ -> true
+                | Core.Types.Dialects.TargetPlatform.NPU, _ -> false
+                | _ -> true
+            let platformOps = topLevelOps |> List.filter retainedOperation
+            let targetDefinition op =
+                match targetPlatform, op with
+                | Core.Types.Dialects.TargetPlatform.MCU, MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
+                | _ -> op
 
             // Apply MLIR nanopasses (MLIR→MLIR transformations)
             let transformedOps =
                 Alex.Pipeline.MLIRNanopass.applyPasses platformOps coeffects.Platform intermediatesDir
-                |> List.map (fun op ->
-                    match targetPlatform, op with
-                    | Core.Types.Dialects.TargetPlatform.MCU, MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
-                    | _ -> op)
+                |> List.map targetDefinition
+
+            // Transport each recorded operation through the same physical
+            // relocation/wrapper transformations. Never recover a source owner
+            // by looking up an emitted symbol name.
+            let transformedDefinitions =
+                definitions |> List.choose (fun row ->
+                    if not (retainedOperation row.Operation) then None
+                    else Alex.Pipeline.MLIRNanopass.relocateDefinition row.Operation
+                         |> Option.map (fun op -> { row with Operation = targetDefinition op }))
 
             let storageValidation =
                 Alex.Traversal.StaticStorageValidation.validate graph transformedOps
@@ -145,10 +153,17 @@ let private generateCore
                     | None -> ()
                 | _ -> ()
 
-                let witnessed =
-                    { Operations = transformedOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
-                      ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
-                Result.Ok (witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
+                let activation =
+                    match targetPlatform with
+                    | Core.Types.Dialects.TargetPlatform.FPGA | Core.Types.Dialects.TargetPlatform.NPU -> Core.Types.WitnessArtifacts.TargetModuleActivation
+                    | _ -> Core.Types.WitnessArtifacts.CheckedProgramStartup
+                Core.WitnessArtifacts.create scope activation transformedDefinitions transformedOps mlirText writableStorage
+                |> Result.map (fun catalog ->
+                    let witnessed =
+                        { Operations = transformedOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
+                          Catalog = Some catalog
+                          ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
+                    witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
         | Result.Error msg -> Result.Error msg
 
 /// Generate MLIR for the graph. A core's leg reads the declared Register and Pointer widths at

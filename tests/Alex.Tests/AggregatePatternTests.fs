@@ -26,7 +26,7 @@ let private fixture () =
     let storage = builder.Create(SemanticKind.AggregateStorage(current.Id), option, dummyRange)
     let raw = builder.Build []
     let graph = { raw with
-                    Layouts = lazy (Map.ofList [formatType option, SettledLayout.Union(["None", None; "Some", Some SettledSlot.Bool], Some 1, Some 2, Some 1)])
+                    Layouts = lazy (Map.ofList [Clef.Compiler.NativeTypedTree.TypeIdentities.ofType option, SettledLayout.Union(["None", None; "Some", Some SettledSlot.Bool], Some 1, Some 2, Some 1)])
                     Codata = lazy { raw.Codata.Value with Escapes = Map.ofList [storage.Id, EscapeKind.StackScoped] } }
     let slot = { Source = current.Id; ValueType = option; IsCapture = false; Holds = CaptureSlotKind.InlineValue option
                  Field = { Name = "current"; Slot = SettledSlot.InlineBytes(2, 1); Offset = Some 1; Size = Some 2; Align = Some 1 } }

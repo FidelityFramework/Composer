@@ -10,7 +10,7 @@ open Core.Timing
 open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 
 /// The LLVM backend: witnessed portable module → target realization → native binary
-let backend : BackEnd = {
+let private implementation : BackEnd = {
     Name = "LLVM"
     Compile = fun witnessed ctx ->
         // Write MLIR to temp file for mlir-opt input
@@ -37,7 +37,7 @@ let backend : BackEnd = {
                     let path = Path.ChangeExtension(mlirPath, ".runtime.mlir")
                     File.WriteAllText(path, realized.Text)
                     path
-            timePhase "BackEnd.MLIRLower" "Lowering MLIR to LLVM IR" (fun () ->
+            timePhase ctx.Timing "BackEnd.MLIRLower" "Lowering MLIR to LLVM IR" (fun () ->
                 Lowering.lowerToLLVM inputPath llPath targetTriple ctx.TargetPointerBits))
         |> Result.bind (fun () ->
             if ctx.EmitIntermediateOnly then
@@ -45,7 +45,11 @@ let backend : BackEnd = {
                 Ok (IntermediateOnly "LLVM IR")
             else
                 // Phase 2: LLVM IR → native binary (target bitcode + LLD)
-                timePhase "BackEnd.Link" "Linking to native binary" (fun () ->
+                timePhase ctx.Timing "BackEnd.Link" "Linking to native binary" (fun () ->
                     Codegen.compileToNativeWithStorage llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink ctx.TargetCpu witnessed.WritableStorage)
                 |> Result.map (fun () -> NativeBinary ctx.OutputPath))
 }
+
+/// Current source/witness ownership is validated before target realization.
+let backend: BackEnd =
+    { implementation with Compile = WitnessedInput.compile implementation.Compile }

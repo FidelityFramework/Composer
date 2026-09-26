@@ -43,6 +43,7 @@ let main _ =
     let prepared, _ = Clef.Compiler.Nanopass.LazyFactoryResults.prepare normalized normalized.Codata.Value.Curry
     let graph, reading = Clef.Compiler.Nanopass.LazyRuntime.settle { prepared with Platform = Some platform }
     Assert.Empty reading.Diagnostics
+    let graph = settleDemand graph
     let binding name = graph.Nodes.Values |> Seq.find (fun node ->
         node.IsReachable && match node.Kind with SemanticKind.Binding(actual, false, _, _) -> actual = name | _ -> false)
     graph, (binding "first").Id, (binding "second").Id, (binding "alias").Id
@@ -101,7 +102,7 @@ let ``changed lazy source proof retracts cached physical projection`` defect =
     let ctx = context graph alias accumulator
     seed ctx first 1 |> ignore
     let removed = if defect = "force-proof" then EdgeRole.LazyMemoization else EdgeRole.LazyLayout
-    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) }
+    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) } |> settleDemand
     let reading = Operands.project (context changed alias accumulator) alias
     Assert.True(Result.isError reading)
     Assert.Empty accumulator.AllOps
@@ -113,7 +114,7 @@ let ``physical thunk formal uses the exact environment extent of its lazy value`
         { Layouts = Map.empty; Origins = Map.empty; Known = Map.empty }
     let carriers, _ = Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.settle inputs graph
     let previous = graph.Codata.Value
-    let graph = { graph with Codata = lazy { previous with CallableCarriers = carriers } }
+    let graph = { graph with Codata = lazy { previous with CallableCarriers = carriers } } |> settleDemand
     let ctx = context graph first (MLIRAccumulator.empty ())
     let shape = Operands.project ctx first |> ok
     let layout = Operands.contract shape
@@ -128,7 +129,7 @@ let ``physical thunk formal uses the exact environment extent of its lazy value`
     let _, _, formal = Assert.Single parameters
     Assert.Equal(contract.Formal, formal)
     for removed in [EdgeRole.LazyInstance; EdgeRole.LazyLayout; EdgeRole.LazyMemoization] do
-        let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) }
+        let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> removed) } |> settleDemand
         let changedContext = context changed first (MLIRAccumulator.empty ())
         Assert.True((Alex.Traversal.CallableOperands.tryThunkDeclaration changedContext contract.Thunk).IsNone)
 
@@ -149,6 +150,7 @@ let ``only witnessed formation accounts for uninitialized cache declarations`` i
     let graph =
         if invalidated then { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) }
         else graph
+        |> settleDemand
     let accumulator = MLIRAccumulator.empty ()
     MLIRAccumulator.bindNode contract.InitialComputed (Arg 0) (TInt(IntWidth 1)) accumulator
     let ctx = context graph contract.Environment accumulator

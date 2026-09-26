@@ -50,14 +50,14 @@ let ``ordered source requirement retains its diagnostic through backend realizat
     Assert.Contains("cf.assert %arg0", verified)
     let triple = "x86_64-unknown-linux-gnu"
     let backendContext: Core.Types.Pipeline.BackEndContext =
-        { OutputPath = "unused"; IntermediatesDir = None; TargetTripleOverride = Some triple
+        { Timing = Core.Timing.silent(); OutputPath = "unused"; IntermediatesDir = None; TargetTripleOverride = Some triple
           TargetPointerBits = Some 64; TargetCpu = None; PlatformOS = Some "linux"
           RuntimeModel = Some RuntimeModel.Libc; DeploymentMode = Core.Types.Dialects.Console
           EmitIntermediateOnly = false; ExternLibraries = Set.empty
           NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
           EmbeddedTarget = None; XtensaTarget = None; Deploy = false }
     let witnessed: Core.Types.Pipeline.BackEndInput =
-        { Operations = [declaration]; PointerBits = Ok 64; ModuleName = Some "requirement_component"; Text = text; WritableStorage = [] }
+        { Operations = [declaration]; PointerBits = Ok 64; ModuleName = Some "requirement_component"; Text = text; WritableStorage = []; Catalog = None }
     let realized =
         BackEnd.LLVM.RequirementRealization.realize
             (BackEnd.LLVM.RequirementRealization.selectRuntime backendContext triple) witnessed

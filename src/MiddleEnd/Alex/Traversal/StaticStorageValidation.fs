@@ -24,17 +24,15 @@ let validate (graph: SemanticGraph) (ops: MLIROp list) : Result<unit, string> =
     let all = flatten ops
     let pools = all |> List.choose (function MLIROp.GlobalBytePool (n,b,a,o) -> Some (n,b,a,o) | _ -> None)
     let errors = ResizeArray<string>()
+    let projection =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph with
+        | Result.Ok projection -> Some projection
+        | Result.Error reason -> errors.Add reason; None
     match graph.StaticStringPool with
     | None -> if not pools.IsEmpty then errors.Add "emitted a byte pool without a settled BAREWire plan"
     | Some pool ->
-        let expectedBody =
-            ObligationBody.StaticStorageLayout (
-                pool.Entries |> List.map (fun e -> e.Offset, e.StorageLength, 1),
-                pool.UsedSize, pool.Size, pool.Alignment, pool.Capacity, pool.SpaceAlignment, pool.Granularity)
         let layoutAnchors =
-            graph.Nodes |> Map.toList |> List.choose (fun (_, node) ->
-                match node.Kind with SemanticKind.Obligation ob when ob.Body = expectedBody -> Some ob.Id | _ -> None)
-        if layoutAnchors.IsEmpty then errors.Add "settled pool has no matching compiler layout obligation"
+            projection |> Option.map _.LiteralPoolAnchors |> Option.defaultValue []
         match pools with
         | [name, bytes, alignment, anchors] when name = pool.Symbol ->
             if bytes <> pool.Bytes || bytes.Length <> pool.Size then errors.Add "emitted pool bytes/extent differ from the settled plan"
@@ -44,18 +42,8 @@ let validate (graph: SemanticGraph) (ops: MLIROp list) : Result<unit, string> =
         | _ -> errors.Add "expected exactly one allocation for the settled BAREWire string pool"
         let entries =
             pool.Entries |> List.collect (fun entry -> entry.NodeIds |> List.map (fun id -> id, entry)) |> Map.ofList
-        let poolBytes = Array.ofList pool.Bytes
         for entry in pool.Entries do
-            let logical = System.Text.Encoding.UTF8.GetBytes entry.Content
-            let ending = int64 entry.Offset + int64 entry.StorageLength
-            if entry.Offset < 0 || ending > int64 poolBytes.Length || entry.StorageLength <> logical.Length + 1 || entry.Length <> logical.Length then
-                errors.Add "source literal extent differs from the settled pool"
-            elif Array.sub poolBytes entry.Offset logical.Length <> logical || poolBytes[entry.Offset + logical.Length] <> 0uy then
-                errors.Add "source literal bytes/sentinel differ from the settled pool"
             for id in entry.NodeIds do
-                match graph.Nodes.TryFind id with
-                | Some { Kind = SemanticKind.Literal (Clef.Compiler.NativeTypedTree.NativeTypes.NativeLiteral.String content) } when content = entry.Content -> ()
-                | _ -> errors.Add "pool entry does not refer to its source string"
                 let sourceSSA = Values.value id 0
                 let definitions = all |> List.choose (function
                     | MLIROp.MemRefOp (MemRefOp.GetGlobal (ssa, name, ty)) when ssa = sourceSSA -> Some (name, ty)
@@ -94,7 +82,9 @@ let validateWritable arch (graph: SemanticGraph) (ops: MLIROp list) =
     let declarations = all |> List.choose (function MLIROp.GlobalMemref(name, ty, authority) -> Some(name, ty, authority) | _ -> None)
     let errors = ResizeArray<string>()
     let observed = ResizeArray<string * ProgramStorageEntry>()
-    let current = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramStorage.read graph
+    let current =
+        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph
+        |> Result.toOption |> Option.map _.ProgramStorage
     match current with
     | None -> errors.Add "the source program-storage inventory is stale"
     | Some inventory ->

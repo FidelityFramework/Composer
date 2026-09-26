@@ -13,7 +13,7 @@ open BackEnd.LLVM.RequirementRealization
 let private triple = "x86_64-unknown-linux-gnu"
 
 let private context =
-    { OutputPath = "unused"; IntermediatesDir = None; TargetTripleOverride = Some triple
+    { Timing = Core.Timing.silent(); OutputPath = "unused"; IntermediatesDir = None; TargetTripleOverride = Some triple
       TargetPointerBits = Some 64; TargetCpu = None; PlatformOS = Some "linux"
       RuntimeModel = Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Libc
       DeploymentMode = Core.Types.Dialects.Console; EmitIntermediateOnly = false
@@ -22,7 +22,7 @@ let private context =
 
 let private input operations =
     { Operations = operations; PointerBits = Ok 64; ModuleName = Some "requirement_backend"
-      Text = moduleToString (Ok 64) "requirement_backend" operations; WritableStorage = [] }
+      Text = moduleToString (Ok 64) "requirement_backend" operations; WritableStorage = []; Catalog = None }
 
 let private required message =
     input [MLIROp.FuncOp(FuncDef("check", [(Arg 0, TInt(IntWidth 1))], [],

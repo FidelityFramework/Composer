@@ -1,0 +1,40 @@
+module MixedDimensionSchemes
+
+// units-of-measure.md, Generalization of Measure Variables: every use keeps
+// its actual substitution even when different measures share physical code.
+[<Measure>] type m
+[<Measure>] type s
+
+let inline project<[<Measure>] 'u, 'a> (value: 'a) : float<'u> = value.Value
+
+type Distance = { Value: float<m> }
+type Duration = { Value: float<s> }
+
+let tagged token value = (token, value * 1.0)
+
+let rec carry token value pending =
+    if pending then carry token (value + value) false
+    else (token, value * 1.0)
+
+let rec left token value pending =
+    if pending then right token (value + value) false
+    else (token, value * 1.0)
+and right token value pending =
+    if pending then left token (value + value) false
+    else (token, value * 1.0)
+
+[<EntryPoint>]
+let main _ =
+    let distance = project<m, Distance> { Distance.Value = 2.0<m> }
+    let duration = project<s, Duration> { Duration.Value = 3.0<s> }
+    let taggedLength, length = tagged true distance
+    let taggedTime, time = tagged false duration
+    let carriedLength, doubledLength = carry true distance true
+    let carriedTime, doubledTime = carry false duration false
+    let mutualLength, mutualDistance = left true distance true
+    let mutualTime, mutualDuration = right false duration true
+    if distance <> 2.0<m> || duration <> 3.0<s> then 1
+    elif not taggedLength || taggedTime || length <> 2.0<m> || time <> 3.0<s> then 2
+    elif not carriedLength || carriedTime || doubledLength <> 4.0<m> || doubledTime <> 3.0<s> then 3
+    elif not mutualLength || mutualTime || mutualDistance <> 4.0<m> || mutualDuration <> 6.0<s> then 4
+    else 0

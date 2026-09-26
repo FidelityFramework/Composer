@@ -11,6 +11,21 @@ The [C/F completion ledger](C_F_Completion_Ledger.md) turns the current PRD
 criteria into an ordered implementation and acceptance inventory. It records
 remaining work and executable gates; it does not add a passing result.
 
+## Whole-graph witness correspondence — 2026-09-26
+
+The current working catalog retains actual Alex source occurrences through
+declaration relocation and backend input validation. Focused correspondence
+checks pass **15/15** and the full Alex assembly **289/289**. Unchanged native
+01/16h in both full and pruned diagnostic modes pass **4/4 compilation and
+4/4 execution**; required MLIR, LLVM IR and native streams are byte-identical.
+The catalogs retain identical source paths/imports/startup/content while using
+distinct local `witnessRun` tokens. Exact working snapshot hashes and logs are in
+the [checkpoint report](C_F_Checkpoint_2026-09-26.md#witness-correspondence-working-cohort).
+This records full-graph witnessing and one validated artifact unit. It does not
+establish selective checking, selective Alex execution or segmented object reuse.
+The [source audit and next acceptance procedure](Nanopass_Incremental_Contract_Direction.md#current-code-findings-and-first-scoped-reevaluation-acceptance)
+requires actual source-owned dirty worklists and authorized Huet occurrences.
+
 ## Main integration and selected-match checkpoint — 2026-09-26
 
 The [C/F checkpoint report](C_F_Checkpoint_2026-09-26.md) maps delivered behavior

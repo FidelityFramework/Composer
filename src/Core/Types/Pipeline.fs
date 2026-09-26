@@ -16,6 +16,9 @@ type BackEndInput = {
     /// Exact source writable objects and the witnessed symbol that realizes
     /// each one. A backend still owes placement/capacity correspondence.
     WritableStorage: (string * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry) list
+    /// Source compilations carry their current witness correspondence. Isolated
+    /// backend components may be unscoped, but cannot enter a backend pipeline.
+    Catalog: Core.Types.WitnessArtifacts.Catalog option
 }
 
 /// Result of a backend compilation pass
@@ -104,6 +107,8 @@ type NativeLinkOptions = {
 /// Contains backend-internal configuration — the orchestrator assembles
 /// this but doesn't interpret it.
 type BackEndContext = {
+    /// One compilation's overlap-safe timing collector, shared by its workers.
+    Timing: Core.Timing.TimingSession
     OutputPath: string
     IntermediatesDir: string option
     /// CLI target override (e.g., --target x86_64-pc-windows-gnu for cross-compilation).
@@ -137,3 +142,24 @@ type BackEnd = {
     /// Compile typed MLIR plus its portable serialization to a target artifact
     Compile: BackEndInput -> BackEndContext -> Result<BackEndArtifact, string>
 }
+
+/// All target pipelines validate the source-to-witness envelope before target
+/// realization changes operations, introduces helpers or writes target files.
+module WitnessedInput =
+    let validate (input: BackEndInput) =
+        match input.Catalog with
+        | None -> Error "Backend compilation requires a current source witness artifact catalog"
+        | Some catalog ->
+            let serialized =
+                match input.ModuleName with
+                | Some name -> Alex.Dialects.Core.Serialize.moduleToString input.PointerBits name input.Operations
+                | None -> sprintf "module {\n%s\n}" (Alex.Dialects.Core.Serialize.opsToString input.PointerBits input.Operations "  ")
+            if serialized <> input.Text then Error "Backend portable text differs from its actual witnessed operations"
+            else Core.WitnessArtifacts.validate catalog.Scope input.Operations input.Text input.WritableStorage catalog
+
+    let compile implementation input context =
+        validate input |> Result.bind (fun () ->
+            match context.IntermediatesDir, input.Catalog with
+            | Some directory, Some catalog -> Core.WitnessArtifacts.write (System.IO.Path.Combine(directory, "10_witness_units.json")) catalog
+            | _ -> ()
+            implementation input context)

@@ -22,8 +22,8 @@ let private witness (ctx: WitnessContext) (node: SemanticNode) =
             let types = parameters |> List.map (fun (_, ty, id) -> mapType ty ctx |> narrowType ctx.Coeffects ctx.Graph id)
             let result = SemanticGraph.getNode body ctx.Graph
             let resultType =
-                match Clef.Compiler.PSGSaturation.SemanticGraph.CallbackDeclarations.forLambda ctx.Graph lambdaId with
-                | Some callback when callback.ReturnsVoid -> TVoid
+                match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+                | Result.Ok projection when projection.VoidCallbacks.Contains lambdaId -> TVoid
                 | _ -> mapType result.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
             emit (pFunctionAddress node.Id symbol types resultType) []
         | _ -> WitnessOutput.error "Settled native callback entry is missing its lambda."
@@ -37,8 +37,8 @@ let private witness (ctx: WitnessContext) (node: SemanticNode) =
                 let prefix = adapted |> List.collect (fun (ops, _, _) -> ops)
                 let values = adapted |> List.map (fun (_, ssa, ty) -> { SSA = ssa; Type = ty })
                 let physicalResult =
-                    match Clef.Compiler.PSGSaturation.SemanticGraph.CallbackDeclarations.forPointer ctx.Graph pointer with
-                    | Some callback when callback.ReturnsVoid -> TVoid
+                    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+                    | Result.Ok projection when projection.VoidPointers.Contains pointer -> TVoid
                     | _ -> mapType resultType ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
                 emit (pFunctionPointerCall node.Id pointerSSA values physicalResult) prefix
         | _ -> WitnessOutput.error "Native callback pointer was not witnessed as a pointer-sized value."

@@ -8,7 +8,7 @@ open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 /// orchestrator resolved from the declared architecture, not by a flag: a
 /// Cortex-M image executes from its declared flash behind an address-table vector,
 /// an Xtensa image is ROM-loaded into SRAM behind a vector block of code.
-let backend: BackEnd = {
+let private implementation: BackEnd = {
     Name = "LLVM / MCU image (Cortex-M or Xtensa)"
     Compile = fun witnessed ctx ->
         let mlirText = witnessed.Text
@@ -49,3 +49,7 @@ let backend: BackEnd = {
                     | Some _, Some _ -> failwith "Exactly one MCU image target may be resolved")
         with ex -> Error ex.Message
 }
+
+/// Current source/witness ownership is validated before target realization.
+let backend: BackEnd =
+    { implementation with Compile = WitnessedInput.compile implementation.Compile }

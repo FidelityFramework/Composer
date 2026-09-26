@@ -20,14 +20,17 @@ open Alex.Patterns.ControlFlowPatterns
 module Operands = Alex.Traversal.LazyOperands
 module Values = Alex.Traversal.Values
 
-let isLazyValue (_ctx: WitnessContext) (node: SemanticNode) =
-    match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with
-    | NativeType.TLazy _ -> true
-    | _ -> false
+let isLazyValue (ctx: WitnessContext) (node: SemanticNode) =
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+    |> Result.toOption |> Option.exists (fun projection -> projection.LazyValues.Contains node.Id)
 
 let pRecallLazyEnvironment source (layout: LazyLayout) = parser {
     let! state = getUserState
-    do! ensure (state.Graph.Codata.Value.LazyOrigins.TryFind source = Some layout.Owner)
+    let! projection =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph with
+        | Result.Ok projection -> preturn projection
+        | Result.Error reason -> fail (Message reason)
+    do! ensure (projection.LazyOccurrences.TryFind source = Some layout.Owner)
             "Lazy environment operand has no exact source layout origin."
     let expected = TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
     let! value, actual =
@@ -35,9 +38,8 @@ let pRecallLazyEnvironment source (layout: LazyLayout) = parser {
         | Some value when value.Occurrence = source && value.Layout = layout -> preturn (value.Environment.SSA, value.Environment.Type)
         | Some _ -> fail (Message "Lazy environment was recalled under another occurrence or layout.")
         | None ->
-            match state.Graph.Nodes.TryFind source with
-            | Some { Type = NativeType.TLazy _ } -> fail (Message "Lazy value has not been witnessed in this operation scope.")
-            | _ -> pRecallNode source
+            if projection.LazyValues.Contains source then fail (Message "Lazy value has not been witnessed in this operation scope.")
+            else pRecallNode source
     do! ensure (actual = expected) "Lazy environment does not retain its settled typed descriptor."
     return [], TRValue { SSA = value; Type = expected }
 }
@@ -100,8 +102,9 @@ let pLazyForward (ctx: WitnessContext) source = parser {
 }
 
 let private programInstance (ctx: WitnessContext) binding shape =
-    match Clef.Compiler.Nanopass.LazyRuntime.programInstance ctx.Graph binding with
-    | Some (owner, allocation) when owner = (Operands.contract shape).Owner -> preturn allocation
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+          |> Result.toOption |> Option.bind (fun projection -> projection.LazyPrograms.TryFind binding) with
+    | Some instance when instance.Owner = (Operands.contract shape).Owner -> preturn instance.Allocation
     | _ -> fail (Message "Program lazy reference lacks its exact initialized static instance and storage authority.")
 
 let pProgramLazyBinding (ctx: WitnessContext) source = parser {

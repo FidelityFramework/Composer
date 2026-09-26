@@ -4,7 +4,6 @@
 module Alex.Traversal.LazyOperands
 
 open Clef.Compiler.NativeTypedTree.NativeTypes
-open Clef.Compiler.NativeTypedTree.UnionFind
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
@@ -17,31 +16,32 @@ type Shape = private {
     EnvironmentType: MLIRType
 }
 
-let private validated = System.Runtime.CompilerServices.ConditionalWeakTable<SemanticGraph, Map<NodeId, LazyLayout>>()
-
 let layout (ctx: WitnessContext) owner =
-    let current = validated.GetValue(ctx.Graph, fun graph ->
-        graph.Codata.Value.LazyLayouts |> Map.filter (fun _ layout ->
-            Clef.Compiler.Nanopass.LazyRuntime.validate graph layout))
-    current.TryFind owner
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+    |> Result.toOption |> Option.bind (fun projection -> projection.Lazies.TryFind owner)
+    |> Option.map _.Layout
 
 let layoutAt (ctx: WitnessContext) occurrence =
-    ctx.Graph.Codata.Value.LazyOrigins.TryFind occurrence
-    |> Option.bind (layout ctx)
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
+    |> Result.toOption |> Option.bind (fun projection ->
+        projection.LazyOccurrences.TryFind occurrence
+        |> Option.bind projection.Lazies.TryFind |> Option.map _.Layout)
 
 let project (ctx: WitnessContext) occurrence : Result<Shape, string> =
-    match ctx.Graph.Nodes.TryFind occurrence, layoutAt ctx occurrence with
-    | Some { Type = ty }, Some layout ->
-        match applySubst ty, Clef.Compiler.PSGSaturation.SemanticGraph.LazyValues.instance ctx.Graph layout.Owner with
-        | NativeType.TLazy element, Some contract when applySubst element = applySubst contract.ElementType ->
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+    | Result.Ok projection when projection.LazyValues.Contains occurrence ->
+        match projection.LazyOccurrences.TryFind occurrence |> Option.bind projection.Lazies.TryFind with
+        | Some contract ->
             try
+                let layout = contract.Layout
                 let environment = TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
                 let result = mapTypeAt contract.ThunkBody contract.ElementType ctx |> narrowType ctx.Coeffects ctx.Graph contract.ThunkBody
                 let results = if result = TVoid then [] else [result]
                 Result.Ok { Occurrence = occurrence; Layout = layout; EnvironmentType = environment
                             FunctionType = TFunc([environment], results) }
             with ex -> Result.Error ex.Message
-        | _ -> Result.Error "Lazy occurrence does not retain its exact settled source element and thunk boundary."
+        | _ -> Result.Error "Lazy occurrence has no source-published thunk boundary."
+    | Result.Error reason -> Result.Error reason
     | _ -> Result.Error "Lazy occurrence has no complete source layout and lifetime contract."
 
 let functionType shape = shape.FunctionType

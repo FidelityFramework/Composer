@@ -4,22 +4,18 @@ module Alex.CodeGeneration.CallableSymbols
 
 open Clef.Compiler.NativeTypedTree.NativeTypes
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+
+let private render = function
+    | CallableSymbolName.ModuleBinding(moduleName, name) -> moduleName + "." + name
+    | CallableSymbolName.LocalBinding(id, name) -> sprintf "__clef_local_%d_%s" (NodeId.value id) name
+    | CallableSymbolName.RootBinding name -> name
+    | CallableSymbolName.Anonymous id -> sprintf "lambda_%d" (NodeId.value id)
 
 let tryBinding (graph: SemanticGraph) (id: NodeId) : string option =
-    match SemanticGraph.tryGetNode id graph with
-    | Some { Kind = SemanticKind.Binding (name, _, _, _); Parent = parent } ->
-        match parent |> Option.bind (fun id -> SemanticGraph.tryGetNode id graph) with
-        | Some { Kind = SemanticKind.ModuleDef (moduleName, _) } -> Some (moduleName + "." + name)
-        | _ when parent.IsSome -> Some (sprintf "__clef_local_%d_%s" (NodeId.value id) name)
-        | _ -> Some name
-    | _ -> None
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable graph
+    |> Result.toOption |> Option.bind (fun projection -> projection.Symbols.TryFind id) |> Option.map render
 
-let lambda (graph: SemanticGraph) (node: SemanticNode) hasClosureLayout : string =
-    let anonymous () = sprintf "lambda_%d" (NodeId.value node.Id)
-    if hasClosureLayout
-       && ([ClosureMetadata.LambdaExpression; ClosureMetadata.RequiresClosurePair]
-           |> List.exists (fun key -> node.Metadata.TryFind key = Some (MetadataValue.Bool true))) then
-        anonymous ()
-    else
-        node.Parent |> Option.bind (tryBinding graph) |> Option.defaultWith anonymous
+let lambda (graph: SemanticGraph) (node: SemanticNode) _hasClosureLayout : string =
+    match tryBinding graph node.Id with
+    | Some symbol -> symbol
+    | None -> invalidOp "Callable code has no source-published declaration identity."

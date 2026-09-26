@@ -52,8 +52,8 @@ type CompilationContext = {
 // Phase 1: FrontEnd - Compile Clef → PSG
 // ═══════════════════════════════════════════════════════════════════════════
 
-let private runFrontEnd (projectPath: string) : Result<ProjectCheckResult, string> =
-    timePhase "FrontEnd" "Clef → PSG (Type Checking & Semantic Graph)" (fun () ->
+let private runFrontEnd timing (projectPath: string) : Result<ProjectCheckResult, string> =
+    timePhase timing "FrontEnd" "Clef → PSG (Type Checking & Semantic Graph)" (fun () ->
         FrontEnd.ProjectLoader.load projectPath)
 
 /// Diagnostic gate — emits all diagnostics with colored formatting, short-circuits on errors.
@@ -116,8 +116,8 @@ let private requireCompatibleTarget (options: CompilationOptions) (project: Proj
             | _ -> Ok project
     | _ -> Ok project)
 
-let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<BackEndInput * Set<string>, string> =
-    timePhase "MiddleEnd" "MLIR Generation" (fun () ->
+let private runMiddleEnd timing (project: ProjectCheckResult) (ctx: CompilationContext) : Result<BackEndInput * Set<string>, string> =
+    timePhase timing "MiddleEnd" "MLIR Generation" (fun () ->
         // Get platform context from CCS
         match Core.CCS.Integration.platformContext project.CheckResult with
         | None -> Error "No platform context available from CCS"
@@ -186,7 +186,7 @@ let compileProject (options: CompilationOptions) : int =
     if options.Deploy && (options.EmitMLIROnly || options.EmitLLVMOnly) then
         invalidArg "Deploy" "Deployment requires a complete build; remove intermediate-only flags"
     // Setup
-    setEnabled options.ShowTiming
+    let timing = Core.Timing.create options.ShowTiming
     disableEmission()
     if options.Verbose then
         enableVerboseMode()
@@ -216,7 +216,7 @@ let compileProject (options: CompilationOptions) : int =
     // Run pipeline: FrontEnd → MiddleEnd → BackEnd
     let result =
         // Phase 1: FrontEnd - Compile Clef to PSG
-        runFrontEnd options.ProjectPath
+        runFrontEnd timing options.ProjectPath
         |> Result.bind (requireCleanDiagnostics options.TreatWarningsAsErrors)
         |> Result.bind (requireCompatibleTarget options)
         |> Result.bind (fun project ->
@@ -236,7 +236,7 @@ let compileProject (options: CompilationOptions) : int =
             printfn ""
 
             // Phase 2: MiddleEnd - Generate MLIR from PSG (target-agnostic)
-            runMiddleEnd project ctx
+            runMiddleEnd timing project ctx
             |> Result.bind (fun (witnessed, externLibraries) ->
                 // Write MLIR to intermediates (if enabled)
                 if ctx.IntermediatesDir.IsSome then
@@ -262,6 +262,7 @@ let compileProject (options: CompilationOptions) : int =
                                 Directory.CreateDirectory directory |> ignore
                                 directory))
                     let backEndCtx = {
+                        Timing = timing
                         OutputPath = ctx.OutputPath
                         IntermediatesDir = backendWorkDirectory
                         TargetTripleOverride = options.TargetTriple |> Option.orElseWith (fun () -> declaredCore |> Option.map (fun c -> c.Triple) |> Option.filter (fun t -> t <> ""))
@@ -330,7 +331,12 @@ let compileProject (options: CompilationOptions) : int =
                             printfn "Produced %s intermediate" fmt
                             Ok ())))
 
-    printSummary()
+    printSummary timing
+    if options.ShowTiming && (options.ArtifactsDirectory.IsSome || needsIntermediates) then
+        Directory.CreateDirectory artifactsDirectory |> ignore
+        let timingPath = Path.Combine(artifactsDirectory, "timing.json")
+        Core.Timing.writeReport timingPath timing
+        printfn "Timing observations: %s" timingPath
     match result with
     | Ok () -> 0
     | Error msg ->
@@ -340,7 +346,7 @@ let compileProject (options: CompilationOptions) : int =
 /// Read the same checked project/platform declarations for device operations.
 /// Deployment itself always goes through compileProject --deploy and a fresh build.
 let deviceProject projectPath action seconds =
-    match runFrontEnd (Path.GetFullPath projectPath) |> Result.bind (requireCleanDiagnostics false) with
+    match runFrontEnd (Core.Timing.silent()) (Path.GetFullPath projectPath) |> Result.bind (requireCleanDiagnostics false) with
     | Error e -> eprintfn "%s" e; 1
     | Ok project ->
         if project.Options.TargetPlatform <> TargetPlatform.MCU then failwith "Device commands require an MCU project"

@@ -1,10 +1,8 @@
-/// WitnessRegistry - Global registry of all witness nanopasses
+/// WitnessRegistry - Target-selected witnesses for one transfer
 ///
 /// Each witness module exports a `nanopass` value. This registry collects all
-/// witnesses into a single registry for parallel execution.
-///
-/// MIGRATION STATUS: Witnesses are being migrated incrementally to nanopass pattern.
-/// As each witness is migrated, uncomment its registration below.
+/// applicable witnesses for one shared Huet traversal. Each transfer owns its
+/// registry and scope callback; another transfer cannot replace either.
 module Alex.Traversal.WitnessRegistry
 
 // Suppress the F# compiler's warning 40: the Y-combinator uses delayed initialization for recursive scope witnesses
@@ -65,16 +63,12 @@ module SeqWitness = Alex.Witnesses.SeqWitness
 module KernelModuleWitness = Alex.Witnesses.KernelModuleWitness
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GLOBAL REGISTRY
+// TRANSFER-OWNED REGISTRY
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Global registry of all witness nanopasses
-/// MIGRATION: Currently empty. As witnesses are migrated, register them here.
-let mutable globalRegistry = NanopassRegistry.empty
-
-/// Initialize the global registry
-/// Called once at startup to populate the registry with all witness nanopasses
-let initializeRegistry (targetPlatform: TargetPlatform) =
+/// Build the immutable registry and its recursive scope callback for this target.
+/// This allocates no shared mutable registration state.
+let createRegistry (targetPlatform: TargetPlatform) =
     // Conditional registration — target-gated witnesses are only registered
     // for platforms where they apply. This is the nanopass-level expression
     // of the Three-Category Model (fully shared, codata-dependent, target-gated).
@@ -198,21 +192,4 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
             ]
         )
 
-    let finalRegistry = { leafRegistry with Nanopasses = allNanopasses.Value }
-    globalRegistry <- finalRegistry
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MIGRATION NOTES
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// MIGRATION CHECKLIST:
-///
-/// For each witness file:
-/// 1. Add category-selective witness function (match node.Kind, return skip for others)
-/// 2. Export `let nanopass : Nanopass = { Name = "..."; Witness = witness... }`
-/// 3. Uncomment the module import above
-/// 4. Uncomment the registry registration in initializeRegistry()
-/// 5. Test in isolation
-/// 6. Verify parallel = sequential output
-///
-/// See: docs/Witness_Migration_Guide.md for full migration process
+    { leafRegistry with Nanopasses = allNanopasses.Value }

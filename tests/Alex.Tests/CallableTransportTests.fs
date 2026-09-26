@@ -128,6 +128,69 @@ let ``named code value emits one typed function constant without an environment 
         Assert.Equal("code", symbol)
     | operation -> failwithf "Named code was not a direct function constant: %A" operation
 
+[<Theory>]
+[<InlineData(0)>]
+[<InlineData(1)>]
+[<InlineData(2)>]
+let ``named callee annotations retain the actual code operand at each wrapper occurrence`` depth =
+    let builder = NodeBuilder()
+    let signature = NativeType.TFun(Types.boolType, Types.boolType)
+    let parameter = builder.Create(SemanticKind.PatternBinding "value", Types.boolType, dummyRange)
+    let result = builder.Create(SemanticKind.VarRef("value", Some parameter.Id), Types.boolType, dummyRange)
+    let implementation = builder.Create(
+        SemanticKind.Lambda(["value", Types.boolType, parameter.Id], result.Id, [], None, LambdaContext.RegularClosure),
+        signature, dummyRange, children = [parameter.Id; result.Id])
+    let declaration = builder.Create(SemanticKind.Binding("identity", false, false, None), signature, dummyRange, children = [implementation.Id])
+    builder.SetParent(implementation.Id, declaration.Id)
+    builder.SetParent(parameter.Id, implementation.Id)
+    builder.SetParent(result.Id, implementation.Id)
+    let reference = builder.Create(SemanticKind.VarRef("identity", Some declaration.Id), signature, dummyRange)
+    let annotations =
+        [1 .. depth] |> List.scan (fun inner _ ->
+            let annotation = builder.Create(SemanticKind.TypeAnnotation(inner, signature), signature, dummyRange, children = [inner])
+            builder.SetParent(inner, annotation.Id)
+            annotation.Id) reference.Id |> List.tail
+    let callee = annotations |> List.tryLast |> Option.defaultValue reference.Id
+    let argument = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
+    let application = builder.Create(SemanticKind.Application(callee, [argument.Id]), Types.boolType, dummyRange, children = [callee; argument.Id])
+    builder.SetParent(callee, application.Id)
+    builder.SetParent(argument.Id, application.Id)
+    let root = builder.Create(SemanticKind.Sequential [declaration.Id; application.Id], Types.boolType, dummyRange, children = [declaration.Id; application.Id])
+    builder.SetParent(declaration.Id, root.Id)
+    builder.SetParent(application.Id, root.Id)
+    let raw = builder.Build []
+    let carriers, residuals = Carriers.settle { Layouts = Map.empty; Origins = Map.empty; Known = Map.empty } raw
+    Assert.Empty residuals
+    let graph = { raw with Codata = lazy { raw.Codata.Value with CallableCarriers = carriers } }
+    let operands = MLIRAccumulator.empty ()
+    let applicationPosition = Zipper.create graph root.Id |> require "Missing root" |> atChild application.Id
+    let mutable referencePosition = applicationPosition
+    let mutable positions = Map.empty
+    for annotation in List.rev annotations do
+        referencePosition <- atChild annotation referencePosition
+        positions <- positions.Add(annotation, referencePosition)
+    referencePosition <- atChild reference.Id referencePosition
+    let ctx = context graph referencePosition operands
+    let output = Alex.Witnesses.VarRefWitness.nanopass.Witness ctx graph.Nodes[reference.Id]
+    if depth = 0 then
+        match output.Result with TRVoid -> () | other -> failwithf "Direct callee unexpectedly requires a value: %A" other
+        Assert.Empty output.InlineOps
+        Assert.Empty operands.CallableAssoc
+    else
+        let original = bindResult reference.Id output operands
+        Assert.Single(output.InlineOps) |> ignore
+        Assert.Equal(None, Operands.environment original)
+        for annotation in annotations do
+            let ctx = context graph positions[annotation] operands
+            let forwarded = Alex.Witnesses.TypeAnnotationWitness.nanopass.Witness ctx graph.Nodes[annotation]
+            let actual = bindResult annotation forwarded operands
+            Assert.Equal(Operands.code original, Operands.code actual)
+            Assert.Equal(None, Operands.environment actual)
+            Assert.Equal(annotation, (Operands.carrier actual).Occurrence)
+            Assert.Empty forwarded.InlineOps
+            Assert.Empty forwarded.TopLevelOps
+    Assert.Empty operands.Errors
+
 [<Fact>]
 let ``passive callable copy cannot recover an environment from a scalar packed value`` () =
     let graph, owner, alias, _, _, sequence, _ = fixture true

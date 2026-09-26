@@ -37,7 +37,7 @@ let private witnessTypeAnnotation (ctx: WitnessContext) (node: SemanticNode) : W
         match tryMatchWithDiagnostics (pSequenceForward ctx wrappedId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
         | Result.Error reason -> WitnessOutput.error $"Sequence annotation: {reason}"
-    | Some ((wrappedId, _), _) when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TFun _ -> true | _ -> false) ->
+    | Some ((wrappedId, _), _) when Alex.Traversal.CallableOperands.valueShape ctx node.Id = Result.Ok(CallableValueShape.Callable node.Id) ->
         match tryMatch pIntrinsicCalleeAnnotation ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
         | None ->

@@ -1,0 +1,5 @@
+module Right
+
+type Cell = { Value: float }
+let cell = { Value = 2.0 }
+let read () = cell.Value

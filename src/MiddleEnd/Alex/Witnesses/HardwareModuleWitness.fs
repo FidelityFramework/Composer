@@ -383,6 +383,7 @@ let private witnessHardwareModule
                             buildMealyMachineModule info layout
 
                     // Add hw.module to root scope (top-level declaration)
+                    EmissionCorrespondence.record ctx [hwModuleOp]
                     let updatedRootScope = ScopeContext.addOp hwModuleOp !ctx.RootScopeContext
                     ctx.RootScopeContext := updatedRootScope
 

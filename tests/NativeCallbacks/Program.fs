@@ -6,6 +6,8 @@ open System.Security.Cryptography
 open System.Text.Json
 
 let cases = [
+    "MixedDimensionSchemes", "MixedDimensionSchemes.clef", "mixed-dimension-schemes", ["arith.cmpf"]
+    "NominalIdentity", "NominalIdentity.clef", "nominal-identity", ["arith.cmpf"]
     "ResultCases", "ResultCases.clef", "result-cases", ["arith.cmpi";"func.call_indirect"]
     "ResultElimination", "ResultElimination.clef", "result-elimination", ["scf.if";"func.call_indirect"]
     "LoopCaptures", "LoopCaptures.clef", "loop-captures", ["scf.while";"func.call_indirect"]
@@ -34,6 +36,10 @@ let cases = [
     "IgnoreValues", "IgnoreValues.clef", "ignore-values", ["func.call @IgnoreValues.numeric";"func.call @IgnoreValues.optional";"func.call @IgnoreValues.consumeUnit"]
 ]
 
+let exactOutputs = Map.ofList ["MixedDimensionSchemes", ""; "NominalIdentity", ""]
+
+let companionSources = Map.ofList ["NominalIdentity", ["NominalIdentityLeft.clef"; "NominalIdentityRight.clef"]]
+
 [<EntryPoint>]
 let main args =
     let source = __SOURCE_DIRECTORY__
@@ -53,6 +59,8 @@ let main args =
         let directory = Path.Combine(work,name)
         Directory.CreateDirectory directory |> ignore
         File.Copy(Path.Combine(source,file), Path.Combine(directory,file))
+        for companion in companionSources.TryFind name |> Option.defaultValue [] do
+            File.Copy(Path.Combine(source,companion), Path.Combine(directory,companion))
         let mutable project = File.ReadAllText(Path.Combine(source,name + ".fidproj"))
         for binding in ["Fidelity.Platform.CompilerSurface.fidproj";"Fidelity.Pthread.fidproj"] do
             project <- project.Replace("\"../../../Fidelity.Platform/Environments/Linux/x86_64/" + binding + "\"", JsonSerializer.Serialize(Path.Combine(platform,binding)))
@@ -64,7 +72,9 @@ let main args =
         for operation in operations do
             if not (mlir.Contains operation) then failwith ("Missing compiler-owned callback operation: " + operation)
         Tests.Process.requireSuccess "mlir-opt" [mlirPath;"--verify-each";"-o";Path.Combine(directory,"verified.mlir")] 60000 (Some (Path.Combine(directory,"verify.log"))) |> ignore
-        Tests.Process.requireSuccess (Path.Combine(directory,"targets",executable)) [] 10000 (Some (Path.Combine(directory,"run.log"))) |> ignore
+        let output = Tests.Process.requireSuccess (Path.Combine(directory,"targets",executable)) [] 10000 (Some (Path.Combine(directory,"run.log")))
+        exactOutputs.TryFind name |> Option.iter (fun expected ->
+            if output <> expected then failwithf "%s output mismatch: expected %A, got %A" name expected output)
         printfn "PASS %s" name
     let compilerFiles =
         [compiler; Path.Combine(Path.GetDirectoryName compiler,"Composer.dll"); Path.Combine(Path.GetDirectoryName compiler,"Clef.Compiler.Service.dll")]

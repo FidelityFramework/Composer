@@ -9,7 +9,7 @@ open Core.Types.Pipeline
 open Core.Timing
 
 /// The AIE backend: MLIR-AIE text → xclbin + NPU instructions
-let backend : BackEnd = {
+let private implementation : BackEnd = {
     Name = "AIE"
     Compile = fun witnessed ctx ->
         let mlirText = witnessed.Text
@@ -33,7 +33,11 @@ let backend : BackEnd = {
             let xclbinPath = Path.Combine(outputDir, baseName + ".xclbin")
             let instsPath = Path.Combine(outputDir, baseName + "_insts.bin")
 
-            timePhase "BackEnd.AIECompile" "Compiling MLIR-AIE to xclbin" (fun () ->
+            timePhase ctx.Timing "BackEnd.AIECompile" "Compiling MLIR-AIE to xclbin" (fun () ->
                 Lowering.lowerToXclbin mlirPath xclbinPath instsPath)
             |> Result.map (fun () -> Xclbin (xclbinPath, instsPath))
 }
+
+/// Current source/witness ownership is validated before target realization.
+let backend: BackEnd =
+    { implementation with Compile = WitnessedInput.compile implementation.Compile }

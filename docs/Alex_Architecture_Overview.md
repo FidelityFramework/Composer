@@ -1,7 +1,7 @@
 # Alex Architecture Overview
 
-This overview describes the current witness boundary, reconciled with source on
-2026-09-25. The [pipeline overview](Architecture_Canonical.md),
+This overview states the witness boundary and records its source audit on
+2026-09-26. The [pipeline overview](Architecture_Canonical.md),
 [Baker contract](../../clef/docs/fidelity/Baker_Saturation_Architecture.md),
 [Thin Middle End](Thin_Middle_End_Design.md), and
 [M-01](PRDs/M-01-DialectAdmission.md) distinguish the governing architecture from
@@ -17,6 +17,16 @@ MLIR. Semantic construction, evaluation relationships, captures, layout and proo
 premises belong in their owning CCS/Baker stages. Alex must retain the graph's
 identities and read the facts needed by the selected target; it cannot reconstruct
 a missing source algorithm or manufacture evidence to make emission succeed.
+
+The September 26 audit found violations of that rule: callable and storage
+validators reran source settlement during witnessing, and numeric/type helpers
+selected widths and reconstructed types. Those operations belong in CCS/Baker.
+The corrective work publishes source-validated, eager per-occurrence projections
+and changes the corresponding consumers to passive reads. A cached lookup alone
+does not enforce the entire boundary: Alex's dependency and input types must also
+exclude source analysis entry points, semantic lazy computations, hyperedges and
+unresolved inference cells. The source-to-witness handoff is accepted only when
+those capability restrictions and the owning source/native regressions hold.
 
 The [closure settlement contract](Closure_Settlement_Contract.md) applies this
 boundary to callable values: Baker retains exact capture, environment, call and
@@ -99,12 +109,25 @@ witnesses; it is not permission to add a second emitter or source-name dispatche
 Share physical vocabulary through Patterns rather than calling another witness
 to supply missing source semantics.
 
-The implementation also retains process-global target selection in
-[`TypeMapping.fs`](../src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs) and a
-mutable registry. Shared editor/agent clients do not make concurrent compilation
-within one process safe. The planned
+[`WitnessRegistry.createRegistry`](../src/MiddleEnd/Alex/Traversal/WitnessRegistry.fs)
+now returns an immutable target-selected registry and scope callback owned by
+one transfer. Separate transfers cannot overwrite its witness selection.
+The type-mapping migration also removes process-global target selection and
+diagnostic collection from
+[`TypeMapping.fs`](../src/MiddleEnd/Alex/CodeGeneration/TypeMapping.fs).
+Shared editor/agent clients do not establish concurrent compilation safety;
+all mutable source, witness and realization state must have a compilation or
+worker owner. The
 [workbench](Interactive_Compiler_Workbench.md#integrity-contract) must serialize
 compiler work or isolate workers until a different policy is established.
+
+Full and incremental compilation share the
+[parallel execution and measurement contract](Nanopass_Incremental_Contract_Direction.md#26-parallel-full-builds-and-comparative-timing).
+The [.NET timing session](../src/Core/Timing.fs) retains independent overlapping
+spans per compilation and reports measured wall time separately from their sum.
+Registry isolation and instrumentation are individual concurrency prerequisites;
+the compiler's segment execution and reconciliation gates establish the complete
+parallel path.
 
 ## Thin emission and target selection
 

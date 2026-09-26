@@ -200,6 +200,7 @@ let main _ =
     // A failed recheck cannot retain an earlier accepted image's evidence.
     let evidence = Path.Combine(directory, "test.build-evidence.json")
     let context: BackEndContext = {
+        Timing = Core.Timing.silent()
         OutputPath = Path.Combine(directory, "test.elf"); IntermediatesDir = None
         TargetTripleOverride = Some "thumbv8m.main-none-eabi"; TargetPointerBits = Some 32; TargetCpu = Some "cortex-m7"
         PlatformOS = None; RuntimeModel = Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Bare

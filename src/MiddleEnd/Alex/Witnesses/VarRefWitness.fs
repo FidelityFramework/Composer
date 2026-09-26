@@ -36,12 +36,11 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
         match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
         | Result.Error reason -> WitnessOutput.error $"Callable reference: {reason}"
-    let rec directCallee (position: Alex.Traversal.PSGZipper.PSGZipper) =
+    let directCallee (position: Alex.Traversal.PSGZipper.PSGZipper) =
         match Alex.Traversal.PSGZipper.up position with
         | Some parent ->
             match parent.Focus.Kind with
             | SemanticKind.Application(callee, _) -> callee = position.Focus.Id
-            | SemanticKind.TypeAnnotation(inner, _) when inner = position.Focus.Id -> directCallee parent
             | _ -> false
         | None -> false
     let rec assignmentTarget (position: Alex.Traversal.PSGZipper.PSGZipper) =
@@ -80,7 +79,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error reason -> WitnessOutput.error $"Sequence reference '{name}': {reason}"
-            | Some bindingNode when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
+            | Some bindingNode when Alex.Traversal.CallableOperands.valueShape ctx node.Id = Result.Ok(CallableValueShape.Callable node.Id) ->
                 let declaration =
                     match bindingNode.Kind, bindingNode.Children with
                     | SemanticKind.Binding(_, false, _, _), [implementation] ->
@@ -106,6 +105,8 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                 | _ when declaration && directCallee ctx.Zipper ->
                     // The direct invocation consumes the settled declaration
                     // symbol. This actual callee occurrence needs no SSA value.
+                    // Transparent wrappers consume an actual typed operand,
+                    // so their child occurrences retain normal value transport.
                     { InlineOps = []; TopLevelOps = []; Result = TRVoid }
                 | _ when ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode ->
                     callable (pProgramCallableReference ctx bindingId)
@@ -151,11 +152,8 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     // Immutable Lambda bindings forward their function value. A mutable
                     // binding's initializer does not change the cell-load contract.
                     let isFunctionBinding =
-                        bindingNode.Children
-                        |> List.tryHead
-                        |> Option.bind (fun childId -> SemanticGraph.tryGetNode childId ctx.Graph)
-                        |> Option.map (fun childNode -> match childNode.Kind with SemanticKind.Lambda _ -> true | _ -> false)
-                        |> Option.defaultValue false
+                        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+                        |> Result.toOption |> Option.exists (fun projection -> projection.FunctionBindings.Contains bindingId)
 
                     if not isMut && isFunctionBinding then
                         if directCallee ctx.Zipper then

@@ -160,7 +160,7 @@ let rec private tupleElementRange (graph: SemanticGraph) (nodeId: NodeId) (index
 /// becomes the width of `range`. A struct's sentinel fields become the widths of the record type's
 /// `FieldRanges` (nested records by the field's declared type), a tuple's the ranges of its
 /// elements by position, an option's payload the widths of the inner type.
-let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<string, Map<string, ValueRange>>)
+let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<NominalTypeIdentity, Map<string, ValueRange>>)
                          (describe: string) (range: ValueRange option) (elements: (int -> ValueRange option) option)
                          (nativeTy: NativeType option) (ty: MLIRType) : MLIRType =
     match ty with
@@ -173,7 +173,7 @@ let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<string, Map<st
                 else name, fty), bytes)
         | Some (NativeType.TApp (tycon, _) as instance) when (Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields instance graph).IsSome ->
             let declared = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields instance graph |> Option.defaultValue []
-            let ranges = Map.tryFind tycon.Name fieldRanges |> Option.defaultValue Map.empty
+            let ranges = Map.tryFind (NominalTypeIdentity.ofConstructor tycon) fieldRanges |> Option.defaultValue Map.empty
             TStruct (fields |> List.map (fun (name, fty) ->
                 let declaredTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd
                 name, narrowBy graph fieldRanges (sprintf "field '%s' of '%s'" name tycon.Name) (Map.tryFind name ranges) None declaredTy fty), bytes)

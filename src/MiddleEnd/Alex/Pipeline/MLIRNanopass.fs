@@ -22,6 +22,33 @@ open Alex.Traversal.TransferTypes
 // DECLARATION VALIDATION + RELOCATION PASS
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Remove all FuncDecl ops from their original locations (they'll be at module top)
+let rec relocateDefinition (op: MLIROp) : MLIROp option =
+    match op with
+    | MLIROp.FuncOp (FuncOp.FuncDecl _) -> None
+    | MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body, vis)) ->
+        Some (MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body |> List.choose relocateDefinition, vis)))
+    | MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, args, results, body, vis)) ->
+        Some (MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, args, results, body |> List.choose relocateDefinition, vis)))
+    | MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body)) ->
+        Some (MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body |> List.choose relocateDefinition)))
+    | MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps, result)) ->
+        Some (MLIROp.SCFOp (SCFOp.If (cond, thenOps |> List.choose relocateDefinition, elseOps |> Option.map (List.choose relocateDefinition), result)))
+    | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
+        Some (MLIROp.SCFOp (SCFOp.While (condOps |> List.choose relocateDefinition, bodyOps |> List.choose relocateDefinition)))
+    | MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps)) ->
+        Some (MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps |> List.choose relocateDefinition)))
+    | MLIROp.SCFOp (SCFOp.IndexSwitch (selector, cases, fallback, results)) ->
+        Some (MLIROp.SCFOp (SCFOp.IndexSwitch (selector,
+            cases |> List.map (fun (label, body) -> label, body |> List.choose relocateDefinition),
+            fallback |> List.choose relocateDefinition, results)))
+    | MLIROp.Block (label, blockOps) ->
+        Some (MLIROp.Block (label, blockOps |> List.choose relocateDefinition))
+    | MLIROp.Region ops ->
+        Some (MLIROp.Region (ops |> List.choose relocateDefinition))
+    | _ -> Some op
+
+
 /// Declaration Validation + Relocation Pass
 ///
 /// Validates that every function call has a matching definition or declaration,
@@ -123,39 +150,20 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
             failwithf "[Alex] ERROR: Call signature for '%s' differs from its declaration or definition (arguments or ordered results)." name
         | _ -> ()
 
-    /// Deduplicate declarations (patterns may emit the same decl multiple times)
+    // Relocation may merge identical import requests. Equal argument/result
+    // types alone are insufficient: byval extent/alignment/ordinal and symbol
+    // visibility are part of the actual declaration's ABI/linkage contract.
+    for name, rows in allDecls |> List.groupBy fst do
+        if rows |> List.map snd |> List.distinct |> List.length <> 1 then
+            failwithf "[Alex] ERROR: Conflicting external declaration ABI or visibility for '%s'." name
+
+    /// Deduplicate exactly equivalent declarations emitted by several patterns.
     let uniqueDecls =
         allDecls
         |> List.distinctBy fst
         |> List.map snd
 
-    /// Remove all FuncDecl ops from their original locations (they'll be at module top)
-    let rec stripDecls (op: MLIROp) : MLIROp option =
-        match op with
-        | MLIROp.FuncOp (FuncOp.FuncDecl _) -> None
-        | MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body, vis)) ->
-            Some (MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body |> List.choose stripDecls, vis)))
-        | MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, args, results, body, vis)) ->
-            Some (MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, args, results, body |> List.choose stripDecls, vis)))
-        | MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body)) ->
-            Some (MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body |> List.choose stripDecls)))
-        | MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps, result)) ->
-            Some (MLIROp.SCFOp (SCFOp.If (cond, thenOps |> List.choose stripDecls, elseOps |> Option.map (List.choose stripDecls), result)))
-        | MLIROp.SCFOp (SCFOp.While (condOps, bodyOps)) ->
-            Some (MLIROp.SCFOp (SCFOp.While (condOps |> List.choose stripDecls, bodyOps |> List.choose stripDecls)))
-        | MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps)) ->
-            Some (MLIROp.SCFOp (SCFOp.For (lb, ub, step, bodyOps |> List.choose stripDecls)))
-        | MLIROp.SCFOp (SCFOp.IndexSwitch (selector, cases, fallback, results)) ->
-            Some (MLIROp.SCFOp (SCFOp.IndexSwitch (selector,
-                cases |> List.map (fun (label, body) -> label, body |> List.choose stripDecls),
-                fallback |> List.choose stripDecls, results)))
-        | MLIROp.Block (label, blockOps) ->
-            Some (MLIROp.Block (label, blockOps |> List.choose stripDecls))
-        | MLIROp.Region ops ->
-            Some (MLIROp.Region (ops |> List.choose stripDecls))
-        | _ -> Some op
-
-    let strippedOps = operations |> List.choose stripDecls
+    let strippedOps = operations |> List.choose relocateDefinition
 
     /// Relocated declarations at top, then all other ops
     uniqueDecls @ strippedOps
@@ -176,18 +184,9 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
 /// Inet lowering here and no dialect above the witness boundary for one to target.
 /// See docs/Thin_Middle_End_Design.md and docs/Delimited_Continuations_Architecture.md.
 let applyPasses (operations: MLIROp list) (platform: PlatformReads) (intermediatesDir: string option) : MLIROp list =
-    // Declaration Collection Pass
-    //
-    // ARCHITECTURAL RATIONALE:
-    // Function declarations are MLIR-level structure, not PSG-level semantics.
-    // During witnessing, ApplicationWitness emits FuncCall operations with actual types.
-    // This pass scans ALL calls, collects unique function signatures, and emits FuncDecl operations.
-    //
-    // BENEFITS:
-    // 1. Deterministic - same calls always produce same declarations (no "first witness wins")
-    // 2. Separates concerns - witnessing (codata) vs declaration emission (structural)
-    // 3. Codata principle - witnesses return calls, post-pass handles declarations
-    // 4. Signature unification - can analyze ALL calls before deciding signature
+    // Hoist witnessed declarations and check exact typed call/declaration
+    // correspondence, including ABI attributes. Every declaration is supplied
+    // by a witness; this pass neither infers nor unifies source signatures.
     let afterDecls = declarationCollectionPass operations
 
     // Serialize intermediate (if -k flag enabled)
@@ -199,10 +198,5 @@ let applyPasses (operations: MLIROp list) (platform: PlatformReads) (intermediat
         if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
             printfn "[Alex] Wrote nanopass intermediate: 08_after_declaration_collection.mlir"
     | None -> ()
-
-    // Future passes will be composed here:
-    // let afterDCont = dcontLoweringPass afterDecls
-    // let afterInet = inetLoweringPass afterDCont
-    // let afterBackend = backendTargetingPass afterInet
 
     afterDecls

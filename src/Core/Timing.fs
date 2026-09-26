@@ -1,185 +1,106 @@
-/// Compilation Timing Infrastructure
-/// Provides phase-level timing for identifying bottlenecks in the compilation pipeline.
-///
-/// Usage:
-///   Composer compile project.fidproj --timing
-///   Composer compile project.fidproj -T
-///
-/// Each phase is timed and reported with millisecond precision.
+/// Compilation-owned monotonic timings. Independent workers share a session,
+/// never a current-phase slot. Nested and overlapping spans remain independent.
 module Core.Timing
 
 open System
 open System.Diagnostics
+open System.Threading
 
-/// A recorded phase timing
 type PhaseTiming = {
+    Id: int64
     Name: string
     Description: string
-    StartTime: DateTime
-    ElapsedMs: int64
-}
+    StartTime: DateTimeOffset
+    StartOffsetTicks: int64
+    ElapsedTicks: int64
+} with
+    member this.ElapsedMs = float this.ElapsedTicks * 1000.0 / float Stopwatch.Frequency
 
-/// Global timing context - tracks all phase timings during a compilation run
-type TimingContext = {
-    mutable Enabled: bool
-    mutable Phases: PhaseTiming list
-    mutable CurrentPhase: (string * string * Stopwatch) option
-}
+/// Host-side instrumentation, independent of source identities and semantics.
+/// The output callback is serialized within this session; source compilation
+/// and timed work never run under the instrumentation lock.
+type TimingSession(enabled: bool, output: string -> unit) =
+    let started = Stopwatch.GetTimestamp()
+    let gate = obj()
+    let phases = ResizeArray<PhaseTiming>()
+    let mutable nextId = 0L
+    let mutable active = 0
+    let mutable completed: int64 option = None
 
-/// Global timing context instance
-let private context : TimingContext = {
-    Enabled = false
-    Phases = []
-    CurrentPhase = None
-}
+    member _.Enabled = enabled
 
-/// Enable or disable timing
-let setEnabled (enabled: bool) =
-    context.Enabled <- enabled
-    context.Phases <- []
-    context.CurrentPhase <- None
+    member _.StartPhase(name: string, description: string) : IDisposable =
+        if not enabled then { new IDisposable with member _.Dispose() = () }
+        else
+            let id, start, wall = lock gate (fun () ->
+                if completed.IsSome then invalidOp "A completed timing session cannot accept new spans."
+                nextId <- nextId + 1L
+                active <- active + 1
+                let start = Stopwatch.GetTimestamp()
+                let wall = DateTimeOffset.UtcNow
+                output (sprintf "[%s] [%s:%d] %s..." (wall.ToString("HH:mm:ss.fff")) name nextId description)
+                nextId, start, wall)
+            let mutable disposed = 0
+            { new IDisposable with
+                member _.Dispose() =
+                    if Interlocked.Exchange(&disposed, 1) = 0 then
+                        let ended = Stopwatch.GetTimestamp()
+                        let phase = {
+                            Id = id; Name = name; Description = description; StartTime = wall
+                            StartOffsetTicks = start - started; ElapsedTicks = ended - start }
+                        lock gate (fun () ->
+                            phases.Add phase
+                            active <- active - 1
+                            output (sprintf "[%s:%d] Done (%.3fms)" name id phase.ElapsedMs)) }
 
-/// Check if timing is enabled
-let isEnabled () = context.Enabled
+    /// Call only after all workers and reconciliation have finished. Refusing
+    /// active spans prevents a partial sample being presented as a full run.
+    member _.Complete() =
+        lock gate (fun () ->
+            if active <> 0 then invalidOp "Cannot complete timing while worker spans are active."
+            if completed.IsNone then completed <- Some (Stopwatch.GetTimestamp()))
 
-/// Start timing a phase
-/// Returns a disposable that will end the phase when disposed
-let startPhase (name: string) (description: string) : IDisposable =
-    if context.Enabled then
-        // End any current phase first
-        match context.CurrentPhase with
-        | Some (prevName, prevDesc, sw) ->
-            sw.Stop()
-            let timing = {
-                Name = prevName
-                Description = prevDesc
-                StartTime = DateTime.Now.AddMilliseconds(-(float sw.ElapsedMilliseconds))
-                ElapsedMs = sw.ElapsedMilliseconds
-            }
-            context.Phases <- context.Phases @ [timing]
-        | None -> ()
+    member _.Phases = lock gate (fun () -> phases |> Seq.sortBy _.Id |> Seq.toList)
+    member _.ActiveSpans = lock gate (fun () -> active)
+    member _.WallElapsedMs =
+        lock gate (fun () ->
+            let ended = completed |> Option.defaultWith Stopwatch.GetTimestamp
+            float (ended - started) * 1000.0 / float Stopwatch.Frequency)
 
-        // Start new phase
-        let sw = Stopwatch.StartNew()
-        context.CurrentPhase <- Some (name, description, sw)
+let create enabled = TimingSession(enabled, printfn "%s")
+let silent () = TimingSession(false, ignore)
 
-        // Print phase start
-        let timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
-        printfn "[%s] [%s] %s..." timestamp name description
-
-        // Return disposable that ends the phase
-        { new IDisposable with
-            member _.Dispose() =
-                match context.CurrentPhase with
-                | Some (n, d, stopwatch) when n = name ->
-                    stopwatch.Stop()
-                    let timing = {
-                        Name = n
-                        Description = d
-                        StartTime = DateTime.Now.AddMilliseconds(-(float stopwatch.ElapsedMilliseconds))
-                        ElapsedMs = stopwatch.ElapsedMilliseconds
-                    }
-                    context.Phases <- context.Phases @ [timing]
-                    context.CurrentPhase <- None
-                    // Print phase end with timing
-                    let timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
-                    printfn "[%s] [%s] Done (%dms)" timestamp name stopwatch.ElapsedMilliseconds
-                | _ -> ()
-        }
-    else
-        // Timing disabled - return no-op disposable
-        { new IDisposable with member _.Dispose() = () }
-
-/// Time a phase with a function (functional style)
-let timePhase (name: string) (description: string) (f: unit -> 'a) : 'a =
-    use _ = startPhase name description
+let timePhase (session: TimingSession) name description f =
+    use _span = session.StartPhase(name, description)
     f()
 
-/// End any current phase (for use when phases don't have clear end points)
-let endCurrentPhase () =
-    if context.Enabled then
-        match context.CurrentPhase with
-        | Some (name, desc, sw) ->
-            sw.Stop()
-            let timing = {
-                Name = name
-                Description = desc
-                StartTime = DateTime.Now.AddMilliseconds(-(float sw.ElapsedMilliseconds))
-                ElapsedMs = sw.ElapsedMilliseconds
-            }
-            context.Phases <- context.Phases @ [timing]
-            context.CurrentPhase <- None
-            // Print phase end
-            let timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
-            printfn "[%s] [%s] Done (%dms)" timestamp name sw.ElapsedMilliseconds
-        | None -> ()
+/// Raw observations for comparative runs. The owner supplies unique output
+/// directories and records inputs/toolchain/cache conditions with these spans.
+let writeReport path (session: TimingSession) =
+    session.Complete()
+    let phases = session.Phases
+    let report =
+        {| SchemaVersion = 1
+           Enabled = session.Enabled
+           StopwatchFrequency = Stopwatch.Frequency
+           WallElapsedMilliseconds = session.WallElapsedMs
+           SumOfSpanMilliseconds = phases |> List.sumBy _.ElapsedMs
+           Phases = phases |> List.map (fun phase ->
+               {| Id = phase.Id; Name = phase.Name; Description = phase.Description; StartTime = phase.StartTime
+                  StartOffsetTicks = phase.StartOffsetTicks; ElapsedTicks = phase.ElapsedTicks; ElapsedMilliseconds = phase.ElapsedMs |}) |> List.toArray |}
+    let options = System.Text.Json.JsonSerializerOptions(WriteIndented = true)
+    System.IO.File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(report, options))
 
-/// Record a phase timing manually (for phases that don't use startPhase/endPhase)
-let recordPhase (name: string) (description: string) (elapsedMs: int64) =
-    if context.Enabled then
-        let timing = {
-            Name = name
-            Description = description
-            StartTime = DateTime.Now.AddMilliseconds(-(float elapsedMs))
-            ElapsedMs = elapsedMs
-        }
-        context.Phases <- context.Phases @ [timing]
-        let timestamp = DateTime.Now.ToString("HH:mm:ss.fff")
-        printfn "[%s] [%s] %s (%dms)" timestamp name description elapsedMs
-
-/// Print timing summary
-let printSummary () =
-    if context.Enabled && not (List.isEmpty context.Phases) then
+/// Wall time is measured, never obtained by adding overlapping phase durations.
+/// Phase sums describe instrumented span time, not CPU time or elapsed latency.
+let printSummary (session: TimingSession) =
+    session.Complete()
+    if session.Enabled then
         printfn ""
-        printfn "═══════════════════════════════════════════════════════════════════"
-        printfn "                         Timing Summary                            "
-        printfn "═══════════════════════════════════════════════════════════════════"
-
-        // Calculate column widths
-        let maxNameLen = context.Phases |> List.map (fun p -> p.Name.Length) |> List.max |> max 8
-        let maxDescLen = context.Phases |> List.map (fun p -> p.Description.Length) |> List.max |> max 12
-
-        // Header
-        printfn "%-*s  %-*s  %10s  %7s" maxNameLen "Phase" maxDescLen "Description" "Time (ms)" "Pct"
-        printfn "%s  %s  %s  %s"
-            (String.replicate maxNameLen "─")
-            (String.replicate maxDescLen "─")
-            (String.replicate 10 "─")
-            (String.replicate 7 "─")
-
-        let total = context.Phases |> List.sumBy (fun p -> p.ElapsedMs)
-
-        // Phase rows
-        for phase in context.Phases do
-            let pct = if total > 0L then float phase.ElapsedMs / float total * 100.0 else 0.0
-            printfn "%-*s  %-*s  %10d  %6.1f%%"
-                maxNameLen phase.Name
-                maxDescLen phase.Description
-                phase.ElapsedMs
-                pct
-
-        // Total
-        printfn "%s  %s  %s  %s"
-            (String.replicate maxNameLen "─")
-            (String.replicate maxDescLen "─")
-            (String.replicate 10 "─")
-            (String.replicate 7 "─")
-        printfn "%-*s  %-*s  %10d  %6.1f%%"
-            maxNameLen "TOTAL"
-            maxDescLen ""
-            total
-            100.0
-
-        printfn "═══════════════════════════════════════════════════════════════════"
+        printfn "Compilation timing"
+        for phase in session.Phases do
+            printfn "  %-24s %10.3f ms  %s" phase.Name phase.ElapsedMs phase.Description
+        let phaseSum = session.Phases |> List.sumBy _.ElapsedMs
+        printfn "  Wall elapsed             %10.3f ms" session.WallElapsedMs
+        printfn "  Sum of phase spans       %10.3f ms (may overlap)" phaseSum
         printfn ""
-
-/// Get all recorded phases
-let getPhases () = context.Phases
-
-/// Get total elapsed time in milliseconds
-let getTotalMs () = context.Phases |> List.sumBy (fun p -> p.ElapsedMs)
-
-/// Reset timing context
-let reset () =
-    context.Phases <- []
-    context.CurrentPhase <- None

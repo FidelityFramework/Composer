@@ -15,16 +15,10 @@ module Operands = Alex.Traversal.CallableOperands
 
 /// Read the declaration's actual lambda boundary, without visiting its body.
 let private declaration (ctx: WitnessContext) binding =
-    match ctx.Graph.Nodes.TryFind binding with
-    | Some { Kind = SemanticKind.Binding(_, false, _, _); Children = [child] } ->
-        let child =
-            match ctx.Graph.Nodes[child].Kind with
-            | SemanticKind.TypeAnnotation(inner, _) -> ctx.Graph.Nodes[inner]
-            | _ -> ctx.Graph.Nodes[child]
-        match child.Kind with
-        | SemanticKind.Lambda(parameters, body, [], _, _) -> Some(parameters, body, child.Id)
-        | _ -> None
-    | _ -> None
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+    |> Result.toOption |> Option.bind (fun projection -> projection.Declarations.TryFind binding)
+    |> Option.filter (fun declaration -> declaration.Captures.IsEmpty)
+    |> Option.map (fun declaration -> declaration.Parameters, declaration.Result, declaration.Implementation)
 
 let private failure (node: SemanticNode) phase message =
     WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some phase) message
@@ -43,8 +37,9 @@ let private arguments (ctx: WitnessContext) call sources =
                 match MLIRAccumulator.recallLazy source ctx.Accumulator with
                 | Some lazyValue -> Result.Ok([], Alex.Traversal.LazyOperands.values lazyValue)
                 | None ->
-                match ctx.Graph.Nodes.TryFind source with
-                | Some node when (match applySubst node.Type with NativeType.TFun _ | NativeType.TLazy _ -> true | _ -> false) ->
+                match Operands.valueShape ctx source with
+                | Result.Error reason -> Result.Error reason
+                | Result.Ok(CallableValueShape.Callable _ | CallableValueShape.Lazy _ | CallableValueShape.Sequence _) ->
                     Result.Error $"Callable argument {NodeId.value source} has no witnessed operands"
                 | _ ->
                     match MLIRAccumulator.recallNode source ctx.Accumulator with
@@ -69,59 +64,77 @@ let private observe (ctx: WitnessContext) (node: SemanticNode) prefix pattern =
         | _ -> { InlineOps = prefix @ operations; TopLevelOps = []; Result = result }
 
 let private invoke (ctx: WitnessContext) (node: SemanticNode) invocation sources body names environment expected =
-    match arguments ctx node.Id sources with
-    | Result.Error reason -> failure node "argument operands" reason
-    | Result.Ok (meets, operands) ->
-        let actuals = Option.toList environment @ operands
-        let agrees = expected |> Option.forall (fun types -> types = List.map (fun (value: Val) -> value.Type) actuals)
-        if not agrees then failure node "parameter boundary" "Direct invocation operands disagree with its settled physical parameter components"
-        else
-        let deferred = sources |> List.collect (fun source -> MLIRAccumulator.getDeferredInlineOps source ctx.Accumulator)
-        let prefix = deferred @ meets
-        match applySubst node.Type with
-        | NativeType.TFun _ ->
-            match Operands.project ctx node.Id with
-            | Result.Error reason -> failure node "callable result" reason
-            | Result.Ok shape -> observe ctx node prefix (pCallableApplication node.Id invocation actuals shape)
-        | NativeType.TSeq _ | NativeType.TSeqEnumerator _ ->
-            match Alex.Traversal.SequenceOperands.project ctx node.Id with
-            | Result.Error reason -> failure node "sequence result" reason
-            | Result.Ok shape -> observe ctx node prefix (pSequenceApplication node.Id invocation actuals shape)
-        | NativeType.TLazy _ ->
-            match Alex.Traversal.LazyOperands.project ctx node.Id with
-            | Result.Error reason -> failure node "lazy result" reason
-            | Result.Ok shape -> observe ctx node prefix (pLazyApplication node.Id invocation actuals shape)
-        | _ ->
-            let resultType =
-                mapTypeAt node.Id node.Type ctx
-                |> narrowType ctx.Coeffects ctx.Graph (Option.defaultValue node.Id body)
-            match invocation with
-            | Direct symbol ->
-                observe ctx node prefix (pDirectCall node.Id symbol (actuals |> List.map (fun value -> value.SSA, value.Type)) resultType names)
-            | Indirect code ->
-                match code.Type with
-                | TFunc(_, [actualResult]) -> observe ctx node prefix (pIndirectApplication node.Id code actuals actualResult)
-                | _ -> failure node "result boundary" "Scalar application requires exactly one result in its witnessed function signature"
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph with
+    | Result.Error reason -> failure node "source demand projection" reason
+    | Result.Ok demand ->
+        let projection = demand.Calls.TryFind node.Id
+        let transported =
+            match projection with
+            | Some proof when proof.Actuals = sources ->
+                sources |> List.indexed |> List.choose (fun (ordinal, source) -> if proof.Omitted.Contains ordinal then None else Some source) |> Result.Ok
+            | Some _ -> Result.Error "Call transport disagrees with its exact source demand projection"
+            | None -> Result.Ok sources
+        match transported |> Result.bind (arguments ctx node.Id) with
+        | Result.Error reason -> failure node "argument operands" reason
+        | Result.Ok (meets, operands) ->
+            let actuals = Option.toList environment @ operands
+            let agrees = expected |> Option.forall (fun types -> types = List.map (fun (value: Val) -> value.Type) actuals)
+            if not agrees then failure node "parameter boundary" "Direct invocation operands disagree with its settled physical parameter components"
+            else
+            let activated =
+                sources |> List.indexed |> List.choose (fun (ordinal, source) ->
+                    match projection with
+                    | Some proof when proof.Omitted.Contains ordinal && not (proof.Eager.Contains ordinal) -> None
+                    | _ -> Some source)
+            let deferred = activated |> List.collect (fun source -> MLIRAccumulator.getDeferredInlineOps source ctx.Accumulator)
+            let prefix = deferred @ meets
+            match Operands.valueShape ctx node.Id with
+            | Result.Error reason -> failure node "result boundary" reason
+            | Result.Ok(CallableValueShape.Callable _) ->
+                match Operands.project ctx node.Id with
+                | Result.Error reason -> failure node "callable result" reason
+                | Result.Ok shape -> observe ctx node prefix (pCallableApplication node.Id invocation actuals shape)
+            | Result.Ok(CallableValueShape.Sequence _) ->
+                match Alex.Traversal.SequenceOperands.project ctx node.Id with
+                | Result.Error reason -> failure node "sequence result" reason
+                | Result.Ok shape -> observe ctx node prefix (pSequenceApplication node.Id invocation actuals shape)
+            | Result.Ok(CallableValueShape.Lazy _) ->
+                match Alex.Traversal.LazyOperands.project ctx node.Id with
+                | Result.Error reason -> failure node "lazy result" reason
+                | Result.Ok shape -> observe ctx node prefix (pLazyApplication node.Id invocation actuals shape)
+            | _ ->
+                let resultType =
+                    mapTypeAt node.Id node.Type ctx
+                    |> narrowType ctx.Coeffects ctx.Graph (Option.defaultValue node.Id body)
+                match invocation with
+                | Direct symbol ->
+                    observe ctx node prefix (pDirectCall node.Id symbol (actuals |> List.map (fun value -> value.SSA, value.Type)) resultType names)
+                | Indirect code ->
+                    match code.Type with
+                    | TFunc(_, [actualResult]) -> observe ctx node prefix (pIndirectApplication node.Id code actuals actualResult)
+                    | _ -> failure node "result boundary" "Scalar application requires exactly one result in its witnessed function signature"
 
 let private direct (ctx: WitnessContext) (node: SemanticNode) binding (sources: NodeId list) =
     let declared =
         match Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph binding, declaration ctx binding with
         | Some symbol, Some(parameters, body, implementation) -> Some(symbol, parameters, body, implementation)
         | _ -> Operands.tryThunkDeclaration ctx binding |> Option.map (fun (symbol, parameters, body) -> symbol, parameters, body, binding)
-    match declared with
-    | Some(symbol, parameters, body, implementation) ->
+    match declared, Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph with
+    | _, Result.Error reason -> failure node "source demand projection" reason
+    | Some(symbol, parameters, body, implementation), Result.Ok demand ->
         if parameters.Length <> sources.Length then
             failure node "declared boundary" "Settled direct call does not supply its actual declared parameters"
         else
             let names =
                 parameters |> List.collect (fun (name, _, formal) ->
-                    match Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph ctx.Graph.Nodes[formal] with
-                    | CallableValueShape.Callable _ ->
+                    if (demand.Parameters.TryFind implementation |> Option.defaultValue Set.empty).Contains formal then [] else
+                    match Operands.valueShape ctx formal with
+                    | Result.Ok(CallableValueShape.Callable _) ->
                         match Operands.project ctx formal with
                         | Result.Ok shape -> (name + "_code") :: (if (Operands.environmentType shape).IsSome then [name + "_environment"] else [])
                         | Result.Error _ -> [name] // the component reading below reports the absent boundary
-                    | CallableValueShape.Sequence _ -> [name + "_pull"; name + "_environment"]
-                    | CallableValueShape.Lazy _ -> [name + "_thunk"; name + "_environment"]
+                    | Result.Ok(CallableValueShape.Sequence _) -> [name + "_pull"; name + "_environment"]
+                    | Result.Ok(CallableValueShape.Lazy _) -> [name + "_thunk"; name + "_environment"]
                     | _ -> [name])
             match Operands.parametersAtCall ctx node.Id implementation parameters with
             | Result.Error reason -> failure node "parameter boundary" reason
@@ -131,11 +144,12 @@ let private direct (ctx: WitnessContext) (node: SemanticNode) binding (sources: 
     | _ -> failure node "declaration identity" "Direct call lacks its settled declaration symbol and actual lambda boundary"
 
 let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) =
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+    | Result.Error reason -> failure node "source callable projection" reason
+    | Result.Ok projection ->
     // Foreign admission and its explicit ABI remain PlatformWitness's concern.
     if Map.containsKey node.Id ctx.Coeffects.Platform.Bindings.Bindings
-       || (match node.Kind with
-           | SemanticKind.Application(callee, _) -> (Clef.Compiler.PSGSaturation.SemanticGraph.MappedBindings.tryFindCall ctx.Graph callee).IsSome
-           | _ -> false) then WitnessOutput.skip
+       || projection.ForeignCalls.Contains node.Id then WitnessOutput.skip
     else
     match tryMatch pApplication ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | None -> WitnessOutput.skip
@@ -150,13 +164,9 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) =
             | Some callable ->
                 invoke ctx node (Indirect(Operands.code callable)) supplied None None (Operands.environment callable) None
             | None ->
-                let calleeNode =
-                    match ctx.Graph.Nodes.TryFind callee with
-                    | Some { Kind = SemanticKind.TypeAnnotation(inner, _) } -> ctx.Graph.Nodes.TryFind inner
-                    | other -> other
-                match calleeNode with
-                | Some { Kind = SemanticKind.Intrinsic _ } -> WitnessOutput.skip
-                | Some { Kind = SemanticKind.VarRef(_, Some binding) } -> direct ctx node binding supplied
+                match projection.IntrinsicAliases.Contains callee, projection.DirectCallees.TryFind callee with
+                | true, _ -> WitnessOutput.skip
+                | _, Some binding -> direct ctx node binding supplied
                 | _ -> failure node "callable occurrence" "Application callee has no witnessed callable operands or settled direct declaration"
 
 let nanopass : Nanopass = { Name = "Application"; Witness = witnessApplication }

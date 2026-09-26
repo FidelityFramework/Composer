@@ -17,7 +17,8 @@ open Alex.Traversal.TransferTypes
 
 /// Validate that all reachable nodes were witnessed
 /// Returns list of diagnostics for any unwitnessed reachable nodes
-let validateCoverage
+let private validateCoverageWith
+    (deferred: Set<NodeId>)
     (graph: SemanticGraph)
     (allVisited: Set<NodeId>)  // Merged visited set from all nanopasses
     : Diagnostic list =
@@ -36,7 +37,7 @@ let validateCoverage
     let unwitnessedNodes =
         reachableNodes
         |> List.filter (fun node ->
-            not (Set.contains node.Id allVisited) &&
+            not (Set.contains node.Id allVisited) && not (deferred.Contains node.Id) &&
             match node.Kind with SemanticKind.TypeDef _ -> false | _ -> true)
 
     // Generate error diagnostics for each unwitnessed node
@@ -54,6 +55,12 @@ let validateCoverage
             (Some "Unwitnessed reachable node")
             (sprintf "PSG node '%s' (ID %d) is reachable but no witness handles it. This is a compiler bug - a witness should be implemented for this node kind." kindSummary (NodeId.value node.Id)))
 
+let validateCoverage (graph: SemanticGraph) (allVisited: Set<NodeId>) : Diagnostic list =
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary graph with
+    | Result.Ok projection -> validateCoverageWith projection.DeferredOnly graph allVisited
+    | Result.Error reason ->
+        [Diagnostic.error None (Some "CoverageValidation") (Some "source demand projection") reason]
+
 // ═══════════════════════════════════════════════════════════
 // COVERAGE STATISTICS
 // ═══════════════════════════════════════════════════════════
@@ -69,14 +76,18 @@ type CoverageStats = {
 
 /// Calculate coverage statistics from graph and merged visited set
 let calculateStats (graph: SemanticGraph) (allVisited: Set<NodeId>) : CoverageStats =
+    let deferred =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary graph with
+        | Result.Ok projection -> projection.DeferredOnly
+        | Result.Error reason -> invalidOp ("Coverage requires its source emission seal: " + reason)
     let totalNodes = Map.count graph.Nodes
     let reachableNodes =
         graph.Nodes
         |> Map.toSeq
         |> Seq.map snd
-        |> Seq.filter (fun n -> n.IsReachable)
+        |> Seq.filter (fun n -> n.IsReachable && not (deferred.Contains n.Id))
         |> Seq.length
-    let witnessedNodes = Set.count allVisited
+    let witnessedNodes = Set.difference allVisited deferred |> Set.count
     let unwitnessedNodes = reachableNodes - witnessedNodes
     let coveragePercentage =
         if reachableNodes > 0 then

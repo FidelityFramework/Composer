@@ -46,6 +46,7 @@ let main _ =
     let prepared, _ = Clef.Compiler.Nanopass.LazyFactoryResults.prepare normalized normalized.Codata.Value.Curry
     let graph, reading = Clef.Compiler.Nanopass.LazyRuntime.settle { prepared with Platform = Some platform }
     Assert.Empty reading.Diagnostics
+    let graph = settleDemand graph
     let binding name = graph.Nodes.Values |> Seq.find (fun node ->
         node.IsReachable && match node.Kind with SemanticKind.Binding(actual, false, _, _) -> actual = name | _ -> false)
     let saved = binding "saved"
@@ -175,7 +176,7 @@ let ``lazy witness forwarding retracts when the destination layout proof is remo
     let root = Zipper.create graph block |> require "Missing block"
     let source = Assert.Single graph.Nodes[saved].Children
     seed (context graph root accumulator) source 0 1 |> ignore
-    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) }
+    let changed = { graph with Edges = graph.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) } |> settleDemand
     let position = Zipper.create changed block |> require "Missing changed block" |> atChild saved
     let ctx = context changed position accumulator
     let output = Alex.Witnesses.BindingWitness.nanopass.Witness ctx changed.Nodes[saved]
@@ -194,6 +195,7 @@ let ``validated lazy code is globally observed once while formations remain loca
         if invalidated then
             { original with Edges = original.Edges |> List.filter (fun edge -> edge.Role <> EdgeRole.LazyLayout) }
         else original
+        |> settleDemand
     let accumulator = MLIRAccumulator.empty ()
     let globalVisited = ref Set.empty
     let position = Zipper.create graph layout.Owner |> require "Missing formation"

@@ -1,0 +1,5 @@
+module Left
+
+type Cell = { Value: bool }
+let cell = { Value = true }
+let read () = cell.Value

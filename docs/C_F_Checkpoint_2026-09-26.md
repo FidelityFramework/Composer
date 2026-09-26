@@ -18,6 +18,200 @@ The ledger is an implementation inventory, not an additional source of language
 requirements or a separately authorized prerequisite project. The correction
 changes no compiler behavior, acceptance result or feature status.
 
+## Source publication and nominal identity checkpoint
+
+This intermediate checkpoint preserves the source-boundary repair requested on
+September 26. It is a checkpoint of work with explicitly open acceptance results,
+not closure of the F/C campaign. The following source changes extend the earlier
+cohorts below:
+
+The paired Clef `main` commit is **`fd4ee1b`**, “Checkpoint source witness
+publication and exact nominal identities”. The Composer commit carrying this
+entry is “Checkpoint passive witness consumers and compilation timing”. Resume
+with both repositories at these matching checkpoints before updating either.
+
+- **C-01/C-02 and F-03/F-04:** ordinary unused-argument proofs retain complete use
+  incidence, logical argument types and explicit eager demand. Mixed dimensional
+  specialization retains exact checker instances and measure binders; member
+  premises survive deferred inference. Callable publication supplies admitted
+  declaration, transport, instance and value-role facts for passive witnessing.
+- **C-05/C-06/C-07:** source storage publication validates Lazy/sequence layouts,
+  program storage, startup and requirements. Demand settlement now precedes Lazy
+  layout proof construction, so retained-string backing uses the final premises.
+  Alex's corresponding consumers no longer rerun those source validators.
+- **F-10/F-11 and C-08:** aggregate/range identity uses structured nominal and
+  instantiated type keys. Distinct modules declaring `Cell` retain distinct
+  definitions, fields and layouts. This also corrects declaration reachability
+  and descriptor/callback lookups affected by the same identity defect.
+- **Witness and tooling integrity:** source publication materializes domain
+  projections and semantic indices before handoff. Exact graph copies require
+  renewed source admission. Witness registration is transfer-owned; .NET timing
+  uses independent spans and measured wall time. The
+  [comparative evaluation contract](Nanopass_Incremental_Contract_Direction.md#26-parallel-full-builds-and-comparative-timing)
+  covers full and incremental parallel compilation and final reconciliation.
+
+The native evidence preceding this checkpoint uses the immutable snapshot
+`/tmp/composer-ordinary-demand-v19/compiler`, with its complete
+`../compiler.sha256` inventory. Original **04a passes** with exact stdout and
+empty stderr. **MixedDimensionSchemes passes** with exit zero, empty output and
+stock MLIR verification. **04c compiles but fails its runtime demand oracle**:
+unused bindings, first-demand timing, shared/captured initialization and mutable
+snapshots still expose broader ordinary call-by-need defects. These are separate
+outcomes; the two passing controls do not establish the third.
+
+That snapshot's full Alex cohort passed **300/300** after explicit source-fixture
+setup corrections. The subsequent Lazy proof-order correction passed its focused
+**55/55** source checks. Those numbers describe their own inputs, not the new
+aggregate-publication or nominal-identity changes. The first combined publication
+run passed **142/183** source checks; its 41 failures exposed an incorrect attempt
+to demand physical witness readiness from target-free source queries. Publication
+is now guarded by the existing source-admitted, declared-platform boundary,
+without weakening projection equality. The checkpoint verification below records
+the rerun against the integrated source.
+
+The following acceptance work stays visible at this checkpoint:
+
+| Area | Required closure |
+|---|---|
+| Ordinary call-by-need | Original 04c demand/effect trace, sharing and dynamic-instance controls |
+| Whole Alex boundary | Complete numeric/type, field placement and descriptor projections; remove reconstruction/fallback branches; isolate Alex behind an immutable contracts assembly with no source-analysis dependency |
+| Environment proof admission | Validate the general held environment-layout map against its owning source proof, beyond existing program-instance validation |
+| Physical argument correspondence | Discriminate a used formal following an omitted formal; source ordinals must match the actual physical calling convention |
+| Component source setup | Construct the prepared graph before its Huet zipper; preserve negative mutations and actual SSA/type oracles |
+| F-05 binding patterns | `let true = value` currently throws an unhandled `Unsupported pattern in let binding: Const`; repair source admission/elaboration and retain its own regression |
+| Nominal identity | Source and native multi-file controls covering both accessors and direct field reads, with exact declaration retention |
+| Parallel/incremental compiler | Source-authorized regions, worker-owned state, segmented realization, reconciliation and measured equivalence against full compilation |
+
+The source projection seal is current-process graph admission. It is not an
+accepted edit revision, persistent dependency cache, scoped compiler or a
+substitute for the final assembly/type capability boundary. All unfinished work
+above remains within the existing feature and integration contracts.
+
+### Integrated checkpoint verification
+
+| Check | Actual result | Evidence |
+|---|---|---|
+| Clef source build | Pass, 17.96 s | `/tmp/clef-nominal-witness-source-v22.log` |
+| Final full Clef source suite | **1,583 passed, 0 failed, 0 skipped**, 32 s | `/tmp/clef-source-checkpoint-full-v22.log` |
+| Composer build against that CCS assembly | Pass, 7.26 s | `/tmp/composer-witness-source-build-v22b.log` |
+| Current native controls | **2/2 pass:** `NominalIdentity`, `MixedDimensionSchemes`; verified MLIR, exit zero, empty output | `/tmp/composer-nominal-native-v22.log` |
+| Alex component suite | **211 passed, 91 failed, 0 skipped; 302 total** | `/tmp/composer-witness-alex-v22.log` |
+| Host timing regression | Pass: overlapping/concurrent spans, separate sessions, failed phases, completion and JSON report | `dotnet fsi tests/Infrastructure/TimingTests.fsx` |
+| Registry isolation | Pass: 96 concurrent target-registry constructions; also included in Alex's passing set | `tests/Alex.Tests/WitnessRegistryTests.fs` |
+
+Of the 91 Alex failures, 65 first report absent aggregate/source-value/storage
+publication or the earlier ordinary-only seal. The other 26 first report
+assertion, declaration-identity or witness-result differences and require
+individual resolution; they are not presumed harmless fixture issues. New lawful
+forwarding and unrelated-instance rejection controls pass. This run does not
+inherit the earlier snapshot's 300/300 result.
+
+The current native snapshot is `/tmp/composer-nominal-v22/compiler`, with a
+36-file inventory at `/tmp/composer-nominal-v22/compiler.sha256`. The harness
+retains its complete logs and observations at
+`/tmp/composer-callbacks-fsharp-c641266ba648492090ccb5e5af3c00b7/evidence.json`.
+All 515 source/declaration input hashes were unchanged across those runs. The
+older compiler's new nominal control failed with three source diagnostics;
+the current native pass exercises both module accessors and direct field reads.
+
+The new requirement-publication test initially used the failing constant-binding
+form recorded above. It now uses an admitted one-arm match to exercise the same
+requirement/frontier and invalidated-condition oracle. This fixture correction
+does not close general binding-pattern acceptance. The new descriptor test was
+also corrected to declare the reader's `PeripheralLayout` vocabulary. Neither
+correction changes compiler behavior or suppresses a failure result.
+
+The full source census initially passed **1,582/1,583**. Its one failing
+requirement assertion expected a specialized `PatternRequirements` entry for
+a general ordered requirement with `PatternTest=None`. Read-only comparison
+confirmed equal source/published site, condition, frontier, continuation and
+participants. The corrected test asserts that complete correspondence and the
+absence of fabricated specialized evidence, while retaining rejection after a
+changed condition type. Post-correction verification passed all **9/9** storage
+publication tests, followed by the complete **1,583/1,583** source suite with
+zero skips. Evidence: `/tmp/clef-storage-witness-checkpoint-v22.log` and
+`/tmp/clef-source-checkpoint-full-v22.log`. The source compiler binary was unchanged
+during these test-only fixture corrections.
+
+Timing with an explicit artifact directory writes `timing.json` alongside the
+run's outputs. Its monotonic spans and measured wall time are raw observations;
+the comparative table requires paired full/incremental runs, work counts and
+equivalence checks before any speedup claim.
+
+A real timing-enabled compile of `NominalIdentity` using the current snapshot
+passed and its executable returned zero with empty stdout/stderr. The single
+observation was **2,441.912 ms wall**, with **2,377.854 ms summed phase spans**:
+front end 2,004.282 ms; middle end 230.726 ms; MLIR lowering 79.824 ms; link
+63.022 ms. Raw data is `/tmp/composer-timing-checkpoint-v22/timing.json`.
+This checks instrumentation through the actual compiler; it is one serial run,
+not a comparative benchmark or evidence of intra-compilation parallelism.
+
+### Resume from this checkpoint
+
+Run from the Composer repository with its sibling Clef checkout. Source and
+consumer builds below are deliberately ordered; independent test processes may
+run after the coordinated assemblies are fixed. Capture compiler contents before
+native jobs and use private output directories. A `--no-build` invocation uses
+the already built test runner and must not be mistaken for building changed tests.
+
+```sh
+dotnet build ../clef/src/Compiler/Clef.Compiler.Service.fsproj --no-restore
+dotnet build src/Composer.fsproj --no-restore -p:BuildProjectReferences=false
+dotnet test ../clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-restore -p:BuildProjectReferences=false
+dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-restore -p:BuildProjectReferences=false
+dotnet fsi tests/Infrastructure/TimingTests.fsx
+dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj --no-build -- /tmp/composer-nominal-v22/compiler/Composer NominalIdentity MixedDimensionSchemes
+```
+
+Resume with the 91 Alex failures grouped by actual cause, prepare valid fixture
+graphs before constructing their zippers, and retain invalid-graph and actual
+operand rejection oracles. Complete source environment/field/numeric projection
+and the restricted witness input/dependency boundary without admitting missing
+facts. Recheck the discriminating native controls after each affected source or
+witness change. Original 04c is the ordinary-demand acceptance target; its runtime
+failures are not closed by unused-argument omission. Finish those correctness
+gates before using them as incremental/parallel performance workloads.
+
+## Witness correspondence working cohort
+
+The subsequent whole-graph correspondence slice records each emitted definition
+at its actual Alex focus, traversal root and Huet path, including queued globals
+and directly emitted function definitions. The existing declaration relocation
+transports that correspondence; each backend validates one current unit's exact
+definitions, typed function imports, global views, writable-storage ownership and
+planned startup before target realization. `10_witness_units.json` retains the
+validated account. Its `witnessRun` token identifies emission bookkeeping, **not
+an accepted source revision or permission to publish a stale result**. Opaque
+target content retains source/content correspondence without acquiring a typed
+internal symbol inventory. This slice is not scoped reevaluation, segmented
+object replacement or reuse; those remain the
+[source-owned worklist requirements](Nanopass_Incremental_Contract_Direction.md#25-edit-transactions-proof-reuse-and-segmented-publication).
+
+The working snapshot is `/tmp/composer-witness-catalog-v4/compiler`, with complete
+inventory `../compiler.sha256`. It includes the then-current CCS v15 working
+source and ordinary unused-parameter physical consumers; it must not be relabeled
+as the earlier committed v13 cohort. Composer SHA-256 is
+`921A2F76F827E46FA61D8FFD5E0ED1E10559CB7CB0CB40B40FB5D8399F423CEB`; CCS is
+`7B31F481FD77EF9913DA54B7C35F407313E090EE89838D54959AC12425184D3E`.
+
+- Catalog component checks: **15/15**, including missing/duplicate ownership,
+  stale snapshot/run, truncated path, copied focus, missing startup, duplicate
+  imports, function-versus-data/mistyped global views and changed backend input;
+  `/tmp/composer-witness-catalog-tests-v4c.log`.
+- Full Alex assembly: **289/289**, zero skips;
+  `/tmp/composer-witness-catalog-full-v4c.log`.
+- Unchanged `01_HelloWorldDirect` and `16h_SequenceApplications`, each in full
+  and pruned modes: **4/4 compilations and 4/4 executions**, expected stdout and
+  empty native stderr; `/tmp/composer-witness-catalog-native-v4b.log`.
+- Required portable/target MLIR, LLVM IR, stdout and stderr are byte-identical
+  across modes. Catalog definitions, source paths, imports, startup and content
+  hashes also agree after excluding distinct `witnessRun` tokens;
+  `/tmp/composer-witness-catalog-validate-v4.log`. Artifacts are retained under
+  `full-native` and `pruned-native` in the snapshot's parent directory.
+
+No C/F feature status changes follow from this bounded gate. No new full CCS
+census, full native manifest or selective-recompilation result is claimed here.
+
 ## Subsequent dimensional, trace and bounded-storage checkpoint
 
 September 26, source commit Clef `d5ae0d9` on `main`; corresponding Composer

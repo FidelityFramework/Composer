@@ -244,7 +244,9 @@ let programStorageType arch graph (entry: ProgramStorageEntry) =
 let pProgramStorageDeclaration identity storageTy : PSGParser<ProgramStorageEntry> =
     parser {
         let! state = getUserState
-        let reading = Clef.Compiler.PSGSaturation.SemanticGraph.ProgramStorage.read state.Graph
+        let reading =
+            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph
+            |> Result.toOption |> Option.map _.ProgramStorage
         do! ensure reading.IsSome "Writable program inventory is absent or stale"
         let inventory = reading.Value
         do! ensure inventory.Unresolved.IsEmpty

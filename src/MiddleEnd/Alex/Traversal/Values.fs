@@ -10,9 +10,7 @@
 module Alex.Traversal.Values
 
 open Clef.Compiler.NativeTypedTree.NativeTypes
-open Clef.Compiler.NativeTypedTree.UnionFind
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Alex.Dialects.Core.Types
 
 /// The values a node may name for its own emission: ordinals 0 .. Family-1.
@@ -46,63 +44,31 @@ let undefined : SSA = V (-1, -1)
 /// its physical authority has settled. A missing premise cannot turn a slot
 /// into an inline initializer at a later reference.
 let isModuleValueSlot (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (node: SemanticNode) : bool =
-    Clef.Compiler.PSGSaturation.SemanticGraph.ProgramInitialization.isSlotBinding graph node.Id
+    let projection =
+        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph
+        |> Result.defaultWith (fun reason -> invalidOp ("Source storage projection: " + reason))
+    projection.Startup
+    |> Option.exists (fun plan -> plan.ValueBindings.Contains node.Id)
 
-/// Whether a lambda takes an environment argument ahead of its parameters.
-let takesEnvironment (lambda: SemanticNode) : bool =
-    match lambda.Kind with
-    | SemanticKind.Lambda (_, _, captures, _, _) ->
-        not (List.isEmpty captures) ||
-        (lambda.Metadata |> Map.tryFind ClosureMetadata.RequiresClosurePair |> Option.map (function MetadataValue.Bool b -> b | _ -> false) |> Option.defaultValue false)
-    | _ -> false
+let private callableFacts graph =
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable graph
+    |> Result.defaultWith (fun reason -> invalidOp ("Source value projection: " + reason))
 
-/// The block argument a lambda parameter is, if the node is one.
-let private argumentOf (graph: SemanticGraph) (node: SemanticNode) : SSA option =
-    match node.Kind, node.Children with
-    | SemanticKind.PatternBinding _, [] ->
-        match node.Parent |> Option.bind (fun p -> SemanticGraph.tryGetNode p graph) with
-        | Some ({ Kind = SemanticKind.Lambda (parameters, _, _, _, _) } as lambda) ->
-            parameters
-            |> List.tryFindIndex (fun (_, _, id) -> id = node.Id)
-            |> Option.map (fun i -> Arg (i + (if takesEnvironment lambda then 1 else 0)))
-        | _ -> None
-    | _ -> None
-
-/// The node whose values a node's name follows (itself where it aliases nothing).
-let rec private aliasTarget (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (node: SemanticNode) : SemanticNode =
-    match node.Kind, node.Children with
-    | SemanticKind.PatternBinding _, childId :: _ ->
-        match SemanticGraph.tryGetNode childId graph with
-        | Some child -> aliasTarget platform graph child
-        | None -> node
-    | SemanticKind.Binding (_, false, _, _), childId :: _ when not (isModuleValueSlot platform graph node) ->
-        match SemanticGraph.tryGetNode childId graph with
-        | Some child -> aliasTarget platform graph child
-        | None -> node
-    | _ -> node
-
-/// The values a node names, following its aliases: a lambda parameter its argument alone.
-let valuesOf (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (nodeId: NodeId) : SSA list =
-    match SemanticGraph.tryGetNode nodeId graph with
-    | None -> values nodeId
-    | Some node ->
-        let target = aliasTarget platform graph node
-        match argumentOf graph target with
-        | Some arg -> [ arg ]
-        | None -> values target.Id
+/// Name the source-admitted alias endpoint or formal. Resolving aliases and
+/// classifying parameter/environment conventions belong to source settlement.
+let valuesOf (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (nodeId: NodeId) : SSA list =
+    let facts = callableFacts graph
+    match facts.AliasTargets.TryFind nodeId with
+    | None -> invalidOp (sprintf "Source value %d has no admitted alias endpoint." (NodeId.value nodeId))
+    | Some target ->
+        match facts.Arguments.TryFind target with
+        | Some ordinal -> [Arg ordinal]
+        | None -> values target
 
 /// The result value of a node: the last of its values.
 let resultOf (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (nodeId: NodeId) : SSA =
     valuesOf platform graph nodeId |> List.last
 
 /// A unit-typed body: the function returns no value and its return needs a zero constant.
-let isUnitTyped (ty: NativeType) : bool =
-    let rec go t =
-        match t with
-        | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) -> true
-        | NativeType.TVar tv ->
-            match find tv with
-            | (_, Some bound) -> go bound
-            | (_, None) -> false
-        | _ -> false
-    go ty
+let isUnitTyped (graph: SemanticGraph) (nodeId: NodeId) : bool =
+    (callableFacts graph).UnitNodes.Contains nodeId

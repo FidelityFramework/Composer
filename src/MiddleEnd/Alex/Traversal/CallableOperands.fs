@@ -4,11 +4,11 @@
 module Alex.Traversal.CallableOperands
 
 open Clef.Compiler.NativeTypedTree.NativeTypes
-open Clef.Compiler.NativeTypedTree.UnionFind
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.XParsec.PSGCombinators
+module Emission = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission
 
 type Shape = private {
     Contract: CallableBoundary
@@ -30,14 +30,14 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
     if Set.contains occurrence seen then Result.Error "Callable signature contains an unresolved recursive component reference."
     else
     let seen = Set.add occurrence seen
-    match ctx.Graph.Codata.Value.CallableCarriers.TryFind occurrence,
-          ctx.Graph.Codata.Value.CallableJoins.TryFind occurrence,
-          ctx.Graph.Codata.Value.CallableFlows.TryFind occurrence with
+    match Emission.tryCallable ctx.Graph with
+    | Result.Error reason -> Result.Error reason
+    | Result.Ok projection ->
+    match projection.Carriers.TryFind occurrence, projection.Joins.TryFind occurrence, projection.Flows.TryFind occurrence with
     | None, None, None -> Result.Error "Callable occurrence has no settled carrier contract."
     | Some _, Some _, _ | Some _, _, Some _ | _, Some _, Some _ -> Result.Error "Callable occurrence has conflicting carrier contracts."
     | None, None, Some flow ->
-        if flow.Occurrence <> occurrence || flow.Alternatives.IsEmpty ||
-           not (Clef.Compiler.PSGSaturation.SemanticGraph.CallableFlows.validate ctx.Graph flow) then
+        if flow.Occurrence <> occurrence || flow.Alternatives.IsEmpty then
             Result.Error "Callable flow no longer has its complete source argument, result and alias participants."
         else
             flow.Alternatives |> List.map (projectSeen ctx seen) |> collect |> Result.bind (fun alternatives ->
@@ -48,8 +48,7 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
                     Result.Error "Callable flow alternatives disagree with their settled common physical convention."
                 else Result.Ok { first with Contract = Flow flow })
     | None, Some joined, None ->
-        if joined.Occurrence <> occurrence || joined.Alternatives.IsEmpty ||
-           not (Clef.Compiler.PSGSaturation.SemanticGraph.MutableCallableStorage.validateJoin ctx.Graph joined) then
+        if joined.Occurrence <> occurrence || joined.Alternatives.IsEmpty then
             Result.Error "Callable join no longer has its complete source storage and read participants."
         else
             joined.Alternatives |> List.map (projectSeen ctx seen) |> collect |> Result.bind (fun alternatives ->
@@ -62,27 +61,24 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
                     Result.Ok { first with Contract = Joined joined })
     | Some carrier, None, None when carrier.Occurrence <> occurrence -> Result.Error "Callable carrier names a different occurrence."
     | Some carrier, None, None ->
-        let validContext = function
-            | LambdaContext.RegularClosure -> true
-            | LambdaContext.LazyThunk ->
-                ctx.Graph.Codata.Value.LazyLayouts.Values |> Seq.exists (fun layout ->
-                    layout.Thunk = carrier.Implementation &&
-                    (LazyOperands.layout ctx layout.Owner |> Option.exists ((=) layout)))
-            | _ -> false
-        match ctx.Graph.Nodes.TryFind occurrence, ctx.Graph.Nodes.TryFind carrier.Implementation with
-        | Some source, Some { Kind = SemanticKind.Lambda(parameters, body, [], _, context) }
-            when validContext context &&
-                 applySubst (Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.sourceType source) = applySubst carrier.SourceType &&
-                 parameters = carrier.Parameters && body = carrier.Result ->
-            let sourceShape id =
-                ctx.Graph.Nodes.TryFind id |> Option.map (Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph)
+        match projection.Declarations.TryFind carrier.Implementation with
+        | Some declaration when declaration.Captures.IsEmpty && declaration.Parameters = carrier.Parameters && declaration.Result = carrier.Result ->
+            let parameters, body = declaration.Parameters, declaration.Result
+            let sourceShape id = projection.ValueShapes.TryFind id
             let shapesAgree =
                 (parameters |> List.map (fun (_, _, id) -> sourceShape id)) = (carrier.ParameterShapes |> List.map Some) &&
-                sourceShape body = Some carrier.ResultShape
+                sourceShape body = Some carrier.ResultShape &&
+                (match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph with
+                 | Result.Ok projection ->
+                     carrier.OmittedParameters = (projection.Parameters.TryFind carrier.Implementation |> Option.defaultValue Set.empty)
+                 | Result.Error _ -> false)
             if not shapesAgree then Result.Error "Callable component references do not match its exact formal and body participants."
             else
-            let permitted = Clef.Compiler.PSGSaturation.SemanticGraph.CallableInstantiations.allowsSignatureData ctx.Graph carrier
-            let parameterTypes = carrier.ParameterShapes |> List.map (componentsSeen ctx seen permitted) |> collect
+            let permitted id = projection.SignatureData.TryFind carrier.Implementation |> Option.exists (Set.contains id)
+            let parameterTypes =
+                List.zip parameters carrier.ParameterShapes |> List.map (fun ((_, _, formal), shape) ->
+                    if carrier.OmittedParameters.Contains formal then Result.Ok []
+                    else componentsSeen ctx seen permitted shape) |> collect
             let resultTypes = componentsSeen ctx seen permitted carrier.ResultShape
             match parameterTypes, resultTypes with
             | Result.Error reason, _ | _, Result.Error reason -> Result.Error reason
@@ -116,23 +112,26 @@ and private componentsSeen (ctx: WitnessContext) seen permitted value : Result<M
     | CallableValueShape.Callable occurrence ->
         projectSeen ctx seen occurrence |> Result.map (fun shape -> shape.FunctionType :: Option.toList shape.EnvironmentType)
     | CallableValueShape.Data id ->
-        match ctx.Graph.Nodes.TryFind id with
-        | Some node ->
-            match applySubst node.Type with
-            | NativeType.TFun _ | NativeType.TForall _ -> Result.Error "Callable component cannot be read as a scalar data operand."
-            | ty when hasUnboundVars ty ||
-                      (not (List.isEmpty (freeMeasureVars ty)) &&
-                       not (permitted id)) ->
-                Result.Error "Callable signature data participant still has unresolved type or dimension variables."
-            | _ ->
+        match Emission.tryCallable ctx.Graph, ctx.Graph.Nodes.TryFind id with
+        | Result.Error reason, _ -> Result.Error reason
+        | Result.Ok projection, Some node ->
+            if not (projection.ClosedData.Contains id || permitted id) then
+                Result.Error "Callable data participant lacks its source-settled closed or quantified signature authority."
+            else
                 try
                     let ty = mapTypeAt id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph id
                     Result.Ok(if ty = TVoid then [] else [ty])
                 with ex -> Result.Error ex.Message
-        | None -> Result.Error "Callable signature data participant is absent."
+        | _, None -> Result.Error "Callable signature data participant is absent."
 
 let project ctx occurrence = projectSeen ctx Set.empty occurrence
 let components ctx value = componentsSeen ctx Set.empty (fun _ -> false) value
+
+let valueShape (ctx: WitnessContext) occurrence =
+    Emission.tryCallable ctx.Graph |> Result.bind (fun projection ->
+        match projection.ValueShapes.TryFind occurrence with
+        | Some shape -> Result.Ok shape
+        | None -> Result.Error "Value occurrence lacks its source-settled callable component role.")
 
 /// Shared physical parameters retain their symbolic measure variables. Only
 /// the current source-owned call instance can authorize that signature here.
@@ -140,18 +139,16 @@ let parametersAtCall (ctx: WitnessContext) site implementation parameters =
     if ctx.Zipper.Focus.Id <> site || not (obj.ReferenceEquals(ctx.Zipper.Focus, ctx.Graph.Nodes[site])) then
         Result.Error "Direct call signature projection requires its current Huet occurrence."
     else
-    let shapes = parameters |> List.map (fun (_, ty, id) ->
-        match ctx.Graph.Nodes.TryFind id with
-        | Some node when applySubst node.Type = applySubst ty ->
-            Result.Ok(Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph node)
-        | _ -> Result.Error "Direct call formal no longer has its declared source type.")
-    shapes |> collect |> Result.bind (fun shapes ->
-        let needsInstance = parameters |> List.exists (fun (_, ty, _) -> not (List.isEmpty (freeMeasureVars ty)))
-        if not needsInstance then shapes |> List.map (components ctx) |> collect else
-        match Clef.Compiler.PSGSaturation.SemanticGraph.CallableInstantiations.callReader ctx.Graph site implementation with
-        | Some proof when proof.Parameters = parameters ->
-            shapes |> List.map (componentsSeen ctx Set.empty proof.SignatureData.Contains) |> collect
-        | _ -> Result.Error "Direct call lacks its exact source scheme instance and actual environment correspondence.")
+    match Emission.tryCallable ctx.Graph, Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph with
+    | Result.Error reason, _ | _, Result.Error reason -> Result.Error reason
+    | Result.Ok projection, Result.Ok demand ->
+        match projection.Calls.TryFind site with
+        | Some proof when proof.Implementation = implementation && proof.Parameters = parameters ->
+            let omitted = demand.Parameters.TryFind implementation |> Option.defaultValue Set.empty
+            parameters |> List.map (fun (_, _, formal) ->
+                if omitted.Contains formal then Result.Ok [] else
+                valueShape ctx formal |> Result.bind (componentsSeen ctx Set.empty proof.SignatureData.Contains)) |> collect
+        | _ -> Result.Error "Direct call lacks its exact source-settled signature and actual environment correspondence."
 let functionType shape = shape.FunctionType
 let environmentType shape = shape.EnvironmentType
 let parameterTypes shape = shape.ParameterTypes
@@ -161,11 +158,11 @@ let resultTypes shape = shape.ResultTypes
 /// binding. Projection validates its current lazy layout and physical formals
 /// before either a direct call or code-value occurrence may name its symbol.
 let tryThunkDeclaration (ctx: WitnessContext) implementation =
-    match ctx.Graph.Nodes.TryFind implementation with
-    | Some ({ Kind = SemanticKind.Lambda(parameters, body, [], _, LambdaContext.LazyThunk) } as node) ->
+    match Emission.tryCallable ctx.Graph |> Result.toOption |> Option.bind (fun projection -> projection.Declarations.TryFind implementation) with
+    | Some { Context = LambdaContext.LazyThunk; Captures = []; Parameters = parameters; Result = body } ->
         match project ctx implementation with
         | Result.Ok shape when (environmentType shape).IsNone ->
-            Some(Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node false, parameters, body)
+            Some(Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph ctx.Graph.Nodes[implementation] false, parameters, body)
         | _ -> None
     | _ -> None
 
@@ -209,10 +206,10 @@ let reproject (ctx: WitnessContext) source destination =
                     not sources.IsEmpty && not destinations.IsEmpty &&
                     (sources |> List.forall (fun source -> destinations |> List.exists (sameExact source)))
                 | _ -> false
-            let sameSourceType =
-                applySubst value.Carrier.SourceType = applySubst shape.Contract.SourceType ||
-                Clef.Compiler.PSGSaturation.SemanticGraph.CallableInstantiations.canTransport ctx.Graph source destination
-            if not sameOrigin || not sameSourceType then
+            let actualTransport =
+                Emission.tryCallable ctx.Graph |> Result.toOption |> Option.exists (fun projection ->
+                    projection.Transports.TryFind destination |> Option.exists (Set.contains source))
+            if not sameOrigin || not actualTransport then
                 Result.Error "Callable copy does not preserve its settled code, environment owner, and source type."
             else create shape value.Code value.Environment)
 

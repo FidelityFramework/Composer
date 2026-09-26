@@ -430,7 +430,7 @@ let private projectScalarReference (graph: SemanticGraph) argId value ty
         let sourceRange =
             match graph.Nodes.[argId].Type with
             | NativeType.TApp (_, [elem]) ->
-                Map.tryFind (formatType (Clef.Compiler.NativeTypedTree.UnionFind.applySubst elem)) graph.ElementRanges.Value
+                Map.tryFind (Clef.Compiler.NativeTypedTree.TypeIdentities.ofType elem) graph.ElementRanges.Value
                 |> Option.defaultValue ValueRange.Unbounded
             | _ -> ValueRange.Unbounded
         let unsignedSource = ValueRange.isNonNegative sourceRange
@@ -547,7 +547,7 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                 | _, None ->
                     match ty with
                     | TStruct (fields, Some bytes) ->
-                        let name = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some tc.Name | _ -> None
+                        let name = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some (NominalTypeIdentity.ofConstructor tc) | _ -> None
                         let descriptor = layouts |> List.tryFind (fun d -> d.RecordType = name && name.IsSome)
                         match descriptor with
                         | Some d when d.Size.IsSome && d.Alignment.IsSome && d.PhysicalFields.Length = fields.Length ->
@@ -569,7 +569,7 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                             else
                                 do! ensure (not (Set.contains argId recordReferences) || Set.contains argId readOnlyRecords)
                                         "A writable foreign record requires identical source/native storage or an explicit copy-back adapter"
-                                let sourceFields = name |> Option.bind (fun name -> Clef.Compiler.PSGSaturation.SemanticGraph.Core.SemanticGraph.tryGetRecordFields name graph) |> Option.defaultValue []
+                                let sourceFields = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields graph.Nodes[argId].Type graph |> Option.defaultValue []
                                 do! ensure (sourceFields.Length = fields.Length) "Foreign record projection requires source field types"
                                 do! ensure (cursor + 1 + 20 * fields.Length <= ssas.Length) "Foreign record projection exceeds the node's assigned SSA family"
                                 do! ensure (d.PhysicalFields |> List.forall (fun f -> f.Count = 1)) "Foreign record array fields require an explicit bounded projection"
@@ -621,7 +621,7 @@ let private byvalOf (graph: SemanticGraph) (references: Set<NodeId>) (platformId
     |> List.mapi (fun i (argId, (_ssa, ty)) ->
         match ty with
         | TStruct (fields, Some bytes) when not (isOptionArgument argId) ->
-            let nativeName = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some tc.Name | _ -> None
+            let nativeName = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some (NominalTypeIdentity.ofConstructor tc) | _ -> None
             let layout = layouts |> List.tryFind (fun d -> d.RecordType = nativeName && nativeName.IsSome)
             match layout with
             | Some d when d.Size = Some bytes.Size && d.Alignment = Some bytes.Align && d.PhysicalFields.Length = fields.Length ->
