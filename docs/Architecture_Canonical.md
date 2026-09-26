@@ -114,6 +114,9 @@ need the M-01 operation/profile admission and preservation contract.
 
 The current middle-end post-witness pass collects and validates function
 declarations. Static-storage correspondence is checked before serialization.
+The [closure settlement contract](Closure_Settlement_Contract.md) connects exact
+formation, capture, invocation and residence evidence to the separate function
+and environment operands witnessed at each callable occurrence.
 Source-level closures, sequences and continuation semantics are not deferred
 to a second semantic MLIR pipeline. Existing target/serializer exceptions and
 incomplete information transport remain reconciliation work in M-01; they do

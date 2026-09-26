@@ -60,8 +60,8 @@ let ``ordinary environment construction preserves the complete mutable cell desc
         match matchAt (pReadContinuationSlot read first layout.Bytes layout.Slots.Head) position 64 operands with
         | Result.Ok ((operations, TRValue value), _) -> operations, value
         | other -> failwithf "Environment read failed: %A" other
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef("environment_component", [Arg 0, TMemRefStatic(1, TInt(IntWidth 1))], result.Type,
-        allocation @ reads @ [MLIROp.FuncOp(FuncOp.Return(Some result.SSA, Some result.Type))], FuncVisibility.Public))
+    let definition = MLIROp.FuncOp(FuncOp.FuncDef("environment_component", [Arg 0, TMemRefStatic(1, TInt(IntWidth 1))], [result.Type],
+        allocation @ reads @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = result.SSA; Type = result.Type }]))], FuncVisibility.Public))
     let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "environment_component" [definition]
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
     Assert.Contains("memref<1xmemref<1xi1>>", verified)
@@ -83,6 +83,42 @@ let ``two occurrences of the same environment layout recall their own actual val
             Assert.Empty operations
             Assert.Equal(expected, value.SSA)
         | other -> failwithf "Environment occurrence failed: %A" other
+
+[<Fact>]
+let ``returned environment initializes its admitted caller destination without allocating in the factory`` () =
+    let position, first, _, capture, _, layout, operands = fixture ()
+    let ty = TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
+    let graph =
+        { position.Graph with Codata = lazy { position.Graph.Codata.Value with
+                                                EnvironmentDestinations = Map.ofList [first, layout.Formal]
+                                                Escapes = Map.empty } }
+    let position = Zipper.create graph first |> require "Missing returned environment fixture"
+    MLIRAccumulator.bindNode layout.Formal (Arg 1) ty operands
+    match matchAt (pCreateEnvironment first layout [capture, capture]) position 64 operands with
+    | Result.Ok ((operations, TRValue value), _) ->
+        Assert.Equal(Arg 1, value.SSA)
+        let definition = MLIROp.FuncOp(FuncOp.FuncDef("environment_destination_component",
+                            [Arg 0, TMemRefStatic(1, TInt(IntWidth 1)); Arg 1, ty], [ty],
+                            operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = value.SSA; Type = ty }]))], FuncVisibility.Public))
+        let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "environment_destination_component" [definition]
+        let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
+        Assert.DoesNotContain("memref.alloca", verified)
+        Assert.Contains("memref.store", verified)
+    | other -> failwithf "Caller destination was not witnessed: %A" other
+
+[<Fact>]
+let ``returned environment cannot substitute a destination of another layout`` () =
+    let position, first, _, capture, _, layout, operands = fixture ()
+    let graph =
+        { position.Graph with Codata = lazy { position.Graph.Codata.Value with
+                                                EnvironmentDestinations = Map.ofList [first, layout.Formal]
+                                                EnvironmentOrigins = Map.ofList [layout.Formal, capture]
+                                                Escapes = Map.empty } }
+    let position = Zipper.create graph first |> require "Missing invalid destination fixture"
+    MLIRAccumulator.bindNode layout.Formal (Arg 1) (TMemRefStatic(layout.Bytes, TInt(IntWidth 8))) operands
+    match matchAt (pCreateEnvironment first layout [capture, capture]) position 64 operands with
+    | Result.Error message -> Assert.Contains("exact layout identity", message)
+    | Result.Ok _ -> failwith "A foreign environment destination was accepted"
 
 [<Theory>]
 [<InlineData("residence", "admitted allocation residence")>]

@@ -9,8 +9,8 @@
 ## 1. Executive Summary
 
 C-01 completes closure formation, capture identity, invocation and storage under
-the current Clef specification. It builds on working compiler paths. The remaining
-work makes those paths compose across returned, stored and deferred function
+the current Clef specification. It builds on working compiler paths. Delivery
+makes those paths compose across returned, stored and deferred function
 values while preserving type, evaluation, lifetime and proof contracts.
 
 The [closure specification](../../../clef-lang-spec/spec/closure-representation.md),
@@ -92,8 +92,10 @@ Existing immutable direct-capture elaboration proves complete eligible use and
 adds truthful leading formals and operands, including recursive forwarding.
 Existing bounded materialized environments retain `ClosureValue`,
 `EnvironmentCreate`, capture reads/writes/borrows, implementation formals and
-actual environment operands. [Closure values as data](../Closure_As_Data.md)
-describes those identities; later waypoints supersede its interim native-status prose.
+actual environment operands. [Closure settlement](../Closure_Settlement_Contract.md)
+defines the shared invariant and regression contract.
+[Closure values as data](../Closure_As_Data.md) describes those identities;
+later waypoints supersede its interim native-status prose.
 
 Direct mutable capture passing still needs one authoritative typed application
 contract. [The cell contract](../Direct_Capture_Cell_Contract.md) records the
@@ -110,8 +112,10 @@ and lambda witnesses consume Baker's explicit operands and formals. Missing
 capture, layout, availability or residence premises remain specific failures in
 the owning stage.
 
-General pair transport still needs multi-value recall, signatures, call/return
-results, joins and stored-callable handling. The legacy packed path in
+General pair transport uses typed multi-value recall, signatures and call/return
+results. These component foundations must compose through the production
+witnesses, joins and stored-callable handling, with source-to-native acceptance
+for each boundary. The legacy packed path in
 `ApplicationPatterns.pClosureCall` is implementation debt, not the canonical
 contract. The bounded known-callee path does not establish arbitrary function
 storage or invocation. `Values.fs` derives SSA names from graph/role ordinals and

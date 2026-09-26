@@ -68,6 +68,7 @@
 
       <!-- Alex XParsec - Composable PSG pattern matchers -->
       <Compile Include="MiddleEnd/Alex/XParsec/PSGCombinators.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/CallableOperands.fs" />
       <Compile Include="MiddleEnd/Alex/XParsec/Extensions.fs" />
 
       <!-- Alex Elements - Atomic MLIR ops (internal, XParsec-based) -->
@@ -96,6 +97,7 @@
       <Compile Include="MiddleEnd/Alex/Patterns/StringPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ApplicationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/CallablePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MmioPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/BorrowedViewPatterns.fs" />

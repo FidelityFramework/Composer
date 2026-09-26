@@ -75,8 +75,8 @@ let ``index switch with zero one or multiple results verifies and lowers through
     let operations, results = built arity
     let result = results |> List.tryHead |> Option.defaultValue first
     let parameters = [Arg 0, TIndex; Arg 1, cell; Arg 2, TIndex; Arg 3, integer; Arg 4, integer]
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef("switch_component", parameters, integer,
-        operations @ [MLIROp.FuncOp(FuncOp.Return(Some result.SSA, Some integer))], FuncVisibility.Public))
+    let definition = MLIROp.FuncOp(FuncOp.FuncDef("switch_component", parameters, [integer],
+        operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = result.SSA; Type = integer }]))], FuncVisibility.Public))
     let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "switch_component" [definition]
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] text
     Assert.Contains("scf.index_switch", verified)
@@ -111,14 +111,14 @@ let ``index switch rejects incompatible supplied evidence with a precise reason`
 
 [<Fact>]
 let ``declarations inside switch arms reach existing module collection`` () =
-    let declaration = MLIROp.FuncOp(FuncOp.FuncDecl("external_effect", [integer], integer, FuncVisibility.Private, []))
-    let call = MLIROp.FuncOp(FuncOp.FuncCall(Some(V(99, 2)), "external_effect", [first], integer))
+    let declaration = MLIROp.FuncOp(FuncOp.FuncDecl("external_effect", [integer], [integer], FuncVisibility.Private, []))
+    let call = MLIROp.FuncOp(FuncOp.FuncCall([{ SSA = (V(99, 2)); Type = integer }], "external_effect", [first]))
     let operations =
         match observe (pBuildIndexSwitch selector [7L, ([declaration; call], [])] ([], []) []) with
         | Result.Ok (operations, _) -> operations
         | Result.Error message -> failwith message
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef("calls", [Arg 0, TIndex; Arg 3, integer], integer,
-        operations @ [MLIROp.FuncOp(FuncOp.Return(Some first.SSA, Some integer))], FuncVisibility.Public))
+    let definition = MLIROp.FuncOp(FuncOp.FuncDef("calls", [Arg 0, TIndex; Arg 3, integer], [integer],
+        operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = first.SSA; Type = integer }]))], FuncVisibility.Public))
     let collected = Alex.Pipeline.MLIRNanopass.declarationCollectionPass [definition]
     Assert.Equal(declaration, collected.Head)
     let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "switch_declarations" collected

@@ -426,6 +426,97 @@ let main _ =
     equal source (File.ReadAllText file)
     printfn "PASS materialized callback signatures, captured declaration identities and dimensional edit/repair"
 
+let sequenceApplicationChecks () =
+    let project = write "sequence-applications/Editor.fidproj" """[package]
+name = "editor-sequence-applications"
+[compilation]
+target = "library"
+[build]
+sources = ["Main.clef"]
+output_kind = "library"
+"""
+    let source = """module SequenceApplications
+[<Measure>] type m
+[<Measure>] type s
+[<EntryPoint>]
+let main _ =
+    let offset = 7<m>
+    let mapper = fun (value: int<m>) -> value + offset
+    let mapOperation: (int<m> -> int<m>) -> seq<int<m>> -> seq<int<m>> = Seq.map
+    let storedMap = mapOperation mapper
+    let mapped = storedMap (seq { yield 1<m> })
+    let folder = fun (state: float<s>) (_: int<m>) -> state + 0.25<s>
+    let afterFolder = Seq.fold folder
+    let afterState = afterFolder 1.0<s>
+    let observed = afterState mapped
+    if observed = 1.25<s> then 0 else 1
+"""
+    let file = write "sequence-applications/Main.clef" source
+    let session = EditorSession(project)
+    let lines = source.Split('\n')
+    let location (marker: string) (name: string) =
+        let line = lines |> Array.findIndex (fun text -> text.Contains(marker, StringComparison.Ordinal))
+        line, lines[line].LastIndexOf(name, StringComparison.Ordinal)
+    let at (snapshot: EditorSnapshot) marker name =
+        let line, column = location marker name
+        session.TryHover(snapshot.Revision, file, line, column) |> get
+    let checkedSnapshot inputs =
+        let snapshot = session.CheckAsync(inputs).Result |> get
+        check snapshot.Failure.IsNone $"Sequence application fixture failed: {snapshot.Failure}"
+        check snapshot.ParseFailures.IsEmpty $"Sequence application fixture did not parse: {snapshot.ParseFailures}"
+        check (snapshot.Diagnostics |> List.forall (fun diagnostic -> diagnostic.EffectiveSeverity <> "Error"))
+            $"Sequence application fixture has errors: {snapshot.Diagnostics}"
+        snapshot
+    let checkProjection snapshot =
+        let references =
+            [ "mapper", "int<m> -> int<m>", "let mapper", "let storedMap"
+              "mapOperation", "(int<m> -> int<m>) -> seq<int<m>> -> seq<int<m>>", "let mapOperation", "let storedMap"
+              "storedMap", "seq<int<m>> -> seq<int<m>>", "let storedMap", "let mapped"
+              "folder", "float<s> -> int<m> -> float<s>", "let folder", "let afterFolder"
+              "afterFolder", "float<s> -> seq<int<m>> -> float<s>", "let afterFolder", "let afterState"
+              "afterState", "seq<int<m>> -> float<s>", "let afterState", "let observed" ]
+            |> List.map (fun (name, signature, declaration, reference) ->
+                let declared = at snapshot declaration name
+                let used = at snapshot reference name
+                equal signature declared.Type
+                equal signature used.Type
+                equal (Some name) used.Name
+                equal declared.Range (used.Definition |> get)
+                declared, used)
+        equal "seq<int<m>>" (at snapshot "let mapped" "mapped").Type
+        equal "float<s>" (at snapshot "let observed" "observed").Type
+        let offset = at snapshot "let offset" "offset"
+        let captured = at snapshot "let mapper" "offset"
+        equal "int<m>" captured.Type
+        equal (Some "offset") captured.Name
+        equal offset.Range (captured.Definition |> get)
+        references, captured
+    let first = checkedSnapshot Map.empty
+    let originalProjection = checkProjection first
+    let retained = sprintf "%A" (first, originalProjection)
+    let changed = source.Replace("offset = 7<m>", "offset = 7<s>")
+    let pending = session.CheckAsync(Map.ofList [file, changed])
+    let line, column = location "let observed" "afterState"
+    check (session.TryHover(first.Revision, file, line, column).IsNone)
+        "A pending staged-callable edit served a stale source signature."
+    let invalid = pending.Result |> get
+    check invalid.Failure.IsNone $"Measured sequence edit failed to produce a source snapshot: {invalid.Failure}"
+    check invalid.ParseFailures.IsEmpty $"Measured sequence edit did not parse: {invalid.ParseFailures}"
+    let mapperLine, _ = location "let mapper" "offset"
+    check (invalid.Diagnostics |> List.exists (fun diagnostic ->
+        diagnostic.Code = "CCS8040" && diagnostic.EffectiveSeverity = "Error" &&
+        (diagnostic.Range |> Option.exists (fun range -> range.FilePath = file && range.StartLine = mapperLine))))
+        $"Staged sequence capture mismatch lost its source diagnostic: {invalid.Diagnostics}"
+    check (invalid.Revision > first.Revision) "Measured edit did not advance the sequence snapshot revision."
+    let repaired = checkedSnapshot Map.empty
+    checkProjection repaired |> ignore
+    check (repaired.Revision > invalid.Revision) "Repair did not produce a fresh staged sequence projection."
+    check (session.TryHover(invalid.Revision, file, line, column).IsNone)
+        "Repair still served a hover from the invalid source revision."
+    equal retained (sprintf "%A" (first, originalProjection))
+    equal source (File.ReadAllText file)
+    printfn "PASS staged Seq source signatures, definition identities and measured edit/repair with stale-read rejection"
+
 let loopObligationChecks () =
     let project = write "loop-obligations/Editor.fidproj" """[package]
 name = "editor-loop-obligations"
@@ -669,6 +760,7 @@ let main _ = if message = "proof fixture" then 0 else 1
     integerLiteralChecks ()
     directCaptureChecks ()
     closureEnvironmentChecks ()
+    sequenceApplicationChecks ()
     loopObligationChecks ()
     callEffectRangeChecks ()
     programLifetimeChecks ()
@@ -702,12 +794,13 @@ let main args =
             | [| "--sample"; project |] -> inspectSample project
             | [| "--direct-captures" |] -> directCaptureChecks ()
             | [| "--closure-environments" |] -> closureEnvironmentChecks ()
+            | [| "--sequence-applications" |] -> sequenceApplicationChecks ()
             | [| "--loop-obligations" |] -> loopObligationChecks ()
             | [| "--call-effects" |] -> callEffectRangeChecks ()
             | [| "--program-lifetime" |] -> programLifetimeChecks ()
             | [| "--string-encoding" |] -> StringEncodingChecks.run root
             | [||] -> checks ()
-            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --loop-obligations | --call-effects | --program-lifetime | --string-encoding]"
+            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --sequence-applications | --loop-obligations | --call-effects | --program-lifetime | --string-encoding]"
             0
         with error -> eprintfn "%O" error; 1
     finally if Directory.Exists root then Directory.Delete(root, true)

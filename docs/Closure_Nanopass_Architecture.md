@@ -1,201 +1,152 @@
 # Closure Architecture
 
-> **MLKit-style flat closures with CCS-computed captures.**
-> See [C-01 PRD](PRDs/C-01-Closures.md) for the original roadmap.
-> **C-07 update:** [Closure values as data](Closure_As_Data.md) records the implemented
-> materialized callback path. The older layout/coeffect sketches below are not
-> an alternative contract for that path; unused code-pointer-in-environment and
-> global-arena prototypes have been removed.
+**Design synchronization: 2026-09-26.** The [closure specification](../../clef-lang-spec/spec/closure-representation.md)
+governs semantics and representation. [C-01 §14](PRDs/C-01-Closures.md#14-the-closure-saturation-form-family)
+and the [settlement contract](Closure_Settlement_Contract.md) describe delivery
+obligations. [Closure values as data](Closure_As_Data.md) records the bounded
+implementation; [waypoints](Language_Coverage_Waypoints.md) record validation.
+This document does not declare the full closure family complete.
 
 ## 1. Executive Summary
 
-Clef Native uses **MLKit-style flat closures** where all captured variables are stored inline in the closure struct, not via pointer chains to enclosing environments.
+A capturing function carries a function value and one flat environment. Each
+capture is reached directly through its own slot. Capturing another function
+value preserves that value's environment; this does not permit replacing lexical
+capture slots with a chain of parent environments. An immutable captured value
+may contain references whose sharing and lifetime still require proof.
 
-**Key Architectural Decision**: Capture analysis is **scope analysis**, and scope is resolved during type checking. Therefore, **capture analysis belongs in CCS**, not Composer. CCS computes captures during PSG construction and includes them directly in `SemanticKind.Lambda`. SSA assignment and closure struct layout are derived by the post-saturation coeffect nanopass (`PSGElaboration.SSAAssignment` today, scheduled into CCS; see CCS_Architecture.md); Alex reads both and computes neither.
-
-**Implementation**: All closures use the **portable memref dialect** — byte-level `TMemRefStatic(N, TInt(IntWidth 8))` for struct representation, `pInsertValue`/`pExtractValue` for field access, `pFuncCallIndirect` for code pointer invocation. No LLVM dialect.
+A capture-free function needs no environment. A named nonescaping function uses
+leading capture parameters when its complete uses establish that form. A known
+materialized callee can elide the function half while retaining the actual
+environment occurrence. Unknown alternatives prevent this elision.
 
 ## 2. Layer Responsibilities
 
 | Layer | Responsibility |
-|-------|---------------|
-| **CCS** | Compute captures during scope analysis, embed in `SemanticKind.Lambda` |
-| **PSGElaboration/SSAAssignment** | Build `ClosureLayout` coeffect, assign SSAs |
-| **Alex/Patterns/ClosurePatterns** | Compose Elements into closure construction/invocation |
-| **Alex/Witnesses/LambdaWitness** | Observe Lambda nodes, delegate to ClosurePatterns |
+| --- | --- |
+| CCS checking | Resolve lexical bindings, types, capture sets and mutability. |
+| Baker / owning CCS nanopasses | Elaborate calls and formation frontiers; settle capture access, effects, ranges, layout, lifetime and obligations through recipes and fan-out/fold-in. |
+| Alex | Pull settled facts at the actual Huet occurrence and compose Elements through Patterns and Witnesses. |
+| Backend | Realize the admitted portable form for the target and preserve or recheck affected properties. |
 
-**Capture analysis is NOT a Composer nanopass.** The PSG arrives from CCS with complete capture information.
+CCS does not preassign Alex SSA identifiers. `Alex.Traversal.Values` derives
+names; the accumulator records emitted operands and scope associations separately
+from the immutable zipper. Historical `PSGElaboration/SSAAssignment` diagrams and
+code-pointer-in-environment sketches do not describe the current architecture.
 
 ## 3. Memory Layout
 
 ### 3.1 Flat Closure Structure
 
-```
-Closure = (fn, env)
-fn:  func.constant @lambda_impl — the function-value half, never stored in env
-env: environment (byte-level memref)
-┌─────────────────────────────────────────────────────────┐
-│ capture_0: T₀  (value for ByValue, pointer for ByRef)   │
-│ capture_1: T₁                                           │
-│ ...                                                     │
-└─────────────────────────────────────────────────────────┘
-
-MLIR type of env: memref<N x i8> where N = sum of capture byte sizes
+```text
+(fn, env)
+fn  = function value, or elided for a proved known callee
+env = [capture slot 0 | padding | capture slot 1 | ... | tail padding]
 ```
 
-(Interim: the code today writes a `code_ptr` word at offset 0 of the buffer and reads it back through a cast; that is the retired encoding, and it is removed by `clef/docs/fidelity/phg/Closure_Retooling_Plan.md` steps 4–5.)
+The function value is never a field of `env`. Extent includes target-declared
+alignment and padding; it is not merely the sum of payload sizes. Captured
+scalar widths come from settled ranges and declared representations. The
+portable materialized environment is a byte `memref` with a settled extent.
+The full unknown-callee form requires separate function/environment transport;
+a packed pair or an unrealized cast cannot stand in for that work.
 
 ### 3.2 Capture Modes
 
-| Variable Kind | Capture Mode | In Struct | Semantics |
-|---|---|---|---|
-| Immutable `let x = ...` | ByValue | `T` | Copy value |
-| Mutable `let mutable x = ...` | ByRef | `memref<1xT>` | A view of the binding's storage cell, never a raw pointer |
+| Binding | Capture | Required behavior |
+| --- | --- | --- |
+| Immutable | Value | Snapshot once at formation; references inside the value retain sharing. |
+| Mutable | Typed cell view | Read and write the same storage instance as every other capture of the binding. |
+| Ref cell held immutably | Ref-cell value | Copy the reference, preserving the referenced cell. |
 
 ### 3.3 Extended Struct Layouts
 
-The same byte-level struct pattern supports three contexts:
-
-| Context | Environment layout | Extraction Base Index |
-|---|---|---|
-| RegularClosure | `{cap₀, cap₁, ...}` | 0 |
-| LazyThunk | `{computed, value, cap₀, ...}` | 2 |
-| SeqGenerator | `{state, current, cap₀, ...}` | 2 |
-
-(Interim: the code's base indices are 1/3/3 because it still stores the code pointer; they become 0/2/2 with the retooling.)
+Lazy values and sequences add their specified memoization or suspension slot
+classes to the environment. Each slot class has an initialization and transition
+discipline. State/current slots do not authorize eager evaluation of a sequence
+body, and a finite frame does not establish its backing storage's residence.
+See the [lazy](../../clef-lang-spec/spec/lazy-representation.md) and
+[sequence](../../clef-lang-spec/spec/seq-representation.md) specifications.
 
 ## 4. Why Flat: the Finiteness Lemma
 
-Flat closure is foundational to the entire structure of the Fidelity Framework: it is the **finiteness lemma** the proof stack rests on. Because the capture set is enumerated (CCS, Section 2), the layout is fixed, and every field is assigned an offset (Alex, Sections 3 and 5), a closure's reachability frontier is exactly its field list. The memory-safety judgments the PSG emits therefore quantify over finite, enumerated structure: liveness is a field list, extent is a literal, release is a single site. That keeps verification conditions in the quantifier-free fragment that discharges at Tier 2 and Tier 3.
+The finite capture set supplies an enumerated **direct obligation frontier**.
+Once types and platform representations settle, its offsets, extents, alignment,
+initialization and direct lifetime constraints can be expressed over those
+participants. Unresolved premises remain explicit until commitment.
 
-Two representation choices lose the lemma:
+The field list does not bound arbitrary transitive storage reachable through a
+capture. It does not alone prove liveness, reference validity, a unique release,
+complete use, or decidability of every program property. An emitted proposition
+is not a discharged proof. These qualifications follow
+[closure representation §11](../../clef-lang-spec/spec/closure-representation.md#11-proof-extraction-at-closure-sites).
 
-| Choice | Failure Mode | Scope of Loss |
-|---|---|---|
-| Linked environments | Unbounded reachability through environment chains; recursive heap predicates; interactive proof territory | Transitive |
-| `nativeptr` | Authority forged from an integer opens the frame: anything may alias anything; the judgment degrades to assumption | Global |
-
-The FFI boundary (Section 7) is memory-safe and bounded exactly when every crossing has enumerated participants (the hyperedge's source set), carries a flat closure of known extent, and releases exactly once. The provable region of the computation graph is closed precisely when every crossing has that form. An unwitnessed cast is an open edge in the boundary of the provable region.
-
-**`nativeptr`'s exit**: per the spec (`clef-lang-spec/spec/ffi-boundary.md`, `ntu-types.md`, `special-attributes-and-types.md`), `nativeptr` is not user-denotable and survives as internal `TNativePtr` plumbing. It is confined to the generated Layer 1/2 membrane and counted as the TCB metric; replaced by use-class (closure environments to the flat closure primitive of Section 3, handles to `CHandle` and branded types, buffers and strings to length-carried memref and bounded arrays, registers to `Mmio`, shared regions to `Ptr<'T, Region, Access>` with BAREWire descriptors); removed from generated code at the corpus-wide regeneration. The audit equation (cast-resolution statistics reconciled against discharged boundary obligations, C-01 PRD Section 6.7) verifies no unwitnessed cast survives.
-
-**Proof-theoretic lineage.** The finiteness lemma is the proof shape MLKit's region discipline formalized: a type-and-effect system whose soundness theorem bounds what a computation can reach by static structure (Tofte & Talpin, "Region-Based Memory Management", Information and Computation 132(2), 1997), made compiler-inferred by the region inference algorithm (Tofte & Birkedal, "A Region Inference Algorithm", ACM TOPLAS 20(4), 1998) and kept safe under collection in Elsman, "Garbage Collection Safety for Region-based Memory Management" (TLDI 2003). Safe-for-space closure conversion is the closure-specific instance of the same bound (Shao & Appel, "Space-Efficient Closure Representations", LFP 1994; "Efficient and Safe-for-Space Closure Conversion", ACM TOPLAS 22(1), 2000). The lemma inherits that lineage and narrows it: where the region calculus bounds reachability by effect annotations over region variables, the flat closure bounds it by the enumerated field list itself.
+Foreign crossings additionally require declared ABI, registration, invocation,
+quiescence and release contracts as applicable. Enumerated participants and a
+flat layout make those obligations expressible; they do not establish them.
+Source `nativeptr` is not an escape hatch. Internal membrane plumbing and typed
+`FnPtr`/`CHandle` boundaries remain governed by the
+[foreign boundary specification](../../clef-lang-spec/spec/ffi-boundary.md).
 
 ## 5. Coeffect — ClosureLayout
 
-All closure layout information is pre-computed during SSAAssignment (Four Pillars: Codata/Coeffects). Witnesses observe the result.
+Current materialized facts are `EnvironmentLayout`, `EnvironmentOrigins`,
+`KnownCallables`, explicit capture/formal incidence and admitted residence. The
+layout contains slots, extent, alignment and resident obligations, not SSA names.
+Legacy `Codata.Closures` remains an implementation boundary to reconcile; its
+presence does not establish full canonical closure support.
 
-**File**: `src/MiddleEnd/PSGElaboration/Coeffects.fs`
-
-```fsharp
-type ClosureLayout = {
-    LambdaNodeId: NodeId
-    Captures: CaptureSlot list
-    // Construction SSAs (parent scope)
-    CodeAddrSSA, ClosureUndefSSA, ClosureWithCodeSSA: SSA
-    CaptureInsertSSAs: SSA list
-    // Arena allocation SSAs
-    HeapPosPtrSSA, HeapPosSSA, HeapBaseSSA, HeapResultPtrSSA, HeapNewPosSSA: SSA
-    SizeGepSSA, SizeSSA, SizeOneSSA: SSA
-    // Uniform pair SSAs
-    PairUndefSSA, PairWithCodeSSA, ClosureResultSSA: SSA
-    // Extraction SSA (child scope)
-    StructLoadSSA: SSA
-    // Types
-    ClosureStructType: MLIRType  // memref<N x i8>
-    Context: LambdaContext
-}
-```
+Knowing the implementation and layout owner does not select a runtime instance.
+Two formations of one lambda can have different environments. Witnesses recall
+the actual occurrence and its settled carrier. Shared graph bodies must retain
+their actual Huet path and local parameter associations.
 
 ## 6. Pipeline Flow
 
+```text
+source checking and lexical capture facts
+  -> Baker callable/formation recipes and fan-out/fold-in
+  -> effect, range, capture and result-destination relationships
+  -> complete-use residence + layout + source admission
+  -> Alex actual-occurrence ctx pull
+  -> portable operations and regions
+  -> target realization and native/source-independent validation
 ```
-Clef Source
-    │
-    ▼
-CCS (checkLambda with free variable analysis)
-    │
-    ├─ Computes captures via scope analysis
-    ├─ Creates SemanticKind.Lambda(params, body, captures, ...)
-    │
-    ▼
-PSG with complete closure information
-    │
-    ▼
-PSGElaboration/SSAAssignment
-    │
-    ├─ Reads captures from SemanticKind.Lambda
-    ├─ Builds ClosureLayout coeffect (complete pre-computation)
-    ├─ Assigns SSAs for construction (parent) and extraction (child)
-    │
-    ▼
-Alex/Witnesses/LambdaWitness
-    │
-    ├─ Observes Lambda node
-    ├─ Looks up ClosureLayout from coeffects
-    ├─ Delegates to ClosurePatterns
-    │
-    ▼
-Alex/Patterns/ClosurePatterns
-    │
-    ├─ pExtractCaptures: legacy env extraction at function entry
-    ├─ EnvironmentPatterns: materialized environment allocation/access
-    ├─ ApplicationPatterns: graph-established call operands
-    │
-    ▼
-Alex/Elements (MLIRAtomics, MemRefElements, FuncElements)
-    │
-    ├─ pInsertValue/pExtractValue: field access
-    ├─ pUndef/pAlloca/pLoad/pStore: memory ops
-    ├─ pFuncCallIndirect: indirect call
-    │
-    ▼
-MLIR (memref, arith, func dialects — portable)
-    │
-    ▼
-mlir-opt → mlir-translate → llc → linker → Native Binary
-```
+
+Representation preparation supplies a requirement. A result destination is not
+by itself a proof that every retained reference outlives the result. An allocation
+in a returning activation is not repaired by labeling it nonescaping. The
+owning lifetime analysis must prove covering storage before Alex can allocate or
+initialize it. Missing evidence prevents commitment.
 
 ## 7. FFI Boundary
 
-Closures are Clef-internal. A native callback uses an explicit `FnPtr` entry and
-an opaque `CHandle` context where the foreign signature supplies one. Generated
-descriptors govern argument and result representations. Scalar-array reference
-parameters are checked for sufficient storage before Composer extracts their
-address; the source does not cast a numeric value into a pointer.
+A Clef closure is not interchangeable with a native callback pointer. The foreign
+signature determines explicit `FnPtr` and context handling. Boundary adapters
+retain actual source state and declared storage/representation facts; native
+addresses are not recovered from numeric values or a packed closure interior.
 
-See the [foreign boundary specification](../../clef-lang-spec/spec/ffi-boundary.md).
+## 8. Function values and C-series delivery
 
-## 8. Function values and the remaining declaration-promotion gap
+`let saved = selected` snapshots the selected function value at that point,
+including when `selected` is mutable. It must not become a forwarding function
+that rereads `selected` at invocation. Partial applications likewise evaluate
+supplied operands once, in source order, and each later application has its own
+frontier. Returned function expressions are separate callable boundaries;
+syntactic declaration currying does not erase them.
 
-Anonymous function expressions, including those without captures, have explicit closure-pair
-planning. An alias of an existing function value preserves the value read at the binding:
-`let saved = selected` snapshots `selected`, including when `selected` is mutable. It does not
-create a forwarding function that reads `selected` later. A named capture-free declaration
-used as a value receives a compiler-generated pair whose forwarding body saturates the
-original declaration's direct-call arity.
-
-Captured arrays retain their element representation and actual extent. Mutable
-cells, function pairs and records carry an address with a compiler-settled view;
-record extraction retains the field layout used by construction. Closure code
-symbols are unique to anonymous lambda nodes, so equally named local bindings
-in different scopes cannot collide. Parent SSA associations are restored after
-each lambda body is emitted. These paths are exercised by fresh native programs
-in `tests/NativeCallbacks`.
-
-The closure environment allocator does not yet reclaim arbitrary escaping
-closures. A region releasing its borrowed callback values establishes the end
-of their use by carriers; it does not itself reclaim the compiler's allocations.
-
-Promotion of a **capturing named local declaration** into a first-class value is still missing.
-For example, a local `let render lo hi = ...` that captures its enclosing frame does not yet
-receive the pair needed when passed to a higher-order function. The current supported source
-form is `let render = fun lo hi -> ...`, which follows anonymous-expression planning. Supporting
-the named form requires a compiler promotion plan that preserves its direct-call ABI and
-capture lifetime; a downstream missing-SSA or missing-return error is a symptom of this gap.
+The `16h` work exercises stored sequence applications and retained environments.
+C-series acceptance also requires arbitrary specified returned, unknown,
+recursive, aggregate-held and foreign-held function forms under their governing
+contracts. Tests cover source semantics, graph/evidence rejection, actual-position
+Alex behavior, editor projection and unchanged native oracles. Every discovered
+blind spot is implementation work included in that delivery gate.
 
 ## 9. References
 
-- Shao & Appel (1994), "Space-Efficient Closure Representations"
-- MLKit Programming with Regions (Tofte, Elsman)
-- C-01 PRD: `docs/PRDs/C-01-Closures.md`
+- [Closure settlement contract](Closure_Settlement_Contract.md)
+- [Closure values as data](Closure_As_Data.md)
+- [C-01 closure PRD](PRDs/C-01-Closures.md)
+- [Baker architecture](../../clef/docs/fidelity/Baker_Saturation_Architecture.md)
+- [Scope-aware incremental direction](Nanopass_Incremental_Contract_Direction.md)
+- [Regression check policy](Regression_Check_Policy.md)

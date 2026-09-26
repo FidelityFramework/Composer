@@ -24,6 +24,8 @@ open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 type CompilationOptions = {
     ProjectPath: string
     OutputPath: string option
+    /// Optional per-invocation output/work directory; does not change source or runtime resolution.
+    ArtifactsDirectory: string option
     TargetTriple: string option
     NativeLink: Core.Types.Pipeline.NativeLinkOptions
     KeepIntermediates: bool
@@ -131,9 +133,14 @@ let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext)
 // Context Setup
 // ═══════════════════════════════════════════════════════════════════════════
 
+let private buildDirectory (options: CompilationOptions) projectDirectory =
+    options.ArtifactsDirectory
+    |> Option.map Path.GetFullPath
+    |> Option.defaultWith (fun () -> Path.Combine(projectDirectory, "targets"))
+
 let private setupContext (options: CompilationOptions) (project: ProjectCheckResult) : CompilationContext =
     let config = project.Options
-    let buildDir = Path.Combine(config.ProjectDirectory, "targets")
+    let buildDir = buildDirectory options config.ProjectDirectory
     Directory.CreateDirectory(buildDir) |> ignore
 
     let intermediatesDir =
@@ -193,12 +200,13 @@ let compileProject (options: CompilationOptions) : int =
     printfn ""
 
     // Setup intermediates directory BEFORE loading project (enables CCS phase emission)
-    let accessEvidence = Path.Combine(Path.GetDirectoryName(options.ProjectPath), "targets", "intermediates", "device-access.json")
+    let projectDirectory = Path.GetDirectoryName(Path.GetFullPath options.ProjectPath)
+    let artifactsDirectory = buildDirectory options projectDirectory
+    let accessEvidence = Path.Combine(artifactsDirectory, "intermediates", "device-access.json")
     if File.Exists accessEvidence then File.Delete accessEvidence
     let needsIntermediates = options.KeepIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly
     if needsIntermediates then
-        let projectDir = Path.GetDirectoryName(options.ProjectPath)
-        let intermediatesDir = Path.Combine(projectDir, "targets", "intermediates")
+        let intermediatesDir = Path.Combine(artifactsDirectory, "intermediates")
         Directory.CreateDirectory(intermediatesDir) |> ignore
         enableAllPhases intermediatesDir
 
@@ -240,9 +248,18 @@ let compileProject (options: CompilationOptions) : int =
                     let declaredCore =
                         Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve project.CheckResult.Graph
                         |> Option.bind (fun p -> p.Core)
+                    // Backends need disk inputs even without retained diagnostic
+                    // dumps. An explicit artifact root owns that working storage
+                    // too; this path does not enable CCS/Alex evidence emission.
+                    let backendWorkDirectory =
+                        ctx.IntermediatesDir |> Option.orElseWith (fun () ->
+                            options.ArtifactsDirectory |> Option.map (fun _ ->
+                                let directory = Path.Combine(ctx.BuildDir, "work")
+                                Directory.CreateDirectory directory |> ignore
+                                directory))
                     let backEndCtx = {
                         OutputPath = ctx.OutputPath
-                        IntermediatesDir = ctx.IntermediatesDir
+                        IntermediatesDir = backendWorkDirectory
                         TargetTripleOverride = options.TargetTriple |> Option.orElseWith (fun () -> declaredCore |> Option.map (fun c -> c.Triple) |> Option.filter (fun t -> t <> ""))
                         TargetPointerBits = declaredCore |> Option.bind (fun c -> c.Widths |> List.tryFind (fun w -> w.Name = "Pointer") |> Option.map (fun w -> w.Bits))
                         TargetCpu = declaredCore |> Option.map (fun c -> c.CpuModel) |> Option.filter (fun t -> t <> "")

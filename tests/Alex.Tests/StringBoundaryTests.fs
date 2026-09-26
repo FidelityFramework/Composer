@@ -56,8 +56,8 @@ let ``settled bytes retain their exact SSA and string carrier without allocation
         Assert.Equal(stringType, value.Type)
         Assert.Same(position.Graph, next.Graph)
         Assert.Equal(position.Focus.Id, next.Focus.Id)
-        let body = [MLIROp.FuncOp(FuncOp.Return(Some value.SSA, Some value.Type))]
-        let definition = MLIROp.FuncOp(FuncOp.FuncDef("from_settled_bytes", [Arg 0, stringType], stringType, body, FuncVisibility.Public))
+        let body = [MLIROp.FuncOp(FuncOp.Return([{ SSA = value.SSA; Type = value.Type }]))]
+        let definition = MLIROp.FuncOp(FuncOp.FuncDef("from_settled_bytes", [Arg 0, stringType], [stringType], body, FuncVisibility.Public))
         let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "string_boundary" [definition]
         let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
         Assert.Contains("func.func @from_settled_bytes", verified)
@@ -148,9 +148,9 @@ let ``an exact byte storage origin composes allocation writes reads and string i
         Assert.Equal(buffer.SSA, converted.SSA)
         Assert.Equal(buffer.Type, converted.Type)
     | other -> failwithf "No string value: %A" other
-    let body = allocationOps @ writeOps @ readOps @ [MLIROp.FuncOp(FuncOp.Return(Some loaded.SSA, Some loaded.Type))]
+    let body = allocationOps @ writeOps @ readOps @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = loaded.SSA; Type = loaded.Type }]))]
     let definition = MLIROp.FuncOp(FuncOp.FuncDef(
-        "byte_storage", [Arg 0, intType; Arg 1, intType; Arg 2, intType], intType, body, FuncVisibility.Public))
+        "byte_storage", [Arg 0, intType; Arg 1, intType; Arg 2, intType], [intType], body, FuncVisibility.Public))
     let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "string_storage" [definition]
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
     Assert.Contains("memref<?xi8>", verified)

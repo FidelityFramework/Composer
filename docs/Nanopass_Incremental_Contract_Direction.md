@@ -1,6 +1,7 @@
 # Nanopass boundaries, provenance and incremental restructuring
 
-September 19, 2026. Design direction for the existing
+September 19, 2026; reachability and segmented-artifact criteria extended September
+26. Design direction for the existing
 [completion roadmap](Clef_Language_Completion_Analysis.md), following the owner's
 request to defer a formal pass protocol until more of the pipeline and its
 incremental restructuring have been exercised. This note records requirements
@@ -70,6 +71,106 @@ It does not by itself establish every dependency of an analysis. The corrected
 requires actual reads/effects and preserves independent invalidations at a join.
 That application-language contract supplies useful acceptance pressure here;
 it is not evidence that compiler-region reuse is implemented.
+
+### 2.1 Reachability is a supported conclusion
+
+The current whole-graph check supplies a reference execution of the analyses.
+Incremental reuse must establish why a reachability conclusion still holds after
+an edit. Record its roots, relevant execution/declaration relationships and
+supporting derivations. Adding or removing a reference, startup effect, callback
+origin or platform declaration can change this support beyond the edited scope.
+Deleting one incoming relationship does not retire a node with another valid
+support; a cycle detached from every applicable root cannot support itself.
+Dead-to-live transitions require renewed elaboration and admission of the newly
+demanded region, including facts that a prior executable did not need.
+
+Fan-out proposals belong to their observed snapshot and dependencies. Fold-in
+must validate those premises, reconcile competing/duplicate replacements, retire
+unsupported generated structure and invalidate dependent facts before renewed
+settlement. Source and generated identity correspondence must survive that
+reconciliation. Deterministic allocation in today's complete run does not supply
+stable identity across an edit or across independently scheduled regions.
+
+A proposed `full`/`reachable` intermediate-dump option is a serialization policy.
+It must leave the compiler graph, reachability judgments and admission unchanged.
+A filtered dump declares its selection policy and omitted-node counts and either
+retains supporting evidence/participants or explicitly identifies external
+references. Full dumps remain available for investigating lost support and
+tree-shaking mistakes. Compact diagnostic output cannot serve as the dependency
+closure for incremental compilation merely because it contains the live nodes.
+
+### 2.2 Settled regions through segmented MLIR, objects and ELF
+
+The prospective CPU path is settled semantic regions → Alex's portable MLIR
+segments → backend object segments → LLD → the final ELF. These are distinct
+boundaries: a nanopass focus, a dependency region, an MLIR region/module and an
+object file need not have the same partition. This direction does not claim that
+the current compiler emits independently reusable object segments.
+
+Before reusing a segment, validate its semantic interface and its realization
+dependencies: exported/imported symbol identity and linkage, argument/result and
+data representations, capture/environment/storage identity, initialization and
+effect ordering, relevant platform facts, and proof/correspondence support.
+Changing a callee body may leave a caller's interface valid; changing its range,
+layout, capture protocol or a fact used to specialize the caller can invalidate
+the caller too. Whole-program optimization, constant propagation, inlining and
+link-time transformations add dependencies that the reuse decision must include.
+Bind reuse to artifact content identity and the relevant compiler, component,
+backend and linker versions/configuration, target features and optimization
+options, and resolved runtime/library/startup/linker-script inputs as applicable.
+Unchanged PSG facts do not establish that a changed realization input is reusable.
+
+Alex receives the settled demanded region, admitted boundary facts and its actual
+occurrence context. A node ID re-rooted without its Huet path is insufficient for
+shared structure. Existing Element/Pattern/Witness composition remains the
+emission path. CCS/Baker own semantic dependency discovery, retraction, saturation
+and readiness; the backend owns realization/link dependency tracking and
+invalidation, object partition realization and the link contract.
+An absent semantic premise remains an owning-stage failure.
+
+Publish a final artifact from a manifest identifying the exact object/bitcode
+and evidence contents, their compatible interfaces/configurations and the accepted
+ELF. An older segment can be reused in a new generation only after its
+dependencies have been validated against that generation. Withdraw obsolete
+objects and symbols when their source support disappears; a successful LLD run
+alone cannot detect an accidentally retained initializer, stale constant or
+invalidated proof. Publish the accepted manifest and ELF together so cancellation
+or a late worker completion cannot expose a mixture of incompatible generations.
+
+### 2.3 Joint constraints as candidate region boundaries
+
+Investigate expressing a region's boundary judgment through joint PSG relations:
+the exported/imported facts, their ordered participants and the derivations that
+support their compatibility. Existing joint incidence is a starting point for
+that experiment, not evidence that it already records the full dependency
+footprint of each analysis. A segmentation proposal must explain what supports
+every boundary summary and which changes invalidate it.
+
+For example, a closure environment's representation depends jointly on its
+capture participants, their types/ranges and storage requirements, and the
+declared platform. A changed capture can invalidate that judgment and its
+consumers even when an observed numeric output remains equal. Reconsider the
+joint judgment and propagate through the affected exported facts; preserve an
+independent valid support when another derivation is withdrawn. Cycles still
+require an admitted stabilization boundary, including rejection of unsupported
+self-justification after a root is removed.
+
+Record semantic participants, roles, observed lookup/absence facts and derivation
+support in or against the identified graph snapshot. Keep scheduling state—dirty
+versions, queued tasks, cancellation and publication ownership—with the service
+that executes those relationships. A change announcement can identify an affected
+relation and revision without introducing an event loop into the PSG zipper or
+making Alex infer the dependency. Pure structural incidence alone misses negative
+observations, alternative selection and realization dependencies.
+
+Exercise this candidate with a changed participant in a multi-input constraint,
+an unchanged independent participant, alternative support, a newly present
+declaration, and a region boundary crossed by a joint obligation. Check whether
+the declared dependencies predict the necessary reconsideration and whether
+unchanged valid interfaces stop further propagation. Several partitions may be
+correct; recomputation and transfer measurements can choose among them after
+semantic and evidence closure are established. No general region schema or new
+nanopass protocol is selected by this experiment.
 
 ## 3. Direction for nanopass input and output
 
@@ -190,12 +291,26 @@ identity; missing crossing hyperedge participants; and suspended work resumed
 against an incompatible snapshot or path. Repeated scheduling and duplicate
 completion must preserve the same admitted graph result.
 
+Reachability and segmented-artifact gates include live→dead→live edits, deletion
+of the last supporting root, deletion with an independent support remaining,
+detached recursive components, changed capture/storage identity, a changed
+exported representation, and changed startup ordering. Exercise undo/redo,
+failed edits followed by repair, reordered/duplicate worker completions and
+replacement of a segment during an in-flight link. Verify actual symbol sets,
+relocations and startup behavior as applicable, including rejection of stale
+object/evidence combinations. Cover both unchanged interfaces that permit reuse
+and changed interfaces that force dependents to rebuild. Change a toolchain or
+link input while keeping PSG facts unchanged and check the resulting invalidation.
+
 Compare incremental results and diagnostics with a fresh check of the same inputs.
 Measure affected-region size, unnecessary recomputation, retained evidence,
 dispatch count, memory and latency on the FidelityHello variants and larger
 application oracles. Equivalent artifacts or specified behavior remain a separate
 gate after graph equivalence and proof freshness. These observations will inform
 the eventual formal input/output and recompilation-boundary contracts.
+Fresh/incremental agreement establishes consistency between the paths. Retain
+independent source/specification, negative-admission and artifact/behavior gates
+to detect a defect shared by both implementations.
 
 ## 8. Baker settlement and extensible Alex witnessing
 

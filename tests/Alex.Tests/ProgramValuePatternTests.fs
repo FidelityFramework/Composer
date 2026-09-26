@@ -56,8 +56,8 @@ let ``program slot initialization consumes the declared writable authority`` () 
     Assert.Single globals |> ignore
     let zero = V(-2, 0)
     let resultType = TInt(IntWidth 32)
-    let body = ops @ [MLIROp.ArithOp(ArithOp.ConstI(zero, 0L, resultType)); MLIROp.FuncOp(FuncOp.Return(Some zero, Some resultType))]
-    let functionOp = MLIROp.FuncOp(FuncOp.FuncDef("initialize_program_slot", [Arg 0, ty], resultType, body, FuncVisibility.Public))
+    let body = ops @ [MLIROp.ArithOp(ArithOp.ConstI(zero, 0L, resultType)); MLIROp.FuncOp(FuncOp.Return([{ SSA = zero; Type = resultType }]))]
+    let functionOp = MLIROp.FuncOp(FuncOp.FuncDef("initialize_program_slot", [Arg 0, ty], [resultType], body, FuncVisibility.Public))
     let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "program_slot_component" (globals @ [functionOp])
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
     Assert.Contains("memref.global", verified)

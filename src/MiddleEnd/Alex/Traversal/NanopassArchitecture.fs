@@ -69,6 +69,17 @@ let private isFunctionBinding (bindingId: NodeId) (graph: SemanticGraph) : bool 
         | _ -> false
     | None -> false
 
+/// A direct function declaration contributes only a module-level definition.
+/// Closure-valued and mutable bindings also form local values, so their global
+/// coverage does not make their construction available in another occurrence.
+let private isDefinitionOnlyBinding (bindingId: NodeId) (graph: SemanticGraph) : bool =
+    match SemanticGraph.tryGetNode bindingId graph with
+    | Some { Kind = SemanticKind.Binding (_, false, _, _); Children = [valueId] } ->
+        match SemanticGraph.tryGetNode valueId graph with
+        | Some { Kind = SemanticKind.Lambda _ } -> not (Map.containsKey valueId graph.Codata.Value.Closures)
+        | _ -> false
+    | _ -> false
+
 /// Visit all nodes in post-order (children before parents)
 /// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
 /// Post-order ensures children's SSA bindings are available when parent witnesses
@@ -132,10 +143,14 @@ let rec visitAllNodes
                 Set.contains bindingId !visited
                 || (SemanticGraph.tryGetNode bindingId visitedCtx.Graph
                     |> Option.exists (ModuleValues.isSlotBinding visitedCtx.Coeffects.TargetPlatform visitedCtx.Graph))
-                || // FPGA: function bindings are compiled once globally
-                   (visitedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA
-                    && Set.contains bindingId !(visitedCtx.GlobalVisited)
-                    && isFunctionBinding bindingId visitedCtx.Graph)
+                || // A nested function can discover a definition after the
+                   // caller's local visited snapshot was taken. Definitions
+                   // remain global even though their body values are local.
+                   (Set.contains bindingId !(visitedCtx.GlobalVisited)
+                    && (if visitedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA then
+                            isFunctionBinding bindingId visitedCtx.Graph
+                        else
+                            isDefinitionOnlyBinding bindingId visitedCtx.Graph))
             if not alreadyHandled then
                 match SemanticGraph.tryGetNode bindingId visitedCtx.Graph with
                 | Some bindingNode ->
@@ -187,6 +202,12 @@ let rec visitAllNodes
         match output.Result with
         | TRValue v ->
             MLIRAccumulator.bindNode currentNode.Id v.SSA v.Type visitedCtx.Accumulator
+        | TRCallable value ->
+            match MLIRAccumulator.bindCallable currentNode.Id value visitedCtx.Accumulator with
+            | Result.Ok () -> ()
+            | Result.Error reason ->
+                Diagnostic.error (Some currentNode.Id) (Some "Callable") (Some "operand transport") reason
+                |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
         | TRVoid -> ()
         | TRError diag ->
             MLIRAccumulator.addError diag visitedCtx.Accumulator

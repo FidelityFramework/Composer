@@ -53,6 +53,22 @@ let rec private unrollReturnType (nParams: int) (ty: NativeType) : NativeType =
         | NativeType.TFun (_, inner) -> unrollReturnType (nParams - 1) inner
         | _ -> ty
 
+/// Structural membership of this occurrence, without following binding references.
+/// Already witnessed dependencies outside the body remain available; a shared
+/// body must still be observed in each function's operation/operand scope.
+let private structuralMembers (position: PSGZipper) =
+    let rec collect seen position =
+        if Set.contains position.Focus.Id seen then seen
+        else
+            let seen = Set.add position.Focus.Id seen
+            position.Focus.Children
+            |> List.indexed
+            |> List.fold (fun found (index, _) ->
+                match down index position with
+                | Some child -> collect found child
+                | None -> found) seen
+    collect Set.empty position
+
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
@@ -65,16 +81,6 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
     match tryMatch pLambdaWithCaptures ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((params', bodyId, captureInfos), _) ->
-        // FIRST: Visit parameter nodes (PatternBindings) to mark them as witnessed
-        // ALL Lambdas must visit their parameters for coverage validation
-        // Parameters are structural (SSA comes from coeffects), but must be visited
-        for (_, _, paramNodeId) in params' do
-            match SemanticGraph.tryGetNode paramNodeId ctx.Graph with
-            | Some paramNode ->
-                // Visit parameter with sub-graph combinator (will hit StructuralWitness)
-                visitAllNodes combinator ctx paramNode ctx.TraversalVisited
-            | None -> ()
-
         // Check if this is a declaration root Lambda
         let nodeIdValue = NodeId.value node.Id
         let declRootOpt = Map.tryFind node.Id ctx.Graph.Codata.Value.DeclarationRootLambdas
@@ -159,33 +165,12 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some plan when plan.EntryLambda = node.Id -> plan.Symbol
                 | _ -> Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node closureLayoutOpt.IsSome
 
-            // Map parameters to MLIR types and build parameter list with SSAs
-            // For FPGA, parameter types are abstract (IntWidth 0) and must be narrowed
-            // using the width inference coeffect before they become hw.module port declarations.
-            let extractParamSSAs =
-                parser {
-                    let rec extractParams ps =
-                        parser {
-                            match ps with
-                            | [] -> return []
-                            | (_paramName, paramType, paramNodeId) :: rest ->
-                                let rawType = mapTypeAt paramNodeId paramType ctx
-                                let mlirType = narrowType ctx.Coeffects ctx.Graph paramNodeId rawType
-                                let! paramSSA = getNodeSSA paramNodeId
-                                let! restParams = extractParams rest
-                                return (paramSSA, mlirType) :: restParams
-                        }
-                    return! extractParams params'
-                }
-
+            // Read each actual formal at this lambda occurrence. Shared Parent
+            // fields do not determine its block argument position.
             let mlirParams =
-                match tryMatch extractParamSSAs ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Some (paramList, _) -> paramList
-                | None ->
-                    printfn "[ERROR] LambdaWitness: Parameter SSAs not found in coeffects for Lambda node %A" (NodeId.value node.Id)
-                    printfn "[ERROR] This indicates SSAAssignment nanopass failed to pre-allocate parameter SSAs"
-                    printfn "[ERROR] Parameters: %A" params'
-                    []  // Return empty list - will cause compilation to fail with proper error
+                params' |> List.mapi (fun index (_, ty, id) ->
+                    let physical = mapTypeAt id ty ctx |> narrowType ctx.Coeffects ctx.Graph id
+                    SSA.Arg(index + (if closureLayoutOpt.IsSome then 1 else 0)), physical)
 
             // For closures: prepend env parameter (Arg 0 = raw pointer as index)
             // The call site passes the env as an index (raw pointer from the uniform pair).
@@ -203,13 +188,19 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // ═══ SSATypes SCOPING ═══
             // SSA values (V n, Arg n) are per-function — different functions reuse the same SSA names.
             // SSATypes is a global map, so we save/restore to isolate each function's type registrations.
-            let savedSSATypes = ctx.Accumulator.SSATypes
-            let savedNodeAssoc = ctx.Accumulator.NodeAssoc
+            let savedOperands = MLIRAccumulator.snapshotOperands ctx.Accumulator
+            let savedSSATypes = savedOperands.Types
             ctx.Accumulator.SSATypes <- Map.empty
 
             // Register parameter SSA types for this function scope
             for (paramSSA, mlirType) in funcParams do
                 MLIRAccumulator.registerSSAType paramSSA mlirType ctx.Accumulator
+
+            // Operand recall is scoped independently of pure SSA naming. Bind
+            // the actual formals here, shadowing any parent-scope occurrence;
+            // The complete operand scope is restored after the body is witnessed.
+            for ((_, _, paramId), (ssa, ty)) in List.zip params' mlirParams do
+                MLIRAccumulator.bindNode paramId ssa ty ctx.Accumulator
 
             // ═══ SAVE CAPTURE SOURCE SSAs BEFORE EXTRACTION REGISTRATION ═══
             // Capture extraction (below) registers inner-function SSAs in NodeAssoc via bindNode,
@@ -304,23 +295,31 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 let updated = ScopeContext.addOp op !bodyScopeRef
                 bodyScopeRef := updated
 
-            // FPGA: Per-function visited set for hw.module scope isolation.
-            let bodyVisited =
-                if ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA then
-                    let paramIds = params' |> List.fold (fun s (_, _, pid) -> Set.add pid s) Set.empty
-                    ref paramIds
-                else
-                    ctx.GlobalVisited
-
-            // Witness body nodes with child scope context
-            match SemanticGraph.tryGetNode bodyId ctx.Graph with
-            | Some bodyNode ->
-                match focusOn bodyId ctx.Zipper with
-                | Some bodyZipper ->
-                    let bodyCtx = { ctx with Zipper = bodyZipper; ScopeContext = bodyScopeRef; TraversalVisited = bodyVisited }
-                    visitAllNodes combinator bodyCtx bodyNode bodyVisited
-                | None -> ()
-            | None -> ()
+            // Descend from the actual lambda occurrence. Re-rooting at bodyId
+            // would discard the enclosing function and its Huet breadcrumbs.
+            let childPosition id =
+                ctx.Zipper.Focus.Children |> List.tryFindIndex ((=) id)
+                |> Option.bind (fun index -> down index ctx.Zipper)
+            match childPosition bodyId with
+            | Some bodyZipper ->
+                let paramIds = params' |> List.map (fun (_, _, id) -> id) |> Set.ofList
+                let inherited =
+                    if ctx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA then Set.empty
+                    else Set.difference !ctx.TraversalVisited (Set.union paramIds (structuralMembers bodyZipper))
+                let bodyVisited = ref inherited
+                let functionCtx = { ctx with ScopeContext = bodyScopeRef; TraversalVisited = bodyVisited }
+                for (_, _, paramId) in params' do
+                    match childPosition paramId with
+                    | Some parameter ->
+                        visitAllNodes combinator { functionCtx with Zipper = parameter } parameter.Focus bodyVisited
+                    | None ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some paramId) (Some "Lambda") (Some "Parameter occurrence")
+                            "Lambda parameter is absent from its structural occurrence") ctx.Accumulator
+                let bodyCtx = { functionCtx with Zipper = bodyZipper }
+                visitAllNodes combinator bodyCtx bodyZipper.Focus bodyVisited
+            | None ->
+                MLIRAccumulator.addError (Diagnostic.error (Some bodyId) (Some "Lambda") (Some "Body occurrence")
+                    "Lambda body is absent from its structural occurrence") ctx.Accumulator
 
             // Restore parent's SSATypes (isolate this function's registrations)
             ctx.Accumulator.SSATypes <- savedSSATypes
@@ -331,7 +330,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Get body result for return value
             let actualValueNode = findLastValueNode bodyId ctx.Graph
             let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
-            ctx.Accumulator.NodeAssoc <- savedNodeAssoc
+            MLIRAccumulator.restoreOperands savedOperands ctx.Accumulator
 
             // Determine return type from Lambda type signature
             // For flattened Lambdas with N params, unroll N levels of TFun. The result is held at
@@ -379,8 +378,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         let hint =
                             match SemanticGraph.tryGetNode actualValueNode ctx.Graph with
                             | Some bodyNode when bodyNode.Kind.ToString().StartsWith("Lambda") ->
-                                " [HINT: Body is a nested Lambda — Lambda produces TRVoid (emits FuncDef as side-effect). " +
-                                "Returning a function value (currying/thunk) is not yet implemented]"
+                                " [Nested callable return requires witnessed operands from its settled source carrier.]"
                             | _ -> ""
                         let err = Diagnostic.error (Some node.Id) (Some "Lambda") (Some (sprintf "%s return" funcName))
                                     (sprintf "%s — produced no result.%s" bodyNodeKindStr hint)
@@ -392,7 +390,11 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match closureLayoutOpt with
                 | Some _ -> "env" :: (params' |> List.map (fun (name, _, _) -> name))
                 | None -> params' |> List.map (fun (name, _, _) -> name)
-            match tryMatchWithDiagnostics (pFunctionDef (if declRootOpt = Some DeclRoot.EntryPoint then FuncVisibility.Public else FuncVisibility.Private) funcName funcParams (Some paramNames) returnType bodyOps returnSSA (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            let visibility = if declRootOpt = Some DeclRoot.EntryPoint then FuncVisibility.Public else FuncVisibility.Private
+            let definition =
+                pFunctionDef visibility funcName funcParams (Some paramNames) returnType bodyOps returnSSA
+                    (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)
+            match tryMatchWithDiagnostics definition ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
@@ -400,8 +402,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 if nativeVoid then
                     let entry = Clef.Compiler.PSGSaturation.SemanticGraph.FunctionPointers.nativeEntrySymbol node.Id
                     let arguments = funcParams |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
-                    let call = MLIROp.FuncOp (FuncOp.FuncCall (Some own.[0], funcName, arguments, returnType))
-                    let body = [call; MLIROp.FuncOp (FuncOp.Return (None, None))]
+                    let call = MLIROp.FuncOp (FuncOp.FuncCall ([{ SSA = own.[0]; Type = returnType }], funcName, arguments))
+                    let body = [call; MLIROp.FuncOp (FuncOp.Return [])]
                     match tryMatchWithDiagnostics (pFuncDef entry funcParams TVoid body FuncVisibility.Private) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok (thunk, _) -> ctx.RootScopeContext := ScopeContext.addOp thunk !ctx.RootScopeContext
                     | Result.Error message -> MLIRAccumulator.addError (Diagnostic.error (Some node.Id) (Some "Lambda") (Some "Native callback thunk") message) ctx.Accumulator
@@ -415,7 +417,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                     // func.constant must use actual function type; we cast to index for storage
                     let innerFuncParamTypes = funcParams |> List.map snd
                     let funcRefSSA = own.[0]
-                    let funcTy = TFunc (innerFuncParamTypes, returnType)
+                    let funcTy = TFunc (innerFuncParamTypes, [returnType])
                     let funcConstOp = MLIROp.FuncOp (FuncOp.FuncConstant (funcRefSSA, funcName, funcTy))
                     ctx.ScopeContext := ScopeContext.addOp funcConstOp !ctx.ScopeContext
                     // Cast function reference → index for storage in closure struct/pair

@@ -11,6 +11,7 @@ let rec private flatten ops =
         op ::
         (match op with
          | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _))
+         | MLIROp.NoUnwindFunction (FuncOp.FuncDef (_, _, _, body, _))
          | MLIROp.HWOp (HWOp.HWModule (_, _, _, body))
          | MLIROp.Block (_, body) | MLIROp.Region body -> flatten body
          | MLIROp.SCFOp (SCFOp.If (_, yes, no, _)) -> flatten (yes @ Option.defaultValue [] no)

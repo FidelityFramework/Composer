@@ -428,7 +428,7 @@ This is not incremental improvement - it's fixing a foundational blind spot that
 
 The nanopass architecture lays the foundation for evolving the Program Semantic Graph (PSG) into a full **Program Hypergraph (PHG)**. This evolution is not just nomenclature—it's the architectural insight that will enable Fidelity to produce efficient workflows for everything from LLVM-targeted CPUs to novel dataflow architectures.
 
-**Reference**: See the [Hyping Hypergraphs](../../SpeakEZ/hugo/content/blog/Hyping%20Hypergraphs.md) blog entry for the full vision of temporal hypergraphs and learning systems.
+**Reference**: See [Hyping Hypergraphs](../../clef-lang-site/hugo/content/docs/internals/pipeline/hyping-hypergraphs.md) for the vision of temporal hypergraphs and learning systems.
 
 ## Why Hypergraphs?
 
@@ -486,7 +486,7 @@ let hyperedge = {
 }
 ```
 
-The extern boundary row is where promotion stops being optional. A callback crossing makes one lifetime claim across its participants: the environment handed to C must be released exactly once, after the last invocation the C side will ever make. That claim is irreducibly joint, and pairwise edges assert strictly less: an edge from declaration to argument, or from registration to release, can each hold while the joint claim fails. Saturation preserves the distinction by construction, because a hyperedge fires only when all of its source nodes are elaborated; jointness survives elaboration exactly when the contract is carried as one hyperedge, and is severed the moment it is decomposed into binary edges. Carried this way, the boundary also closes the provable region of the computation graph: per the finiteness lemma in `Closure_Nanopass_Architecture.md` Section 4, the region is closed precisely when every crossing is a hyperedge with enumerated participants, a flat environment of known extent, and a single release site, and an unwitnessed cast is an open edge in its boundary.
+A callback crossing has a joint lifetime contract across registration, retained state, invocations, quiescence and release. Each conclusion must retain all participants and their roles; checking isolated pairs does not establish that joint conclusion. A native hyperedge expresses these dependencies directly, while a relation-node encoding can preserve the same information. Neither representation discharges the obligation merely by recording it. A finite flat environment supplies direct layout obligations; captured references, foreign behavior and exactly-once release require their own established premises. See the [closure settlement contract](Closure_Settlement_Contract.md) and closure specification §11.
 
 ## Targeting Multiple Architectures
 

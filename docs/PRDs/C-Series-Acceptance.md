@@ -268,6 +268,13 @@ As selective reuse enters a C-series slice, its acceptance includes these cases:
 | Recursive dependencies or a withdrawn premise | Re-establish the owning domains' admitted fixed points across cycles and joins; retract unsupported conclusions. An unchanged output value alone is insufficient. |
 | Work resumes after a newer edit or changed target/rule selection | Validate snapshot, occurrence/path, query and premise identities. Stale completion cannot publish into the current graph; zipper navigation alone does not establish freshness. |
 | Incremental result reaches the witness boundary | Compare its settled graph, readiness and located diagnostics with a fresh check of the same inputs, allowing valid identity renaming with retained correspondence. Then check realized artifact/behavior equivalence separately. |
+| Reachability or segmented-artifact reuse changes | Exercise supported live/dead transitions, last-root deletion and detached cycles. Revalidate segment interfaces and realization dependencies; retire stale symbols/objects and publish a compatible artifact/evidence manifest. |
+
+The [segmented MLIR/object/ELF direction](../Nanopass_Incremental_Contract_Direction.md#22-settled-regions-through-segmented-mlir-objects-and-elf)
+keeps dependency regions, Alex occurrence contexts and backend object boundaries
+distinct. A compact reachable-only diagnostic dump is a serialization view; it
+does not establish a reusable semantic region. Fresh-check equivalence supplements
+the independent specification, admission and native/artifact gates above.
 
 Use the C forms themselves as acceptance pressure: shadowed or shared callable
 occurrences, changed staged operands and captures, a recursive-group edit, changed
@@ -306,6 +313,13 @@ forms. They are distinct from already-settled normal lazy memoization or ordinar
 recursive function behavior.
 
 ## 6. Framework consumers and target boundaries
+
+The [functional surface showcases](../Functional_Surface_Showcases.md) connect
+these contracts to HelloWayland's pure frame plan, WrenHello's signal-based
+bridge facade, HelloDISCO's bounded model/view, and HelloArty's planned parallel
+continuation case. They supply application composition pressure alongside the
+enumerated PRD gates. Their UI, reactive, async and hardware extensions retain
+separate acceptance; richer source notation alone does not establish them.
 
 [BAREWire's intersection subset](../../../BAREWire/docs/12%20Intersection%20Subset.md)
 records accommodations of particular compiler builds. Current array/loop-based

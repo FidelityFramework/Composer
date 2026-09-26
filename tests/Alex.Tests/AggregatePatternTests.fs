@@ -53,8 +53,8 @@ let ``selected Option initialization writes owned bytes without a descriptor cop
         match matchAt (pWithUnitResult destination.Id (pBuildDUInitialize destination.Id view.Id name index input)) (focus graph destination) 64 operands with
         | Result.Ok ((ops, TRValue result), _) -> ops, result
         | other -> failwithf "Option initialization failed: %A" other
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef("initialize_option", [Arg 0, TMemRefStatic(4, TInt(IntWidth 8)); Arg 1, TInt(IntWidth 1)], result.Type,
-        views @ writes @ [MLIROp.FuncOp(FuncOp.Return(Some result.SSA, Some result.Type))], FuncVisibility.Public))
+    let definition = MLIROp.FuncOp(FuncOp.FuncDef("initialize_option", [Arg 0, TMemRefStatic(4, TInt(IntWidth 8)); Arg 1, TInt(IntWidth 1)], [result.Type],
+        views @ writes @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = result.SSA; Type = result.Type }]))], FuncVisibility.Public))
     let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "aggregate_component" [definition]
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
     Assert.Contains("memref.view", verified)

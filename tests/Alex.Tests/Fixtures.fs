@@ -97,9 +97,8 @@ let readModule fixture pointerBits =
     let operations, result, _ = readArray fixture pointerBits (recalledOperands fixture)
     match result with
     | TRValue value ->
-        let body = operations @ [MLIROp.FuncOp(FuncOp.Return(Some value.SSA, Some value.Type))]
+        let body = operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = value.SSA; Type = value.Type }]))]
         let definition = MLIROp.FuncOp(FuncOp.FuncDef(
-            "read_index", [Arg 0, TMemRef(TInt(IntWidth 1)); Arg 1, TInt(IntWidth 8)],
-            value.Type, body, FuncVisibility.Public))
+            "read_index", [Arg 0, TMemRef(TInt(IntWidth 1)); Arg 1, TInt(IntWidth 8)], [value.Type], body, FuncVisibility.Public))
         Alex.Dialects.Core.Serialize.moduleToString (Ok pointerBits) "index_component" [definition]
     | other -> failwithf "Array.get did not produce a value: %A" other

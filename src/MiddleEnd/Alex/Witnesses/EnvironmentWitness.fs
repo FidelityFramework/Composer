@@ -46,6 +46,10 @@ let private witness (ctx: WitnessContext) (node: SemanticNode) =
         match ctx.Graph.Codata.Value.EnvironmentLayouts |> Map.tryFind owner with
         | Some layout -> observe ctx node (pCreateEnvironment node.Id layout initializers)
         | None -> failure node "allocation layout" $"Environment {NodeId.value owner} has no settled allocation layout"
+    | SemanticKind.EnvironmentAllocate owner ->
+        match ctx.Graph.Codata.Value.EnvironmentLayouts |> Map.tryFind owner with
+        | Some layout -> observe ctx node (pAllocateEnvironment node.Id layout)
+        | None -> failure node "allocation layout" $"Environment {NodeId.value owner} has no settled allocation layout"
     | SemanticKind.ClosureValue(implementation, environment) ->
         match ctx.Graph.Codata.Value.KnownCallables |> Map.tryFind node.Id, layoutAt ctx environment with
         | Some callable, Some layout when callable.Implementation = implementation

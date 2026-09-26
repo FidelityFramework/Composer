@@ -66,13 +66,19 @@ module private Projection =
         | Some (MetadataValue.Type signature) -> signature
         | _ -> value.Type
 
-    let sourceDefinition graph kind =
-        match kind with
-        | SemanticKind.VarRef(_, Some declaration)
-        | SemanticKind.EnvironmentRead(_, declaration)
-        | SemanticKind.EnvironmentBorrow(_, declaration) ->
-            Some (Clef.Compiler.PSGSaturation.SemanticGraph.DirectCaptures.sourceDefinition graph declaration)
-        | _ -> None
+    let sourceDefinition graph =
+        let promoted = Clef.Compiler.PSGSaturation.SemanticGraph.ClosureEnvironments.trySourceDeclaration graph
+        fun (value: SemanticNode) ->
+            let declaration =
+                match promoted value.Id with
+                | Some declaration -> Some declaration
+                | None ->
+                    match value.Kind with
+                    | SemanticKind.VarRef(_, Some declaration)
+                    | SemanticKind.EnvironmentRead(_, declaration)
+                    | SemanticKind.EnvironmentBorrow(_, declaration) -> Some declaration
+                    | _ -> None
+            declaration |> Option.map (Clef.Compiler.PSGSaturation.SemanticGraph.DirectCaptures.sourceDefinition graph)
 
     let declarationName kind =
         match kind with
@@ -133,6 +139,7 @@ module private Projection =
                     Range = span value.Range; Premises = premises
                     SmtLib = query; QueryHash = query |> Encoding.UTF8.GetBytes |> hash
                 })
+        let sourceDefinition = sourceDefinition graph
         let hovers =
             graph.Nodes
             |> Map.toList
@@ -142,7 +149,7 @@ module private Projection =
                 | None, _ | _, SemanticKind.Obligation _ -> None
                 | Some range, _ ->
                     let definition =
-                        sourceDefinition graph value.Kind |> Option.bind (fun source -> nodes.TryFind source)
+                        sourceDefinition value |> Option.bind (fun source -> nodes.TryFind source)
                     let name =
                         match view.Name, value.Kind with
                         | None, (SemanticKind.EnvironmentRead _ | SemanticKind.EnvironmentBorrow _) ->

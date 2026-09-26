@@ -10,11 +10,14 @@
     <Compile Include="ZipperTests.fs" />
     <Compile Include="IndexPatternTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
+    <Compile Include="FunctionResultTests.fs" />
     <Compile Include="StringBoundaryTests.fs" />
     <Compile Include="UnitResultTests.fs" />
     <Compile Include="IndexSwitchTests.fs" />
     <Compile Include="ContinuationPatternTests.fs" />
     <Compile Include="EnvironmentPatternTests.fs" />
+    <Compile Include="CallableOperandTests.fs" />
+    <Compile Include="LambdaOccurrenceTests.fs" />
     <Compile Include="AggregatePatternTests.fs" />
     <Compile Include="ProgramValuePatternTests.fs" />
     <Compile Include="MutableClosureTests.fs" />

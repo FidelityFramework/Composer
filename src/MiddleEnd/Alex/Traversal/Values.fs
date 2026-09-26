@@ -27,6 +27,8 @@ let meetValue (consumer: NodeId) (i: int) : SSA = V (NodeId.value consumer, 1000
 let returnMeetValue (lambdaId: NodeId) : SSA = V (NodeId.value lambdaId, 1100)
 /// The zero a unit-typed function returns.
 let unitReturnValue (lambdaId: NodeId) : SSA = V (NodeId.value lambdaId, 1101)
+/// Code materialized alongside an occurrence's ordinary data/environment read.
+let callableCode (nodeId: NodeId) : SSA = V (NodeId.value nodeId, 1200)
 /// The k-th value of a closure's callee prologue (capture extraction and env reconstruction).
 let prologueValue (lambdaId: NodeId) (k: int) : SSA = V (NodeId.value lambdaId, 2000 + k)
 /// The fixed work lanes of a settled continuation initializer/copy slot.

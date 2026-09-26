@@ -74,7 +74,7 @@ let ``ordinary and saturated calls preserve resolved identity across equal local
             match output.Result with
             | TRValue _ -> ()
             | other -> failwithf "Call was not witnessed: %A" other
-            let targets = output.InlineOps |> List.choose (function MLIROp.FuncOp(FuncOp.FuncCall(_, target, _, _)) -> Some target | _ -> None)
+            let targets = output.InlineOps |> List.choose (function MLIROp.FuncOp(FuncOp.FuncCall(_, target, _)) -> Some target | _ -> None)
             Assert.Equal(definitionSymbol, Assert.Single targets)
             Assert.Equal(Some definitionSymbol, Alex.Patterns.HardwareModulePatterns.resolveStepFunctionName graph fn.Reference)
             Assert.Same(graph, ctx.Graph)

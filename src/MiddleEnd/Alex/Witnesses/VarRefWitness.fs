@@ -43,7 +43,8 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     // the scrutinee SSA by MatchWitness, not pre-assigned in coeffects.
                     match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
                     | Some (ssa, ty) ->
-                        { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+                        let (ops, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id ssa ty
+                        { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                     | None ->
                         // Function parameter binding — SSA is in coeffects
                         // Uses platform-aware mapping + per-node width narrowing from coeffects

@@ -23,6 +23,7 @@ open CLI.Commands.DoctorCommand
 type CompileArgs =
     | [<MainCommand; Unique>] Project of path: string
     | [<AltCommandLine("-o")>] Output of path: string
+    | Artifacts_Dir of path: string
     | [<AltCommandLine("-t")>] Target of target: string
     | [<AltCommandLine("-k")>] Keep_Intermediates
     | [<AltCommandLine("-v")>] Verbose
@@ -44,6 +45,7 @@ type CompileArgs =
             match this with
             | Project _ -> ".fidproj file or Clef source file to compile"
             | Output _ -> "Output executable path"
+            | Artifacts_Dir _ -> "Compilation artifact directory (default: project's targets); use a distinct directory per concurrent invocation"
             | Target _ -> "Target triple (default: host platform)"
             | Keep_Intermediates -> "Keep intermediate files (.mlir, .ll, .bc) for debugging"
             | Verbose -> "Enable verbose output"
@@ -99,6 +101,7 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
     let options : CompilationOptions = {
         ProjectPath = projectPath
         OutputPath = args.TryGetResult(Output)
+        ArtifactsDirectory = args.TryGetResult(Artifacts_Dir)
         TargetTriple = args.TryGetResult(Target)
         NativeLink = {
             Sysroot = args.TryGetResult(Sysroot)

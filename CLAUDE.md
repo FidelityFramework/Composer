@@ -41,7 +41,10 @@ limit for Patterns or Witnesses.
    Fix CCS/Baker when settlement is wrong; extend Elements/Patterns/Witnesses when
    the admitted settled form lacks physical expression. Do not create an alternate
    emitter to bypass either boundary.
-3. **NEVER create git commits** — that is the user's responsibility.
+3. Create commits or push only when the user authorizes a checkpoint. Verify the
+   coordinated change first and follow the requested commit scope and message
+   format. Preserve coupled work that has not passed its gate in an isolated
+   worktree; do not push a regression to obtain a checkpoint.
 
 ## Decision-Making Discipline
 
@@ -140,6 +143,7 @@ fact/proof transport and reconciliation of existing target paths remain planned.
 |---|---|
 | [Clef specification](../clef-lang-spec/README.md) | Language and representation authority. |
 | [Baker architecture](../clef/docs/fidelity/Baker_Saturation_Architecture.md) | Ingredients/Recipes, graph construction and saturation boundary. |
+| [Closure settlement contract](docs/Closure_Settlement_Contract.md) | Capture, invocation, residence and separate callable operand obligations across Baker and Alex. |
 | [CCS architecture](docs/CCS_Architecture.md) | Compiler service and graph facts. |
 | [Alex overview](docs/Alex_Architecture_Overview.md) | Context, traversal, physical expression and current evidence limits. |
 | [Thin Middle End](docs/Thin_Middle_End_Design.md) | Semantic/witness/backend boundary. |
@@ -182,19 +186,48 @@ cd tests/regression
 dotnet fsi Runner.fsx
 dotnet fsi Runner.fsx -- --verbose
 dotnet fsi Runner.fsx -- --sample 05_AddNumbers
+dotnet fsi Runner.fsx -- --jobs 4
 ```
 
-It builds the compiler and runs samples sequentially; `--parallel` is unsupported.
-Compiler changes require the owning graph, source-admission, Alex, proof and
-native gates as applicable. The regression runner must pass and binaries must
-execute correctly; a narrowed or empty selection cannot establish full coverage.
+The runner first builds its .NET `ProcessHost` privately with isolated
+`--artifacts-path`, then builds and snapshots the compiler before checking samples.
+`--jobs N` bounds independent compiler CLI jobs, then independent native jobs
+after every compilation finishes; the default is `1`. Each job has a host and
+command, and tools can launch children, so this is not an OS-process count.
+It does not parallelize graph construction or witnessing within one compiler
+process. Commands launch without a shell. On Linux, the host establishes a
+session and the runner terminates its process group through .NET P/Invoke,
+including when an exited parent's descendants retain output pipes. Command exit
+codes are preserved, and jobs without supplied input receive EOF.
+Each run has a unique root under `/tmp/composer-checks` by default (`--results`
+changes its parent), a compiler snapshot/hash manifest, the selected sample list,
+and per-ordinal job directories with binaries, separate logs and full `-k`
+artifacts. Results inside the compiler output are rejected to prevent recursive
+snapshot copying. Shared compiler builds still require coordination; the runner's
+cooperative build/copy lease does not serialize unrelated manual builds.
+For direct concurrent checks of the same project, supply distinct `-o` paths and
+`--artifacts-dir` roots. Native jobs still run in the sample directory; arbitrary
+application writes to shared files are not isolated. From the repository root,
+run `dotnet build tests/Infrastructure/ProcessHost/ProcessHost.fsproj` before
+running `dotnet fsi tests/regression/ParallelRunnerTests.fsx` for the .NET-only
+scheduler/process-isolation gates.
+Follow the [regression check policy](docs/Regression_Check_Policy.md): each step
+runs focused source/graph, proof, editor, Alex and native checks as appropriate
+to the changed semantics. Add neighboring controls when shared contracts or
+unexpected results warrant them. Run the full relevant suites at major
+integration gates and before whole C-xx closure, rather than every edit. Verify
+nonempty selections, keep the behavioral oracles intact, and retain commands,
+scope, failures and artifacts. A targeted pass establishes only that step; it
+cannot replace the full delivery gate or excuse a failed required case.
 Document-only work records document validation rather than inventing runtime
 results. The [Alex suite](tests/Alex.Tests/README.md) explicitly distinguishes
 component fixtures from source-language and native acceptance.
 
 ### Intermediate Artifacts
 
-With `-k`, inspect the sample's `targets/intermediates/` in pipeline order:
+With `-k`, inspect the job's `intermediates/` in the runner's printed artifact
+root. Direct CLI commands without `--artifacts-dir` retain the sample's
+`targets/intermediates/` location. Read artifacts in pipeline order:
 
 | Artifact | Stage |
 |---|---|

@@ -24,6 +24,41 @@ open Core.Types.Dialects         // TargetPlatform
 open Alex.CodeGeneration.TypeMapping
 open Alex.Patterns.MemoryPatterns // pRecallArgWithLoad (monadic TMemRef auto-load)
 open Alex.Patterns.StringPatterns // pStringEquality (structural = / <> on strings)
+module CallableOperands = Alex.Traversal.CallableOperands
+
+/// One admitted physical invocation. The callee is an already witnessed code
+/// operand or a settled declaration symbol; this never walks or emits its body.
+type CallableInvocation = Direct of string | Indirect of Val
+
+let private pInvoke invocation arguments results = parser {
+    match invocation with
+    | Direct symbol -> return! pFuncCallResults results symbol arguments
+    | Indirect code ->
+        do! ensure (code.Type = TFunc(List.map (fun (value: Val) -> value.Type) arguments,
+                                     List.map (fun (value: Val) -> value.Type) results))
+                "Callable invocation operands disagree with its witnessed physical signature"
+        return! pFuncCallIndirectResults results code.SSA arguments
+}
+
+/// A function-valued result keeps both operands through the ordinary func
+/// operation. Its source-owned carrier was projected at the current occurrence.
+let pCallableApplication nodeId invocation arguments shape = parser {
+    let code = { SSA = Alex.Traversal.Values.value nodeId 0; Type = CallableOperands.functionType shape }
+    let environment = CallableOperands.environmentType shape |> Option.map (fun ty ->
+        { SSA = Alex.Traversal.Values.value nodeId 1; Type = ty })
+    let! value =
+        match CallableOperands.create shape code environment with
+        | Result.Ok value -> preturn value
+        | Result.Error reason -> fail (Message reason)
+    let! operation = pInvoke invocation arguments (CallableOperands.values value)
+    return [operation], TRCallable value
+}
+
+let pIndirectApplication nodeId code arguments resultType = parser {
+    let value = { SSA = Alex.Traversal.Values.value nodeId 0; Type = resultType }
+    let! operation = pInvoke (Indirect code) arguments [value]
+    return [operation], TRValue value
+}
 
 // ═══════════════════════════════════════════════════════════
 // APPLICATION PATTERNS (Function Calls)
@@ -118,7 +153,7 @@ let pClosureCall (nodeId: NodeId) (closureSSA: SSA) (args: (SSA * MLIRType) list
         let funcCastOp = MLIROp.FuncOp (FuncOp.IndexToFunc (funcCastSSA, codePtrSSA, allArgTypes, retType))
 
         // call_indirect: env_ptr prepended to user args
-        let callOp = MLIROp.FuncOp (FuncOp.FuncCallIndirect (Some resultSSA, funcCastSSA, argVals, retType))
+        let callOp = MLIROp.FuncOp (FuncOp.FuncCallIndirect ([{ SSA = resultSSA; Type = retType }], funcCastSSA, argVals))
 
         let ops = [zeroOp; oneOp; codeLoadOp; envLoadOp; funcCastOp; callOp]
         return (ops, TRValue { SSA = resultSSA; Type = retType })

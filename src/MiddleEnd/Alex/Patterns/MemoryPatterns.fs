@@ -308,7 +308,7 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
 // ═══════════════════════════════════════════════════════════
 
 /// MemRef copy - bulk memory copy via memcpy library function
-let pMemCopy (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
+let pMemCopy (resultSSA: SSA) (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! state = getUserState
         let platformWordTy = state.Platform.PlatformWordType
@@ -317,7 +317,7 @@ let pMemCopy (destSSA: SSA) (srcSSA: SSA) (countSSA: SSA) : PSGParser<MLIROp lis
             { SSA = srcSSA; Type = platformWordTy }
             { SSA = countSSA; Type = platformWordTy }
         ]
-        let! memcpyCall = pFuncCall None "memcpy" args platformWordTy
+        let! memcpyCall = pFuncCall (Some resultSSA) "memcpy" args platformWordTy
         let! memcpyDecl = pFuncDecl "memcpy" [platformWordTy; platformWordTy; platformWordTy] platformWordTy FuncVisibility.Private
         return ([memcpyDecl; memcpyCall], TRVoid)
     }
@@ -621,6 +621,7 @@ let private physicalElementType (arch: Architecture) (elemTy: MLIRType) : MLIRTy
 ///   [7] = byteCount (count * elemSize)
 ///   [8] = srcPtr (srcBase + srcOffset)
 ///   [9] = dstPtr (dstBase + dstOffset)
+///   [10] = memcpy's required pointer result (unused by Array.blit)
 let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
@@ -628,7 +629,7 @@ let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
         do! ensure (argIds.Length >= 5) "Array.blit: Expected 5 args"
         let! node = getCurrentNode
         let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 10) $"pArrayBlit: Expected 10 SSAs, got {ssas.Length}"
+        do! ensure (ssas.Length >= 11) $"pArrayBlit: Expected 11 SSAs, got {ssas.Length}"
         let! (_, srcSSA, srcType) = pRecallArgWithLoad argIds.[0]
         let! (_, rawSrcIdx, rawSrcIdxTy) = pRecallArgWithLoad argIds.[1]
         let! (_, dstSSA, dstType) = pRecallArgWithLoad argIds.[2]
@@ -656,7 +657,7 @@ let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let byteCountOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[7], countSSA, ssas.[4], idxType))
         let srcPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[8], ssas.[2], ssas.[5], wordTy))
         let dstPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[9], ssas.[3], ssas.[6], wordTy))
-        let! (copyOps, _) = pMemCopy ssas.[9] ssas.[8] ssas.[7]
+        let! (copyOps, _) = pMemCopy ssas.[10] ssas.[9] ssas.[8] ssas.[7]
         let ops =
             srcIdxMeet @ dstIdxMeet @ countMeet @
             [srcBaseIdxOp; dstBaseIdxOp; srcBaseOp; dstBaseOp; elemSizeOp;

@@ -206,9 +206,8 @@ let private mlirOpt arguments (input: string) =
 let ``witnessed closure cell and snapshot verify and lower through standard MLIR`` (pointerBits: int) =
     let _, _, _, snapshot, _, outputs = stages pointerBits
     let operations = outputs |> List.collect _.InlineOps
-    let body = operations @ [MLIROp.FuncOp(FuncOp.Return(Some snapshot.SSA, Some snapshot.Type))]
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef("closure_snapshot", [Arg 0, carrier; Arg 1, carrier],
-                                               carrier, body, FuncVisibility.Public))
+    let body = operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = snapshot.SSA; Type = snapshot.Type }]))]
+    let definition = MLIROp.FuncOp(FuncOp.FuncDef("closure_snapshot", [Arg 0, carrier; Arg 1, carrier], [carrier], body, FuncVisibility.Public))
     let text = Alex.Dialects.Core.Serialize.moduleToString (Ok pointerBits) "mutable_closure_component" [definition]
     let verified = mlirOpt ["--verify-each"] text
     Assert.Contains("memref<1xmemref<2xindex>>", verified)

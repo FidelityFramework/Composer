@@ -7,6 +7,259 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## Callable settlement and coordinated verification — 2026-09-26
+
+**Intermediate implementation checkpoint under the C-series delivery contract.**
+This entry supersedes the source-settlement diagnosis in the earlier staged-Seq
+entry below. The actual 16h source now reaches settled graph construction without
+effective source errors. Its native acceptance remains the next integration
+gate, with its source and expected output preserved.
+
+Clef now shares exact callable-origin and formal/actual relationships across
+range, activation, environment and sequence analyses. Factory results retain
+caller-owned destinations, eager capture snapshots and the actual source and
+destination lifetime participants. Residence settlement validates the joint
+relationships, including unknown uses and retraction, rather than treating a
+finite capture list or an equal-sized frame as a lifetime proof. Stateless
+callables receive code declarations without an invented empty environment.
+Immutable operation aliases retain their polymorphic source declarations and
+specialize concrete uses through the existing monomorphization path.
+The editor gate also exposed source-name/definition loss during stateless code
+promotion. Each rewritten reference now retains its own source declaration in
+validated graph provenance, even when several aliases share one code binding.
+Editor projection consumes that relationship; native invocation still uses the
+promoted code target. The original hover/navigation assertions are preserved.
+
+Composer preserves actual Huet occurrence and scoped operand recall while
+adding typed callable operand composition and portable function operations with
+ordered multiple results. These foundations carry code and environment as
+distinct operands and validate the CCS-published carrier. Their component tests
+include real MLIR verification and LLVM lowering for 32-bit and 64-bit profiles.
+They do not reconstruct capture, layout, lifetime or source semantics in Alex.
+
+The coupled switch of the remaining witnesses to that callable convention is
+preserved on `codex/callable-transport-20260926` in the separate
+`Composer-callable-transport` worktree. Its integration must settle multiple
+sequence origins and mutable callable storage together through the existing
+Element/Pattern/Witness pipeline. The checkpoint retains the verified witness
+integration and its native controls. The [checkpoint policy](Regression_Check_Policy.md#checkpoint-cadence)
+requires this separation when a coherent cross-cutting change is ready before
+the next coupled feature gate; it does not waive that gate.
+
+The [closure settlement contract](Closure_Settlement_Contract.md), closure
+architecture documents and C-series criteria were reconciled against the Clef
+specification: immutable formation snapshots, mutable-cell sharing, public source
+signatures, actual native formals, environment-first invocation and caller-owned
+result destinations each retain their own authority. Baker owns elaboration and
+saturation; Alex observes those results through its zipper. Incremental work must
+retain the supporting and invalidated relationships as well as positive facts.
+
+Validation:
+
+| Gate | Result and limit |
+|---|---|
+| Full CCS test assembly | **1,058 passed**, including exact origin, result-destination, residence, alias-specialization and source-navigation regressions. |
+| Full Alex test assembly | **124 passed**, including actual Huet occurrence, typed callable operands and portable multiple-result verification/lowering. |
+| Full CCS.Editor default suite | Passed source signatures/definitions, unsaved edit/repair, stale snapshot rejection, capture/environment/sequence projections, and its actual cvc5 dispatch checks. |
+| .NET parallel-runner tests | Passed bounded overlap, phase barrier, ordered results, independent artifacts, streams/input, failure reporting and process cleanup including orphaned descendants. |
+| Actual 16h source settlement | Unchanged sample passed with no parse failures or effective source errors and 10,073 graph nodes. Native acceptance belongs to the coupled integration gate above. |
+| Four-worker native controls | **4/4 compiled and 4/4 executed**, with exact manifest output for 01, 11, 12 and 16a; no skipped entries. |
+
+The consumer assemblies were rebuilt with project references enabled after the
+shared graph union changed. An earlier stale editor assembly misread the new
+union case; its initial cast failure is retained in the investigation log. The
+subsequent source-navigation failure drove the provenance correction above.
+
+Reproduction from the Composer root:
+
+```bash
+dotnet test ../clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-restore --disable-build-servers -v:minimal
+dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-restore --disable-build-servers -v:minimal
+dotnet run --project tests/CCS.Editor.Tests/CCS.Editor.Tests.fsproj --no-restore --disable-build-servers
+dotnet fsi tests/regression/ParallelRunnerTests.fsx
+dotnet fsi tests/regression/Runner.fsx -- --sample 01_HelloWorldDirect --sample 11_Closures --sample 12_HigherOrderFunctions --sample 16a_SequenceOperations --jobs 4 --timeout 180
+```
+
+The native cohort retains full `-k` artifacts and uses an explicit 180-second
+per-job limit. It is a functional control gate; it does not establish the
+30-second default-timeout suite or full-manifest acceptance. Artifact formatting
+and the reachable-only serialization view retain their separate follow-on gate.
+The final run took 94.7 seconds; its compiler snapshot, hashes, per-job artifacts
+and results are under
+`/tmp/composer-checks/20260926T113957-878016bda9a844dc8b5d3e632f38a605/`,
+with console log `/tmp/composer-checkpoint-native-final.log`.
+
+Coordinated source input: Clef `f898c97e11c5a45da91899901bac29250a8d96a2` and
+the Composer commit containing this entry (parent `c81d16b760d7`). Companion
+revisions: Fidelity.Platform `d42c9988f7fd`, BAREWire `6e212487aef5`, and
+clef-lang-spec `280efcc551a4`. The separate spec/site/whitepaper documentation
+sweep remains in those repositories' working trees; these two authorized commits
+cover Clef and Composer. Local Markdown targets/anchors and whitespace were
+checked before committing.
+
+Final suite logs: `/tmp/clef-checkpoint-final-tests.log`,
+`/tmp/composer-checkpoint-alex-coordinated.log`,
+`/tmp/composer-checkpoint-editor-coordinated.log` and
+`/tmp/composer-checkpoint-runner.log`; actual 16h source admission is recorded in
+`/tmp/clef-checkpoint-16h-final.log`. The earlier entries remain dated
+investigation evidence; their failing runs and smaller suite counts are not this
+checkpoint's results.
+
+## Staged Seq contracts and bounded process checks — 2026-09-26
+
+**Bounded implementation checkpoint; C-01–C-07 remain In-Progress.** Core Seq
+operations now use Baker's existing recipe/fold-in path for stored partial
+applications and bare operation values. Supplied operands are snapshotted at
+their written formation frontiers; fold keeps independently typed state and
+payloads. Seq occurrences participate in the existing generic instantiation and
+immutable-alias specialization paths. The new source tests preserve dimensional
+types, effects, binding identity and located rejections. An unsupplied polymorphic
+`tryHead` alias retains its declaration scheme and has a concrete call-site
+instance; the source declaration is not forced monomorphic to satisfy a test.
+
+The full CCS suite exposed recipe creation for historical, unreachable partial
+call nodes retained by application flattening. Those obsolete Seq occurrences no
+longer create another deferred producer. The retained graph and owning
+reachability/sequence-ownership analyses remain intact; live staged frontiers
+still elaborate. The existing ownership tests were preserved.
+
+Alex lambda witnessing now descends from the actual occurrence and uses scoped
+formal operands and body visitation. Native controls exposed two integration
+defects in that change: a nested function rediscovered a globally emitted
+definition, and a recalled formal bypassed its settled read meet. The fixes
+distinguish definition-only dependencies from local closure construction and
+transcribe the existing read refinement. Shared-body, nested-definition and
+formal-read component tests exercise real witness output and MLIR verification.
+No capture, layout or source-operation reconstruction was added to Alex.
+
+The [regression runner](../tests/regression/README.md) now supports `--jobs N`.
+It builds a private .NET process host, builds Composer once under a cooperative
+build/copy lease, snapshots the compiler, and runs bounded compilation jobs
+followed by bounded native jobs. Each run and ordinal has separate artifacts,
+streams and status files; `--artifacts-dir` isolates direct CLI invocations too.
+Linux process-group cleanup covers a parent that exits while a descendant holds
+the pipes. Native stdin/exit/output contracts remain checked, all `-k` artifacts
+are retained, and failed checks keep the run red. This implements independent
+check concurrency; compiler-internal parallel saturation and serialization remain
+separate work.
+
+The timeout investigation used the unchanged baseline binary. Closures with
+`-k -T` reported **83.663 s** across timed phases, including **83.211 s** in the
+front end. Without `-k`, the same source/profile reported **6.829 s**. A .NET trace
+placed most sampled main-thread work in `emitPhaseIfEnabled` and F# reflective
+object formatting. These are individual observations, not a benchmark series.
+The runner's 30-second default bounds an example compilation, independently of
+the compiler's .NET build. Manifest limits were not increased. Full versus
+reachable-only serialization and bounded artifact formatting remain prospective
+optimizations; no graph pruning or reduced evidence was used to obtain a pass.
+
+Validation:
+
+| Gate | Result and limit |
+|---|---|
+| Full CCS test assembly | **1,023 passed**, including 17 staged-Seq cases and the unchanged sequence-ownership tests. |
+| Full Alex test assembly | **97 passed**, including three actual-occurrence/dependency/read-meet regressions. |
+| CCS.Editor `--sequence-applications` | Passed public signatures, source definitions, measured unsaved edit/repair and stale-read rejection. This targeted check does not claim a full LSP run. |
+| .NET parallel-runner tests | Passed worker bounds/overlap, ordered results, phase barrier, process streams/input, launch failures, nonzero exits, live-parent and orphan timeout cleanup, and directory/symlink isolation. |
+| Four-worker native control run | 01, 02, 11, 12 and 16a compiled and ran with exact expected output; 16h failed source admission, so the run returned failure. This diagnostic cohort used `--timeout 180`; it does not establish that the default timeout suite passes. |
+| Same-project concurrency | Two independent 16a entries compiled and ran together with separate artifacts and exact output, while the control runner was also active. Both runner invocations used private compiler snapshots. |
+| Final Baker-guard native replay | Two-worker 16a/16h run used their unchanged manifest limits: 16a passed compilation/execution; 16h retained 44 CCS8403 continuation/environment settlement errors and produced no accepted executable. |
+
+This is not completion of native stored-Seq support. Resume at 16h's exact
+parent/child frame identities, retained ordinary callable/environment formation,
+range/representation settlement and factory/consumer boundaries. Preserve its
+source and expected output. Existing original16, original13/original15,
+collection storage and canonical lazy gates remain open as recorded in the
+C-series contract; this checkpoint did not run the complete native manifest or
+new proof, circuit or device acceptance gates.
+
+The [incremental direction](Nanopass_Incremental_Contract_Direction.md#21-reachability-is-a-supported-conclusion)
+now makes reachability support/retraction explicit and distinguishes serialized
+views from semantic dependency regions. The proposed joint boundary judgments
+and segmented MLIR → objects → LLD/ELF path retain actual Huet context, semantic
+versus realization dependency ownership, content/configuration identities and
+compatible artifact/evidence publication. Their edit/retraction/interface tests
+are requirements, not implemented incremental-compilation claims.
+
+Coordinated inputs: Composer `c81d16b760d7` and clef `15a688a74948`, with the
+working-tree implementation/tests described above; Fidelity.Platform
+`d42c9988f7fd`, BAREWire `6e212487aef5`, clef-lang-spec `280efcc551a4`.
+No commits were created. Existing documentation and companion-repository work
+were preserved. Each native runner artifact root retains compiler hashes,
+manifest/selection/configuration and per-job output:
+
+- Four-worker controls: `/tmp/composer-checks/20260926T100405-14afa6823c774c5080ebaca1178115e8/`.
+- Concurrent duplicate project: `/tmp/composer-checks/20260926T100405-d2f60f536f89463fb1f18f840a009a8b/`.
+- Final Baker replay: `/tmp/composer-checks/20260926T101020-fe28051188724dc79d7dceafdf903a5e/`.
+- Source/editor/component logs: `/tmp/c-series-20260926-ccs-full.log`, `/tmp/c-series-20260926-editor-seq.log`, `/tmp/composer-parallel-alex-tests.log`.
+- Harness log: `/tmp/composer-parallel-runner-final-tests.log`.
+- Baseline timing/trace: `/tmp/c-series-20260926-11-timing.log`, `/tmp/c-series-20260926-11-no-k.log`, `/tmp/c-series-20260926-11-profile.nettrace`.
+
+Whitespace and local documentation links were checked. The earlier corpus-drift
+baseline remains the pre-existing specification diagnostic-code finding; no
+specification source was changed in this implementation checkpoint.
+
+## C-series nanopass boundaries and functional showcases — 2026-09-25
+
+**Documentation checkpoint; implementation statuses unchanged.** The shared
+[ownership boundary](PRDs/C-Series-Acceptance.md#11-baker-construction-alex-witnessing-and-backend-realization)
+now explicitly preserves Baker nanopass elaboration, fan-out/fold-in and
+saturation, and Alex's actual Huet occurrence with Element/Pattern/Witness
+composition into admitted portable MLIR. Zipper navigation laws do not establish
+dependency freshness or correct occurrence preservation through every production
+scope traversal. The acceptance criteria cover both distinctions.
+
+[Design-time continuation](PRDs/C-Series-Acceptance.md#42-scope-aware-design-time-nanopass-continuation)
+follows the existing incremental direction: affected semantic regions extend
+beyond lexical subtrees; crossing participants, alternative supports, cycles,
+retractions and stale completions retain their own obligations. Future selective
+reuse is compared with a fresh check before artifact/behavior acceptance. This
+does not freeze a new pass protocol or claim an incremental engine is implemented.
+
+FPGA guidance now explicitly retains target commitment in the backend. The
+planned Dynamatic handoff previously placed Handshake directly in Alex; it now
+receives portable MLIR plus correlated graph evidence and performs the conversion
+in the FPGA leg. Existing CIRCT-emitting hardware witnesses remain identified
+reconciliation work. Scheduling, buffering, component selection and HDL generation
+do not become middle-end algorithms. The eBPF overview likewise separates Alex
+witnessing from backend encoding/register allocation and final-host admission.
+
+The [functional showcase plan](Functional_Surface_Showcases.md) connects C-series
+delivery to HelloWayland frame planning, WrenHello's versioned signal facade,
+HelloDISCO's bounded model/view and the planned
+[Arty continuation case](fpga-targeting/08_functional_continuation_case_study.md).
+The Arty case distinguishes captured producer identity, suspension/join semantics,
+backpressure and reset from actual circuit overlap and FPGA artifact evidence.
+UI function/CE equivalence preserves cold activation, keyed payload updates and
+scope-owned disposal under Fidelity.UI's contracts; Ripple is ergonomic prior
+art. Async, threading, reactive, UI and target successors keep their own gates.
+
+Source/document inspection references:
+
+| Repository | Revision |
+|---|---|
+| Composer | `a2a02be` starting criteria; boundary/case additions recorded at `c81d16b` during this review |
+| clef / clef-lang-spec | `15a688a74948` / `280efcc551a4` |
+| BAREWire / Fidelity.Platform | `6e212487aef5` / `d42c9988f7fd` |
+| Fidelity.UI / Fable.Ripple | `a1c280bbc78f` / `8e4d31273ce6` |
+| HelloArty / HelloWayland | `e3c0b158de6b` / `adc4cf6bde11` |
+| WrenHello / HelloDISCO | `cd6f307cb8f0` / `94dddd49d237` plus existing HelloDISCO working-tree changes |
+
+HelloDISCO's uncommitted settings record, behavior projections and related
+project/tests were inspected and preserved. Their presence does not establish
+native or board acceptance of those changes. This checkpoint edits Composer
+documentation only; no application, compiler, fixture, image or device changes
+were made.
+
+Validation covers changed and incoming local links/anchors, architecture and
+showcase cross-review, and whitespace. The corpus drift gate retains its one
+pre-existing specification diagnostic-code finding at `error-handling.md:303`;
+the before/after logs are `/tmp/clef-c-series-boundary-drift-before.log` and
+`/tmp/clef-c-series-boundary-drift-after.log`. No compiler, native, UI, solver,
+circuit or board tests were run. Resume implementation with the fresh coordinated
+C baseline and unchanged 16h; the showcase slices supplement those gates as
+their actual prerequisites become available.
+
 ## C-series criteria and realization integrity — 2026-09-25
 
 **Documentation checkpoint; C-01 through C-07 remain In-Progress.** The

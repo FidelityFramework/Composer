@@ -38,7 +38,8 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
     let definedFunctions =
         let rec collectDefs (op: MLIROp) =
             match op with
-            | MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _)) -> [name]
+            | MLIROp.FuncOp (FuncOp.FuncDef (name, _, _, _, _))
+            | MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, _, _, _, _)) -> [name]
             | MLIROp.HWOp (HWOp.HWModule (name, _, _, _)) -> [name]
             | _ -> []
         operations |> List.collect collectDefs |> Set.ofList
@@ -47,7 +48,8 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
     let rec collectDecls (op: MLIROp) : (string * MLIROp) list =
         match op with
         | MLIROp.FuncOp (FuncOp.FuncDecl (name, _, _, _, _)) as decl -> [(name, decl)]
-        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectDecls
+        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _))
+        | MLIROp.NoUnwindFunction (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectDecls
         | MLIROp.HWOp (HWOp.HWModule (_, _, _, body)) -> body |> List.collect collectDecls
         | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->
             let t = thenOps |> List.collect collectDecls
@@ -69,10 +71,12 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
     let knownFunctions = Set.union definedFunctions declaredNames
 
     /// Recursively collect all function calls
-    let rec collectCalls (op: MLIROp) : string list =
+    let rec collectCalls (op: MLIROp) : (string * MLIRType list * MLIRType list) list =
         match op with
-        | MLIROp.FuncOp (FuncOp.FuncCall (_, name, _, _)) -> [name]
-        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectCalls
+        | MLIROp.FuncOp (FuncOp.FuncCall (results, name, arguments)) ->
+            [name, List.map (fun (value: Val) -> value.Type) arguments, List.map (fun (value: Val) -> value.Type) results]
+        | MLIROp.FuncOp (FuncOp.FuncDef (_, _, _, body, _))
+        | MLIROp.NoUnwindFunction (FuncOp.FuncDef (_, _, _, body, _)) -> body |> List.collect collectCalls
         | MLIROp.HWOp (HWOp.HWModule (_, _, _, body)) -> body |> List.collect collectCalls
         | MLIROp.SCFOp (SCFOp.If (_, thenOps, elseOps, _)) ->
             let t = thenOps |> List.collect collectCalls
@@ -87,13 +91,37 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
         | MLIROp.Region ops -> ops |> List.collect collectCalls
         | _ -> []
 
-    let calledNames = operations |> List.collect collectCalls |> Set.ofList
+    let calls = operations |> List.collect collectCalls
+    let calledNames = calls |> List.map (fun (name, _, _) -> name) |> Set.ofList
 
     /// Hard error: any call to a function with no definition or declaration
     let undefinedCalls = Set.difference calledNames knownFunctions
     if not (Set.isEmpty undefinedCalls) then
         let names = undefinedCalls |> String.concat ", "
         failwithf "[Alex] ERROR: Calls to undefined functions: %s. All called functions must have a definition or an explicit declaration." names
+
+    // Relocation cannot silently retain only the first of conflicting result
+    // signatures. Compare the actual typed operation lists, including results.
+    let signatures =
+        let definitions = operations |> List.choose (function
+            | MLIROp.FuncOp (FuncOp.FuncDef(name, arguments, results, _, _))
+            | MLIROp.NoUnwindFunction (FuncOp.FuncDef(name, arguments, results, _, _)) ->
+                Some(name, (List.map snd arguments, results))
+            | _ -> None)
+        let declarations = allDecls |> List.choose (function
+            | name, MLIROp.FuncOp(FuncOp.FuncDecl(_, arguments, results, _, _)) -> Some(name, (arguments, results))
+            | _ -> None)
+        definitions @ declarations |> List.groupBy fst |> List.map (fun (name, rows) ->
+            let alternatives = rows |> List.map snd |> List.distinct
+            match alternatives with
+            | [signature] -> name, signature
+            | _ -> failwithf "[Alex] ERROR: Conflicting function signatures for '%s'." name)
+        |> Map.ofList
+    for name, arguments, results in calls do
+        match signatures.TryFind name with
+        | Some(expectedArguments, expectedResults) when arguments <> expectedArguments || results <> expectedResults ->
+            failwithf "[Alex] ERROR: Call signature for '%s' differs from its declaration or definition (arguments or ordered results)." name
+        | _ -> ()
 
     /// Deduplicate declarations (patterns may emit the same decl multiple times)
     let uniqueDecls =
@@ -107,6 +135,8 @@ let declarationCollectionPass (operations: MLIROp list) : MLIROp list =
         | MLIROp.FuncOp (FuncOp.FuncDecl _) -> None
         | MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body, vis)) ->
             Some (MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body |> List.choose stripDecls, vis)))
+        | MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, args, results, body, vis)) ->
+            Some (MLIROp.NoUnwindFunction (FuncOp.FuncDef (name, args, results, body |> List.choose stripDecls, vis)))
         | MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body)) ->
             Some (MLIROp.HWOp (HWOp.HWModule (name, ins, outs, body |> List.choose stripDecls)))
         | MLIROp.SCFOp (SCFOp.If (cond, thenOps, elseOps, result)) ->

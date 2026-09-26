@@ -1,6 +1,6 @@
 # Partial Application Closure Reification — Research Spike
 
-> **Status**: Research spike. Documents the gap between curry flattening detection and escaping partial application emission.
+> **Historical research spike, superseded as implementation guidance.** The current [closure settlement contract](Closure_Settlement_Contract.md), [architecture](Closure_Nanopass_Architecture.md), and C-01 §14 govern construction in Baker and passive Alex witnessing. The dated observations and alternatives below record the investigation; they do not authorize thunk construction in Alex, packed pairs, or replay of supplied operands. All required partial-application forms are C-series delivery obligations.
 >
 > **Context**: Sample 11 closures pass for all cases except nested closures (`makeScaledAdder`), which requires partial application results to be reified as closure values.
 
@@ -70,7 +70,7 @@ All detection is correct. The `PartialApplicationInfo` knows:
 - **BindingWitness**: Partial app bindings emit `TRVoid`
 - **VarRefWitness**: References to partial app bindings emit `TRVoid`
 
-### 3.3 Closure Infrastructure (Complete for Regular Closures)
+### 3.3 Closure Infrastructure (historical assessment)
 
 ClosurePatterns provides:
 - `pFlatClosure`: Build env buffer + uniform pair from captures

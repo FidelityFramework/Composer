@@ -62,9 +62,11 @@ acceptance case, not behavior inferred from an FPGA register's reset pin.
 
 Use an independent integer reference for the existing triangle/smoothstep
 formula, preserving its division order. With the current floor 0 and ceiling
-256, proposed raw-brightness vectors include phase 0: `[0; 255; 0; 0]`, and phase
-128: `[128; 126; 0; 0]`. These are reference expectations, not recorded executable
-results. Apply the captured color/master policy at the declared frame boundary.
+256, proposed smoothed-brightness vectors include phase 0: `[0; 255; 0; 0]`, and
+phase 128: `[128; 126; 0; 0]`. Phase here is the captured next-phase value supplied
+to the transform, before PWM and color/master policy. These are reference
+expectations, not recorded executable results. Apply the captured color/master
+policy at the declared frame boundary.
 
 Run contrasting completion schedules for the same two captured requests: lane 0
 first, lane 1 first, simultaneous delivery, and a second request whose arithmetic

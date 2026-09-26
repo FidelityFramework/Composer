@@ -29,6 +29,9 @@ Element/Pattern/Witness composition; FPGA realization mechanisms remain in the
 backend. [Design-time continuation criteria](C-Series-Acceptance.md#42-scope-aware-design-time-nanopass-continuation)
 keep C work aligned with scope-aware incremental nanopasses without claiming
 that selective reuse is already implemented.
+The [functional showcase plan](../Functional_Surface_Showcases.md) connects the
+language gates to HelloWayland, WrenHello, HelloDISCO and a bounded HelloArty
+continuation experiment, with additional UI/reactive/target dependencies explicit.
 
 ---
 

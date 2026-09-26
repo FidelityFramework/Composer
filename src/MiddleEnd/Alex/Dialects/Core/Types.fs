@@ -40,7 +40,7 @@ type StructBytes = { Offsets: int list; Size: int; Align: int }
 type MLIRType =
     | TInt of IntWidth
     | TFloat of FloatWidth
-    | TFunc of MLIRType list * MLIRType     // Function type (args, return)
+    | TFunc of MLIRType list * MLIRType list // Code value's function type (args, results); environment is separate
     | TMemRef of MLIRType                   // MemRef type (dynamic 1D)
     | TMemRefStatic of int * MLIRType       // Static-sized MemRef type (1D with known size)
     | TMemRefScalar of MLIRType             // Scalar MemRef type (0D)
@@ -92,7 +92,7 @@ let declaredWordWidth (arch: Architecture) : IntWidth =
     | Error message -> failwith message
 
 /// The declared Pointer width in bytes: the size of an index, and the unit of a memref
-/// descriptor (five words) and a closure pair (two words).
+/// descriptor (five words). Function code values have no implicit data-storage layout.
 let declaredPointerBytes (arch: Architecture) : int =
     match arch.Pointer with
     | Ok bits -> (bits + 7) / 8
@@ -100,8 +100,8 @@ let declaredPointerBytes (arch: Architecture) : int =
 
 /// The size in bytes of a value as it is stored: a read, never a computation (§8.3, one size
 /// model). A scalar is the bytes of its selected width; every pointer-sized type (an index; a
-/// rank-1 memref descriptor, {allocPtr, alignPtr, offset, size, stride}, five words; a closure
-/// pair, two words) is the declared Pointer width times its words, and `pointer` is `Error`
+/// rank-1 memref descriptor, {allocPtr, alignPtr, offset, size, stride}, five words)
+/// is the declared Pointer width times its words, and `pointer` is `Error`
 /// where no declaration is in hand (serialization), so that a pointer-sized value reaching such a
 /// path is a loud defect and never a silent eight bytes; a struct is its settled size, read from
 /// the layout CCS settled at saturation, and a struct with none (fabric, an opaque field) is a
@@ -115,7 +115,7 @@ let rec mlirTypeSizeWith (pointer: Result<int, string>) (ty: MLIRType) : int =
     | TInt (IntWidth 0) -> failwith "mlirTypeSize: an integer whose width the node's range was to give reached a size read unnarrowed"
     | TInt w -> intWidthBytes w
     | TFloat F32 -> 4 | TFloat F64 -> 8
-    | TFunc _ -> 2 * pointerBytes ()
+    | TFunc _ -> failwith "mlirTypeSize: a function code SSA has no admitted data-storage layout; settle callable storage before sizing it"
     | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 5 * pointerBytes ()
     | TVector (_, elemTy) -> mlirTypeSizeWith pointer elemTy
     | TIndex -> pointerBytes ()
@@ -397,18 +397,18 @@ and ByvalParam = { ParamIndex: int; SizeBytes: int; AlignBytes: int }
 /// Function dialect operations
 and FuncOp =
     // Function definition/declaration
-    | FuncDef of string * (SSA * MLIRType) list * MLIRType * MLIROp list * FuncVisibility  // name, args, retType, body, visibility
-    | FuncDecl of string * MLIRType list * MLIRType * FuncVisibility * ByvalParam list     // name, paramTypes, retType, visibility, byvalParams (external decl)
+    | FuncDef of string * (SSA * MLIRType) list * MLIRType list * MLIROp list * FuncVisibility  // name, args, resultTypes, body, visibility
+    | FuncDecl of string * MLIRType list * MLIRType list * FuncVisibility * ByvalParam list     // name, paramTypes, resultTypes, visibility, byvalParams (external decl)
     // Function calls
-    | FuncCall of SSA option * string * Val list * MLIRType                                // result, func, args, retType
-    | FuncCallIndirect of SSA option * SSA * Val list * MLIRType                           // result, callee, args, retType
+    | FuncCall of Val list * string * Val list                                             // results, func, args
+    | FuncCallIndirect of Val list * SSA * Val list                                        // results, callee, args
     | FuncConstant of SSA * string * MLIRType                                              // result, funcName, funcType
     // Cast index → function type for call_indirect (unrealized_conversion_cast)
     | IndexToFunc of SSA * SSA * MLIRType list * MLIRType                                 // result, sourceIndex, argTypes, retType
-    // Cast function type → index for closure storage (unrealized_conversion_cast)
+    // Explicit foreign function-address boundary, not canonical closure storage
     | FuncToIndex of SSA * SSA * MLIRType list * MLIRType                                 // result, sourceFunc, argTypes, retType
     // Return
-    | Return of SSA option * MLIRType option                                               // value, type
+    | Return of Val list                                                                  // ordered typed results
 
 /// CIRCT Hardware Construction Dialect (structural, module-level)
 /// Maps to hw dialect — hardware modules, instances, and ports for FPGA targets

@@ -19,44 +19,84 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 // FUNCTION DEFINITION
 // ═══════════════════════════════════════════════════════════
 
-let pFuncDef (name: string) (args: (SSA * MLIRType) list) (retTy: MLIRType)
+let private scalarResultTypes = function TVoid -> [] | result -> [result]
+
+let private pResultTypes (results: MLIRType list) =
+    ensure (not (List.contains TVoid results)) "Function result lists use [] for no result; TVoid is not a value type"
+
+let private pScalarResult (result: SSA option) (retTy: MLIRType) : PSGParser<Val list> =
+    parser {
+        match result, retTy with
+        | None, TVoid -> return []
+        | Some _, TVoid -> return! fail (Message "A void function call cannot define an SSA result")
+        | Some ssa, ty -> return [{ SSA = ssa; Type = ty }]
+        | None, _ -> return! fail (Message "A nonvoid function call requires its typed SSA result, even when unused")
+    }
+
+let pFuncDefResults (name: string) (args: (SSA * MLIRType) list) (resultTypes: MLIRType list)
                  (body: MLIROp list) (visibility: FuncVisibility) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.FuncDef (name, args, retTy, body, visibility))
+        do! pResultTypes resultTypes
+        return MLIROp.FuncOp (FuncOp.FuncDef (name, args, resultTypes, body, visibility))
     }
+
+let pFuncDef name args retTy body visibility =
+    pFuncDefResults name args (scalarResultTypes retTy) body visibility
 
 // ═══════════════════════════════════════════════════════════
 // FUNCTION DECLARATION (external)
 // ═══════════════════════════════════════════════════════════
 
-let pFuncDecl (name: string) (argTypes: MLIRType list) (retTy: MLIRType)
+let pFuncDeclResults (name: string) (argTypes: MLIRType list) (resultTypes: MLIRType list)
                   (visibility: FuncVisibility) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, visibility, []))
+        do! pResultTypes resultTypes
+        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, resultTypes, visibility, []))
     }
 
-let pFuncDeclByval (name: string) (argTypes: MLIRType list) (retTy: MLIRType)
+let pFuncDecl name argTypes retTy visibility =
+    pFuncDeclResults name argTypes (scalarResultTypes retTy) visibility
+
+let pFuncDeclByvalResults (name: string) (argTypes: MLIRType list) (resultTypes: MLIRType list)
                        (visibility: FuncVisibility) (byvalParams: ByvalParam list) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, retTy, visibility, byvalParams))
+        do! pResultTypes resultTypes
+        return MLIROp.FuncOp (FuncOp.FuncDecl (name, argTypes, resultTypes, visibility, byvalParams))
     }
+
+let pFuncDeclByval name argTypes retTy visibility byvalParams =
+    pFuncDeclByvalResults name argTypes (scalarResultTypes retTy) visibility byvalParams
 
 // ═══════════════════════════════════════════════════════════
 // DIRECT CALL
 // ═══════════════════════════════════════════════════════════
 
-let pFuncCall (result: SSA option) (func: string) (args: Val list) (retTy: MLIRType) : PSGParser<MLIROp> =
+let pFuncCallResults (results: Val list) (func: string) (args: Val list) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.FuncCall (result, func, args, retTy))
+        do! pResultTypes (List.map (fun (value: Val) -> value.Type) results)
+        return MLIROp.FuncOp (FuncOp.FuncCall (results, func, args))
+    }
+
+let pFuncCall result func args retTy =
+    parser {
+        let! results = pScalarResult result retTy
+        return! pFuncCallResults results func args
     }
 
 // ═══════════════════════════════════════════════════════════
 // INDIRECT CALL
 // ═══════════════════════════════════════════════════════════
 
-let pFuncCallIndirect (result: SSA option) (callee: SSA) (args: Val list) (retTy: MLIRType) : PSGParser<MLIROp> =
+let pFuncCallIndirectResults (results: Val list) (callee: SSA) (args: Val list) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.FuncCallIndirect (result, callee, args, retTy))
+        do! pResultTypes (List.map (fun (value: Val) -> value.Type) results)
+        return MLIROp.FuncOp (FuncOp.FuncCallIndirect (results, callee, args))
+    }
+
+let pFuncCallIndirect result callee args retTy =
+    parser {
+        let! results = pScalarResult result retTy
+        return! pFuncCallIndirectResults results callee args
     }
 
 // ═══════════════════════════════════════════════════════════
@@ -72,7 +112,16 @@ let pFuncConstant (result: SSA) (funcName: string) (funcTy: MLIRType) : PSGParse
 // RETURN
 // ═══════════════════════════════════════════════════════════
 
+let pFuncReturnResults (results: Val list) : PSGParser<MLIROp> =
+    parser {
+        do! pResultTypes (List.map (fun (value: Val) -> value.Type) results)
+        return MLIROp.FuncOp (FuncOp.Return results)
+    }
+
 let pFuncReturn (valueOpt: SSA option) (tyOpt: MLIRType option) : PSGParser<MLIROp> =
     parser {
-        return MLIROp.FuncOp (FuncOp.Return (valueOpt, tyOpt))
+        match valueOpt, tyOpt with
+        | None, None | None, Some TVoid -> return! pFuncReturnResults []
+        | Some value, Some ty when ty <> TVoid -> return! pFuncReturnResults [{ SSA = value; Type = ty }]
+        | _ -> return! fail (Message "Function return requires one type per value; a void return has neither")
     }

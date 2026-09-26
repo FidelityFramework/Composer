@@ -37,7 +37,7 @@ let pRecallEnvironment source (layout: EnvironmentLayout) = parser {
     return [], TRValue { SSA = value; Type = expected }
 }
 
-let pCreateEnvironment nodeId (layout: EnvironmentLayout) initializers = parser {
+let pAllocateEnvironment nodeId (layout: EnvironmentLayout) = parser {
     let! state = getUserState
     let! ty = pEnvironmentType layout
     let ssa = Values.value nodeId 0
@@ -54,6 +54,20 @@ let pCreateEnvironment nodeId (layout: EnvironmentLayout) initializers = parser 
             return [allocation]
           }
         | _ -> fail (Message $"Environment {NodeId.value nodeId} requires an admitted allocation residence")
+    return allocations, TRValue { SSA = ssa; Type = ty }
+}
+
+let pCreateEnvironment nodeId (layout: EnvironmentLayout) initializers = parser {
+    let! state = getUserState
+    let! ty = pEnvironmentType layout
+    let! allocations, result =
+        match state.Graph.Codata.Value.EnvironmentDestinations |> Map.tryFind nodeId with
+        | Some destination -> pRecallEnvironment destination layout
+        | None -> pAllocateEnvironment nodeId layout
+    let! ssa =
+        match result with
+        | TRValue value when value.Type = ty -> preturn value.SSA
+        | _ -> fail (Message $"Environment {NodeId.value nodeId} destination has no settled carrier")
     let! stores = pInitializeEnvironmentSlots nodeId ssa ty layout.Bytes layout.Slots initializers
-    return allocations @ stores, TRValue { SSA = ssa; Type = ty }
+    return allocations @ stores, result
 }

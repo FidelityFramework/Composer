@@ -100,8 +100,8 @@ let ``unit wrapper rejects a body that already returns a value`` () =
 let ``effectful unit conditional verifies and lowers through standard MLIR`` () =
     let operations, result = conditionalResult ()
     let parameters = [Arg 0, TInt(IntWidth 1); Arg 1, cellType; Arg 2, unitType; Arg 3, unitType; Arg 4, TIndex]
-    let body = operations @ [MLIROp.FuncOp(FuncOp.Return(Some result.SSA, Some result.Type))]
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef("unit_effects", parameters, result.Type, body, FuncVisibility.Public))
+    let body = operations @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = result.SSA; Type = result.Type }]))]
+    let definition = MLIROp.FuncOp(FuncOp.FuncDef("unit_effects", parameters, [result.Type], body, FuncVisibility.Public))
     let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "unit_component" [definition]
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] text
     Assert.Contains("scf.if", verified)

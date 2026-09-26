@@ -181,11 +181,11 @@ let pMappedCall : PSGParser<MLIROp list * TransferResult> = parser {
         state.Graph.Nodes.[binding].Metadata |> Map.tryFind "FidelityExtern.Library"
         |> Option.exists (function MetadataValue.String library -> isLinkedExtern state.Platform library | _ -> false)
     do! ensure (linked mapping.AcquireBinding && linked mapping.ReleaseBinding) "Mapped acquisition and release must name explicitly linked native libraries"
-    let acquireDecl = f (FuncOp.FuncDecl (acquireName, List.map (fun (v:Val) -> v.Type) acquireArgs, wordTy, FuncVisibility.Private, []))
-    let releaseDecl = f (FuncOp.FuncDecl (releaseName, List.map (fun (v:Val) -> v.Type) releaseArgs, TVoid, FuncVisibility.Private, []))
+    let acquireDecl = f (FuncOp.FuncDecl (acquireName, List.map (fun (v:Val) -> v.Type) acquireArgs, [wordTy], FuncVisibility.Private, []))
+    let releaseDecl = f (FuncOp.FuncDecl (releaseName, List.map (fun (v:Val) -> v.Type) releaseArgs, [], FuncVisibility.Private, []))
     let raw, acquired = fresh (), fresh ()
-    let acquire = f (FuncOp.FuncCall (Some raw, acquireName, acquireArgs, wordTy))
-    let release () = f (FuncOp.FuncCall (None, releaseName, releaseArgs, TVoid))
+    let acquire = f (FuncOp.FuncCall ([{ SSA = raw; Type = wordTy }], acquireName, acquireArgs))
+    let release () = f (FuncOp.FuncCall ([], releaseName, releaseArgs))
     let shapeOps = ResizeArray<MLIROp>()
     let wordValue = function
         | Input name -> nativeInputs.[name], true
@@ -241,7 +241,7 @@ let pMappedCall : PSGParser<MLIROp list * TransferResult> = parser {
                        m (MemRefOp.Load (code, callback, [zeroIndex], TIndex, callbackTy))
                        m (MemRefOp.Load (environment, callback, [oneIndex], TIndex, callbackTy))
                        f (FuncOp.IndexToFunc (functionPointer, code, [TIndex; viewTy], resultTy))
-                       f (FuncOp.FuncCallIndirect (Some callbackResult, functionPointer, [{ SSA = environment; Type = TIndex }; { SSA = view; Type = viewTy }], resultTy))]
+                       f (FuncOp.FuncCallIndirect ([{ SSA = callbackResult; Type = resultTy }], functionPointer, [{ SSA = environment; Type = TIndex }; { SSA = view; Type = viewTy }]))]
     let validResult, acquiredResult = fresh (), fresh ()
     let baseLimit, addressValid, addressResult = fresh (), fresh (), fresh ()
     // The extent product is used only after its division guard has established

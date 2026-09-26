@@ -41,9 +41,9 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
     match ty with
     | TInt width -> intWidthToString width
     | TFloat width -> floatWidthToString width
-    | TFunc (paramTypes, retType) ->
+    | TFunc (paramTypes, resultTypes) ->
         let paramStrs = paramTypes |> List.map (typeToString pointer) |> String.concat ", "
-        sprintf "(%s) -> %s" paramStrs (typeToString pointer retType)
+        sprintf "(%s) -> %s" paramStrs (resultTypesToString pointer resultTypes)
     | TMemRef elemTy ->
         sprintf "memref<?x%s>" (typeToString pointer elemTy)
     | TMemRefStatic (size, elemTy) ->
@@ -73,6 +73,15 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
         else "i32"
     | TError msg -> sprintf "<<ERROR: %s>>" msg
 
+/// Function results are a list. A sole function-typed result still needs the
+/// enclosing result-list parentheses so its own arrow is unambiguous.
+and resultTypesToString (pointer: Result<int, string>) (results: MLIRType list) : string =
+    if List.contains TVoid results then
+        failwith "Function result lists use [] for no result; TVoid is not a value type"
+    match results with
+    | [result] when (match result with TFunc _ -> false | _ -> true) -> typeToString pointer result
+    | _ -> results |> List.map (typeToString pointer) |> String.concat ", " |> sprintf "(%s)"
+
 /// FPGA-aware type serialization: TStruct → !hw.struct<...>, all others → typeToString pointer
 /// Used by comb.* and other CIRCT ops that carry struct types on FPGA.
 let rec hwTypeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
@@ -95,6 +104,11 @@ let ssaToString (ssa: SSA) : string =
 /// Convert Val (SSA + type) to typed SSA value string
 let valToString (pointer: Result<int, string>) (v: Val) : string =
     sprintf "%s : %s" (ssaToString v.SSA) (typeToString pointer v.Type)
+
+let private resultAssignment (results: Val list) =
+    match results with
+    | [] -> ""
+    | _ -> (results |> List.map (fun value -> ssaToString value.SSA) |> String.concat ", ") + " = "
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OPERATION SERIALIZATION
@@ -553,19 +567,19 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             (ssaToString value) (ssaToString ptr) (bits / 8) bits
     | MLIROp.ArithOp aop -> arithOpToString pointer aop
     | MLIROp.MemRefOp mop -> memrefOpToString pointer mop
-    | MLIROp.NoUnwindFunction (FuncDef (name, args, retTy, body, _)) ->
+    | MLIROp.NoUnwindFunction (FuncDef (name, args, resultTypes, body, _)) ->
         let argsStr = args |> List.map (fun (ssa, ty) -> sprintf "%s: %s" (ssaToString ssa) (typeToString pointer ty)) |> String.concat ", "
         let bodyStr = body |> List.map (opToString pointer) |> String.concat "\n    "
         sprintf "func.func @%s(%s) -> %s attributes {passthrough = [\"nounwind\"]} {\n    %s\n}"
-            (symbolName name) argsStr (typeToString pointer retTy) bodyStr
+            (symbolName name) argsStr (resultTypesToString pointer resultTypes) bodyStr
     | MLIROp.NoUnwindFunction _ -> failwith "NoUnwindFunction requires a function definition"
     | MLIROp.FuncOp fop ->
         match fop with
-        | FuncDef (name, args, retTy, body, _visibility) ->
+        | FuncDef (name, args, resultTypes, body, _visibility) ->
             let argsStr = args |> List.map (fun (ssa, ty) -> sprintf "%s: %s" (ssaToString ssa) (typeToString pointer ty)) |> String.concat ", "
             let bodyStr = body |> List.map (opToString pointer) |> String.concat "\n    "
-            sprintf "func.func @%s(%s) -> %s {\n    %s\n}" (symbolName name) argsStr (typeToString pointer retTy) bodyStr
-        | FuncDecl (name, paramTypes, retTy, _visibility, byvalParams) ->
+            sprintf "func.func @%s(%s) -> %s {\n    %s\n}" (symbolName name) argsStr (resultTypesToString pointer resultTypes) bodyStr
+        | FuncDecl (name, paramTypes, resultTypes, _visibility, byvalParams) ->
             let paramsStr = paramTypes |> List.map (typeToString pointer) |> String.concat ", "
             let attrsStr =
                 match byvalParams with
@@ -575,36 +589,34 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
                     // Format: "idx:size:align,idx:size:align,..."
                     let bvStr = bvs |> List.map (fun bv -> sprintf "%d:%d:%d" bv.ParamIndex bv.SizeBytes bv.AlignBytes) |> String.concat ","
                     sprintf " attributes {ffi.byval = \"%s\"}" bvStr
-            sprintf "func.func private @%s(%s) -> %s%s" (symbolName name) paramsStr (typeToString pointer retTy) attrsStr
-        | FuncCall (resultOpt, funcName, args, retTy) ->
+            sprintf "func.func private @%s(%s) -> %s%s" (symbolName name) paramsStr (resultTypesToString pointer resultTypes) attrsStr
+        | FuncCall (results, funcName, args) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString pointer v.Type) |> String.concat ", "
-            match resultOpt with
-            | Some result -> sprintf "%s = func.call @%s(%s) : (%s) -> %s" (ssaToString result) (symbolName funcName) argSSAs argTypes (typeToString pointer retTy)
-            | None -> sprintf "func.call @%s(%s) : (%s) -> %s" (symbolName funcName) argSSAs argTypes (typeToString pointer retTy)
-        | FuncCallIndirect (resultOpt, callee, args, retTy) ->
+            sprintf "%sfunc.call @%s(%s) : (%s) -> %s" (resultAssignment results) (symbolName funcName) argSSAs argTypes
+                (resultTypesToString pointer (List.map _.Type results))
+        | FuncCallIndirect (results, callee, args) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString pointer v.Type) |> String.concat ", "
-            match resultOpt with
-            | Some result -> sprintf "%s = func.call_indirect %s(%s) : (%s) -> %s" (ssaToString result) (ssaToString callee) argSSAs argTypes (typeToString pointer retTy)
-            | None -> sprintf "func.call_indirect %s(%s) : (%s) -> %s" (ssaToString callee) argSSAs argTypes (typeToString pointer retTy)
+            sprintf "%sfunc.call_indirect %s(%s) : (%s) -> %s" (resultAssignment results) (ssaToString callee) argSSAs argTypes
+                (resultTypesToString pointer (List.map _.Type results))
         | FuncConstant (result, funcName, funcTy) ->
             sprintf "%s = func.constant @%s : %s" (ssaToString result) (symbolName funcName) (typeToString pointer funcTy)
         | IndexToFunc (result, source, argTypes, retTy) ->
-            let funcTyStr =
-                let argsStr = argTypes |> List.map (typeToString pointer) |> String.concat ", "
-                sprintf "(%s) -> %s" argsStr (typeToString pointer retTy)
+            let funcTyStr = typeToString pointer (TFunc(argTypes, if retTy = TVoid then [] else [retTy]))
             sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s" (ssaToString result) (ssaToString source) funcTyStr
         | FuncToIndex (result, source, argTypes, retTy) ->
-            let funcTyStr =
-                let argsStr = argTypes |> List.map (typeToString pointer) |> String.concat ", "
-                sprintf "(%s) -> %s" argsStr (typeToString pointer retTy)
+            let funcTyStr = typeToString pointer (TFunc(argTypes, if retTy = TVoid then [] else [retTy]))
             sprintf "%s = builtin.unrealized_conversion_cast %s : %s to index" (ssaToString result) (ssaToString source) funcTyStr
-        | Return (valueOpt, tyOpt) ->
-            match valueOpt, tyOpt with
-            | Some value, Some ty -> sprintf "func.return %s : %s" (ssaToString value) (typeToString pointer ty)
-            | Some value, None -> sprintf "func.return %s" (ssaToString value)
-            | None, _ -> "func.return"
+        | Return values ->
+            match values with
+            | [] -> "func.return"
+            | _ ->
+                if values |> List.exists (fun value -> value.Type = TVoid) then
+                    failwith "Function return cannot contain a TVoid value"
+                let operands = values |> List.map (fun value -> ssaToString value.SSA) |> String.concat ", "
+                let types = values |> List.map (fun value -> typeToString pointer value.Type) |> String.concat ", "
+                sprintf "func.return %s : %s" operands types
     | MLIROp.GlobalString (name, content, storageLength, obligations) ->
         // Emit memref.global (portable MLIR) with null sentinel byte for C interop.
         // Clef strings are (ptr, length) — the sentinel is a storage detail invisible

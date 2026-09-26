@@ -12,7 +12,7 @@ let pFunctionAddress (site: NodeId) symbol parameters result : PSGParser<MLIROp 
     parser {
         let address = value site 0
         let pointer = value site 1
-        return [ MLIROp.FuncOp (FuncOp.FuncConstant(address, symbol, TFunc(parameters, result)))
+        return [ MLIROp.FuncOp (FuncOp.FuncConstant(address, symbol, TFunc(parameters, if result = TVoid then [] else [result])))
                  MLIROp.FuncOp (FuncOp.FuncToIndex(pointer, address, parameters, result)) ],
                TRValue { SSA = pointer; Type = TIndex }
     }
@@ -23,7 +23,7 @@ let pFunctionPointerCall (site: NodeId) pointer (arguments: Val list) result : P
         let output = value site 1
         let operations =
             [ MLIROp.FuncOp (FuncOp.IndexToFunc(address, pointer, List.map (fun v -> v.Type) arguments, result))
-              MLIROp.FuncOp (FuncOp.FuncCallIndirect((if result = TVoid then None else Some output), address, arguments, result)) ]
+              MLIROp.FuncOp (FuncOp.FuncCallIndirect((if result = TVoid then [] else [{ SSA = output; Type = result }]), address, arguments)) ]
         if result = TVoid then
             let! unitTy = pMapType Types.unitType
             let! unitValue = pConstI output 0L unitTy

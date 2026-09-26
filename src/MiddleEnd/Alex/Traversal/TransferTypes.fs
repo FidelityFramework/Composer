@@ -249,6 +249,23 @@ module Diagnostic =
 // MLIR ACCUMULATOR (Mutable Fold State)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// A callable's code and actual environment are distinct typed SSA operands.
+/// Construction is internal to the graph-reading callable projection; there is
+/// no scalar/packed fallback and code-only values carry no environment operand.
+type CallableOperand = internal {
+    Carrier: CallableCarrier
+    Code: Val
+    Environment: Val option
+}
+
+/// One operation scope's complete operand reading. All three maps must move
+/// together when a shared graph body is witnessed at a different occurrence.
+type OperandSnapshot = {
+    Scalars: Map<NodeId, SSA * MLIRType>
+    Callables: Map<NodeId, CallableOperand>
+    Types: Map<SSA, MLIRType>
+}
+
 /// Flat accumulator - all operations in single stream with scope markers
 /// SSA bindings are global (shared across all witnesses and scopes)
 /// NOTE: Visited set is NOT in accumulator - each nanopass gets its own visited set
@@ -258,6 +275,7 @@ type MLIRAccumulator() =
     member val AllOps: MLIROp list = [] with get, set                      // Flat operation stream with markers
     member val Errors: Diagnostic list = [] with get, set
     member val NodeAssoc: Map<NodeId, SSA * MLIRType> = Map.empty with get, set  // Global SSA bindings (PSG nodes)
+    member val CallableAssoc: Map<NodeId, CallableOperand> = Map.empty with get, set
     member val SSATypes: Map<SSA, MLIRType> = Map.empty with get, set            // SSA → type reverse index (for monadic type derivation in Elements)
 
     // Witnessing Coordination State (Dependent Transparency)
@@ -289,6 +307,7 @@ module MLIRAccumulator =
     /// Bind a PSG node to its SSA value (global binding)
     /// Also populates SSATypes reverse index for monadic type derivation in Elements
     let bindNode (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
+        acc.CallableAssoc <- acc.CallableAssoc.Remove nodeId
         acc.NodeAssoc <- Map.add nodeId (ssa, ty) acc.NodeAssoc
         // Preserve physical SSA type if already registered by an Element (pAlloca, pAlloc, etc.)
         // Elements register physical types (TMemRefStatic from alloca); bindNode carries semantic types
@@ -323,6 +342,31 @@ module MLIRAccumulator =
     /// Recall the SSA binding for a PSG node (global lookup)
     let recallNode (nodeId: NodeId) (acc: MLIRAccumulator) =
         Map.tryFind nodeId acc.NodeAssoc
+
+    /// Bind a graph-projected callable atomically. A mismatched physical SSA
+    /// must not leave a half-pair or silently replace its registered type.
+    let bindCallable (nodeId: NodeId) (value: CallableOperand) (acc: MLIRAccumulator) =
+        let operands = value.Code :: Option.toList value.Environment
+        if value.Carrier.Occurrence <> nodeId then
+            Result.Error "Callable operand belongs to a different source occurrence."
+        elif operands |> List.exists (fun value ->
+            acc.SSATypes.TryFind value.SSA |> Option.exists (fun ty -> ty <> value.Type)) then
+            Result.Error "Callable operand conflicts with an already witnessed SSA type."
+        else
+            acc.NodeAssoc <- acc.NodeAssoc.Remove nodeId
+            acc.CallableAssoc <- acc.CallableAssoc.Add(nodeId, value)
+            for value in operands do acc.SSATypes <- acc.SSATypes.Add(value.SSA, value.Type)
+            Result.Ok ()
+
+    let recallCallable nodeId (acc: MLIRAccumulator) = acc.CallableAssoc.TryFind nodeId
+
+    let snapshotOperands (acc: MLIRAccumulator) =
+        { Scalars = acc.NodeAssoc; Callables = acc.CallableAssoc; Types = acc.SSATypes }
+
+    let restoreOperands (snapshot: OperandSnapshot) (acc: MLIRAccumulator) =
+        acc.NodeAssoc <- snapshot.Scalars
+        acc.CallableAssoc <- snapshot.Callables
+        acc.SSATypes <- snapshot.Types
 
     /// Recall the type of an SSA value (reverse index lookup)
     /// Used by Elements (e.g. pLoad) to derive memref types monadically from the accumulator
@@ -426,6 +470,7 @@ module MLIRAccumulator =
 /// Result of witnessing a PSG node
 type TransferResult =
     | TRValue of Val                    // Produces a value (SSA + type)
+    | TRCallable of CallableOperand    // Code and actual environment remain separate operands
     | TRVoid                             // Produces no value (effect only)
     | TRError of Diagnostic              // Error with structured context
     | TRSkip                             // Node not handled (try next witness)

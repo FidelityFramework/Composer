@@ -18,6 +18,12 @@ premises belong in their owning CCS/Baker stages. Alex must retain the graph's
 identities and read the facts needed by the selected target; it cannot reconstruct
 a missing source algorithm or manufacture evidence to make emission succeed.
 
+The [closure settlement contract](Closure_Settlement_Contract.md) applies this
+boundary to callable values: Baker retains exact capture, environment, call and
+destination participants; Alex pulls the settled carrier at the actual occurrence
+and keeps its function and environment operands distinct. Environment identity
+belongs to the runtime formation, even when two values share implementation code.
+
 The receiving vocabulary has three layers:
 
 | Layer | Responsibility |
