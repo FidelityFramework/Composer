@@ -1,275 +1,177 @@
-# C-03: Recursive Bindings
+# C-03: Recursive Bindings and Tail Calls
 
-> **Sample**: `13_Recursion` | **Status**: In Progress | **Depends On**: C-01 (Closures), C-02 (HOFs)
+> **Sample**: `13_Recursion` | **Status**: In-Progress | **Depends On**: [C-01](C-01-Closures.md), [C-02](C-02-HigherOrderFunctions.md)
+>
+> **Criteria realignment, 2026-09-25.** Existing recursive binding and capture
+> work is retained. This revision replaces the January implementation sketches
+> with current acceptance criteria; it records no new compiler execution or pass.
 
 ## 1. Executive Summary
 
-Recursive functions (`let rec`) require that a binding be visible within its own body. This PRD implements:
-1. **Simple recursion** - `let rec f x = ... f ...`
-2. **Nested recursion** - `let f x = let rec loop y = ... loop ... in loop x`
-3. **Mutual recursion** - `let rec f x = ... g ... and g y = ... f ...`
+Complete source recursion through the existing CCS/Baker/Alex pipeline: self
+recursion, nested recursive functions, mutually recursive function groups and
+their admitted callable uses. Recursive references must retain binding identity,
+types, capture identity and evaluation effects through lowering. Tail-recursive
+forms must receive the stack behavior their admitted contract requires.
 
-## 2. The Core Challenge
+The [C-series acceptance contract](C-Series-Acceptance.md) governs evidence and
+status. The [recursive expression specification](../../../clef-lang-spec/spec/expressions.md#recursive-definition-expressions),
+[recursive inference rules](../../../clef-lang-spec/spec/inference-constraint-solving.md)
+and [closure representation](../../../clef-lang-spec/spec/closure-representation.md)
+govern semantics. A passing recursive example is bounded evidence, not completion
+of the whole source-recursion surface.
 
-A recursive function references itself before its definition is complete:
+## 2. Current State and Remaining Boundary
 
-```fsharp
-let rec factorial n =
-    if n <= 1 then 1
-    else n * factorial (n - 1)  // VarRef to 'factorial' - but we're still defining it!
-```
+The [language coverage waypoints](../Language_Coverage_Waypoints.md) are the
+execution record. They establish the September 19 immutable direct-capture
+increment, including recursive forwarding, shadowing, nested capture identity
+and collision-free target symbols. They also record the original sample 13's
+unresolved generic integer-width failure. That failure remains an open native
+gate; the direct-capture fixture does not replace it.
 
-The VarRef to `factorial` inside the body needs a `defId` pointing to the Binding node. But at the time we check the body, the Binding node doesn't exist yet.
+Current source already contains the following foundations:
+
+| Foundation to retain | Owning implementation / evidence |
+|---|---|
+| Recursive binding identities available before body checking | [Bindings.fs](../../../clef/src/Compiler/NativeTypedTree/Expressions/Bindings.fs), with module-level group handling in [NativeService.fs](../../../clef/src/Compiler/NativeTypedTree/NativeService.fs) |
+| Nested named-function capture discovery, excluding own parameters and self | Existing `computeCaptures` use in `Bindings.fs` |
+| Baker-owned immutable direct capture form and recursive forwarding | [ClosureRecipes.fs](../../../clef/src/Compiler/Baker/Recipes/ClosureRecipes.fs), [DirectCaptures.fs](../../../clef/src/Compiler/PSGSaturation/SemanticGraph/DirectCaptures.fs), September 19 waypoint |
+| Target symbols derived from resolved local binding identity | The same waypoint's callable-symbol and native gates |
+| Source-reference/capture remapping through fold-in | September 19 fold-in reference identity waypoint |
+
+This inventory does not establish acceptance of all recursive groups, mutable
+captures, escaping recursive functions or width/range recurrences. Resume from
+the first unsettled relationship in a failing case. Do not recreate the old
+missing-NodeId or missing-capture fixes as if they were unimplemented.
 
 ## 3. CCS Implementation
 
-### 3.1 Current State (Incomplete)
+CCS and Baker own the following source and graph contracts:
 
-In `checkLetOrUse` for `let rec`:
-```fsharp
-let bindingEnv =
-    if isRec then
-        bindings |> List.fold (fun env binding ->
-            let name = getBindingName binding
-            let ty = freshTypeVar range
-            addBinding name ty false None env  // NodeId = None!
-        ) env
-```
+1. Every member of a recursive function group has a stable identity available
+   while checking every body in that group. Self and peer references resolve to
+   that identity; shadowed names and independent local functions stay distinct.
+2. Recursive uses impose the current type and measure constraints. Group
+   generalization follows the specification; independent uses cannot accidentally
+   share a solved type variable, and captures do not erase generalizable measures.
+3. Capture discovery uses resolved definitions. An outer variable referenced by
+   a nested recursive function is retained; a same-named local parameter is not
+   mistaken for that capture. Module bindings remain direct references.
+4. Baker establishes the complete-use callable form. Eligible nonescaping named
+   functions pass settled captures as additional parameters; recursive calls
+   forward those same participants. Escaping, returned, stored, partially applied
+   or higher-order uses retain the C-01/C-02 callable and lifetime obligations.
+5. Mutable capture groups preserve one shared cell where the source shares one.
+   The [direct capture cell contract](../Direct_Capture_Cell_Contract.md) owns the
+   remaining representation, residence and call-effect requirements; copying a
+   mutable value into recursive arguments changes its semantics.
+6. Recursive effect/range analysis accounts for the whole call group and all
+   relevant writes. It must reach a sound fixed point or retain a located
+   unresolved obligation. A caller's earlier bound must not survive a recursive
+   mutation without justification. A source `int` never acquires a convenient
+   hardcoded width to make sample 13 compile.
 
-This adds bindings to the environment with `NodeId = None`, so self-referential VarRefs get `defId = None`.
-
-### 3.2 Required Implementation
-
-**Pre-create Binding nodes** to obtain NodeIds before checking bodies:
-
-```fsharp
-let checkLetOrUse ... =
-    let bindings = letOrUse.Bindings
-    let isRec = letOrUse.IsRecursive
-
-    if isRec then
-        // STEP 1: Pre-create Binding nodes to get NodeIds
-        let bindingNodes = bindings |> List.map (fun binding ->
-            let name = getBindingName binding
-            let ty = freshTypeVar range
-            let node = builder.Create(
-                SemanticKind.Binding(name, false, true, false),  // isRec = true
-                ty,
-                range)
-            (binding, name, ty, node))
-
-        // STEP 2: Add ALL bindings to environment WITH their NodeIds
-        let envWithBindings = bindingNodes |> List.fold (fun env (_, name, ty, node) ->
-            addBinding name ty false (Some node.Id) env
-        ) env
-
-        // STEP 3: Check each body in the extended environment
-        let checkedBindings = bindingNodes |> List.map (fun (binding, name, ty, bindingNode) ->
-            // Check the body - VarRefs to 'name' now resolve to bindingNode.Id
-            let bodyNode = checkBinding ... envWithBindings ...
-            // Update the binding node with the actual body
-            (bindingNode, bodyNode))
-
-        // STEP 4: Build result
-        ...
-    else
-        // Non-recursive: existing logic
-        ...
-```
-
-### 3.3 Key Principle
-
-> **The NodeId must exist before we need to reference it.**
-
-For recursive bindings:
-1. Create the Binding node (get NodeId)
-2. Add to environment with that NodeId
-3. Check body (VarRefs resolve via environment)
-4. Connect body to Binding node
-
-### 3.4 Files to Modify
-
-| File | Change |
-|------|--------|
-| `Expressions/Bindings.fs` | Restructure `checkLetOrUse` for recursive bindings |
-
-**No other CCS files need changes.** The SemanticKind.Binding already has an `isRec` flag. VarRef already supports `defId: NodeId option`.
+Keep source ranges, graph/reference incidence, capture origins and obligation
+participants through elaboration and fold-in. Missing required facts are diagnosed
+by their owning stage before an unsupported witness is attempted.
 
 ## 4. Composer Implementation
 
-### 4.1 SSAAssignment: Nested Function Naming
+Alex observes the settled function, callable identity, operands and child regions
+through its existing context and Huet position. It composes the admitted physical
+form with Elements/Patterns/Witnesses; it does not discover captures or a recursive
+group by walking names or rebuilding the source algorithm.
 
-For nested functions with the same name (e.g., `loop` in multiple functions), qualify names by walking the Parent chain:
+The [current architecture](../Architecture_Canonical.md) and
+[Alex overview](../Alex_Architecture_Overview.md) replace the old
+`SSAAssignment`, parent-chain naming and direct `llvm.func` recipes. SSA identities
+derive from witnessed graph roles and block arguments. Target realization belongs
+to the selected backend, under the
+[operation/pathway contract](../../../clef-lang-spec/spec/backend-lowering-architecture.md).
 
-```fsharp
-// In collectLambdas:
-let findEnclosingFunctionName (startId: NodeId) : string option =
-    let rec walk nodeId passedFirstLambda =
-        match graph.Nodes.TryFind nodeId with
-        | None -> None
-        | Some n ->
-            match n.Kind with
-            | SemanticKind.Lambda _ when passedFirstLambda ->
-                // Found enclosing Lambda - get parent Binding's name
-                match n.Parent with
-                | Some pid ->
-                    match graph.Nodes.[pid].Kind with
-                    | SemanticKind.Binding(name, _, _, _) -> Some name
-                    | _ -> None
-                | None -> None
-            | _ ->
-                match n.Parent with
-                | Some pid -> walk pid true
-                | None -> None
-    walk startId false
+The selected target can change the admitted call or tail form, but cannot change
+the settled source semantics. Trace the actual emitted calls, arguments, storage
+and cleanup to the graph participants and declared target facts. Recheck affected
+obligations when a downstream transformation changes their premises; a source
+proof or successful verifier result does not certify the final realization. The
+shared acceptance contract applies this correspondence discipline to each claimed
+pathway without making every target's deployment a C-03 completion prerequisite.
 
-// Usage: qualify nested names
-match findEnclosingFunctionName lambdaId with
-| Some enclosing -> sprintf "%s_%s" enclosing baseName
-| None -> baseName
-```
+For each admitted tail form, identify the source tail position, cleanup/resource
+requirements and selected lowering. Check that argument evaluation, capture
+forwarding and return behavior survive the transformation. The
+[stack-overflow contract](../../../clef-lang-spec/spec/special-attributes-and-types.md#stack-overflow)
+and [list-operation requirements](../../../clef-lang-spec/spec/list-operations-representation.md)
+must not be reduced to an assumption that LLVM happens to optimize the call.
+Provide structural evidence and a sufficiently deep native oracle for the claimed
+bounded-stack behavior. Non-tail recursion retains its declared stack/resource
+requirements; compiler saturation termination does not establish program
+termination or a bound on runtime recursion.
 
-### 4.2 No Witness Changes Needed
+## 5. Recursive Groups and Unsettled Source Contracts
 
-With proper PSG (VarRefs have defIds), the existing witness code handles recursive calls correctly:
-- VarRef has defId → lookup in lambdaNames → emit call
+Mutually recursive functions belong to this PRD's acceptance surface. Test peer
+calls, different logical argument lists, shared outer captures and independent
+group instances. Direct-capture conversion must consider the group's complete
+uses; one escaping or opaque use cannot be ignored when selecting a form.
 
-## 5. CCS: Nested Function Captures (Issue Found Jan 2026)
+Recursive **value initialization** is a separate source case. The inherited
+[recursive safety analysis](../../../clef-lang-spec/spec/inference-constraint-solving.md#recursive-safety-analysis)
+still describes lazy initialization, runtime self-reference checks and an F#
+exception outcome, while Clef's [error model](../../../clef-lang-spec/spec/error-handling.md)
+uses native values and explicit diagnostics. Record and reconcile the native
+initialization/failure contract before claiming that case. Do not import the
+managed exception mechanism or count function-recursion tests as value-initialization
+coverage. Unsupported initialization forms need explicit, located rejection.
 
-### 5.1 The Problem
-
-Nested recursive functions may **capture variables from enclosing scope**, but the current implementation in `checkSingleBinding` hardcodes `captures = []` for ALL named function bindings:
-
-```fsharp
-// Bindings.fs line ~223 - CURRENT (BUGGY)
-SemanticKind.Lambda(lambdaParams, bodyNode.Id, [], env.EnclosingFunction, LambdaContext.RegularClosure),
-//                                               ^^ captures hardcoded to empty!
-```
-
-The comment says:
-```fsharp
-// Named function bindings don't capture from outer scope (they ARE the outer scope)
-```
-
-This is **correct for top-level functions** but **wrong for nested functions**.
-
-### 5.2 Example: sumTo vs factorialTail
-
-```fsharp
-// factorialTail - WORKS (no capture needed)
-let factorialTail (n: int) : int =
-    let rec loop acc n =     // 'n' is a PARAMETER, shadows outer n
-        if n <= 1 then acc
-        else loop (acc * n) (n - 1)
-    loop 1 n
-
-// sumTo - BROKEN (capture needed but not computed)
-let sumTo (n: int) : int =
-    let rec loop acc i =     // only 'acc' and 'i' are parameters
-        if i > n then acc    // 'n' CAPTURED from outer scope!
-        else loop (acc + i) (i + 1)
-    loop 0 1
-```
-
-In `sumTo`, the nested `loop` references `n` from the enclosing function. This is a capture that must flow to MLIR.
-
-**Current MLIR output (wrong):**
-```mlir
-llvm.func @sumTo_loop(%arg0: i64, %arg1: i64) -> i64 {
-    %cmp = arith.cmpi sgt, %arg1, %arg0 : i64   // comparing i > acc, NOT i > n!
-```
-
-The condition `i > n` became `i > acc` because `n` wasn't passed.
-
-### 5.3 The Fix
-
-When `env.EnclosingFunction.IsSome`, we're inside a function, so this is a nested function that may need captures. Call `computeCaptures` (from Applications.fs) instead of passing `[]`:
-
-```fsharp
-// Bindings.fs - CORRECTED
-let paramNames = lambdaParams |> List.map (fun (name, _, _) -> name) |> Set.ofList
-// Also exclude the function's own name (for recursive self-reference)
-let excludeNames = Set.add name paramNames
-
-// Compute captures only for nested functions (top-level never captures)
-let captures =
-    if env.EnclosingFunction.IsSome then
-        computeCaptures builder env bodyNode.Id excludeNames
-    else
-        []
-
-let lambdaNode = builder.Create(
-    SemanticKind.Lambda(lambdaParams, bodyNode.Id, captures, env.EnclosingFunction, LambdaContext.RegularClosure),
-    funcType,
-    range,
-    children = lambdaChildren)
-```
-
-### 5.4 Alex Impact
-
-Once captures flow through the PSG, Alex/LambdaWitness must handle them for nested recursive functions:
-- Either pass captures as additional parameters (parameter-passing style)
-- Or create a closure environment (flat closure style, as in C-01)
-
-For tail-recursive nested functions that don't escape, parameter-passing is more efficient.
+This is a specific specification seam, not a reason to postpone the settled
+function-group, capture, range or tail-call work. C-03's status must keep the
+unadmitted initialization surface visible when reporting its accepted scope.
 
 ## 6. Verification
 
-### 6.1 PSG Check
-```
-VarRef ("factorial", Some (NodeId 547))  // Self-reference has defId
-```
+Apply the [shared gates](C-Series-Acceptance.md) to the following matrix:
 
-### 6.2 MLIR Check
-```mlir
-llvm.func @factorial(%n: i32) -> i32 {
-    ...
-    %result = llvm.call @factorial(%n_minus_1) : (i32) -> i32  // Recursive call works
-    ...
-}
-```
+| Boundary | Required evidence |
+|---|---|
+| Binding and group identity | Self/peer references resolve before body completion; shadowing and duplicate local names retain distinct definitions through fold-in and target symbol emission |
+| Source schemes | Independent ordinary/measured uses; exact type/dimension rejection with diagnostic code, effective severity and source range |
+| Captures and callables | Nested immutable captures, recursive forwarding, mutually recursive shared captures, mutable cell identity, and each claimed returned/stored/partial/HOF use |
+| Effects and ranges | Recursive writes invalidate stale observations; sound recurrence settlement or the responsible unresolved-range diagnostic |
+| Physical realization | Settled call operands/signatures and regions survive portable witnessing, MLIR verification and the selected backend |
+| Tail behavior | Eligible self and mutual tail forms preserve effects and cleanup; claimed bounded-stack behavior has structural and native evidence |
+| Native regression | Original `13_Recursion` compiles and executes with its intended results, including factorial 5 = 120 and sumTo 10 = 55; focused fixtures supplement it |
+| Unsupported boundaries | Invalid cycles/initialization and unavailable callable, lifetime or representation forms fail at the responsible source/settlement boundary |
 
-### 6.3 Execution Check
-```
-factorial 5: 120
-factorialTail 5: 120
-sumTo 10: 55        // After capture fix
-```
+Run the applicable surrounding closure, HOF, collection and sequence regression
+gates because they reuse recursive construction and capture facts. Record the
+actual compiler/dependency revisions and the admitted profile. No editor, graph,
+verifier or native gate substitutes for another.
 
 ## 7. Implementation Checklist
 
-### Phase 1: CCS - Recursive Binding NodeIds
-- [x] Restructure `checkLetOrUse` to pre-create Binding nodes for `let rec`
-- [x] Add NodeIds to environment before checking bodies
-- [x] Verify: VarRef to self has `defId = Some nodeId`
-- [x] CCS builds
+Existing foundations above are retained; the unchecked items below are acceptance
+work, not a declaration that every underlying mechanism is absent.
 
-### Phase 2: Composer - Nested Function Naming (Parent Links)
-- [x] Bindings.fs: `buildSequential` sets parent on all children
-- [x] Bindings.fs: Lambda creation sets parent on params and body
-- [x] TypeOperations.fs: TypeAnnotation sets parent on inner node
-- [x] SSAAssignment uses Parent chain for qualified names
-- [x] Verify: `@factorialTail_loop` not `@loop`
-- [x] Composer builds
-
-### Phase 3: CCS - Nested Function Captures (NEW)
-- [ ] Import `computeCaptures` into Bindings.fs (or move to shared module)
-- [ ] Call `computeCaptures` when `env.EnclosingFunction.IsSome`
-- [ ] Exclude function's own name and parameters from capture set
-- [ ] Verify: sumTo's loop Lambda has `captures = [{Name="n"; ...}]`
-- [ ] CCS builds
-
-### Phase 4: Alex - Handle Nested Function Captures
-- [ ] LambdaWitness: pass captures as additional parameters for non-escaping nested functions
-- [ ] Generate `@sumTo_loop(n, acc, i)` not `@sumTo_loop(acc, i)`
-- [ ] Verify: sumTo returns 55 for n=10
-
-### Phase 5: Validation
-- [ ] RecursionSimple compiles and executes
-- [ ] Recursion.fidproj (full) compiles and executes with correct sumTo results
-- [ ] Samples 01-14 still pass
+- [ ] Reproduce and resolve sample 13's generic integer-width boundary in the
+      owning inference/range/representation stage, retaining the source contract.
+- [ ] Establish the self/nested/mutual function-group matrix, preserving existing
+      recursive identities, capture recipes and target symbols.
+- [ ] Admit remaining mutable, returned/stored and partial recursive callable
+      forms with C-01/C-02, or retain their explicit residual scope.
+- [ ] Establish recursive effect/range convergence and exact negative diagnostics.
+- [ ] Establish the required tail-call/stack behavior for each claimed form.
+- [ ] Resolve or explicitly delimit recursive value initialization against the
+      native specification, without hiding its unsupported cases.
+- [ ] Run and record the full applicable gates; update the waypoint and PRD status
+      only for the scope the evidence establishes.
 
 ## 8. Related PRDs
 
-- **C-01**: Closures - nested functions may capture
-- **C-02**: HOFs - recursive functions as values
+- [C-01: Closures](C-01-Closures.md): capture identity, residence and callable forms.
+- [C-02: Higher-Order Functions](C-02-HigherOrderFunctions.md): recursive functions
+  passed, stored, returned or partially applied.
+- [C-04: Core Collections](C-04-CoreCollections.md): recursive recipes and tail folds.
+- [C-05: Lazy](C-05-Lazy.md): memoization and the recursive-initialization seam.
+- [C-06: SimpleSeq](C-06-SimpleSeq.md): recursive calls crossing suspension/lifetime boundaries.

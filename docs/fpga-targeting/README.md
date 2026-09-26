@@ -23,6 +23,12 @@ with [Proof composition](../Proof_Composition_Architecture.md), and semantic
 obligation ownership with [Obligation residency](../Obligation_Residency_Design.md).
 It creates neither another source semantics nor a second general proof service.
 
+The [C-series acceptance criteria](../PRDs/C-Series-Acceptance.md#41-integrity-through-realization-colibri-fpga-and-ebpf)
+apply this component/admission and artifact-correspondence discipline to the
+current functional-language work. Colibri's concrete circuit implementations
+and verification assets inform Baker/Alex integrity now, while each FPGA
+realization milestone retains its own implementation and evidence gates.
+
 ## Decisions
 
 1. Maintain an owned Dynamatic fork whose application input is Clef-derived

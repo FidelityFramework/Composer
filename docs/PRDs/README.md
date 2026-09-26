@@ -16,6 +16,14 @@ the work order. Later composition can reopen an earlier area: a foundation sampl
 may be complete while returned closures, collection storage or continuation
 lifetimes still require work in the computation PRDs.
 
+Criteria reconciliation, 2026-09-25: the
+[C-series acceptance contract](C-Series-Acceptance.md) and revised C-01–C-07
+preserve existing implementation, replace superseded implementation sketches
+and distinguish dated evidence from remaining gates. This documentation change
+advances no feature status. FPGA/Colibri and eBPF supply concrete
+[realization-integrity criteria](C-Series-Acceptance.md#41-integrity-through-realization-colibri-fpga-and-ebpf)
+for Baker, Alex and downstream artifact checks across the series.
+
 ---
 
 ## Category Overview
@@ -97,21 +105,31 @@ input is a separate `Console.readln` behavior issue
 
 ### Computation (C-xx) - Functional Abstractions
 
-The foundation has enabled substantial computation support. C-01 and C-02 have
-expanded/reopened as C-06/C-07 demand retained environments and stored operation
-values. Residence and aggregate composition also cross these boundaries. Each
-computation PRD remains In-Progress until its own acceptance gates are satisfied;
-newer passing samples establish their bounded paths.
+F-xx and C-xx carry equal importance as delivery contracts for Clef and Composer.
+The category names and dependency order do not imply different standards of
+semantic or artifact integrity. Both groups already have substantial implemented
+behavior; each owns its complete advertised acceptance surface.
+
+C-01 and C-02 have expanded/reopened as C-06/C-07 demand retained environments
+and stored operation values. Residence and aggregate composition cross these
+boundaries. Each computation PRD remains In-Progress until its own acceptance
+gates are satisfied; newer passing samples establish their bounded paths. Changes
+in either group preserve affected accepted behavior in the other.
+
+Use the [shared criteria and continuation order](C-Series-Acceptance.md) with each
+PRD. Original and lettered source oracles remain acceptance assets. The known
+exception is sample14's obsolete recomputation expectation: C-05 requires an
+explicit migration to normative memoization alongside its implementation.
 
 | PRD | Title | Sample | Status | Note |
 |-----|-------|--------|--------|------|
-| [C-01](C-01-Closures.md) | MLKit-Style Flat Closures | 11 | In-Progress | Bounded native environments tested; returned/retained callable storage and broader residence remain open. |
+| [C-01](C-01-Closures.md) | Flat Closures and Callable Environments | 11, 11a–b | In-Progress | Direct captures and bounded environments tested; full function/environment transport, mutable direct signatures and broader residence remain open. |
 | [C-02](C-02-HigherOrderFunctions.md) | Higher-Order Functions | 12 | In-Progress | Native callback paths tested; stored/bare Seq operation partials expose remaining callable admission work. |
 | [C-03](C-03-Recursion.md) | Recursion & Tail Calls | 13 | In-Progress | Implementation exists; original 13 has a recorded generic integer-width failure. Full PRD acceptance is not established by C-07. |
-| [C-04](C-04-CoreCollections.md) | Core Collections | 13a | In-Progress | Option operations are tested; general collection storage, bounded extent and native gates remain open. |
-| [C-05](C-05-Lazy.md) | Lazy Evaluation | 14 | In-Progress | Implementation exists; original 14 has a recorded width/extent failure and canonical lazy acceptance remains open. |
+| [C-04](C-04-CoreCollections.md) | Core Collections | 13a | In-Progress | Option/range work and collection recipes exist; canonical List/Map/Set storage, bounded extent/capacity and registered 13a native gates remain open. |
+| [C-05](C-05-Lazy.md) | Lazy Evaluation and Memoization | 14 | In-Progress | Checking and legacy realization exist; canonical typed storage/force behavior remains open. The old sample expects recomputation and must be corrected to the normative cache contract. |
 | [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–d | In-Progress | Native core and bounded scalar/Option transport tested; original recurrence/aggregate and broader residence gates remain separate. |
-| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | 16a–g pass; original 16 and 16h retain factory/capture and staged callable failures. Full operation coverage remains open; see waypoint. |
+| [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | 16a–g have recorded passes; original16/16h remain open. Eleven-operation core acceptance and listed successor consumers/materializers have separate gates. |
 
 ### Async (A-xx) - Asynchronous Programming
 
@@ -130,7 +148,8 @@ scheduling, async lifetime admission, or a new MLIR dialect's preservation gates
 
 ### Next implementation handoff
 
-Read the current [coverage waypoints](../Language_Coverage_Waypoints.md) and
+Read the [C-series acceptance contract](C-Series-Acceptance.md), current
+[coverage waypoints](../Language_Coverage_Waypoints.md) and
 [M-01 contract map](M-01-DialectAdmission.md#5-numeric-selection-parallelism-and-design-time-projection)
 with the linked clef-lang-spec chapters before using inherited implementation
 sketches. The standard governs semantics; this index records acceptance status;
@@ -138,9 +157,11 @@ M-01 records target-aware expression and information-preservation gates.
 
 | Area | Concrete entry condition and first gate |
 |------|-----------------------------------------|
-| C-01 / C-02 | Reuse staged operand snapshots for Seq partial/bare values; admit retained sequence and callable environments with exact residence/use evidence. `16h_SequenceApplications` is the unchanged native gate. |
-| C-04 with remaining C-07 consumers | Establish collection storage, bounded links, extent and current/nonempty contracts before claiming `toList`, `toArray` or extrema support. Use the existing BAREWire collection contracts and native oracles. |
-| C-05 | Reconcile the inherited lazy implementation with the canonical closure/thunk contract before treating it as a foundation for native `Incremental<'T>`. |
+| C-01 / C-02 | Reuse staged operand snapshots for Seq partial/bare values; admit actual retained environments and canonical multi-value transport with exact residence/use evidence. `16h_SequenceApplications` is the unchanged first gate; original16 exercises returned factory/capture uses. |
+| C-03 with C-06 numeric prerequisites | Preserve recursive binding/capture implementation; close original13's generic-width gap and admit sound recurrence rules for original15's coupled/multiplicative state, including intermediate updates. |
+| C-04 with remaining C-07 consumers | Complete collection storage, sentinel/bounded links, extent/capacity and guarded access from declared platform authority, then the promised List/Map/Set operations and materializers. Register 13a native oracles and use current BAREWire consumers. |
+| C-05 | Reuse the shared environment contract for typed cache storage and once-only force. Correct the stale sample14 oracle transparently; stable scoped/program storage does not wait for every A-series PRD. |
+| C-06 / C-07 | Preserve 15a–d and 16a–g; close original15/original16/16h with aggregate retention, full callable origins, residence and demand evidence, then listed successor operations. |
 | A / T families and added dialects | Follow [M-01](M-01-DialectAdmission.md): numeric selection and construction govern arith/math forms; RPC wait relationships and scheduler manifests govern async/control forms. Alex selects witnesses from settled facts for the actual target. Require graph, backend and design-time gates for each admitted operation/profile. |
 | R-04 first within Reactive, with R-01/R-02 | After the preceding Async/Threading work, lead with the static incremental core on C-01/C-05: tracked inputs, cached `return`/`map`/`map2`, demand and cutoff. Develop typed Observable delivery and matched operators alongside it, with shared versioned invalidation and an event-to-cache native gate. |
 | R-05 with R-03/R-06 | Add dynamic dependency replacement and child lifetimes alongside the corresponding Observable bridges. Gate independent invalidations, ordered effects, stale work, demand withdrawal and disposal before extending actor/target integration. |
@@ -298,6 +319,9 @@ The applicable closure and lazy contracts expose captures and delayed dependenci
 M-01 spans the language families and target pathways below. Its operation-level
 gates accompany the feature that requires them; target availability and
 information-preservation evidence determine which dialect forms are admitted.
+The C-series edges denote shared contracts rather than cold-start milestones.
+Sequence continuation work is already implemented independently of Lazy's
+remaining memoization migration; both reuse C-01's environment contract.
 
 ```
 Foundation (F-01 to F-10)
@@ -307,11 +331,11 @@ Foundation (F-01 to F-10)
             │       │
             │       ├── C-01 Closures ← F-04 Lambdas, F-10 Records
             │       ├── C-02 HOFs ← C-01 Closures
-            │       ├── C-03 Recursion ← C-01 Closures
+            │       ├── C-03 Recursion ← C-01/C-02, shared numeric/effect settlement
             │       ├── C-04 Collections ← C-02, C-03
             │       ├── C-05 Lazy ← C-01 Closures
-            │       ├── C-06 SimpleSeq ← C-05 Lazy
-            │       └── C-07 SeqOps ← C-06 SimpleSeq
+            │       ├── C-06 SimpleSeq ← C-01/C-02, control/liveness, C-03 numeric work
+            │       └── C-07 SeqOps ← C-06, C-01/C-02; C-04 for materializers
             │
             ├── Async (A-01 to A-06)
             │       │

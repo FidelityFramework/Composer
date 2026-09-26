@@ -7,6 +7,63 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+## C-series criteria and realization integrity — 2026-09-25
+
+**Documentation checkpoint; C-01 through C-07 remain In-Progress.** The
+[shared acceptance contract](PRDs/C-Series-Acceptance.md) and all seven C PRDs
+now distinguish existing implementation, dated bounded evidence and remaining
+acceptance. F-xx and C-xx have equal delivery standing: dependency order does
+not imply different standards of semantic or artifact integrity. An accurate
+diagnostic for a promised conforming use remains an open positive gate.
+
+The revisions retire obsolete capture/layout work in Alex, fixed SSA budgets,
+packed interior callables, default global arenas, cold-start checklists and the
+old BAREWire blocker inventory. Current recipes, witnesses and native oracles
+remain the implementation assets. C-01 retains its boundary contract and §14
+form-family anchors; the direct mutable-cell note now uses stable section links.
+C-03 retains implemented recursive identity/capture work. C-04 retains its full
+promised List/Map/Set/Option/range/support surface and identifies the missing 13a
+manifest gates. C-05 requires normative caching and records the necessary future
+sample14/manifest correction; those fixtures are unchanged here. C-06/C-07 now
+separate their recorded native successes from recurrence, retained environment,
+aggregate and staged-operation gaps. C-07 core and successor rows remain explicit.
+
+The [Colibri component basis](fpga-targeting/02_colibri_circuit_basis.md),
+[FPGA artifact verification](fpga-targeting/05_artifact_verification.md) and
+[eBPF admission boundary](ebpf-targeting/01_verifier_as_design_time_contract.md)
+inform the common criteria directly. Their lesson is delivery integrity through
+the selected realization: exact participant and component correspondence,
+preserved observable traces, checked target assumptions, and evidence renewed
+when lowering changes a premise. Artifact checks consume actual emitted or
+reconstructed outputs; a second model serialized from the same upstream graph
+does not validate the emitter. Circuit-to-silicon and verifier/host gates retain
+their distinct evidence levels. This alignment neither completes M-01's general
+admission/evidence transport nor claims new FPGA/eBPF integration or deployment.
+
+Inspected source references were Composer `a9583674c34c`, clef `15a688a74948`,
+BAREWire `6e212487aef5`, Fidelity.Platform `d42c9988f7fd`, clef-lang-spec
+`280efcc551a4`, and Colibri `3fa784121cce`. Current site and Markdown-paper working
+copies informed the review; their existing modifications were preserved. These
+are inspection references, not a freshly tested combined toolchain. Only
+Composer documentation is changed in this checkpoint; no source, sample,
+manifest, compiler output or dependency was modified.
+
+Validation covers changed local links/anchors, incoming links to the revised
+documents, operation-inventory retention, semantic cross-review and
+`git diff --check`. No compiler, solver, native, formal-circuit or hardware tests
+were run. The corpus drift gate retains its one pre-existing finding in the
+specification diagnostic-registry paragraph (`error-handling.md:303`, an inherited
+diagnostic-code example); no new finding is introduced. Scheduled migration
+vocabulary is reported separately from that failure. Before/after logs are
+`/tmp/clef-c-series-drift-before.log` and `/tmp/clef-c-series-drift-after.log`.
+
+Resume with the [dependency-led continuation](PRDs/C-Series-Acceptance.md#5-dependency-led-continuation):
+establish a fresh coordinated baseline, then use unchanged 16h to complete
+staged application and retained callable/environment contracts. Original16,
+original13/original15, collection storage and canonical lazy acceptance remain
+explicit subsequent/shared gates. Existing valid expectations stay fixed;
+normatively obsolete expectations require a documented semantic correction.
+
 ## Interactive compiler workbench planning — 2026-09-25
 
 **Documentation checkpoint; WB-01 through WB-04 remain Planned.** The new

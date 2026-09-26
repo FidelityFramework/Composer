@@ -101,6 +101,10 @@ concurrency/async track.
 
 ## Relationship to sibling series
 
+- [C-series acceptance](../PRDs/C-Series-Acceptance.md#41-integrity-through-realization-colibri-fpga-and-ebpf)
+  applies the distinction between semantic settlement, faithful realization and
+  independent artifact admission to current Baker/Alex work. This shared
+  integrity requirement does not depend on completing an eBPF deployment first.
 - [wasm-targeting/](../wasm-targeting/) — the other hosted verified ISA; the
   class-level constructs proposed here (versioned capability matrix,
   capability-keyed witness gating) are designed for both.

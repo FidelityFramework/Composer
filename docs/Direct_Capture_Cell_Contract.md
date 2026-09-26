@@ -7,17 +7,17 @@ claim completion of C-01 or select `TCell` as an approved representation.
 
 ## Governing decisions
 
-[Closure representation §8](../../clef-lang-spec/spec/closure-representation.md#L203)
+[Closure representation §8](../../clef-lang-spec/spec/closure-representation.md#8-nested-named-functions-vs-escaping-closures)
 requires leading capture parameters when all uses establish the nonescaping direct
-form; binding parentage alone is insufficient. [§2.2 and §3.3](../../clef-lang-spec/spec/closure-representation.md#L43)
+form; binding parentage alone is insufficient. [§2.2 and §3.3](../../clef-lang-spec/spec/closure-representation.md#22-capture-semantics)
 require shared mutable storage and a lifetime covering every capturing closure.
-[§11](../../clef-lang-spec/spec/closure-representation.md#L279) preserves unresolved
+[§11](../../clef-lang-spec/spec/closure-representation.md#11-proof-extraction-at-closure-sites) preserves unresolved
 storage premises; a finite frontier does not prove transitive storage lifetime.
 
-[C-01 §14.2–14.4](PRDs/C-01-Closures.md#L813) supplies the unmaterialized form,
+[C-01 §14.2–14.4](PRDs/C-01-Closures.md#142-the-form-family-and-its-selection-at-saturation) supplies the unmaterialized form,
 portable typed views, application agreement and residence obligations. Its
 unmaterialized environment needs no environment allocation; that does not eliminate
-the captured cell's own storage obligations. The [closure retooling mechanism](../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md#L149)
+the captured cell's own storage obligations. The [closure retooling mechanism](../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md#4-the-mechanism--and-only-this-mechanism)
 owns construction through Baker ingredients, recipes and fan-out/fold-in. Alex
 pulls settled facts at Huet positions through witnesses, patterns and Elements.
 

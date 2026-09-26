@@ -1,237 +1,193 @@
 # C-02: Higher-Order Functions
 
-> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
-
-> **Sample**: `12_HigherOrderFunctions` | **Status**: Planned | **Depends On**: C-01 (Closures)
+> **Status:** In-Progress. HOFs, callback recipes and native oracles are implemented;
+> general stored/returned callable composition remains open.
+> **Sample:** `12_HigherOrderFunctions`, with native callback and C-07 application variants.
+> **Dependencies:** [C-01](C-01-Closures.md), source type/application contracts and
+> the storage contracts of retained values.
+> **Criteria realignment:** 2026-09-25; documentation only, with no new runtime results.
 
 ## 1. Executive Summary
 
-Higher-order functions (HOFs) are functions that take functions as arguments or return functions as results. This PRD builds directly on the closure infrastructure from C-01 - HOFs are essentially the *use* of closures.
+C-02 completes functions as arguments, results and stored values, including
+composition and partial application. Existing HOF and Option/Result/Seq native
+callback paths supply the starting point. Remaining work makes them compose
+across callable origins, environment lifetimes and application forms.
 
-**Key Insight**: If closures work correctly, HOFs are largely "free" - they're just function values being passed around. The remaining work is ensuring function types propagate correctly through CCS type inference and that Alex handles function-typed parameters/returns.
+The [closure specification](../../../clef-lang-spec/spec/closure-representation.md),
+[application checking](../../../clef-lang-spec/spec/inference-application-resolution.md)
+and each operation's chapter govern semantics. Use the
+[shared C-series criteria](C-Series-Acceptance.md) and
+[coverage waypoints](../Language_Coverage_Waypoints.md) for completion and evidence.
+The former claim that HOF support is largely free once closures exist is retired:
+staging, representation, effects and residence are observable obligations.
 
 ## 2. Language Feature Specification
 
 ### 2.1 HOF Patterns
 
-```fsharp
-// Function as parameter
-let applyTwice (f: int -> int) (x: int) : int =
-    f (f x)
+| Use | Required behavior |
+|---|---|
+| Function parameter | Invoke the supplied value with its actual environment and checked argument/result types |
+| Function result | Retain implementation/environment with residence covering subsequent uses |
+| Composition | Preserve callback order, independent environments and intermediate types/dimensions |
+| Conditional/matched selection | Select the whole function value; equal layouts do not imply equal implementations |
+| Stored alias | Snapshot the value observed at binding, including aliases of mutable function bindings |
+| Partial application | Evaluate supplied operands once in source order and retain them until remaining arguments arrive |
+| Bare operation value | Admit its full function type and subsequent stages through the ordinary graph contract |
 
-// Function as return value
-let makeAdder (n: int) : (int -> int) =
-    fun x -> x + n
-
-// Function composition
-let compose (f: int -> int) (g: int -> int) : (int -> int) =
-    fun x -> g (f x)
-```
+Direct syntax and forward/backward pipes preserve source evaluation order.
+Producer formation evaluates supplied expressions; deferred iteration and callback
+invocation occur only when the operation requires them. Aliasing a partial cannot
+replay an earlier operand initializer.
 
 ### 2.2 Type Representation
 
-Function types `A -> B` are represented as:
-- **No captures**: Simple function pointer (`ptr<fn(A) -> B>`)
-- **With captures**: Closure struct (`{ ptr<fn(env, A) -> B>, ptr<env> }`)
+Source function types remain `TFun` with public generic/NTU signatures. Independent
+argument, intermediate, accumulator and result dimensions survive specialization,
+capture, storage and elimination. Physical carriers do not replace those types.
 
-The caller doesn't need to know which representation is used - both are called the same way (closure calling convention always passes env pointer, even if unused).
+A materialized callable is `(fn, env)`, separate middle-end values. Known-callee
+elision and direct capture passing require C-01's complete graph premises. A
+function type or code identity alone does not establish a storage field,
+environment instance or lifetime.
 
 ### 2.3 Calling Convention Unification
 
-**All function values use closure calling convention**:
-```
-call(closure, args...) = extractCodePtr(closure)(extractEnv(closure), args...)
-```
+One truthful application contract connects callee, actual environment, hidden
+formals where applicable, explicit arguments and results. Baker constructs it
+before Alex. Pair parameters/returns, joins and aggregate/DU elimination agree
+with that contract. No interior numeric code-pointer packing, implicit null
+environment or cast-resolution convention is introduced.
 
-For functions without captures, the closure is a minimal flat closure `{ code_ptr }` with zero capture fields. There is no env pointer - the struct itself contains only the code pointer.
+Foreign `FnPtr<'F>` entries retain the distinct
+[C-01 boundary contract](C-01-Closures.md#6-ffi-boundary-marshaling). Ordinary HOF
+support does not automatically transport specialized foreign ABI provenance.
 
 ## 3. CCS Layer Implementation
 
-### 3.1 Function Type in Parameters
+CCS owns typing, generic instantiation, source identity and argument admission.
+Existing callable application and operation recipes establish staged applications
+and snapshots for admitted paths. Extension preserves evaluated values and their
+identities through Baker fan-out/fold-in; tracing an alias to a source expression
+does not authorize evaluating it again.
 
-CCS already handles function types - verify that:
+Known-callee environment admission supports bounded scalar captures and complete
+direct uses in sequence producers. Stored/bare Seq operations and broader
+returned, opaque, aggregate or nested callable captures retain open contracts.
+[Closure values as data](../Closure_As_Data.md) and [C-07](C-07-SeqOperations.md)
+identify the boundaries; later waypoints supersede interim native-status prose.
 
-```fsharp
-// In CheckExpressions.fs - parameter type checking
-| SynType.Fun(argType, returnType, _) ->
-    let argTy = checkType env argType
-    let retTy = checkType env returnType
-    NativeType.TFun(argTy, retTy)
-```
-
-### 3.2 Function Application to Function-Typed Arguments
-
-When `f` is a parameter of type `A -> B`:
-```fsharp
-// checkApp in Applications.fs
-match funcType with
-| NativeType.TFun(paramTy, retTy) ->
-    // f is callable, arg must match paramTy
-    let argNode = checkExpr env builder arg
-    unify argNode.Type paramTy
-    // Result has type retTy
-```
-
-### 3.3 No New SemanticKinds Needed
-
-HOF usage relies entirely on existing kinds:
-- `Lambda` - for creating function values
-- `App` - for applying functions
-- `VarRef` - for referencing function-typed bindings
-- `PatternBinding` - for binding function-typed parameters
+Front-end/Baker work is more than checking an existing `TFun`: callable origins,
+stage frontiers, snapshots, environments, types, effects and residence must survive
+each transformation.
 
 ## 4. Composer/Alex Layer Implementation
 
-### 4.1 Function-Typed Parameters
+The bounded environment path supplies explicit formals and actual operands to
+ordinary lambda/application witnesses. Alex pulls at the actual Huet position;
+it does not reconstruct partial applications, discover captures or select source
+algorithms by library spelling.
 
-When a function parameter has function type, SSAAssignment treats it like any other parameter - it gets an SSA for the closure struct value:
-
-```fsharp
-// In lambda parameter processing
-| paramType when isFunctionType paramType ->
-    // Parameter is a closure struct
-    let paramSSA = freshSSA ()
-    bindParameter name paramSSA paramType
-```
-
-### 4.2 Function Invocation Through Parameter
-
-When calling a function-typed parameter:
-
-```fsharp
-// witnessApp when callee is a VarRef to function parameter
-let calleeSSA = lookupVarSSA calleeName z
-let extractCode = freshSynthSSA z
-let extractEnv = freshSynthSSA z
-
-emit $"  %%{extractCode} = llvm.extractvalue %%{calleeSSA}[0]"
-emit $"  %%{extractEnv} = llvm.extractvalue %%{calleeSSA}[1]"
-emit $"  %%{resultSSA} = llvm.call %%{extractCode}(%%{extractEnv}, {argSSAs})"
-```
-
-### 4.3 Returning Function Values
-
-When a function returns a function type, the return value is a closure struct:
-
-```fsharp
-// witnessReturn when return type is function
-| returnType when isFunctionType returnType ->
-    // valueSSA is already a closure struct
-    emit $"  llvm.return %%{valueSSA}"
-```
+General pair support still needs multi-value recall/signatures, call/return
+results, branch joins, stored values and target lowering. The single-result model
+and legacy packed closure-call path are migration work, not source restrictions
+or evidence of canonical general HOF acceptance.
 
 ## 5. MLIR Output Specification
 
-### 5.1 Function Taking Function Parameter
+Direct calls use graph-established operands. Unknown values use a function-typed
+value and actual environment through `func.call_indirect`. Both halves survive
+parameters, returns, joins and eliminators whenever elision is unavailable.
+Typed views access placed slots. Historical direct `llvm.*` listings and raw-pointer
+closure structs are retired implementation sketches.
 
-```mlir
-// applyTwice : (int -> int) -> int -> int
-llvm.func @applyTwice(%f: !closure_type, %x: i32) -> i32 {
-    // First application: f x
-    %code1 = llvm.extractvalue %f[0] : !closure_type -> !llvm.ptr
-    %env1 = llvm.extractvalue %f[1] : !closure_type -> !llvm.ptr
-    %r1 = llvm.call %code1(%env1, %x) : (!llvm.ptr, i32) -> i32
-
-    // Second application: f (f x)
-    %code2 = llvm.extractvalue %f[0] : !closure_type -> !llvm.ptr
-    %env2 = llvm.extractvalue %f[1] : !closure_type -> !llvm.ptr
-    %r2 = llvm.call %code2(%env2, %r1) : (!llvm.ptr, i32) -> i32
-
-    llvm.return %r2 : i32
-}
-```
-
-### 5.2 Function Returning Function
-
-```mlir
-// makeAdder : int -> (int -> int)
-llvm.func @makeAdder(%n: i32) -> !closure_type {
-    // Allocate environment for captured 'n'
-    %env = llvm.alloca 1 x !llvm.struct<(i32)>
-    %slot0 = llvm.getelementptr %env[0, 0]
-    llvm.store %n, %slot0
-
-    // Build closure struct
-    %tmp = llvm.insertvalue undef : !closure_type[0], @adder_impl
-    %closure = llvm.insertvalue %tmp[1], %env
-
-    llvm.return %closure : !closure_type
-}
-
-llvm.func @adder_impl(%env: !llvm.ptr, %x: i32) -> i32 {
-    %n_ptr = llvm.getelementptr %env[0, 0]
-    %n = llvm.load %n_ptr : i32
-    %result = arith.addi %x, %n : i32
-    llvm.return %result : i32
-}
-```
+[M-01](M-01-DialectAdmission.md) governs realization and preserved information.
+Require verification, backend lowering and native behavior; verifier success
+alone does not establish timing, identity or storage lifetime. The
+[FPGA/Colibri](../fpga-targeting/README.md) and
+[eBPF](../ebpf-targeting/README.md) plans inform these criteria: transformed circuits
+or bytecode must retain the settled callable/effect/storage contracts with their
+own artifact checks. An existing host pass does not certify those target paths.
 
 ## 6. Validation
 
 ### 6.1 Sample Code
 
-**File**: `samples/console/FidelityHelloWorld/12_HigherOrderFunctions/HigherOrderFunctions.fs`
+Retain original12's `applyTwice`, pair mapping, conditional selection, factories
+and both composition orders. Native callback and lettered FidelityHello variants
+extend its scope; they do not replace it.
 
-Key test cases:
-- `applyTwice` - function as parameter, applied twice
-- `mapPair` - function applied to multiple values
-- `chooseAndApply` - conditional function selection
-- `makeAdder/makeMultiplier` - function factories (closures)
-- `compose` - function composition
+The unchanged [16h oracle](../../samples/console/FidelityHelloWorld/16h_SequenceApplications/README.md)
+is the next staging gate: direct/pipe/stored/bare forms, both fold frontiers,
+independent dimensions, immutable aliases, formation effects, fresh enumeration
+and stopping. Original16 remains the factory/capture composition gate.
 
 ### 6.2 Expected Output
 
-```
-=== Higher-Order Functions Test ===
-increment twice on 5: 7
-double twice on 3: 12
+Keep original12's exact [manifest output](../../tests/regression/Manifest.toml)
+and 16h/original16 expected outputs. New cases check ordered effects and actual
+environment identity as well as return values.
 
-double both (3, 7): 6, 14
-
-chooseAndApply true double square 5: 10
-chooseAndApply false double square 5: 25
-
-add10 applied to 5: 15
-mult3 applied to 7: 21
-
-double then increment on 5: 11
-increment then double on 5: 12
-```
+| Completion row | Positive cases | Rejection/preservation cases |
+|---|---|---|
+| Parameter/result transport | Named/literal/captured callbacks, returned functions, repeated invocation | Wrong dimensions or missing environment facts produce the responsible located diagnostic |
+| Stages | Direct/both pipe directions, bare aliases, multiple partial frontiers | Supplied operands are neither delayed improperly nor repeated |
+| Selection/storage | Different implementations/equal layouts; same code/distinct environments; mutable selection snapshots | Saved values cannot reread later selections; joins retain both halves |
+| Composition | Captured HOFs, nested functions, generic/measure instantiations | Independent parameters, captures and intermediate dimensions remain distinct |
+| Deferred operations | Eleven C-07 core operations in admitted forms, including children and stopping | Complete-use/residence failures stay explicit; no post-decision pull/callback |
+| Aggregates | Functions through records, tuples, options/results and collections with valid storage | Elimination preserves code identity/lifetime; a descriptor alone cannot admit arbitrary `TFun` storage |
+| Tooling/evidence | Public types, capture navigation, precise errors and unsaved repair | Hidden parameters do not replace source signatures; stale/altered participants and evidence are refused |
 
 ## 7. Files to Create/Modify
 
-### 7.1 CCS
+| Owner | Existing implementation to extend |
+|---|---|
+| Source typing | CCS `NativeTypedTree/Expressions/Applications.fs`, binding/generalization and scheme owners |
+| Staging/snapshots | `Nanopass/CallableApplications.fs`, `Baker/Recipes/ApplicationRecipes.fs`, owning operation recipes |
+| Captures/residence | C-01 construction/settlement; C-04/C-06 storage owners |
+| Physical expression | Alex `Traversal/Values.fs`, `Dialects/Core/Types.fs`, lambda/application/environment witnesses/patterns |
+| Acceptance | NativeCallbacks, original12/16/16h, source/graph negatives, Alex/proof and shared editor/client gates |
 
-| File | Action | Purpose |
-|------|--------|---------|
-| None expected | - | HOF support should already exist if closures work |
-
-### 7.2 Composer
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `src/Alex/Witnesses/LambdaWitness.fs` | VERIFY | Closure invocation handles function-typed callees |
-| `src/Alex/Traversal/CCSTransfer.fs` | VERIFY | App witness handles indirect calls |
+These are extension owners, not a second application lowerer or per-operation emitter.
 
 ## 8. Implementation Checklist
 
-- [ ] Verify CCS type-checks function-typed parameters
-- [ ] Verify CCS type-checks function return types
-- [ ] Verify Alex handles function-typed parameter SSAs
-- [ ] Verify Alex emits correct indirect call for function parameters
-- [ ] Verify closure calling convention works uniformly
-- [ ] Sample 12 compiles without errors
-- [ ] Sample 12 produces correct output
-- [ ] Samples 01-11 still pass
+The [C-06 checkpoint](../Language_Coverage_Waypoints.md#c-06-native-continuation-settlement--2026-09-20)
+records original12 in its passing 23/28 compilation cohort. Option/Result and
+[C-07](../Language_Coverage_Waypoints.md#c-07-sequence-operations--implementation-waypoint-acceptance-open-2026-09-20)
+native fixtures establish their specific callback paths; original16 and 16h remain
+unpassed. This criteria update reruns none of those results.
+
+- [ ] Complete staged stored/bare Seq applications without replaying supplied effects.
+- [ ] Establish general transport and actual-environment identity through C-01's contract.
+- [ ] Admit returned/retained/aggregate storage under owning lifetime/placement contracts.
+- [ ] Pass §6 through source, graph, Alex, backend/native and exact negative gates.
+- [ ] Pass editor/analyzer/live-LSP projection and repair for newly admitted forms.
+- [ ] Record final regression controls, artifacts, companion revisions and profile limits under the shared criteria.
+
+Unchecked rows are completion gates; they do not revoke existing support or imply
+function typing and callback execution are absent.
+Accurately refusing a promised conforming use does not close its positive gate.
+C-02 retains the same delivery obligation as the F-series; dependency order does
+not make these missing compositions optional.
 
 ## 9. Risk Assessment
 
-**Low Risk**: HOFs are primarily a type system feature. If C-01 (Closures) is complete, HOFs should largely "just work." The main verification is ensuring:
-1. Function types flow correctly through inference
-2. Indirect calls through function-typed bindings emit correct MLIR
+The principal risk is losing a premise while composing working mechanisms:
+operand order, complete-use classification, signature truth, environment occurrence,
+effect invalidation or residence. C-01 pair/direct mutable-cell work and C-04
+storage contracts dominate that risk.
+
+Proceed in bounded source-to-artifact increments with fixed observations. A
+literal callback, source scheme, component fixture or hover does not close its
+retained callable counterpart. Foreign registration, Async/actors and descriptor
+transfer retain their applicable gates; their constraints inform current design.
 
 ## 10. Related PRDs
 
-- **C-01**: Closures - Required foundation
-- **C-06/C-07**: Sequences - Will use HOFs (`Seq.map`, `Seq.filter`)
-- **T-03 to T-05**: MailboxProcessor - Behavior functions are HOFs
+- [C-01](C-01-Closures.md): captures, representation, residence and foreign distinctions.
+- [C-03](C-03-Recursion.md): recursive values of function type and capture/effect forwarding.
+- [C-04](C-04-CoreCollections.md): HOF algorithms and persistent storage.
+- [C-05](C-05-Lazy.md), [C-06](C-06-SimpleSeq.md), [C-07](C-07-SeqOperations.md): deferred application, lifetime and demand.
+- [M-01](M-01-DialectAdmission.md): admitted forms and preserved information.

@@ -1,1161 +1,525 @@
 # C-04: Core Collections and Range Expressions
 
-> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
+> **Status**: In-Progress | **Depends On**: C-01 (Closures), C-02 (Higher-Order Functions), C-03 (Recursion)
+> **Existing samples**: `13a_SimpleCollections`, `13a_BAREWireCollections`; bounded Option oracles `08a`–`08e`.
+> **Criteria realignment — 2026-09-25:** this document preserves the promised collection surface and the dated implementation evidence. It changes no compiler behavior and records no fresh test execution.
 
-> **Sample**: `13a_Collections` | **Status**: Planned | **Depends On**: C-01 (Closures), C-03 (Recursion)
+The [shared C-series acceptance contract](C-Series-Acceptance.md) applies to every
+increment. Language semantics come from the current Clef specification, especially
+[List](../../../clef-lang-spec/spec/list-operations-representation.md),
+[Map](../../../clef-lang-spec/spec/map-representation.md),
+[Set](../../../clef-lang-spec/spec/set-representation.md),
+[Option](../../../clef-lang-spec/spec/option-operations-representation.md),
+[memory regions](../../../clef-lang-spec/spec/memory-regions.md) and
+[numeric selection](../../../clef-lang-spec/spec/numeric-selection.md).
+[Language Coverage Waypoints](../Language_Coverage_Waypoints.md) records the
+bounded native, graph and tooling results and their coordinated revisions.
 
-> **September 2026 scope:** the current bounded Option increments are tracked in
-> [Language Coverage Waypoints](../Language_Coverage_Waypoints.md), including
-> native FidelityHello variants and peered tooling revisions. The January status
-> table below is historical; its broad completion labels do not establish current
-> native coverage of the collection families.
-
-**Foundation for Eager Collections and Idiomatic Clef Syntax**: This PRD establishes the core collection types and range expressions that BAREWire and most Clef programs require. Unlike Seq (lazy, pull-based), these are eager, fully-materialized data structures.
+This replaces the January implementation sketch and its conflicting checklists.
+The old collection-as-closure layouts, source pointer representations, assumed
+global arena, missing-file claims and vector-first plan are superseded. Their
+operation promises remain in §3. Existing recipes and witnesses are implementation
+assets to reconcile with the specification, not evidence of complete support.
 
 ## 1. Executive Summary
 
-Clef programs fundamentally rely on:
+C-04 covers persistent eager Lists, Maps and Sets, Option operations, collection
+range expressions, tuple binding/projection and the supporting operations in §3.
+Map and Set completion is part of this PRD. Completing Option and a minimal List
+sample does not complete C-04.
 
-**Core Collection Types:**
-- **List<'T>** - Immutable singly-linked list (Clef's workhorse collection)
-- **Map<'K, 'V>** - Immutable key-value dictionary
-- **Set<'T>** - Immutable set of unique values
-
-**Range Expressions** (extremely common Clef syntax):
-- `[1..10]` - List from 1 to 10
-- `[1..2..10]` - Stepped list: 1, 3, 5, 7, 9
-- `[|1..10|]` - Array range
-- `seq { 1..10 }` - Lazy sequence range
-
-These are NOT lazy sequences - collections are fully materialized in memory. Range expressions provide idiomatic initialization syntax.
+Acceptance requires source admission, semantic graph construction, settled
+representation and storage obligations, physical witnessing, and native behavior
+for the promised operations. The selected profile must supply the required
+storage and numeric capabilities. Unsupported uses need located diagnostics in
+their owning stage. A declared intrinsic signature or a passing component
+fixture alone establishes neither usable source syntax nor native conformance.
+An accurate rejection of a valid, promised operation is still an implementation
+gap: it cannot close that operation's positive gate. Capability limits must be
+explicit and justified by the selected contract, not introduced to remove a
+difficult case from the promised surface. C and F are peer delivery obligations;
+the dependency order here is an engineering sequence, not a priority ranking.
 
 ### 1.1 Why This PRD?
 
-**BAREWire Blockers**: The BAREWire serialization library requires:
-- `Map.tryFind` (4 occurrences)
-- `Map.values` (2 occurrences)
-- `Set.empty`, `Set.contains`, `Set.add` (3 occurrences)
-- `Option.map` (1 occurrence)
-
-**Conspicuous Absence**: Range expressions like `[1..10]` are among the most common Clef patterns, yet currently error with "requires slice support" in CCS.
-
-**Glaring Omission**: The PRD roadmap (11-31) covers closures, lazy, seq, async, regions, networking, desktop - but NO PRD covers the fundamental eager collection types that virtually every Clef program uses.
+These operations let applications express immutable state, searches, transforms
+and folds without hand-written storage loops. BAREWire's current shared source
+uses arrays and explicit loops; its former Map/Set call counts and boxing
+refactoring notes describe a replaced implementation. Its codec, schema and
+layout workloads remain useful acceptance consumers, with independent byte and
+failure oracles. See §12 for the present integration boundary.
 
 ### 1.2 Design Philosophy
 
-Following CCS principles:
-1. **Monomorphization** - Collections are specialized per element type (no uniform representation)
-2. **No Boxing** - Element types are stored directly, not as `obj`
-3. **Arena-Friendly** - Collections allocate from regions when available (A-04+)
-4. **Structural Sharing** - Immutable operations share unchanged substructure
+- Preserve concrete NTU element, key, value and state types, dimensions and
+  source identities through specialization and recipe expansion.
+- Settle algorithm, evaluation order, capture, comparison, storage and lifetime
+  relationships in CCS/Baker. Alex observes those relationships at the actual
+  Huet position and composes admitted physical operations.
+- Preserve persistent versions through same-arena structural sharing and
+  lifetime joins. Node construction writes fresh storage; it does not mutate
+  an earlier version or the sentinel.
+- Derive widths, extents, alignments and capacity requirements from the graph
+  and selected platform. Optimization requires its own semantic justification
+  and target admission.
 
-## 2. Type Definitions
+## 2. Type Definitions and Semantic Contracts
 
 ### 2.1 List<'T>
 
-Clef lists are immutable singly-linked lists with structural sharing.
+A list node is the `Empty | Cons` aggregate specified by the List representation
+chapter: tag, head payload and arena-relative tail index. A List value selects a
+node in its settled arena. `List.empty` denotes index 0, a valid sentinel;
+`List.isEmpty` tests its Empty tag. `List.tail []` is `[]`, since the sentinel's
+tail indexes itself. This corrects the former runtime-failure description.
 
-```
-// List as flat closure
-// Empty: { code_ptr }
-// Cons:  { code_ptr, head: T, tail: List<T> }
-
-List<T> = FlatClosure<T>
-  where FlatClosure has:
-    - code_ptr: function pointer for list operations
-    - captures: 0 for empty, 2 for cons (head + tail)
-```
-
-**Note**: Unlike .NET's two-pointer ClefList (for IEnumerable), native lists are single-pointer cons cells. This is the classic ML/Lisp representation.
+`List.head` is admitted only when the `Cons` test on the same node dominates the
+application on the saturated graph. The compiler must not invent a test with a
+runtime failure arm to discharge that requirement. A literal construction may
+settle the case. Traversal recipes establish their own case guards before
+reading payloads. The same nonempty requirement applies to the partial List
+selectors named in the specification.
 
 ### 2.2 Map<'K, 'V>
 
-Maps are immutable balanced binary search trees (AVL or Red-Black).
-
-```
-// Map as flat closure (AVL tree implementation via Baker decomposition)
-// Empty: { code_ptr }
-// Node:  { code_ptr, key: K, value: V, left: Map<K,V>, right: Map<K,V>, height: i32 }
-
-Map<K, V> = FlatClosure<K, V>
-  where FlatClosure has:
-    - code_ptr: function pointer for map operations
-    - captures: 0 for empty, 5 for node (key, value, left, right, height)
-```
-
-**Key Constraint**: Keys must support comparison (`IComparable` in BCL terms). In CCS, this is expressed via SRTP: `'K when 'K : comparison`.
+A Map is a persistent AVL tree with key, value, left/right arena-relative indices
+and height. The sentinel has height 0, self-indexing child links and unread
+payload slots. Every modification preserves earlier roots, shares unchanged
+subtrees, maintains AVL balance, and uses the admitted comparison for `'K`.
+Traversal yields keys in comparison order. Replacement of an existing key keeps
+one entry; deletion must handle leaf, one-child and two-child cases without
+losing unrelated entries.
 
 ### 2.3 Set<'T>
 
-Sets are immutable balanced binary search trees (same structure as Map without values).
-
-```
-// Set as flat closure (AVL tree implementation via Baker decomposition)
-// Empty: { code_ptr }
-// Node:  { code_ptr, value: T, left: Set<T>, right: Set<T>, height: i32 }
-
-Set<T> = FlatClosure<T>
-  where FlatClosure has:
-    - code_ptr: function pointer for set operations
-    - captures: 0 for empty, 4 for node (value, left, right, height)
-```
+A Set uses the corresponding persistent AVL representation without a separate
+Map value slot. It preserves uniqueness, comparison order and prior versions.
+Mapped values may collide: `Set.map` must restore uniqueness and ordering under
+the result element comparison. Union, intersection and difference must respect
+the same storage and lifetime requirements as single-tree operations.
 
 ### 2.4 NTUKind Extensions
 
-```fsharp
-type NTUKind =
-    // ... existing kinds ...
-    | NTUarray     // 'T[] (mutable, contiguous)
-    | NTUlist      // List<'T>
-    | NTUmap       // Map<'K, 'V>
-    | NTUset       // Set<'T>
-```
+The current type algebra already contains collection constructors. Its
+[source](../../../clef/src/Compiler/NativeTypedTree/NativeTypes.fs) and the
+[Native Type Universe](../../../clef-lang-spec/spec/native-type-universe.md)
+are the starting points; this PRD does not instruct implementers to add a
+second List/Map/Set universe or equate those types with an untyped pointer.
 
 ### 2.5 Type Constructor Arity Principle
 
-> **Arity is explicit in the type constructor. No helper functions needed.**
+List, Set and Option have one payload parameter; Map has independent key and
+value parameters. Fold state is independent of collection payload. Instantiation
+must remain fresh at each polymorphic use, including bare aliases and stored
+partials. Tests must mix distinct types and dimensions in one reachable program
+and reject mismatched callback/state/result types at the source location.
 
-Following the same principle as function arity (see "Arity On The Side Of Caution"), type constructors carry their arity explicitly:
+### 2.6 Option
 
-| Type Constructor | Arity | NTUKind | Usage |
-|-----------------|-------|---------|-------|
-| `arrayTyCon` | 1 | NTUarray | `TApp(arrayTyCon, [elemType])` |
-| `listTyCon` | 1 | NTUlist | `TApp(listTyCon, [elemType])` |
-| `mapTyCon` | 2 | NTUmap | `TApp(mapTyCon, [keyType; valType])` |
-| `setTyCon` | 1 | NTUset | `TApp(setTyCon, [elemType])` |
+Option retains the specification's native tagged-value contract: None and Some
+are distinct cases, with a platform-selected addressable tag and a concrete
+payload representation. None is not an absent interior pointer. Its HOFs expand
+through Baker case recipes; callable payloads and state retain their separate
+function boundaries and C-01 lifetime obligations.
 
-**Why no helper functions?** The type constructor with its arity IS the intrinsic. `mkArrayType elemType` is unnecessary indirection - just use `TApp(arrayTyCon, [elemType])` directly. This parallels how saturated function calls compile to direct calls rather than closure creation.
+All supplied operands are evaluated eagerly in source order. `defaultWith` and
+`orElseWith` evaluate the producer expression eagerly but invoke the resulting
+function only for None. `iter`, `map`, `bind`, predicates and folds invoke their
+callback only in the specified case. Stored partials snapshot supplied function
+and value operands; storage captured by those functions remains shared according
+to its binding contract. `forall None` is true; `exists None` is false.
 
-```fsharp
-// WRONG - helper function indirection
-let mkArrayType elemType = NativeType.TApp(arrayTyCon, [elemType])
-
-// RIGHT - direct type application (arity is explicit)
-NativeType.TApp(arrayTyCon, [elemType])
-```
-
-### 2.6 NativeType Extensions
-
-```fsharp
-type NativeType =
-    // ... existing types ...
-    | TList of elementType: NativeType
-    | TMap of keyType: NativeType * valueType: NativeType
-    | TSet of elementType: NativeType
-```
+`Option.get` remains in scope as the specified payload extraction primitive.
+Its absent-case admission must be recorded explicitly before claiming complete
+source support; this PRD does not retain the old invented exception behavior or
+authorize reading an unselected payload. The same requirement applies to the
+success precondition of `Map.find`, whose operation inventory alone does not
+settle missing-key behavior. Any unresolved contract belongs in the specification
+and CCS admission work before a native implementation is accepted.
 
 ### 2.7 Range Expressions
 
-Range expressions are idiomatic Clef syntax for generating sequences of values. They desugar to collection initialization.
+Promised syntax includes `[first .. last]`, `[first .. step .. last]`, the
+corresponding array forms, and the range producer consumed by `seq { ... }`.
+List and array results are eager; sequence realization belongs jointly with
+[C-06](C-06-SimpleSeq.md) and [C-07](C-07-SeqOperations.md).
 
-#### 2.7.1 Syntax Forms
+Acceptance covers ascending, descending, singleton, empty and stepped cases,
+endpoint evaluation order, lexical range-operator identity, and exact element
+count and byte extent. Zero step and unsupported numeric forms must receive the
+owning specified outcome or admission diagnostic before division, allocation or
+iteration. Count arithmetic and the final induction step cannot overflow simply
+because the mathematical range is valid. Element dimensions, progression and
+representation must agree under the current numeric contract; there is no
+source-level fixed machine-width default in this plan.
 
-| Syntax | Meaning | Desugars To |
-|--------|---------|-------------|
-| `[1..10]` | List 1 to 10 inclusive | `List.ofSeq (seq { 1..10 })` or loop |
-| `[1..2..10]` | List 1,3,5,7,9 (step 2) | `List.ofSeq (seq { 1..2..10 })` |
-| `[10..-1..1]` | Countdown 10,9,8,...,1 | `List.ofSeq (seq { 10..-1..1 })` |
-| `[|1..10|]` | Array 1 to 10 | `Array.init 10 (fun i -> i + 1)` |
-| `[|1..2..10|]` | Array with step | Loop-based initialization |
-| `seq { 1..10 }` | Lazy sequence | State machine (C-06) |
-| `{ 1..10 }` | Sequence (implicit) | Same as `seq { 1..10 }` |
+The existing named, closed, unstepped integer `for value in first .. last`
+normalization is useful implementation, but its September 20 gate does not
+establish materialized ranges, stepped ranges, general enumerable loops or
+per-iteration closure identity. See §8.
 
-#### 2.7.2 CCS Representation
+## 3. CCS Intrinsics and Promised Operation Inventory
 
-CCS parses range expressions as `SynExpr.IndexRange`:
-
-```fsharp
-// From CCS SyntaxTree.fs
-| IndexRange of
-    expr1: SynExpr option *    // Start (None = unbounded)
-    opm: range *               // Range of .. operator
-    expr2: SynExpr option *    // End (None = unbounded)
-    range1: range *
-    range2: range *
-    range: range
-
-// Stepped ranges use nested IndexRange or special handling
-```
-
-**Current CCS Status**: `IndexRange` currently errors with "requires slice support". This PRD implements proper range expression handling.
-
-#### 2.7.3 CCS Implementation
-
-**SemanticKind Extension:**
-
-```fsharp
-type SemanticKind =
-    // ... existing kinds ...
-
-    /// Range expression: start..finish or start..step..finish
-    /// Produces a sequence/list/array depending on context
-    | RangeExpr of
-        start: NodeId *
-        finish: NodeId *
-        step: NodeId option *
-        targetKind: RangeTargetKind
-
-/// What collection type the range produces
-type RangeTargetKind =
-    | RangeToList    // [1..10]
-    | RangeToArray   // [|1..10|]
-    | RangeToSeq     // seq { 1..10 }
-```
-
-**Type Checking:**
-
-```fsharp
-/// Check a range expression
-let checkRangeExpr
-    (checkExpr: CheckExprFn)
-    (env: TypeEnv)
-    (builder: NodeBuilder)
-    (startOpt: SynExpr option)
-    (finishOpt: SynExpr option)
-    (stepOpt: SynExpr option)
-    (targetKind: RangeTargetKind)
-    (range: SourceRange)
-    : SemanticNode =
-
-    // Start and finish must be same numeric type
-    let startNode = startOpt |> Option.map (checkExpr env builder)
-    let finishNode = finishOpt |> Option.map (checkExpr env builder)
-    let stepNode = stepOpt |> Option.map (checkExpr env builder)
-
-    // Infer element type (int by default, or from expressions)
-    let elemType =
-        match startNode, finishNode with
-        | Some s, _ -> s.Type
-        | _, Some f -> f.Type
-        | None, None -> env.Globals.IntType
-
-    // Unify all range bounds to same type
-    [startNode; finishNode; stepNode]
-    |> List.choose id
-    |> List.iter (fun n ->
-        addConstraint (Constraint.Equals(n.Type, elemType, range)) env)
-
-    // Result type depends on target
-    let resultType =
-        match targetKind with
-        | RangeToList -> mkListType elemType
-        | RangeToArray -> mkArrayType elemType
-        | RangeToSeq -> mkSeqType elemType
-
-    let childIds = [startNode; finishNode; stepNode] |> List.choose (Option.map (fun n -> n.Id))
-    builder.Create(
-        SemanticKind.RangeExpr(
-            startNode |> Option.map (fun n -> n.Id) |> Option.defaultValue NodeId.Empty,
-            finishNode |> Option.map (fun n -> n.Id) |> Option.defaultValue NodeId.Empty,
-            stepNode |> Option.map (fun n -> n.Id),
-            targetKind),
-        resultType,
-        range,
-        children = childIds)
-```
-
-#### 2.7.4 Alex Code Generation
-
-**List Range** `[1..10]`:
-```mlir
-// Eager: allocate and fill list in reverse, then reverse
-// Or: generate as seq, then Seq.toList
-llvm.func @range_to_list(%start: i32, %finish: i32) -> !list_int {
-    // Simple approach: loop building cons cells
-    %result = ... // List.empty
-    %i = %finish
-    loop:
-        %cell = call @list_cons(%i, %result)
-        %i_next = arith.subi %i, 1
-        %done = arith.cmpi slt, %i_next, %start
-        cond_br %done, ^exit, ^loop
-    exit:
-        return %result
-}
-```
-
-**Array Range** `[|1..10|]`:
-```mlir
-// Efficient: calculate size, allocate, fill
-llvm.func @range_to_array(%start: i32, %finish: i32) -> !array_int {
-    %size = arith.subi %finish, %start
-    %size_plus_1 = arith.addi %size, 1
-    %arr = call @array_zeroCreate(%size_plus_1)
-    %i = 0
-    %val = %start
-    loop:
-        call @array_set(%arr, %i, %val)
-        %i_next = arith.addi %i, 1
-        %val_next = arith.addi %val, 1
-        %done = arith.cmpi sge, %i_next, %size_plus_1
-        cond_br %done, ^exit, ^loop
-    exit:
-        return %arr
-}
-```
-
-**Stepped Range** `[1..2..10]`:
-```mlir
-// With step parameter
-llvm.func @range_stepped_to_array(%start: i32, %step: i32, %finish: i32) -> !array_int {
-    // Calculate size: ((finish - start) / step) + 1
-    %diff = arith.subi %finish, %start
-    %count = arith.divsi %diff, %step
-    %size = arith.addi %count, 1
-    %arr = call @array_zeroCreate(%size)
-    // Fill with stepped values
-    ...
-}
-```
-
-#### 2.7.5 Intrinsics for Range Support
-
-| Intrinsic | Signature | Purpose |
-|-----------|-----------|---------|
-| `Range.toList` | `int -> int -> List<int>` | `[start..finish]` |
-| `Range.toListStep` | `int -> int -> int -> List<int>` | `[start..step..finish]` |
-| `Range.toArray` | `int -> int -> int[]` | `[|start..finish|]` |
-| `Range.toArrayStep` | `int -> int -> int -> int[]` | `[|start..step..finish|]` |
-| `Range.toSeq` | `int -> int -> seq<int>` | `seq { start..finish }` |
-| `Range.toSeqStep` | `int -> int -> int -> seq<int>` | `seq { start..step..finish }` |
-
-**Note**: These intrinsics are generic over numeric types supporting `(+)` and comparison. In practice, `int` is most common.
-
-## 3. CCS Intrinsics
+The tables preserve the PRD's operation scope. They are acceptance obligations,
+not a claim that every signature, recipe or executable already works. Syntax and
+resolved operation identity govern elaboration; an old proposed internal
+`Range.*` helper name does not require a new public API.
 
 ### 3.1 List Intrinsics
 
-| Intrinsic | Signature | Purpose |
-|-----------|-----------|---------|
-| `List.empty` | `List<'T>` | Empty list (flat closure with zero captures) |
-| `List.isEmpty` | `List<'T> -> bool` | Check if list is empty |
-| `List.head` | `List<'T> -> 'T` | Get first element (fails on empty) |
-| `List.tail` | `List<'T> -> List<'T>` | Get rest of list (fails on empty) |
-| `List.cons` | `'T -> List<'T> -> List<'T>` | Prepend element |
-| `List.length` | `List<'T> -> int` | Count elements |
-| `List.rev` | `List<'T> -> List<'T>` | Reverse list |
-| `List.append` | `List<'T> -> List<'T> -> List<'T>` | Concatenate lists |
-| `List.map` | `('T -> 'U) -> List<'T> -> List<'U>` | Transform elements |
-| `List.filter` | `('T -> bool) -> List<'T> -> List<'T>` | Keep matching elements |
-| `List.fold` | `('S -> 'T -> 'S) -> 'S -> List<'T> -> 'S` | Left fold |
-| `List.foldBack` | `('T -> 'S -> 'S) -> List<'T> -> 'S -> 'S` | Right fold |
-| `List.tryHead` | `List<'T> -> Option<'T>` | Safe head |
-| `List.tryFind` | `('T -> bool) -> List<'T> -> Option<'T>` | Find first match |
-| `List.forall` | `('T -> bool) -> List<'T> -> bool` | All elements match |
-| `List.exists` | `('T -> bool) -> List<'T> -> bool` | Any element matches |
+| Operation | Signature / result | Required behavior |
+|---|---|---|
+| `List.empty` | `'T list` | Valid sentinel; no per-use allocation |
+| `List.isEmpty` | `'T list -> bool` | Empty case test |
+| `List.head` | `'T list -> 'T` | Existing same-node Cons guard required |
+| `List.tail` | `'T list -> 'T list` | Tail link; empty tail is empty |
+| `List.cons`, `::` | `'T -> 'T list -> 'T list` | Fresh node sharing the tail in its arena |
+| `List.length` | `'T list -> int` | Exact cardinality |
+| `List.rev` | `'T list -> 'T list` | Reversed order |
+| `List.append`, `@` | `'T list -> 'T list -> 'T list` | Left elements followed by right; sharing/lifetime contract retained |
+| `List.map` | `('T -> 'U) -> 'T list -> 'U list` | One result per input, correct order and callback effects |
+| `List.filter` | `('T -> bool) -> 'T list -> 'T list` | Stable retained subsequence |
+| `List.fold` | `('S -> 'T -> 'S) -> 'S -> 'T list -> 'S` | Left fold, independent state type |
+| `List.foldBack` | `('T -> 'S -> 'S) -> 'T list -> 'S -> 'S` | Right fold with its distinct argument order |
+| `List.tryHead` | `'T list -> 'T option` | None for empty; Some head otherwise |
+| `List.tryFind` | `('T -> bool) -> 'T list -> 'T option` | First match with short-circuit behavior |
+| `List.forall` | `('T -> bool) -> 'T list -> bool` | True for empty; stop at first false |
+| `List.exists` | `('T -> bool) -> 'T list -> bool` | False for empty; stop at first true |
 
-**Clef List Syntax Sugar**:
-- `[1; 2; 3]` desugars to `List.cons 1 (List.cons 2 (List.cons 3 List.empty))`
-- `x :: xs` desugars to `List.cons x xs`
+List literals and cons patterns are part of this inventory. They must elaborate
+to the same constructors and guards as explicit operations.
 
 ### 3.2 Map Intrinsics
 
-| Intrinsic | Signature | Purpose |
-|-----------|-----------|---------|
-| `Map.empty` | `Map<'K, 'V>` | Empty map (flat closure with zero captures) |
-| `Map.isEmpty` | `Map<'K, 'V> -> bool` | Check if map is empty |
-| `Map.add` | `'K -> 'V -> Map<'K, 'V> -> Map<'K, 'V>` | Add/replace key-value |
-| `Map.remove` | `'K -> Map<'K, 'V> -> Map<'K, 'V>` | Remove key |
-| `Map.tryFind` | `'K -> Map<'K, 'V> -> Option<'V>` | Lookup by key |
-| `Map.find` | `'K -> Map<'K, 'V> -> 'V` | Lookup (fails if missing) |
-| `Map.containsKey` | `'K -> Map<'K, 'V> -> bool` | Check key exists |
-| `Map.count` | `Map<'K, 'V> -> int` | Number of entries |
-| `Map.keys` | `Map<'K, 'V> -> List<'K>` | All keys as list |
-| `Map.values` | `Map<'K, 'V> -> List<'V>` | All values as list |
-| `Map.toList` | `Map<'K, 'V> -> List<'K * 'V>` | Convert to key-value pairs |
-| `Map.ofList` | `List<'K * 'V> -> Map<'K, 'V>` | Create from key-value pairs |
-| `Map.map` | `('K -> 'V -> 'U) -> Map<'K, 'V> -> Map<'K, 'U>` | Transform values |
-| `Map.filter` | `('K -> 'V -> bool) -> Map<'K, 'V> -> Map<'K, 'V>` | Keep matching entries |
-| `Map.fold` | `('S -> 'K -> 'V -> 'S) -> 'S -> Map<'K, 'V> -> 'S` | Fold over entries |
+| Operation | Signature / result | Required behavior |
+|---|---|---|
+| `Map.empty` | `Map<'K,'V>` | Valid sentinel |
+| `Map.isEmpty` | `Map<'K,'V> -> bool` | Height-zero test |
+| `Map.add` | `'K -> 'V -> Map<'K,'V> -> Map<'K,'V>` | Insert or replace, preserve other versions and AVL balance |
+| `Map.remove` | `'K -> Map<'K,'V> -> Map<'K,'V>` | Remove present key; preserve absent-key contents and rebalance |
+| `Map.tryFind` | `'K -> Map<'K,'V> -> 'V option` | Typed hit or miss |
+| `Map.find` | `'K -> Map<'K,'V> -> 'V` | Success contract resolved as required by §2.6 |
+| `Map.containsKey` | `'K -> Map<'K,'V> -> bool` | Membership under the same comparison |
+| `Map.count` | `Map<'K,'V> -> int` | Distinct-key cardinality |
+| `Map.keys` | `Map<'K,'V> -> 'K list` | Keys in comparison order |
+| `Map.values` | `Map<'K,'V> -> 'V list` | Values in matching key order |
+| `Map.toList` | `Map<'K,'V> -> ('K * 'V) list` | Ordered key/value pairs |
+| `Map.ofList` | `('K * 'V) list -> Map<'K,'V>` | Repeated insertion with specified duplicate-key replacement |
+| `Map.map` | `('K -> 'V -> 'U) -> Map<'K,'V> -> Map<'K,'U>` | Preserve keys; transform values |
+| `Map.filter` | `('K -> 'V -> bool) -> Map<'K,'V> -> Map<'K,'V>` | Retain matching entries with a valid persistent tree |
+| `Map.fold` | `('S -> 'K -> 'V -> 'S) -> 'S -> Map<'K,'V> -> 'S` | Fold in comparison order |
 
 ### 3.3 Set Intrinsics
 
-| Intrinsic | Signature | Purpose |
-|-----------|-----------|---------|
-| `Set.empty` | `Set<'T>` | Empty set (flat closure with zero captures) |
-| `Set.isEmpty` | `Set<'T> -> bool` | Check if set is empty |
-| `Set.add` | `'T -> Set<'T> -> Set<'T>` | Add element |
-| `Set.remove` | `'T -> Set<'T> -> Set<'T>` | Remove element |
-| `Set.contains` | `'T -> Set<'T> -> bool` | Check membership |
-| `Set.count` | `Set<'T> -> int` | Number of elements |
-| `Set.union` | `Set<'T> -> Set<'T> -> Set<'T>` | Set union |
-| `Set.intersect` | `Set<'T> -> Set<'T> -> Set<'T>` | Set intersection |
-| `Set.difference` | `Set<'T> -> Set<'T> -> Set<'T>` | Set difference |
-| `Set.isSubset` | `Set<'T> -> Set<'T> -> bool` | Subset test |
-| `Set.toList` | `Set<'T> -> List<'T>` | Convert to list |
-| `Set.ofList` | `List<'T> -> Set<'T>` | Create from list |
-| `Set.map` | `('T -> 'U) -> Set<'T> -> Set<'U>` | Transform elements |
-| `Set.filter` | `('T -> bool) -> Set<'T> -> Set<'T>` | Keep matching elements |
-| `Set.fold` | `('S -> 'T -> 'S) -> 'S -> Set<'T> -> 'S` | Fold over elements |
+| Operation | Signature / result | Required behavior |
+|---|---|---|
+| `Set.empty` | `Set<'T>` | Valid sentinel |
+| `Set.isEmpty` | `Set<'T> -> bool` | Height-zero test |
+| `Set.add` | `'T -> Set<'T> -> Set<'T>` | Insert with uniqueness and persistence |
+| `Set.remove` | `'T -> Set<'T> -> Set<'T>` | Correct removal/rebalance for every child shape |
+| `Set.contains` | `'T -> Set<'T> -> bool` | Membership |
+| `Set.count` | `Set<'T> -> int` | Distinct-element cardinality |
+| `Set.union` | `Set<'T> -> Set<'T> -> Set<'T>` | Elements in either operand |
+| `Set.intersect` | `Set<'T> -> Set<'T> -> Set<'T>` | Elements in both operands |
+| `Set.difference` | `Set<'T> -> Set<'T> -> Set<'T>` | Elements in the first operand only |
+| `Set.isSubset` | `Set<'T> -> Set<'T> -> bool` | Set containment, including empty operands |
+| `Set.toList` | `Set<'T> -> 'T list` | Comparison-ordered elements |
+| `Set.ofList` | `'T list -> Set<'T>` | Construct with duplicates removed |
+| `Set.map` | `('T -> 'U) -> Set<'T> -> Set<'U>` | Re-establish result ordering and uniqueness |
+| `Set.filter` | `('T -> bool) -> Set<'T> -> Set<'T>` | Persistent subset |
+| `Set.fold` | `('S -> 'T -> 'S) -> 'S -> Set<'T> -> 'S` | Fold in comparison order |
 
 ### 3.4 Option Intrinsics (Enhancement)
 
-Option already exists but needs these operations:
+| Operation | Signature / result | Required behavior |
+|---|---|---|
+| `None`, `Some` | `'T option`, `'T -> 'T option` | Concrete case construction and matching |
+| `Option.map` | `('T -> 'U) -> 'T option -> 'U option` | Transform Some payload |
+| `Option.bind` | `('T -> 'U option) -> 'T option -> 'U option` | Return selected callback result |
+| `Option.defaultValue` | `'T -> 'T option -> 'T` | Eager fallback value |
+| `Option.defaultWith` | `(unit -> 'T) -> 'T option -> 'T` | Invoke producer only for None |
+| `Option.orElse` | `'T option -> 'T option -> 'T option` | Eager fallback option |
+| `Option.orElseWith` | `(unit -> 'T option) -> 'T option -> 'T option` | Invoke optional producer only for None |
+| `Option.iter` | `('T -> unit) -> 'T option -> unit` | Invoke action once for Some; retain unit result |
+| `Option.fold` | `('S -> 'T -> 'S) -> 'S -> 'T option -> 'S` | None retains state; Some applies folder to state then payload |
+| `Option.foldBack` | `('T -> 'S -> 'S) -> 'T option -> 'S -> 'S` | None retains state; Some applies folder to payload then state |
+| `Option.filter` | `('T -> bool) -> 'T option -> 'T option` | Retain Some when predicate holds |
+| `Option.exists` | `('T -> bool) -> 'T option -> bool` | False for None |
+| `Option.forall` | `('T -> bool) -> 'T option -> bool` | True for None |
+| `Option.isSome`, `Option.isNone` | `'T option -> bool` | Case tests |
+| `Option.get` | `'T option -> 'T` | Payload extraction; admission boundary in §2.6 |
+| `Option.toList` | `'T option -> 'T list` | Zero or one elements under the List storage contract |
 
-| Intrinsic | Signature | Purpose |
-|-----------|-----------|---------|
-| `Option.map` | `('T -> 'U) -> Option<'T> -> Option<'U>` | Transform if Some |
-| `Option.bind` | `('T -> Option<'U>) -> Option<'T> -> Option<'U>` | Flatmap |
-| `Option.defaultValue` | `'T -> Option<'T> -> 'T` | Get with default |
-| `Option.defaultWith` | `(unit -> 'T) -> Option<'T> -> 'T` | Get with lazy default |
-| `Option.orElse` | `Option<'T> -> Option<'T> -> Option<'T>` | Retain Some or select eager optional fallback |
-| `Option.orElseWith` | `(unit -> Option<'T>) -> Option<'T> -> Option<'T>` | Invoke optional fallback producer only for None |
-| `Option.iter` | `('T -> unit) -> Option<'T> -> unit` | Evaluate both operands eagerly; invoke the action only for Some |
-| `Option.fold` | `('State -> 'T -> 'State) -> 'State -> Option<'T> -> 'State` | Some applies folder to state then payload; None retains state |
-| `Option.foldBack` | `('T -> 'State -> 'State) -> Option<'T> -> 'State -> 'State` | Some applies folder to payload then state; None retains state |
-| `Option.filter` | `('T -> bool) -> Option<'T> -> Option<'T>` | Retain Some when the predicate holds |
-| `Option.exists` | `('T -> bool) -> Option<'T> -> bool` | False for None; test Some |
-| `Option.forall` | `('T -> bool) -> Option<'T> -> bool` | True for None; test Some |
-| `Option.isSome` | `Option<'T> -> bool` | Check if Some |
-| `Option.isNone` | `Option<'T> -> bool` | Check if None |
-| `Option.get` | `Option<'T> -> 'T` | Unwrap (fails on None) |
-| `Option.toList` | `Option<'T> -> List<'T>` | Convert to 0-or-1 element list |
+### 3.5 Additional Small Intrinsics
 
-### 3.5 Additional Small Intrinsics (BAREWire Needs)
-
-| Intrinsic | Signature | Purpose |
-|-----------|-----------|---------|
-| `max` | `'T -> 'T -> 'T` | Maximum (comparison) |
-| `min` | `'T -> 'T -> 'T` | Minimum (comparison) |
-| `fst` | `'T * 'U -> 'T` | First of tuple |
-| `snd` | `'T * 'U -> 'U` | Second of tuple |
-| `Array.blit` | `'T[] -> int -> 'T[] -> int -> int -> unit` | Copy array segment |
-| `String.concat` | `string -> List<string> -> string` | Join strings with separator |
+The original supporting promises remain: comparison-based `min` and `max`, pair
+projections `fst` and `snd`, `Array.blit`, and separator-based `String.concat`
+over a string list. Acceptance includes type/dimension preservation, evaluation
+order, array extent and overlap behavior, empty inputs and exact output capacity.
+Their owning standard contracts govern details; no BAREWire-specific emitter is
+required. `Array.map`, `Array.fold`, `Array.init`, `Array.sum` and `Array.sumBy`, present in the former
+optimization plan, also need semantic coverage when used as collection consumers;
+SIMD selection is separately governed by §11.
 
 ### 3.6 Tuple Destructuring in Let Bindings
 
-> **Added January 2026** - Identified during BAREWire compilation work.
+Pairs, larger tuples, nested tuple patterns, parentheses and wildcards must bind
+the correct components while evaluating the right-hand side once. Bindings retain
+their individual types, dimensions, source identities and lexical scope. Shape
+or type mismatches require located diagnostics; an unsupported pattern must not
+silently bind `_` or disappear.
 
-Tuple destructuring in let bindings is a core Clef pattern that CCS must support:
+The old `Bindings.fs` pseudocode is not a current defect diagnosis. Inspect the
+existing [binding checker](../../../clef/src/Compiler/NativeTypedTree/Expressions/Bindings.fs)
+and [pattern checker](../../../clef/src/Compiler/NativeTypedTree/Expressions/Patterns.fs)
+before changing their owning graph construction. BAREWire RoundTrip already
+contains reachable tuple-return/destructuring consumers; broader nested-pattern
+coverage still needs its own evidence.
 
-```fsharp
-// Tuple destructuring pattern - currently broken in CCS
-let (a, b) = someFunction()   // Should bind 'a' and 'b'
-let x, y, z = triple          // Should bind 'x', 'y', 'z'
+### 3.7 Range Surface
 
-// BAREWire usage example:
-let innerSize, innerAlign = getSizeAndAlignment ctx schema innerType
-```
+| Historical helper family | Required source capability | Acceptance owner |
+|---|---|---|
+| `Range.toList`, `Range.toListStep` | Inclusive list ranges, with implicit or explicit step | C-04 |
+| `Range.toArray`, `Range.toArrayStep` | Inclusive array ranges, with implicit or explicit step | C-04 |
+| `Range.toSeq`, `Range.toSeqStep` | Corresponding lazy range producer | C-04 source semantics; C-06/C-07 generator, traversal and lifetime |
 
-#### 3.6.1 Root Cause Analysis
+The inventory retains all six intentions without requiring those historical
+internal helper spellings. Range operators must retain lexical identity and
+the progression rules of the language.
 
-The issue is in `Bindings.fs`:
+### 3.8 Additional Normative Families and Roadmap Boundaries
 
-```fsharp
-// CURRENT STATE (broken)
-let getBindingName (binding: SynBinding) : string =
-    let (SynBinding(_, _, _, _, _, _, _, headPat, _, _, _, _, _)) = binding
-    match headPat with
-    | SynPat.Named(SynIdent(ident, _), _, _, _) -> ident.idText
-    | SynPat.LongIdent(longDotId, _, _, _, _, _) ->
-        longDotId.LongIdent |> List.last |> fun id -> id.idText
-    | _ -> "_"  // ← SILENT FALL-THROUGH: tuple patterns return "_"
-```
+The standard specifies more than the original minimum inventory. These are
+explicit follow-on acceptance rows, not implied by a family name being present:
 
-The function `getBindingName` only handles `Named` and `LongIdent` patterns. For `SynPat.Tuple`, it silently returns `"_"`, causing all tuple bindings to fail.
+| Family | Additional operations to account for |
+|---|---|
+| List | `List.collect`, `List.reduce`, `List.contains`, `List.tryPick`, `List.minBy`, `List.maxBy`, `List.min`, `List.max`, `List.last`, `List.forall2`, `List.sum`, `List.sumBy`, `List.average`; iteration and `List.toSeq`/`List.ofSeq` integration retain their own acceptance |
+| Map | `Map.toSeq`, `Map.iter`, `Map.forall`, `Map.exists`, `Map.ofSeq`, `Map.ofArray` |
+| Set | `Set.isSuperset`, `Set.forall`, `Set.exists`, `Set.iter`, `Set.toSeq`, `Set.toArray`, `Set.ofSeq`, `Set.ofArray`, `Set.singleton` |
+| Option | `Option.map2`, `Option.map3`, `Option.flatten`, `Option.toArray`; `Option.toNullable`/`Option.ofNullable` require an explicit boundary/profile contract |
 
-#### 3.6.2 Required Fix
-
-**Option A: Handle Tuple Patterns in Binding Construction**
-
-Modify `checkBinding` in `Bindings.fs` to recognize tuple patterns and create multiple bindings:
-
-```fsharp
-// REQUIRED: Handle tuple patterns
-| SynPat.Tuple(_, pats, _, _) ->
-    // 1. Check the RHS expression - get the tuple value
-    // 2. For each element pattern, extract the corresponding tuple element
-    // 3. Create bindings for each named pattern in the tuple
-
-    // Pseudo-implementation:
-    let rhsType = inferType env rhs
-    match rhsType with
-    | TTuple elemTypes when List.length elemTypes = List.length pats ->
-        pats |> List.mapi (fun i pat ->
-            match pat with
-            | SynPat.Named(ident, _, _, _) ->
-                // Extract tuple element i
-                // Create binding: let ident = Tuple.item i rhs
-                ...
-            | SynPat.Tuple _ ->
-                // Nested tuple - recurse
-                ...
-            | _ -> failwith "Unsupported pattern in tuple"
-        )
-    | _ -> failwith "Type mismatch in tuple destructuring"
-```
-
-**Option B: Desugar Early in PSG Construction**
-
-Transform tuple let-bindings during PSG construction:
-
-```fsharp
-// Source:
-let (a, b) = expr
-
-// Desugars to:
-let __tuple = expr
-let a = fst __tuple
-let b = snd __tuple
-```
-
-This approach reuses existing infrastructure (`fst`, `snd`, or `Tuple.item`).
-
-#### 3.6.3 CCS Implementation Note
-
-Per the diagnostic principle: **No silent default cases**. The `| _ -> "_"` fall-through must be replaced with explicit error handling:
-
-```fsharp
-// CORRECT: Explicit handling with diagnostic
-| SynPat.Tuple _ ->
-    failwith "Tuple destructuring in let bindings not yet implemented (C-04 §3.6)"
-| SynPat.Paren(inner, _) ->
-    getBindingName' inner  // Unwrap parentheses
-| other ->
-    failwith $"Unsupported pattern in let binding: {other.GetType().Name}"
-```
-
-#### 3.6.4 Implementation Checklist
-
-- [ ] Replace `| _ -> "_"` with explicit pattern cases in `getBindingName`
-- [ ] Add diagnostic error for unsupported patterns (no silent fall-through)
-- [ ] Implement `SynPat.Tuple` handling in `checkBinding`
-- [ ] Add tuple element extraction intrinsics (`Tuple.item1`, `item2`, ... or use `fst`/`snd`)
-- [ ] Test with BAREWire `let a, b = ...` patterns
-- [ ] Verify nested tuple patterns work: `let (a, (b, c)) = ...`
-
-#### 3.6.5 Related: General Pattern Matching
-
-Patterns.fs (`checkPattern`) correctly handles `SynPat.Tuple` and returns bindings:
-
-```fsharp
-// In Patterns.fs - this WORKS
-| SynPat.Tuple(_, pats, _, range) ->
-    pats
-    |> List.mapi (fun i pat -> checkPattern env builder pat (Some(TupleElement(i))))
-    |> List.collect id
-```
-
-The issue is that `Bindings.fs` doesn't call through to `checkPattern` for tuple patterns in let bindings. The fix should leverage the existing pattern machinery.
+Record each row's intended increment and evidence before making a full-family
+conformance claim. Sequence conversions share C-06/C-07 acceptance; nullable
+boundary conversion does not introduce interior null. These extensions do not
+remove Map, Set or any §3.1–§3.7 promise from C-04 completion.
 
 ## 4. Implementation Strategy
 
-### 4.1 Phase 1: Minimal Viable (BAREWire Unblocking)
+The [Baker contract](../../../clef/docs/fidelity/Baker_Saturation_Architecture.md)
+and [Alex overview](../Alex_Architecture_Overview.md) govern the implementation.
+Much of the machinery exists:
 
-Focus on the specific operations BAREWire needs:
+| Current owner | Existing implementation | Remaining acceptance boundary |
+|---|---|---|
+| Source typing and specialization | [Intrinsics](../../../clef/src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs), [NativeTypes](../../../clef/src/Compiler/NativeTypedTree/NativeTypes.fs), [Monomorphization](../../../clef/src/Compiler/Nanopass/Monomorphization.fs) | Reachable source forms, independent schemes, complete types and located rejection for every claimed operation |
+| Baker decomposition | [ListRecipes](../../../clef/src/Compiler/Baker/Recipes/ListRecipes.fs), [MapRecipes](../../../clef/src/Compiler/Baker/Recipes/MapRecipes.fs), [SetRecipes](../../../clef/src/Compiler/Baker/Recipes/SetRecipes.fs), [OptionRecipes](../../../clef/src/Compiler/Baker/Recipes/OptionRecipes.fs) | Correct algorithms, eager operands, guarded payload reads, graph/reference incidence, layout/lifetime/obligations and complete residuals |
+| Reusable ingredients | [Primitives](../../../clef/src/Compiler/Baker/Ingredients/Primitives.fs), [Patterns](../../../clef/src/Compiler/Baker/Ingredients/Patterns.fs), [Options](../../../clef/src/Compiler/Baker/Ingredients/Options.fs) | Sentinel/node/traversal forms and recipe laws agree with the current standard |
+| Alex physical expression | [CollectionPatterns](../../src/MiddleEnd/Alex/Patterns/CollectionPatterns.fs), [ListWitness](../../src/MiddleEnd/Alex/Witnesses/ListWitness.fs), [MapWitness](../../src/MiddleEnd/Alex/Witnesses/MapWitness.fs), [SetWitness](../../src/MiddleEnd/Alex/Witnesses/SetWitness.fs), [OptionWitness](../../src/MiddleEnd/Alex/Witnesses/OptionWitness.fs) | Consume settled facts and emit the admitted sentinel/arena form; no source-name algorithm selection or invented storage premise |
+| Integer range normalization | [LoopRanges](../../../clef/src/Compiler/Nanopass/LoopRanges.fs), [LoopRangeRecipes](../../../clef/src/Compiler/Baker/Recipes/LoopRangeRecipes.fs) | Preserve the existing bounded loop subset; extend materialized and stepped forms only with their own contracts |
 
-**Priority 1 - BAREWire Blockers:**
-- `Map.tryFind`
-- `Map.values`
-- `Set.empty`, `Set.contains`, `Set.add`
-- `Option.map`
-- `max`, `snd`
-- `Array.blit`
-- `String.concat`
+The List witness already handles primitives and rejects surviving HOF operations
+that require Baker decomposition. Map/Set recipes and witnesses also exist.
+Current CollectionPatterns still constructs several empty/node values through
+generic DU construction, and Set deletion contains a simplified merge path.
+Those source observations identify work to inspect and replace; they are not a
+fresh execution result or proof of the specified sentinel representation and AVL
+deletion. Recipe-file existence must never substitute for algorithm acceptance.
 
-This minimal set unblocks BAREWire compilation.
+For each increment, fix the first missing or incorrect fact in the pipeline.
+CCS/Baker owns new algorithm structure and obligation participants. Alex can
+extend physical expression for an admitted form but cannot reconstruct a tree
+algorithm, allocate an unexplained arena, or repair a missing guard while
+emitting. SSA names are derived by current Alex machinery; the January
+preassignment and alternate-transfer sketches are not implementation directions.
 
-### 4.2 Phase 2: List Foundation
+## 5. Representation and Storage Acceptance
 
-Implement List intrinsics:
-- Core: `empty`, `isEmpty`, `head`, `tail`, `cons`, `length`
-- Transforms: `map`, `filter`, `fold`, `rev`, `append`
-- Queries: `tryHead`, `tryFind`, `forall`, `exists`
+| Obligation | Required criterion |
+|---|---|
+| Sentinel residence (VC-RES) | One immutable program-lifetime image per concrete collection instantiation, citing the selected platform's named authority through graph evidence |
+| Hosting-arena floor | Initialize the zero sentinel slot at arena creation; its size covers the largest hosted node. Bump allocation begins at the floor; reset returns to the floor |
+| Sentinel immutability (VC-RO) | No subsequent node write can target the sentinel; prohibited writes produce the owning diagnostic, including CCS8020 where specified |
+| Arena links (VC-LINK) | Links are bounded arena-relative indices into the value's settled arena. Store-site capacity/range obligations hold; loads inherit them; index 0 is valid |
+| Payload guards (VC-GUARD) | Reads are dominated by the List Cons or tree nonzero-height fact for the same node; rotation guards satisfy the specified height implications |
+| Persistent sharing | Fresh path copies preserve prior versions and share unchanged nodes within one arena. Derivation edges settle the covering lifetime; no cross-arena link or implicit copying substitutes for an unavailable lifetime home |
+| Extent and capacity | Node layouts, alignments, padding, counts, floor and total live allocation agree with the selected target and actual emitted storage; no wrapped arithmetic or guessed capacity |
+| Callback boundary | Traversal callbacks preserve C-01/C-02 evaluation, partial-application, capture and lifetime contracts; shared mutable state invalidates stale range facts when required |
 
-### 4.3 Phase 3: Map/Set Complete
+BAREWire's `ProgramLifetime` designation names existing immutable and optional
+mutable spaces; it does not grant a generic storage fallback. Static sentinel
+images use immutable authority. Runtime writes, initialization of a hosting
+arena and any mutable program-lifetime storage need their own admitted authority
+and realization. A source `let` alone does not authorize image writes. See
+[Platform integration](../../../Fidelity.Platform/docs/CANONICAL_PLATFORM_SPEC.md)
+and [BAREWire's storage planner](../../../BAREWire/src/Platform/StaticStorage.fs).
+The emitter must use the actual settled placements against which evidence was
+produced. A missing space, insufficient capacity or unplaceable lifetime remains
+an explicit rejection.
 
-Implement remaining Map and Set operations:
-- Tree operations: `add`, `remove`, rebalancing
-- Bulk operations: `ofList`, `toList`
-- Set operations: `union`, `intersect`, `difference`
+### 5.1 Preservation Through Lowering
 
-### 4.4 Phase 4: Integration with Regions (A-04+)
+Collection allocation, access and representation contracts remain obligations
+through backend transformations. The handoff must retain the relationship
+between source/graph nodes, admitted operations, concrete storage and generated
+artifacts. A transform that changes placement, addressing, widths, access order
+or allocation must preserve the affected claim or produce new evidence for it.
+Graph settlement or successful MLIR verification alone does not establish that
+the final artifact implements those facts.
 
-Once regions are available:
-- Collection nodes allocate from current region
-- Structural sharing works across region boundaries
-- Deterministic cleanup when region closes
+The [FPGA verification workstream](../fpga-targeting/README.md) and
+[M-01](M-01-DialectAdmission.md) provide the same integrity discipline for
+Colibri circuit realization, hardware artifacts and target admission. C-04 uses
+that discipline now: inspect actual emitted allocations, offsets, loads/stores,
+branch guards and backend output, then test correspondence with the retained
+graph evidence. On a hardware or verifier-gated profile, add the selected
+target's artifact/gate obligations rather than promoting a CPU result to
+cross-target support. These target plans do not claim completed hardware or BPF
+collection support.
 
-## 5. Alex Layer Implementation
+## 6. Completion Sequence
 
-### 5.1 List Operations
+1. Preserve the accepted Option/default/iteration/fold behavior and its graph,
+   tooling and native oracles. Resolve the remaining partial-operation admission
+   contracts and inventory gaps without widening claims from those successes.
+2. Establish the common sentinel image, hosting-arena floor, link, guard,
+   capacity and lifetime contracts in the owning graph and selected profile.
+   Exercise multiple collection types in one arena and independent arenas.
+3. Bring List construction, matching and traversals through that representation;
+   then complete the List inventory and Option-to-List integration.
+4. Complete persistent Map/Set primitives, comparisons, all rotations, updates,
+   deletion and the promised traversals/transforms/set algebra. Keep earlier
+   versions live in tests so mutation or dropped subtrees cannot pass unnoticed.
+5. Complete eager ranges, tuple/supporting operations and bounded real-library
+   consumers. Join lazy range/conversion acceptance with C-06/C-07.
+6. Reconcile every promised operation with exact accepted forms, negative cases,
+   supported profiles and retained evidence. Update the standard only where an
+   actual unresolved contract was settled, then the PRD and waypoints together.
 
-**List.cons** (most common operation):
-```mlir
-// Allocate cons cell
-%cell_ptr = llvm.call @arena_alloc(%arena, %cell_size) : (!llvm.ptr, i64) -> !llvm.ptr
+These are implementation slices, not permission to leave Map/Set or difficult
+negative cases outside the final C-04 gate.
 
-// Store head
-%head_ptr = llvm.getelementptr %cell_ptr[0, 0] : !llvm.ptr
-llvm.store %new_head, %head_ptr : !element_type
+## 7. Required Acceptance Cases
 
-// Store tail
-%tail_ptr = llvm.getelementptr %cell_ptr[0, 1] : !llvm.ptr
-llvm.store %existing_list, %tail_ptr : !llvm.ptr
+| Area | Positive and adversarial cases |
+|---|---|
+| Source and specialization | Direct calls, pipes, aliases, stored partials, records/functions/unit/measured payloads; wrong arity/type/dimension, shadowed operation names and unresolved reachable types |
+| Evaluation | Callback factories and mutable snapshots expose order and exactly-once invocation; empty/None cases expose unwanted calls; distinct fold/foldBack order and state types |
+| Lists | Empty/singleton/many, repeated tail of empty, guarded head, unguarded-head rejection, stable map/filter/append, short-circuit search and prior-version sharing |
+| Maps/Sets | Sorted/reverse insertion, duplicate insert/replace, all four AVL rotations, deletion of absent/leaf/one-child/two-child/root/last entry, order and height consistency, retained earlier roots, Set-map collisions and all empty set-algebra combinations |
+| Storage | Missing immutable/mutable authority, exact capacity and one-node excess, alignment, floor-preserving reset, attempted sentinel mutation, cross-arena sharing and escaping lifetimes; actual placement correspondence |
+| Ranges | Eager List/Array and lazy producer boundaries, positive/negative steps, singleton/zero-trip, zero step, unsupported types, exact endpoint/step evaluation, count/byte overflow and final-step limits |
+| Tuples/supporting operations | One RHS evaluation, nested bindings and wildcards, lexical shadowing, arity/type failure, array-copy overlap/bounds, empty and capacity-limited string concatenation |
+| Graph and emission | Resident guard/derivation/residence identities survive recipe replacement; no unresolved HOF residual reaches a primitive witness; stock verification and native results agree with independent oracles |
+| Backend correspondence | Actual artifact storage/access agrees with graph evidence after transforms; changed widths, placement, guards or artifacts cannot reuse an unrelated earlier verdict |
 
-// Result is pointer to new cell
-```
-
-**List.head**:
-```mlir
-// Extract head from cons closure (capture index 0 after code_ptr)
-%head = llvm.extractvalue %list[1] : !llvm.struct<(ptr, T, ptr)>
-%head = llvm.load %head_ptr : !element_type
-```
-
-### 5.2 Map Operations (AVL Tree)
-
-**Map.tryFind**:
-```mlir
-llvm.func @map_tryFind(%map: !llvm.ptr, %key: !key_type) -> !option_value_type {
-    // Binary search down tree
-    %current = %map
-    llvm.br ^loop
-
-^loop:
-    // Check if empty via Baker-decomposed isEmpty operation
-    %is_empty = func.call @list_isEmpty(%current) : (!llvm.struct) -> i1
-    llvm.cond_br %is_empty, ^not_found, ^check
-
-^check:
-    %node_key_ptr = llvm.getelementptr %current[0, 0] : !llvm.ptr
-    %node_key = llvm.load %node_key_ptr : !key_type
-    %cmp = call @compare(%key, %node_key) : (!key_type, !key_type) -> i32
-    %is_less = arith.cmpi slt, %cmp, %zero : i32
-    %is_greater = arith.cmpi sgt, %cmp, %zero : i32
-    llvm.cond_br %is_less, ^go_left, ^check_equal
-
-^check_equal:
-    llvm.cond_br %is_greater, ^go_right, ^found
-
-^go_left:
-    %left_ptr = llvm.getelementptr %current[0, 2] : !llvm.ptr
-    %left = llvm.load %left_ptr : !llvm.ptr
-    %current = %left
-    llvm.br ^loop
-
-^go_right:
-    %right_ptr = llvm.getelementptr %current[0, 3] : !llvm.ptr
-    %right = llvm.load %right_ptr : !llvm.ptr
-    %current = %right
-    llvm.br ^loop
-
-^found:
-    %value_ptr = llvm.getelementptr %current[0, 1] : !llvm.ptr
-    %value = llvm.load %value_ptr : !value_type
-    %some = ... // Construct Some(value)
-    llvm.return %some : !option_value_type
-
-^not_found:
-    %none = ... // Construct None
-    llvm.return %none : !option_value_type
-}
-```
-
-### 5.3 Comparison Constraint
-
-Map and Set require comparable keys/elements. In CCS, this is expressed via SRTP:
-
-```fsharp
-// Map.add requires comparison constraint on key type
-let add<'K, 'V when 'K : comparison> (key: 'K) (value: 'V) (map: Map<'K, 'V>) : Map<'K, 'V> = ...
-```
-
-Alex resolves SRTP to concrete comparison implementations:
-- `int`, `int64`, etc. → built-in comparison ops
-- `string` → lexicographic comparison
-- Custom types → require explicit `compare` function
-
-## 6. Memory Management
-
-### 6.1 Pre-Region (Stack/Global Arena)
-
-Before A-04 regions:
-- Collections allocate from a global arena
-- Arena cleared on program exit
-- No early deallocation (acceptable for short-lived programs)
-
-### 6.2 Post-Region (A-04+)
-
-With regions:
-- Collections allocate from the enclosing region
-- Region close deallocates all collection nodes
-- Structural sharing respects region lifetimes
-
-### 6.3 Structural Sharing
-
-Immutable operations share unchanged structure:
-
-```fsharp
-let xs = [1; 2; 3]      // Allocates 3 cells
-let ys = 0 :: xs        // Allocates 1 cell, shares xs
-let zs = List.tail xs   // No allocation! Just pointer to second cell
-```
-
-```
-xs: Cons(1, Cons(2, Cons(3, Empty)))
-         ^
-ys: Cons(0, xs)  // Structural sharing
-
-zs: Cons(2, Cons(3, Empty))  // Same as xs.tail
-    (All are flat closures with appropriate captures)
-```
-
-## 7. Files to Modify
-
-### 7.1 CCS
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `NativeTypes.fs` | MODIFY | Add `NTUlist`, `NTUmap`, `NTUset`, `TList`, `TMap`, `TSet` |
-| `Intrinsics.fs` | MODIFY | Add List.*, Map.*, Set.*, Option.* intrinsics |
-| `Unify.fs` | MODIFY | Add bridge cases for TList, TMap, TSet |
-
-### 7.2 Alex
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `Witnesses/ListWitness.fs` | CREATE | List operation MLIR generation |
-| `Witnesses/MapWitness.fs` | CREATE | Map operation MLIR generation |
-| `Witnesses/SetWitness.fs` | CREATE | Set operation MLIR generation |
-| `CCSTransfer.fs` | MODIFY | Handle collection intrinsics |
+Use the shared acceptance contract for compiler hashes, coordinated revisions,
+native exit/output checks, diagnostic location/severity, editor projections and
+artifact correspondence. Graph proof, verifier success, hosted reference output
+and native execution establish different boundaries; retain each required gate.
 
 ## 8. Validation
 
-### 8.1 Sample Code
+The following are **recorded September 2026 results**, not tests rerun during
+this document realignment. Their detailed logs, revisions and limitations remain
+in [Language Coverage Waypoints](../Language_Coverage_Waypoints.md). Older Clef
+hashes follow that document's repository-history mapping.
 
-```fsharp
-module CollectionsSample
+| Dated increment | Recorded implementation and evidence | Limit |
+|---|---|---|
+| September 19 Option defaults | 311/311 CCS tests; nine native callback executables; `08a_OptionDefaults` and `08b_OptionDefaultWith` exact-output gates; graph, Alex, editor/analyzer and LSP checks | Eager fallback versus deferred invocation, partial snapshots and unit formals; not full closure residence or collection completion |
+| September 20 Option alternatives | 395/395 CCS tests including alternatives and temporal range regressions; four native executables; `08c_OptionAlternatives` | May-write invalidation and saved-predicate observation timing matter to callback correctness; no complete mutable-cell claim |
+| September 20 Option iteration | 419/419 CCS tests; 25/25 Alex component cases; two native executables; `08d_OptionIteration` | Includes unit-valued conditional results; does not establish all collection callbacks |
+| September 20 Option folds | 482/482 CCS tests; 15 native fold groups; `08e_OptionFolds`; editor/analyzer/LSP projection | Independent state/payload, both partial frontiers and graph dominance for shared state; other families remain open |
+| September 20 counted bounds and integer range loops | Four native counted-loop groups; later 536/536 CCS checkpoint and four native unstepped range-loop groups | Bound ordering and named closed unstepped integer-loop normalization only; not general materialized/stepped ranges |
 
-[<EntryPoint>]
-let main _ =
-    Console.writeln "=== Core Collections Test ==="
+The existing [13a SimpleCollections sample](../../samples/console/FidelityHelloWorld/13a_SimpleCollections/)
+and [13a BAREWireCollections sample](../../samples/console/FidelityHelloWorld/13a_BAREWireCollections/)
+remain useful source fixtures, but their presence is not a passing native gate.
+Preserve independent expected output while adapting reachable source to the
+current standard. Do not shrink a regression selection or rewrite an oracle to
+make an unsupported collection family appear complete.
 
-    // Range expressions - the idiomatic Clef way
-    Console.writeln "--- Range Expressions ---"
-
-    // Array range
-    let arr = [|1..5|]
-    Console.write "Array [|1..5|]: "
-    for x in arr do
-        Console.write (Format.int x + " ")
-    Console.writeln ""
-
-    // List range
-    let lst = [1..5]
-    Console.write "List [1..5]: "
-    for x in lst do
-        Console.write (Format.int x + " ")
-    Console.writeln ""
-
-    // Stepped range
-    let odds = [|1..2..10|]
-    Console.write "Odds [|1..2..10|]: "
-    for x in odds do
-        Console.write (Format.int x + " ")
-    Console.writeln ""
-
-    // Countdown
-    let countdown = [5..-1..1]
-    Console.write "Countdown [5..-1..1]: "
-    for x in countdown do
-        Console.write (Format.int x + " ")
-    Console.writeln ""
-
-    // List operations
-    Console.writeln "--- List ---"
-    let xs = [1; 2; 3]
-    let ys = 0 :: xs
-    Console.write "ys length: "
-    Console.writeln (Format.int (List.length ys))
-
-    for x in xs do
-        Console.writeln (Format.int x)
-
-    // Map operations
-    Console.writeln "--- Map ---"
-    let m = Map.empty
-            |> Map.add "one" 1
-            |> Map.add "two" 2
-            |> Map.add "three" 3
-
-    match Map.tryFind "two" m with
-    | Some v -> Console.writeln ("Found: " + Format.int v)
-    | None -> Console.writeln "Not found"
-
-    // Set operations
-    Console.writeln "--- Set ---"
-    let s = Set.empty
-            |> Set.add 1
-            |> Set.add 2
-            |> Set.add 3
-
-    if Set.contains 2 s then
-        Console.writeln "Set contains 2"
-
-    0
-```
-
-### 8.2 Expected Output
-
-```
-=== Core Collections Test ===
---- Range Expressions ---
-Array [|1..5|]: 1 2 3 4 5
-List [1..5]: 1 2 3 4 5
-Odds [|1..2..10|]: 1 3 5 7 9
-Countdown [5..-1..1]: 5 4 3 2 1
---- List ---
-ys length: 4
-1
-2
-3
---- Map ---
-Found: 2
---- Set ---
-Set contains 2
-```
+No current full List/Map/Set sentinel, lifetime and native acceptance is claimed
+by this PRD. The preserved Option results are substantial delivered behavior;
+the common representation and remaining operation inventory are still work.
 
 ## 9. Implementation Checklist
 
-### Phase 1: BAREWire Unblocking (Priority)
-- [ ] Add `TMap`, `TSet` to NativeTypes
-- [ ] Add `Map.tryFind` intrinsic
-- [ ] Add `Map.values` intrinsic
-- [ ] Add `Set.empty`, `Set.contains`, `Set.add` intrinsics
-- [ ] Add `Option.map` intrinsic
-- [ ] Add `max`, `snd` intrinsics
-- [ ] Add `Array.blit` intrinsic
-- [ ] Add `String.concat` intrinsic
-- [ ] BAREWire compiles
-
-### Phase 2: Range Expressions (High Visibility)
-- [ ] Add `RangeExpr` SemanticKind with `RangeTargetKind`
-- [ ] Update CCS Coordinator to handle `SynExpr.IndexRange`
-- [ ] Implement `Range.toArray` intrinsic (simplest case)
-- [ ] Implement `Range.toList` intrinsic
-- [ ] Implement stepped range variants (`Range.toArrayStep`, etc.)
-- [ ] Alex witnesses for range code generation
-- [ ] `[|1..10|]` compiles and produces correct array
-- [ ] `[1..10]` compiles and produces correct list
-- [ ] `[1..2..10]` stepped ranges work
-
-### Phase 3: List Foundation
-- [ ] Add `TList` to NativeTypes
-- [ ] Implement core List intrinsics (empty, cons, head, tail, length)
-- [ ] Implement List.map, filter, fold
-- [ ] List sample compiles and runs
-
-### Phase 4: Complete Collections
-- [ ] Implement remaining Map operations
-- [ ] Implement remaining Set operations
-- [ ] Implement tree rebalancing (AVL)
-- [ ] Full sample compiles and runs
+- [ ] Every §3.1–§3.7 promise has a source form, owning semantic contract,
+  implementation location, native oracle and rejection cases; additional §3.8
+  families are explicitly accounted for. A diagnostic for a valid promised use
+  remains an open positive gate.
+- [ ] Common sentinel residence, initialization, floor, read-only protection,
+  links, guards, capacity and lifetime joins are graph-resident and preserved.
+- [ ] List traversal and complete persistent AVL behavior pass the §7 cases,
+  including old-root preservation and two-child deletion.
+- [ ] Remaining Option and partial-operation admission contracts are settled;
+  the dated defaults, alternatives, iteration and fold regressions still pass.
+- [ ] Ranges and tuple/supporting operations retain exact types, dimensions,
+  operand order and bounded storage on each claimed profile.
+- [ ] Reachable library consumers pass fresh native and applicable differential
+  gates; declaration-only/library compilation is never substituted.
+- [ ] Backend artifact correspondence preserves the actual allocation, access
+  and representation obligations after each relevant lowering transform.
+- [ ] The shared acceptance gates and affected existing regressions pass with
+  coordinated compiler/platform/library identities and retained evidence.
+- [ ] Documentation reports accepted scope and remaining boundaries accurately;
+  C-04 is marked complete only after all promised rows meet their criteria.
 
 ## 10. Relationship to Other PRDs
 
-| PRD | Relationship |
-|-----|--------------|
-| C-01 (Closures) | List.map, filter, fold take closure parameters |
-| C-03 (Recursion) | Collection operations are naturally recursive |
-| C-05 (Lazy) | `List.tryHead` returns `Option`, not `Lazy` |
-| C-06 (Seq) | `Seq.toList`, `List.toSeq` convert between |
-| C-07 (SeqOps) | Many Seq ops mirror List ops |
-| A-04 (Regions) | Collections allocate from regions |
-
-## 11. Anti-Patterns
-
-| Pattern | Why Wrong | Correct Approach |
-|---------|-----------|------------------|
-| `ResizeArray` | BCL mutable type | Use `List` or `Array` |
-| `Dictionary` | BCL mutable type | Use `Map` |
-| `HashSet` | BCL mutable type | Use `Set` |
-| `box`/`unbox` | No `obj` in native | Use proper generic types |
-| Uniform representation | Performance cost | Monomorphize per type |
-
-## 12. Notes on BAREWire Refactoring
-
-With this PRD, BAREWire needs these changes:
-
-1. **Replace `ResizeArray`** → Use `Array.zeroCreate` + explicit resizing, or use `List` and convert
-2. **Remove `box`/`unbox`** → Use proper typed accessors or generic dispatch
-3. **Update Map/Set usage** → Already correct, just needs intrinsics
-
-The `box`/`unbox` usage in `Memory/View.fs` (lines 459-503) is the critical blocker. This must be refactored to use typed read/write functions dispatched by NTUKind match, not runtime boxing.
-
-## 13. Implementation Status and Gap Analysis (January 2026)
-
-> **This section documents what actually exists vs what's specified, ensuring full capture.**
-
-### 13.1 Current State Summary
-
-| Component | Specified | Status | Notes |
-|-----------|-----------|--------|-------|
-| CCS type signatures (Intrinsics.fs) | §3 | ✅ Complete | List, Map, Set, Option operations |
-| NativeType TList/TMap/TSet | §2.5 | ✅ Complete | Added to NativeTypes.fs |
-| UnionFind bridge cases | §7.1 | ✅ Complete | applySubst, occursIn, freeTypeVars |
-| TypeMapping.fs collection types | implicit | ✅ Complete | TList/TMap/TSet → TPtr |
-| Reachability.fs intrinsic marking | implicit | ✅ Complete | IntrinsicModule.List/Map/Set/Option |
-| Vector dialect templates | §13.2 | ✅ Complete | Comprehensive in Dialects/Vector/Templates.fs |
-| **ListWitness.fs** | §7.2 | ❌ NOT CREATED | Alex witness needed |
-| **MapWitness.fs** | §7.2 | ❌ NOT CREATED | Alex witness needed |
-| **SetWitness.fs** | §7.2 | ❌ NOT CREATED | Alex witness needed |
-| **OptionWitness.fs** | implicit | ❌ NOT CREATED | Option operations need witness |
-| **CCSTransfer.fs handlers** | §7.2 | ❌ NOT IMPLEMENTED | Collection intrinsic dispatch |
-| **Functional decomposition** | §13.4 | ❌ NOT IMPLEMENTED | HOFs need PSG decomposition |
-| **Vector dialect integration** | §13.2 | ❌ NOT CONNECTED | Templates exist but unused |
-
-### 13.2 The Functional Decomposition Requirement
-
-Per `fncs_functional_decomposition_principle` memory, current CCS intrinsics are **type-only stubs**:
-
-```fsharp
-// CURRENT STATE (antipattern)
-| "List.map" ->
-    NativeType.TFun(mapFn, NativeType.TFun(listType, resultListType))
-    // Just a type signature! Alex has no structure to witness.
-```
-
-**Correct approach**: Operations must be classified as **primitives** or **decomposable**:
-
-#### 13.2.1 Primitive Operations (Alex Witnesses Directly)
-
-These cannot decompose further - they ARE the primitives:
-
-| Module | Primitives | MLIR Emission |
-|--------|-----------|---------------|
-| **List** | `empty`, `cons`, `head`, `tail`, `isEmpty` | Direct struct ops |
-| **Map** | `empty`, `isEmpty` | Flat closure check |
-| **Set** | `empty`, `isEmpty` | Flat closure check |
-| **Option** | `None`, `Some`, `isSome`, `isNone` | Tag check |
-
-#### 13.2.2 Decomposable Operations (CCS Provides Functional Structure)
-
-These should decompose in CCS/PSGSaturation to primitives:
-
-```fsharp
-// List.map SHOULD decompose to:
-let rec map f xs =
-    if List.isEmpty xs then List.empty
-    else List.cons (f (List.head xs)) (map f (List.tail xs))
-
-// List.fold SHOULD decompose to:
-let rec fold folder acc xs =
-    if List.isEmpty xs then acc
-    else fold folder (folder acc (List.head xs)) (List.tail xs)
-```
-
-| Module | Decomposable Operations |
-|--------|------------------------|
-| **List** | `map`, `filter`, `fold`, `foldBack`, `rev`, `append`, `length`, `tryFind`, `forall`, `exists` |
-| **Map** | `add`, `remove`, `tryFind`, `find`, `containsKey`, `map`, `filter`, `fold`, `keys`, `values`, `toList`, `ofList` |
-| **Set** | `add`, `remove`, `contains`, `union`, `intersect`, `difference`, `map`, `filter`, `fold`, `toList`, `ofList` |
-| **Option** | `map`, `bind`, `defaultValue`, `defaultWith`, `get`, `toList` |
-
-### 13.3 Implementation Path
-
-#### Phase A: Primitive Witnesses (Foundation)
-
-Create Alex witnesses for fundamental operations:
-
-**File: `Alex/Witnesses/ListWitness.fs`**
-```fsharp
-/// Witness List.empty - returns flat closure with zero captures
-let witnessListEmpty (z: PSGZipper) (elemTy: MLIRType) : MLIROp list * Val =
-    let closureType = TStruct [TPtr]  // { code_ptr }
-    let result = z.FreshSSA closureType
-    [ LLVMOp.Undef (result, closureType) ], { SSA = result; Type = closureType }
-
-/// Witness List.cons - allocate cons cell, store head and tail
-let witnessListCons (z: PSGZipper) (headVal: Val) (tailVal: Val) : MLIROp list * Val =
-    // Arena allocation + struct construction
-    ...
-
-/// Witness List.head - GEP to head field, load
-let witnessListHead (z: PSGZipper) (listVal: Val) (elemTy: MLIRType) : MLIROp list * Val =
-    ...
-
-/// Witness List.tail - GEP to tail field, load
-let witnessListTail (z: PSGZipper) (listVal: Val) : MLIROp list * Val =
-    ...
-
-/// Witness List.isEmpty - Baker decomposes to structure check
-let witnessListIsEmpty (z: PSGZipper) (listVal: Val) : MLIROp list * Val =
-    // Baker decomposes isEmpty to appropriate structural check
-    // Witness the decomposed structure that Baker provides
-    ...
-```
-
-#### Phase B: Decomposition in PSGSaturation
-
-Add functional decomposition for higher-order operations. This creates PSG structure that Alex witnesses as recursion.
-
-**File: `CCS/PSGSaturation/ListSaturation.fs`** (NEW)
-```fsharp
-/// Saturate List.map call to explicit recursion
-/// Input: Call(List.map, [mapper; source])
-/// Output: LetRec with recursive map using head/tail/cons primitives
-let saturateListMap (builder: NodeBuilder) (mapperNode: SemanticNode) (sourceNode: SemanticNode) : SemanticNode =
-    // Generate recursive structure that PSG carries
-    ...
-```
-
-#### Phase C: Vector Dialect Integration (Array Operations)
-
-The Vector dialect templates in `Alex/Dialects/Vector/Templates.fs` are comprehensive. Connect them for Array operations:
-
-| Array Operation | Vector Template | Notes |
-|-----------------|-----------------|-------|
-| `Array.map (fun x -> x * c)` | `broadcast` + element-wise mul | Constant factor |
-| `Array.fold (+) 0` | `reductionAdd` | Horizontal sum |
-| `Array.init n f` | `splat` for constants | Identity/constant init |
-| `[|1..1024|]` | `vector.store` chunks | Range materialization |
-
-**File: `Alex/Witnesses/ArrayVectorWitness.fs`** (NEW)
-```fsharp
-/// Detect vectorizable Array.map patterns
-let canVectorize (mapperLambda: SemanticNode) : bool =
-    // Check if lambda body is element-wise arithmetic
-    match mapperLambda.Kind with
-    | Lambda(_, bodyId, [], _, _) ->
-        let body = getNode bodyId
-        isElementWiseArithmetic body
-    | _ -> false
-
-/// Emit vectorized Array.map using vector dialect
-let witnessArrayMapVectorized (z: PSGZipper) (width: int) ... : MLIROp list * Val =
-    // Use Vector.broadcast, Vector.load, arith ops, Vector.store
-    ...
-```
-
-## 14. Referential Transparency and Graph Coloring
-
-Collection operations are predominantly **referentially transparent** (pure). This mathematical property enables:
-
-1. **Parallelization via Graph Coloring** - Nodes with the same "color" can execute simultaneously
-2. **Structural sharing** in immutable collections preserves purity
-3. **Future INet (Interaction Net) dialect** - Pure regions compile to parallel interaction nets
-
-**Why structural sharing matters for purity:**
-```fsharp
-let m1 = Map.add "a" 1 Map.empty
-let m2 = Map.add "b" 2 m1  // m1 is UNCHANGED - pure operation
-let m3 = Map.add "c" 3 m1  // m1 is STILL UNCHANGED
-// m2 and m3 share unchanged subtrees with m1
-```
-
-If `Map.add` mutated in place, we'd lose purity → lose parallelization opportunities.
-
-## 15. Suspension and Net Structure on the PSG
-
-Collections sit inside computation expressions, and both halves of that composition are settled on the PSG at saturation — not by dialects in the middle end:
-
-```fsharp
-let processData = async {
-    let! data = fetchFromDB()           // a cut: the suspension recipe splits here
-    let transformed =                    // pure: net structure, parallel by construction
-        data
-        |> List.map transform
-        |> List.filter valid
-        |> List.fold combine initial
-    do! saveResults transformed          // a cut
-}
-```
-
-The `let!`/`do!` sites are cuts of the suspension recipe (Delimited_Continuations_Architecture.md §3–7): segments, a frame, a delimiter edge, witnessed as `scf.index_switch` over a discriminant. The pure pipeline between them is net structure in the hypergraph — hyperedges over the enumerated collection operations — whose parallelism is a consequence of that structure and is witnessed as data flow. Neither half is a dialect; both are standard `func`/`memref`/`arith`/`scf`/`index` at the boundary.
-
-## 16. Vector Dialect Specification
-
-The MLIR Vector dialect templates exist in `Alex/Dialects/Vector/Templates.fs` with comprehensive support:
-
-### 16.1 Available Operations
-
-| Category | Operations |
-|----------|------------|
-| **Broadcast/Splat** | `broadcast`, `splat` - scalar to vector |
-| **Element Access** | `extract`, `insert`, `extractStrided`, `insertStrided` |
-| **Shape** | `shapeCast`, `transpose`, `flatTranspose` |
-| **Reduction** | `reductionAdd`, `reductionMul`, `reductionAnd`, `reductionOr`, `reductionXor`, `reductionMin*`, `reductionMax*` |
-| **FMA** | `fma` - fused multiply-add |
-| **Memory** | `load`, `store`, `maskedLoad`, `maskedStore`, `gather`, `scatter` |
-| **Mask** | `createMask`, `constantMask` |
-
-### 16.2 Connection to Collection Operations
-
-| Collection Pattern | Vector Emission | Width |
-|--------------------|-----------------|-------|
-| `Array.map (fun x -> x * 2) arr` | `vector.load` → `arith.muli` → `vector.store` | 4/8/16 based on arch |
-| `Array.fold (+) 0 arr` | Chunked `vector.load` → `arith.addi` → `vector.reduction <add>` | Platform-specific |
-| `Array.sum arr` | Same as fold (+) | Platform-specific |
-| `Array.sumBy f arr` | Map + reduce fusion | Platform-specific |
-| `[|1..n|]` | `arith.constant` iota + `vector.store` chunks | Platform-specific |
-
-### 16.3 Platform Width Detection
-
-```fsharp
-/// Get SIMD width for platform
-let getVectorWidth (arch: Architecture) (elemTy: MLIRType) : int =
-    match arch, elemTy with
-    | X86_64, TInt I32 -> 8   // AVX-256: 8 x i32
-    | X86_64, TInt I64 -> 4   // AVX-256: 4 x i64
-    | X86_64, TFloat F32 -> 8 // AVX-256: 8 x f32
-    | ARM64, TInt I32 -> 4    // NEON: 4 x i32
-    | ARM64, TFloat F32 -> 4  // NEON: 4 x f32
-    | _ -> 1  // Fallback: scalar
-```
-
-### 16.4 Vectorization Eligibility
-
-Not all operations vectorize. Eligibility criteria:
-
-| Criterion | Vectorizable | Not Vectorizable |
-|-----------|--------------|------------------|
-| Element independence | `Array.map (fun x -> x * 2)` | `Array.scan` (prefix dependency) |
-| Memory contiguity | `Array.map` on slice | Sparse/strided access |
-| No early exit | `Array.sum` | `Array.tryFind` (exits on match) |
-| Numeric types | `int`, `float`, `int64` | `string`, custom types |
-
-## 17. Implementation Checklist (Updated January 2026)
-
-### Phase A: Primitive Witnesses (Foundation)
-- [x] Create `Alex/Witnesses/ListWitness.fs` with: empty, cons, head, tail, isEmpty ✅
-- [x] Create `Alex/Witnesses/MapWitness.fs` with: empty, isEmpty (tree ops later) ✅
-- [x] Create `Alex/Witnesses/SetWitness.fs` with: empty, isEmpty (tree ops later) ✅
-- [x] Create `Alex/Witnesses/OptionWitness.fs` with: None, Some, isSome, isNone, get ✅
-- [ ] Update `CCSTransfer.fs` to dispatch to collection witnesses
-
-### Phase B: Higher-Order Decomposition (Baker)
-- [x] Create `Baker/ShadowAST.fs` for editing transparency ✅ (January 2026)
-- [x] Create `Baker/Recipes/Decomposition.fs` with Context, Result, helpers ✅
-- [x] Create `Baker/Recipes/ListRecipes.fs` for List.map, filter, fold, etc. ✅
-- [x] Create `Baker/Recipes/MapRecipes.fs` for Map.add, tryFind, etc. ✅
-- [x] Create `Baker/Recipes/SetRecipes.fs` for Set.add, contains, etc. ✅
-- [x] Create `Baker/Recipes/OptionRecipes.fs` for Option.map, bind, filter ✅
-- [x] Create `Baker/HOFDecomposition.fs` orchestration with ShadowRegistry ✅
-- [ ] PSG nodes currently placeholders - implement full recursive expansion
-- [ ] Verify PSG carries recursive structure, Alex witnesses it
-
-### Phase C: Vector Dialect Integration
-- [ ] Create `Alex/Witnesses/ArrayVectorWitness.fs`
-- [ ] Implement vectorization eligibility detection
-- [ ] Implement vectorized Array.map for numeric element types
-- [ ] Implement vectorized Array.fold (+) / Array.sum
-- [ ] Implement vectorized range materialization `[|1..n|]`
-- [ ] Platform width detection (AVX-256/AVX-512/NEON)
-
-### Validation
-- [ ] Sample 13a_SimpleCollections compiles
-- [ ] List operations produce correct output
-- [ ] Map operations produce correct output
-- [ ] Set operations produce correct output
-- [ ] Option operations produce correct output
-- [ ] Range expressions `[|1..10|]`, `[1..10]` work
-- [ ] Vectorized Array.map shows SIMD in MLIR output
-
-## 18. Serena Memories
-
-These memories document the collection architecture for future sessions:
-
-- `collection_machinery_architecture` - Decomposition and purity preservation
-- `collection_vectorization_opportunity` - SIMD/vector dialect patterns
-- `ntu_collection_architecture` - NTU type system for collections
+| Owner | Relationship |
+|---|---|
+| C-01 / C-02 | Callable identity, captures, partial application, environment representation and callback lifetime |
+| C-03 | Recursive traversal, mutual tree helpers and justified stack/tail behavior |
+| C-05 | Lazy values used as payloads; eager collections do not become lazy by sharing their carrier machinery |
+| C-06 / C-07 | Range generators, collection/sequence conversion, repeat traversal and consumer lifetime |
+| A-04 | Wider region surface; required collection lifetime/capacity facts cannot be postponed behind a global arena |
+| M-01 | Target-specific physical-form admission and preservation, including any demanded vector realization |
+| F-09 | Result callbacks share case-recipe machinery; their successful gates do not establish untested Option/List/Map/Set operations |
+
+## 11. Optimization and Anti-Patterns
+
+Persistent structure permits sharing; it does not alone prove callback purity,
+parallel safety or associative arithmetic. A Map/filter/fold callback may have
+effects. Numeric reductions retain the specified arithmetic construction,
+rounding and result semantics. Vectorization, parallel scheduling and suspension
+are separate admitted transformations with their own evidence under
+[M-01](M-01-DialectAdmission.md) and the owning contracts.
+
+Existing vector templates may be reused when a demanded expression/profile
+supports them. An architecture name is not evidence of an instruction-set
+extension, a fixed lane count or admissible reassociation. Scalar semantic
+acceptance does not require a new vector witness, and a vector-looking MLIR
+module does not establish collection semantics.
+
+Prohibited shortcuts include using source addresses as collection links,
+allocating an undeclared process-wide arena, runtime absence checks in place of
+the sentinel, semantic decomposition in Alex, mutation of persistent nodes,
+host boxed/BCL collections as the native realization, and integer-width guesses
+that bypass NTU settlement. Missing graph facts remain failures in their owning
+stage; a second emitter is not a remedy.
+
+## 12. Notes on BAREWire Integration
+
+Use the current [intersection-subset record](../../../BAREWire/docs/12%20Intersection%20Subset.md)
+and [RoundTrip workload](../../../BAREWire/samples/RoundTrip/Main.clef), not the
+January list of blockers. Generic codecs, typed option outcomes, tuple returns,
+schema traversals and layout/extent calculations exercise useful composition
+boundaries. Migrate a selected `SUBSET` workaround only after its preferred form
+passes the supported source and execution gates; preserve the library's shared
+.NET/Fable/Composer behavior and wire bytes.
+
+The native gate compiles a fresh reachable executable, requires successful exit
+and compares an independent transcript. BAREWire's historical September 3 native
+success and later September 6 failure refer to their recorded compiler snapshots;
+neither is a new verdict on the current checkout. Hosted checks and metadata-only
+compilation do not establish native acceptance. There is no requirement to change
+BAREWire's public array-based declaration schemas solely to exercise List or Map.
+
+Selected-platform declaration identity, capacities and storage authority must
+survive integration. A proved declaration model is not evidence that independently
+placed generated objects obey it. Keep native correspondence and failure behavior
+in the acceptance gate alongside successful library output.

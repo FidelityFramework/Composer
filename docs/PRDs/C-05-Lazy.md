@@ -1,708 +1,226 @@
-# C-05: Lazy Values (Thunks)
+# C-05: Lazy Values and Memoization
 
-> **Layout note (2026-09).** This PRD describes the interim environment layout, in which the code pointer is a field of the environment (`{code_ptr, …}`; captures from `[1]`, or `[3]` for lazy and seq). The settled form is the two-value pair `(fn, env)` with no function address stored in the environment as data — spec `closure-representation.md` §2.1/§6.3, `lazy-representation.md` §3, `seq-representation.md` §4. The code moves under `clef/docs/fidelity/phg/Closure_Retooling_Plan.md`, and this PRD moves with it; until then the layout sections below describe what the code does, not the design.
-
-> **Sample**: `14_Lazy` | **Status**: Planned | **Depends On**: C-01 (Closures)
-
-**Foundation of the Lazy Stack**: This PRD establishes deferred computation with memoization. `Lazy<'T>` is a simpler primitive than `Seq<'T>` - it computes once and caches. Sequences (C-06) build on this foundation.
+> **Sample**: `14_Lazy` | **Status**: In-Progress | **Depends On**: [C-01](C-01-Closures.md)
+>
+> **Criteria realignment, 2026-09-25.** Existing lazy checking, capture analysis
+> and physical implementation are retained as the migration starting point.
+> This revision changes acceptance criteria only; it reports no new execution.
 
 ## 1. Executive Summary
 
-Lazy values defer computation until explicitly forced. Unlike sequences (which may yield multiple values), a lazy value produces exactly one value that is then cached. This enables efficient memoization and avoidance of unnecessary computation.
+A lazy value defers its body until forced. The first force evaluates and stores
+the result; subsequent forces of that same value return the stored result without
+evaluating the body again. Memoization is required language behavior, including
+when the body has effects. It is not an optional optimization or a milestone
+deferred until every arena PRD is complete.
 
-**Key Insight**: A lazy value is an **extended flat closure** - the thunk's captured variables are inlined directly into the lazy struct, following MLKit-style flat closure principles (see "Gaining Closure" blog post). There is no `env_ptr`, no null pointers, no indirection.
+The [C-series acceptance contract](C-Series-Acceptance.md) governs status and
+evidence. The normative authority is
+[Lazy Value Representation, especially §§3, 4, 9 and 11](../../../clef-lang-spec/spec/lazy-representation.md),
+with [delayed expressions](../../../clef-lang-spec/spec/expressions.md),
+[closure representation](../../../clef-lang-spec/spec/closure-representation.md)
+and [backend lowering](../../../clef-lang-spec/spec/backend-lowering-architecture.md).
 
-### 1.1 Flat Closure Alignment
+Sequences share closure/capture machinery but maintain independent enumeration
+state; they do not memoize one result. C-06/C-07 progress does not establish C-05
+acceptance, and C-05 does not require a new sequence protocol.
 
-The C-01 closure architecture established that closures are self-contained:
+## 2. Current State and Remaining Boundary
 
-```
-Closure = {code_ptr, capture₀, capture₁, ...}
-```
+The [language coverage waypoints](../Language_Coverage_Waypoints.md) record
+sample 14's unresolved lazy width/extent read. That native gate remains open.
+Current source contains `TLazy`, `LazyExpr`, `LazyForce`, shared capture discovery
+and a lazy witness/pattern path. These are existing work to realign, not missing
+types and modules to create again.
 
-Lazy extends this pattern by prepending memoization state:
+| Existing component | Current inspection / continuation point |
+|---|---|
+| [NativeTypes.fs](../../../clef/src/Compiler/NativeTypedTree/NativeTypes.fs) and native unification | Lazy element identity already exists; preserve its NTU type and dimensional constraints |
+| [Collections.fs](../../../clef/src/Compiler/NativeTypedTree/Expressions/Collections.fs) | `checkLazy` builds the thunk and shares capture analysis with functions |
+| [LazyWitness.fs](../../src/MiddleEnd/Alex/Witnesses/LazyWitness.fs) | Existing physical path still contains a placeholder `TIndex` cached-value type and fixed force-SSA assumptions |
+| [ClosurePatterns.fs](../../src/MiddleEnd/Alex/Patterns/ClosurePatterns.fs) | Existing lazy struct/force patterns still reflect code-address-in-environment assumptions |
+| [Sample 14](../../samples/console/FidelityHelloWorld/14_Lazy/Lazy.fs) and [manifest](../../tests/regression/Manifest.toml) | Currently expect the effectful thunk to recompute on the second force; this is a stale oracle, not the accepted language behavior |
 
-```
-Lazy<T> = {computed: i1, value: T, code_ptr: ptr, capture₀, capture₁, ...}
-```
+These source observations explain pending work; they are not fresh build or
+runtime results. The [closure retooling plan](../../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md)
+and C-01 own the shared callable migration. Preserve already working checking,
+capture-origin and reference-remapping behavior while replacing obsolete forms.
 
-This means **each `lazy { ... }` expression produces a concrete struct type** based on its capture set. The "type" `Lazy<int>` is actually a family of types parameterized by captures - the same pattern as closures themselves.
+## 3. Language Feature Specification
 
-## 2. Language Feature Specification
-
-### 2.1 Lazy Creation
+For source such as:
 
 ```fsharp
-let expensive = lazy {
-    Console.writeln "Computing..."
-    42
-}
+let delayed = lazy (Console.writeln "Computing"; 42)
+let first = Lazy.force delayed
+let second = Lazy.force delayed
 ```
 
-The computation is deferred - "Computing..." is NOT printed yet.
+construction does not execute the body, `Computing` occurs once at the first
+force, and both results are 42. An alias of `delayed` names the same memoized
+instance. Two factory calls creating lazy values retain distinct instances and
+each may execute its own body once.
 
-### 2.2 Lazy Force
+Immutable captures retain their formation-time values, including any references
+inside those values. Mutable captures retain the original shared cell; a write
+before first force affects the computation, while a write after successful force
+does not cause a second evaluation. The cached result preserves its own reference
+sharing and lifetime. A cached `Result.Error` is an ordinary result value, not a
+reason to retry the thunk.
 
-```fsharp
-let v1 = Lazy.force expensive  // Prints "Computing...", returns 42
-let v2 = Lazy.force expensive  // Returns 42 immediately (cached)
-```
-
-### 2.3 Lazy.value (Shorthand)
-
-```fsharp
-let v = expensive.Value  // Same as Lazy.force
-```
-
-## 3. Architectural Principles
-
-### 3.1 No Nulls, No `env_ptr`
-
-Following the flat closure model, the lazy struct contains:
-
-| Field | Type | Purpose |
-|-------|------|---------|
-| `computed` | `i1` | Has thunk been evaluated? |
-| `value` | `T` | Cached result (valid when computed=true) |
-| `code_ptr` | `ptr` | Thunk function pointer |
-| `capture₀...captureₙ` | varies | Inlined captured variables |
-
-**There is no `env_ptr` field.** Captured variables are stored directly in the struct.
-
-### 3.2 Capture Semantics (from C-01)
-
-| Variable Kind | Capture Mode | Storage in Lazy |
-|---------------|--------------|-----------------|
-| Immutable | ByValue | Copy of value |
-| Mutable | ByRef | Pointer to storage location |
-
-For mutable captures that escape (e.g., lazy value returned from function), the storage is hoisted to arena allocation per C-01 patterns.
-
-### 3.3 Struct Layout Examples
-
-**No captures** (`lazy 42`):
-```
-{computed: i1, value: i32, code_ptr: ptr}
-```
-
-**With immutable captures** (`lazy (x * y)` where x, y are `int`):
-```
-{computed: i1, value: i32, code_ptr: ptr, x: i32, y: i32}
-```
-
-**With mutable capture** (`lazy (count <- count + 1; count)` where count is mutable):
-```
-{computed: i1, value: i32, code_ptr: ptr, count_ptr: ptr}
-```
-Note: `count_ptr` points to the mutable's storage location (stack or arena).
+Retain the `Lazy<'T>` element type through checking, capture, storage and force.
+Test unit, Boolean, integer, real, measured and admitted aggregate/callable
+results; do not represent all cached values as `index`. Any claimed alternative
+surface such as `.Value` must share this contract and have its own source gate.
 
 ## 4. CCS Layer Implementation
 
-### 4.1 NativeType Extension
+Baker and the owning CCS nanopasses settle the lazy callable, capture operations,
+typed memoization slots, force control and storage obligations. The canonical
+portable form is:
 
-```fsharp
-// In NativeTypes.fs
-type NativeType =
-    // ... existing types ...
-    | TLazy of elementType: NativeType
+```text
+Lazy<T> = (thunk, env)
+env logical fields: [0] computed, [1] cached T, [2..] captures
+thunk: receives its environment and reads the settled captures
 ```
 
-**Note**: `TLazy` represents the semantic type. The concrete MLIR struct layout varies by capture set - this is resolved during Alex lowering, not in CCS.
-
-### 4.2 SemanticKind.LazyExpr
-
-```fsharp
-type SemanticKind =
-    | LazyExpr of body: NodeId * captures: CaptureInfo list
-```
-
-The `captures` list uses the same `CaptureInfo` type as Lambda (C-01):
-- Name, Type, IsMutable, SourceNodeId
-- CCS computes captures during type checking (scope is known)
-
-### 4.3 SemanticKind.LazyForce
-
-```fsharp
-type SemanticKind =
-    | LazyForce of lazyValue: NodeId
-```
-
-Force is a semantic operation, not just a function call - it involves checking the computed flag and potentially invoking the thunk.
-
-### 4.4 Lazy Intrinsics
-
-```fsharp
-// In CheckExpressions.fs
-| "Lazy.force" ->
-    // Lazy<'a> -> 'a
-    let aVar = freshTypeVar ()
-    NativeType.TFun(NativeType.TLazy(aVar), aVar)
-
-| "Lazy.isValueCreated" ->
-    // Lazy<'a> -> bool
-    let aVar = freshTypeVar ()
-    NativeType.TFun(NativeType.TLazy(aVar), env.Globals.BoolType)
-```
-
-### 4.5 Checking `lazy { }` Expressions
-
-```fsharp
-/// Check a lazy expression
-let checkLazyExpr
-    (checkExpr: CheckExprFn)
-    (env: TypeEnv)
-    (builder: NodeBuilder)
-    (body: SynExpr)
-    (range: range)
-    : SemanticNode =
-
-    // 1. Check body expression
-    let bodyNode = checkExpr env builder body
-
-    // 2. Collect captures (reuse closure capture analysis from C-01)
-    let captures = collectCaptures env builder bodyNode.Id
-
-    // 3. Create LazyExpr node
-    builder.Create(
-        SemanticKind.LazyExpr(bodyNode.Id, captures),
-        NativeType.TLazy(bodyNode.Type),
-        range,
-        children = [bodyNode.Id])
-```
-
-**Key Point**: Capture analysis is reused from C-01. CCS already knows how to identify captured variables during lambda checking - the same logic applies to lazy.
-
-### 4.6 Files to Modify (CCS)
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `NativeTypes.fs` | MODIFY | Add `TLazy` type constructor |
-| `SemanticGraph.fs` | MODIFY | Add `LazyExpr`, `LazyForce` SemanticKinds |
-| `CheckExpressions.fs` | MODIFY | Add `Lazy.force`, `Lazy.isValueCreated` intrinsics |
-| `Expressions/Coordinator.fs` | MODIFY | Handle `lazy { }` expressions |
-
-## 5. Alex Layer Implementation
-
-### 5.1 LazyLayout Coeffect
-
-Following the `ClosureLayout` pattern from C-01, compute lazy struct layouts as coeffects:
-
-**File**: `src/Alex/Preprocessing/LazyLayout.fs`
-
-```fsharp
-/// Layout information for a lazy expression
-type LazyLayout = {
-    /// NodeId of the LazyExpr
-    LazyId: NodeId
-    /// Element type (T in Lazy<T>)
-    ElementType: MLIRType
-    /// Capture layouts (reuse from closure)
-    Captures: CaptureLayout list
-    /// Total struct size
-    StructType: MLIRType
-    /// Offset of code_ptr field
-    CodePtrOffset: int
-    /// SSAs for lazy struct operations
-    LazySSA: SSA
-    ComputedFlagSSA: SSA
-    ValueSSA: SSA
-}
-
-/// Compute lazy layouts for all LazyExpr nodes
-let run (graph: SemanticGraph) (closureLayouts: ClosureLayoutCoeffect) : Map<NodeId, LazyLayout> =
-    // For each LazyExpr, build layout based on captures
-    // Reuse capture layout computation from C-01
-```
-
-### 5.2 Lazy Struct Type Generation
-
-```fsharp
-/// Generate MLIR struct type for a lazy expression
-let lazyStructType (elementType: MLIRType) (captureTypes: MLIRType list) : MLIRType =
-    // {computed: i1, value: T, code_ptr: ptr, cap₀, cap₁, ...}
-    TStruct ([TInt I1; elementType; TPtr] @ captureTypes)
-```
-
-### 5.3 LazyWitness - Creation
-
-```fsharp
-/// Emit MLIR for lazy expression creation
-let witnessLazyCreate
-    (z: PSGZipper)
-    (layout: LazyLayout)
-    (captureVals: Val list)
-    : (MLIROp list * TransferResult) =
-
-    let structType = layout.StructType
-    let ssas = requireNodeSSAs layout.LazyId z
-
-    // Pre-assigned SSAs
-    let falseSSA = ssas.[0]
-    let undefSSA = ssas.[1]
-    let withComputedSSA = ssas.[2]
-    let withCodePtrSSA = ssas.[3]
-    // SSAs for captures: ssas.[4..]
-
-    let ops = [
-        // Create false constant for computed flag
-        MLIROp.ArithOp (ArithOp.ConstI (falseSSA, 0L, MLIRTypes.i1))
-
-        // Create undef lazy struct
-        MLIROp.LLVMOp (LLVMOp.Undef (undefSSA, structType))
-
-        // Insert computed=false at index 0
-        MLIROp.LLVMOp (LLVMOp.InsertValue (withComputedSSA, undefSSA, falseSSA, [0], structType))
-
-        // Get thunk function address and insert at index 2
-        MLIROp.LLVMOp (LLVMOp.AddressOf (layout.CodePtrSSA, GFunc layout.ThunkFuncName))
-        MLIROp.LLVMOp (LLVMOp.InsertValue (withCodePtrSSA, withComputedSSA, layout.CodePtrSSA, [2], structType))
-    ]
-
-    // Insert each capture at indices 3, 4, 5, ...
-    let captureOps =
-        captureVals
-        |> List.indexed
-        |> List.collect (fun (i, capVal) ->
-            let prevSSA = if i = 0 then withCodePtrSSA else ssas.[3 + i]
-            let nextSSA = ssas.[4 + i]
-            [MLIROp.LLVMOp (LLVMOp.InsertValue (nextSSA, prevSSA, capVal.SSA, [3 + i], structType))])
-
-    let resultSSA = if captureVals.IsEmpty then withCodePtrSSA else ssas.[3 + captureVals.Length]
-
-    (ops @ captureOps, TRValue { SSA = resultSSA; Type = structType })
-```
-
-### 5.4 LazyWitness - Force
-
-```fsharp
-/// Emit MLIR for Lazy.force
-let witnessLazyForce
-    (z: PSGZipper)
-    (layout: LazyLayout)
-    (lazyVal: Val)
-    : (MLIROp list * TransferResult) =
-
-    let structType = layout.StructType
-    let elemType = layout.ElementType
-    let ssas = requireNodeSSAs layout.LazyId z
-
-    // SSA assignments for force operation
-    let computedSSA = ssas.[0]      // Extracted computed flag
-    let cachedValueSSA = ssas.[1]   // Extracted cached value (if computed)
-    let codePtrSSA = ssas.[2]       // Extracted code pointer
-    // ssas.[3..] for extracted captures
-    let computedValueSSA = ssas.[3 + layout.Captures.Length]
-    let resultSSA = ssas.[4 + layout.Captures.Length]
-
-    // Extract computed flag
-    let checkOps = [
-        MLIROp.LLVMOp (LLVMOp.ExtractValue (computedSSA, lazyVal.SSA, [0], structType))
-    ]
-
-    // SCF.if for branching
-    // If computed: extract and return value from field 1
-    // If not computed: extract code_ptr and captures, call thunk, cache result
-
-    // The thunk signature depends on captures:
-    // No captures: () -> T
-    // With captures: (cap₀, cap₁, ...) -> T
-
-    let extractCaptureOps =
-        layout.Captures
-        |> List.mapi (fun i _ ->
-            let capSSA = ssas.[3 + i]
-            MLIROp.LLVMOp (LLVMOp.ExtractValue (capSSA, lazyVal.SSA, [3 + i], structType)))
-
-    let captureArgs =
-        layout.Captures
-        |> List.mapi (fun i cap -> { SSA = ssas.[3 + i]; Type = cap.Type })
-
-    // Build force logic using SCF.if
-    // ... (detailed branching logic)
-
-    (checkOps @ extractCaptureOps @ branchOps, TRValue { SSA = resultSSA; Type = elemType })
-```
-
-### 5.5 Thunk Function Generation
-
-Each `lazy { ... }` generates a thunk function that takes captured values as parameters:
-
-```fsharp
-/// Generate thunk function for a lazy expression
-let emitThunkFunction
-    (lazyId: NodeId)
-    (layout: LazyLayout)
-    (bodyEmitter: unit -> MLIRBuilder)
-    : MLIROp list =
-
-    // Thunk signature: (cap₀: T₀, cap₁: T₁, ...) -> T
-    // No captures: () -> T
-    let paramTypes = layout.Captures |> List.map (fun c -> c.Type)
-    let returnType = layout.ElementType
-
-    // Emit function with body
-    // ...
-```
-
-**Key insight**: The thunk function takes captures as **parameters**, not through an env pointer. When forced, the captured values are extracted from the lazy struct and passed to the thunk.
-
-### 5.6 SSA Cost Computation
-
-```fsharp
-/// SSA cost for LazyExpr with N captures
-let lazyExprSSACost (numCaptures: int) : int =
-    // 1: false constant
-    // 1: undef struct
-    // 1: insert computed flag
-    // 1: addressof code_ptr
-    // 1: insert code_ptr
-    // N: insert each capture
-    5 + numCaptures
-
-/// SSA cost for LazyForce with N captures
-let lazyForceSSACost (numCaptures: int) : int =
-    // 1: extract computed flag
-    // 1: extract cached value
-    // 1: extract code_ptr
-    // N: extract each capture
-    // 1: computed value from thunk call
-    // 1: result (phi or direct)
-    5 + numCaptures
-```
-
-### 5.7 Files to Create/Modify (Alex)
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `Alex/Preprocessing/LazyLayout.fs` | CREATE | Compute lazy struct layouts |
-| `Alex/Witnesses/LazyWitness.fs` | CREATE | Emit lazy creation and force MLIR |
-| `Alex/Preprocessing/SSAAssignment.fs` | MODIFY | Add LazyExpr, LazyForce SSA costs |
-| `Alex/Traversal/CCSTransfer.fs` | MODIFY | Handle LazyExpr, LazyForce |
-| `Alex/CodeGeneration/TypeMapping.fs` | MODIFY | Map TLazy to concrete struct types |
-
-## 6. MLIR Output Specification
-
-### 6.1 No-Capture Example: `lazy 42`
-
-```mlir
-// Lazy struct type (no captures)
-!lazy_int_0 = !llvm.struct<(i1, i32, ptr)>
-
-// Thunk function: () -> i32
-llvm.func @lazy_42_thunk() -> i32 {
-    %c42 = arith.constant 42 : i32
-    llvm.return %c42 : i32
-}
-
-// Creation
-%false = arith.constant false
-%undef = llvm.mlir.undef : !lazy_int_0
-%with_computed = llvm.insertvalue %false, %undef[0] : !lazy_int_0
-%code_ptr = llvm.mlir.addressof @lazy_42_thunk : !llvm.ptr
-%lazy_val = llvm.insertvalue %code_ptr, %with_computed[2] : !lazy_int_0
-```
-
-### 6.2 With-Capture Example: `lazy (x * y)`
-
-```mlir
-// Lazy struct type (captures x: i32, y: i32)
-!lazy_int_2 = !llvm.struct<(i1, i32, ptr, i32, i32)>
-
-// Thunk function: (i32, i32) -> i32
-llvm.func @lazy_xy_thunk(%x: i32, %y: i32) -> i32 {
-    %result = arith.muli %x, %y : i32
-    llvm.return %result : i32
-}
-
-// Creation (assuming %x_val and %y_val are the captured values)
-%false = arith.constant false
-%undef = llvm.mlir.undef : !lazy_int_2
-%s0 = llvm.insertvalue %false, %undef[0] : !lazy_int_2
-%code_ptr = llvm.mlir.addressof @lazy_xy_thunk : !llvm.ptr
-%s1 = llvm.insertvalue %code_ptr, %s0[2] : !lazy_int_2
-%s2 = llvm.insertvalue %x_val, %s1[3] : !lazy_int_2
-%lazy_val = llvm.insertvalue %y_val, %s2[4] : !lazy_int_2
-```
-
-### 6.3 Force Example
-
-```mlir
-// Force a lazy value
-llvm.func @force_lazy(%lazy: !lazy_int_2) -> i32 {
-    // Extract computed flag
-    %computed = llvm.extractvalue %lazy[0] : !lazy_int_2
-
-    // Branch based on computed
-    %result = scf.if %computed -> i32 {
-        // Already computed - return cached value
-        %cached = llvm.extractvalue %lazy[1] : !lazy_int_2
-        scf.yield %cached : i32
-    } else {
-        // Not computed - extract code_ptr and captures, call thunk
-        %code_ptr = llvm.extractvalue %lazy[2] : !lazy_int_2
-        %cap_x = llvm.extractvalue %lazy[3] : !lazy_int_2
-        %cap_y = llvm.extractvalue %lazy[4] : !lazy_int_2
-        %computed_val = llvm.call %code_ptr(%cap_x, %cap_y) : (i32, i32) -> i32
-        // Note: Caching requires alloca; see Section 7
-        scf.yield %computed_val : i32
-    }
-
-    llvm.return %result : i32
-}
-```
-
-## 7. Memoization and Mutability
-
-### 7.1 The Caching Challenge
-
-True memoization requires mutating the lazy struct to:
-1. Set `computed = true`
-2. Store the computed value
-
-With by-value lazy structs, this requires the lazy value to be stored in mutable memory (stack alloca or arena).
-
-### 7.2 Implementation Options
-
-**By-pointer memoization**
-- Lazy values are always `ptr` to stack/arena allocated struct
-- Force mutates through the pointer
-- Natural memoization
-
-**Functional update (copy-on-force)**
-- Force returns `(value, updated_lazy_struct)`
-- Caller decides whether to use updated struct
-- Pure but awkward API
-
-**Deferred memoization (pure thunk)**
-- Initial implementation: always recompute (no caching)
-- Add memoization when arena PRDs (20-22) are complete
-- Simpler starting point
-
-**Decision**: Start with **deferred memoization** for C-05. The semantics are correct for pure thunks (same result each time). True memoization with caching will be added after arena support (A-04 to A-06) provides the memory management foundation.
-
-### 7.3 Pure Thunk Semantics (Initial Implementation)
-
-For this PRD, `Lazy.force` always evaluates the thunk:
-
-```mlir
-// Simplified force (no caching)
-llvm.func @force_lazy_pure(%lazy: !lazy_int_2) -> i32 {
-    %code_ptr = llvm.extractvalue %lazy[2] : !lazy_int_2
-    %cap_x = llvm.extractvalue %lazy[3] : !lazy_int_2
-    %cap_y = llvm.extractvalue %lazy[4] : !lazy_int_2
-    %result = llvm.call %code_ptr(%cap_x, %cap_y) : (i32, i32) -> i32
-    llvm.return %result : i32
-}
-```
-
-This is semantically correct for pure computations. The memoization optimization comes later.
+The function value is separate from the flat environment. No code address is an
+environment data field. Exact callable identity can permit code-component
+elision; it never permits losing the actual environment instance or its formation
+effects. Flat means one capture environment, not the absence of a typed view or
+the prohibition of the environment parameter.
+
+The owning passes must establish:
+
+- Capture source identity, mode and formation order, excluding module bindings
+  from the capture list and retaining mutable cell identity.
+- Complete types, representation, offsets, extent and alignment for the computed
+  state, cached result and captures under the selected platform facts.
+- Definite initialization and the guard permitting a cached-result read. Before
+  successful computation, the result slot supplies no value of `T`; do not invent
+  a source default, null value or initialized result to fill that gap.
+- One memoization identity across aliases, captures, stores and returned values.
+  Copies of a carrier do not create a fresh cache for the same lazy instance.
+- Source, call, layout, residence and proof participants through recipe fan-out
+  and fold-in. An attached layout obligation does not prove lifetime or once-only
+  evaluation.
+
+## 5. Composer Implementation
+
+Alex pulls the settled callable, child regions, typed storage and force decisions
+through its context and Huet position, then composes the admitted physical form.
+It must not reconstruct the thunk algorithm, choose capture slots, infer storage
+lifetimes or repair unknown cached-result types during emission.
+
+Use portable `func`, control-flow and `memref` forms admitted for the selected
+pathway. Target ABI realization belongs below the backend boundary. The old
+direct LLVM struct/address recipes, code-pointer environment field, separate
+capture-parameter thunk convention and preassigned/fixed SSA budgets are retired
+implementation sketches. They are not alternatives to the current contract.
+
+Target-aware realization must retain correspondence between the lazy instance,
+its storage, cached-value accesses and the actual emitted force/publication
+operations. A downstream rewrite that changes an obligation's premises requires
+preserved or renewed evidence for that artifact. Source memoization evidence,
+layout evidence and target acceptance establish different boundaries. Apply the
+shared acceptance contract to every claimed pathway; target deployment retains
+its own gate.
+
+The [Alex overview](../Alex_Architecture_Overview.md) describes derived SSA names
+and the actual traversal. Physical identity/count accounting follows witnessed
+operations and their settled types; a count of four or `5 + captures` does not
+establish the semantics or storage of a force operation.
+
+## 6. Storage and Lifetime
+
+Memoization needs stable storage for the same lazy instance. Placement follows
+the closure lifetime lattice: scope-bounded stack storage, a covering region,
+program-lifetime static storage, or genuinely dynamic storage where the target
+admits it. Required capture backing storage and cached-result storage must outlive
+every admitted use. Escape alone does not justify heap allocation or static
+placement; multiple factory instances cannot be collapsed into one global cache.
+
+Program-lifetime caching requires the selected platform's writable storage
+authority for the memoization transition. Immutable image authority does not
+permit runtime cache writes. The shared [storage contract](C-Series-Acceptance.md#6-framework-consumers-and-target-boundaries)
+connects those declarations to the actual allocation and force operations.
+
+Scope-bounded and program-lifetime forms can support memoization without making
+completion of all region APIs a prerequisite. Region/dynamic forms retain their
+own availability, capacity, release and no-heap-target diagnostics. Reject missing
+residence premises explicitly rather than returning a view of a dead frame or
+silently allocating a GC-managed carrier.
+
+## 7. Memoization, Concurrency and Open Semantics
+
+Single-threaded memoization is a settled requirement and the first completion
+slice. Concurrent or cross-actor force is a separately identified admission:
+[Lazy Representation §11](../../../clef-lang-spec/spec/lazy-representation.md#11-normative-requirements)
+requires ownership evidence establishing one semantic forcer. Its target
+publication/visibility mechanism must preserve the stored result and computed
+state. A CAS instruction alone does not discharge that ownership or ordering
+contract. Until those premises and their realization are supported, such uses
+must receive an explicit located diagnostic and remain outside the accepted
+scope; a single-thread pass cannot establish concurrent force support.
+
+Two cases require an explicit native contract before admission: forcing the same
+unevaluated lazy value from within its own evaluation, and evaluation that does
+not produce a value because of termination, cancellation or an admitted foreign
+failure. The current once-successful-force rule does not specify a general
+reentrancy/retry/cached-failure protocol. Do not invent one or import managed
+exception caching. Coordinate recursive initialization with [C-03](C-03-Recursion.md)
+and the [native error model](../../../clef-lang-spec/spec/error-handling.md), then
+record the selected behavior and negative cases. Ordinary returned `Result`
+values remain covered by normal memoization.
 
 ## 8. Validation
 
-### 8.1 Sample Code
+Apply the [shared gates](C-Series-Acceptance.md) to these observations:
 
-```fsharp
-module LazyValuesSample
+| Contract | Required oracle |
+|---|---|
+| Deferred body | Constructing an unforced lazy value runs none of its body effects |
+| Once-only force | Two forces, including through aliases, run the body once and return the same cached value |
+| Capture semantics | Immutable snapshots, writes before first force, shared mutable captures and cached-result sharing survive the whole pipeline |
+| Instance identity | Multiple factory results each memoize independently; no accidental cross-instance cache or expired capture |
+| Typed results | Scalar, measured and each admitted aggregate/callable result retain exact types and representation premises |
+| Storage | Scope/static and every additionally claimed placement have complete-use residence and release evidence |
+| Negative admission | Wrong types, unresolved range/layout/residence and unsupported concurrency/reentrancy forms produce the responsible diagnostic, effective severity and source range |
+| Physical/native | Correct graph and portable witness, stock MLIR verification, backend acceptance, exact native effect/output trace and exit status |
 
-let expensive = lazy {
-    Console.writeln "Computing expensive value..."
-    42
-}
-
-let lazyAdd a b = lazy {
-    Console.writeln "Adding..."
-    a + b
-}
-
-[<EntryPoint>]
-let main _ =
-    Console.writeln "=== Lazy Values Test ==="
-
-    Console.writeln "--- First Force ---"
-    let v1 = Lazy.force expensive
-    Console.write "Result: "
-    Console.writeln (Format.int v1)
-
-    Console.writeln "--- Second Force ---"
-    let v2 = Lazy.force expensive
-    Console.write "Result: "
-    Console.writeln (Format.int v2)
-
-    Console.writeln "--- Lazy with captures ---"
-    let sum = lazyAdd 10 20
-    Console.write "Sum: "
-    Console.writeln (Format.int (Lazy.force sum))
-
-    0
-```
-
-### 8.2 Expected Output (Initial - No Memoization)
-
-```
-=== Lazy Values Test ===
---- First Force ---
-Computing expensive value...
-Result: 42
---- Second Force ---
-Computing expensive value...
-Result: 42
---- Lazy with captures ---
-Adding...
-Sum: 30
-```
-
-Note: "Computing expensive value..." appears TWICE because initial implementation doesn't cache. This is correct behavior for pure thunks and will be optimized when arena support enables memoization.
-
-### 8.3 Expected Output (With Memoization - Future)
-
-```
-=== Lazy Values Test ===
---- First Force ---
-Computing expensive value...
-Result: 42
---- Second Force (cached) ---
-Result: 42
---- Lazy with captures ---
-Adding...
-Sum: 30
-```
+**Sample 14 and manifest correction is future implementation acceptance work.**
+When the compiler implements canonical memoization, update the sample's old
+`no memoization` commentary/label and the manifest together: the second force must
+not print `Computing expensive value...` again. Preserve its capture/factory
+checks and require the corrected exact-output gate. Changing the expectation
+alone cannot establish completion, and retaining the current repeated-effect
+expectation cannot certify the specified behavior. This documentation revision
+does not modify either fixture.
 
 ## 9. Implementation Checklist
 
-### Phase 1: CCS Foundation
-- [ ] Add `TLazy` to NativeTypes
-- [ ] Add `LazyExpr`, `LazyForce` to SemanticKind
-- [ ] Implement `lazy { }` checking with capture analysis (reuse C-01 logic)
-- [ ] Add `Lazy.force` intrinsic
-- [ ] CCS builds successfully
-
-### Phase 2: Alex Implementation
-- [ ] Create `LazyLayout.fs` coeffect computation
-- [ ] Create `LazyWitness.fs` with flat closure model
-- [ ] Update SSAAssignment for LazyExpr, LazyForce
-- [ ] Update TypeMapping for TLazy → concrete struct
-- [ ] Handle LazyExpr, LazyForce in CCSTransfer
-- [ ] Generate thunk functions with capture parameters
-- [ ] Composer builds successfully
-
-### Phase 3: Validation
-- [ ] Sample 14 compiles without errors
-- [ ] Binary executes correctly (thunks evaluate)
-- [ ] Captures work (lazyAdd captures a, b)
-- [ ] Samples 01-13 still pass (regression)
-
-### Phase 4: Memoization (Future - requires A-04 to A-06)
-- [ ] Arena allocation for lazy struct
-- [ ] Force mutates struct to cache result
-- [ ] Second force returns cached value
+- [ ] Preserve existing lazy source typing/capture work and settle the canonical
+      `(thunk, env)` form through the owning Baker mechanisms.
+- [ ] Resolve sample 14's width/extent boundary and remove placeholder cached
+      types through real type/layout settlement.
+- [ ] Establish single-thread memoization, alias identity and independent factory
+      instances with typed cached results and complete-use lifetimes.
+- [ ] Realize the settled form through current Alex patterns and backend contracts;
+      retire code-address fields and fixed SSA-budget assumptions.
+- [ ] Correct sample 14 and its manifest with the compiler change, then pass the
+      exact effect/output gate and applicable closure/sequence regressions.
+- [ ] Keep concurrent force explicitly unadmitted until ownership, publication and
+      target evidence pass; reconcile reentrant/non-returning force semantics
+      before claiming those cases.
+- [ ] Record actual source, graph, witness, proof and native results in the
+      waypoint; close only the scope those gates establish.
 
 ## 10. Related PRDs
 
-- **C-01**: Closures - Lazy uses same flat closure model
-- **C-03**: Recursion - Pre-creation pattern for NodeIds
-- **C-06**: SimpleSeq - Sequences build on lazy foundation
-- **C-07**: SeqOperations - Higher-order sequence functions
-- **A-04 to A-06**: Regions/Arena - Enable true memoization
-
-## 11. Architectural Alignment
-
-This PRD aligns with the flat closure architecture documented in:
-- "Gaining Closure" blog post (SpeakEZ)
-- `closure_architecture_corrected` Serena memory
-- `true_flat_closures_implementation` Serena memory
-
-**Key principles maintained:**
-1. **No nulls** - Every field initialized
-2. **No env_ptr** - Captures inlined directly
-3. **Self-contained structs** - No pointer chains
-4. **Coeffect-based layout** - SSA computed before witnessing
-5. **Capture reuse** - Same analysis as C-01 closures
-
-## 12. Implementation Lessons (January 2026)
-
-### 12.1 The "Compose from Standing Art" Principle
-
-> **New features MUST compose from recently established patterns, not invent parallel mechanisms.**
-
-C-05 implementation initially went wrong by creating a `{code_ptr, env_ptr}` closure model with null env_ptr for no-capture cases. This completely ignored that **flat closures had just been established** in C-01.
-
-**The correct approach:**
-1. Identify what existing patterns the feature needs (closures, capture analysis)
-2. Check what was RECENTLY established (C-01 flat closures)
-3. EXTEND the existing pattern, don't reinvent
-
-```
-WRONG: Lazy-specific closure model with nulls
-RIGHT: Lazy = C-01 Flat Closure + memoization state
-       {computed: i1, value: T, code_ptr: ptr, cap₀, cap₁, ...}
-```
-
-This principle applies to ALL future PRDs. See Serena memory: `compose_from_standing_art_principle`
-
-### 12.2 Thunk Calling Convention: Struct Pointer Passing
-
-A key architectural decision was choosing between two calling conventions:
-
-| Convention | Thunk Signature | Force Complexity |
-|------------|-----------------|------------------|
-| **Parameter Passing** | `(cap₀, cap₁, ...) -> T` | Must extract and pass captures |
-| **Struct Pointer Passing** | `(ptr) -> T` | Uniform - just passes pointer |
-
-**Decision: Struct Pointer Passing** - Thunk receives pointer to lazy struct, extracts its own captures.
-
-**Why struct pointer passing wins:**
-- Force is UNIFORM regardless of capture count
-- No def-use tracking needed at force site
-- Clean separation: force handles invocation, thunk handles extraction
-- SSA cost for force is FIXED (4 ops) not variable
-
-See Serena memory: `lazy_thunk_calling_convention`
-
-### 12.3 Capture Analysis Reuse
-
-CCS already had capture analysis for Lambda (C-01). The correct approach was to **reuse it**:
-
-```fsharp
-// In Applications.fs - made public for reuse
-let computeCaptures (builder: NodeBuilder) (env: TypeEnv) (bodyNodeId: NodeId) (excludeNames: Set<string>) : CaptureInfo list
-
-// checkLambda uses it
-let captures = computeCaptures builder env bodyNode.Id paramNames
-
-// checkLazy reuses the SAME function
-let captures = computeCaptures builder env innerNode.Id (Set.singleton "_unit")
-```
-
-**Lesson:** Before writing new code, ask "Does this already exist for a similar feature?"
-
-### 12.4 SSA Cost Determinism
-
-SSA assignment must be 100% deterministic - no synthetic SSAs, no runtime decisions.
-
-**LazyExpr SSA cost:** `5 + numCaptures` (variable, but deterministic from PSG)
-**LazyForce SSA cost:** `4` (fixed - this is the struct pointer passing benefit)
-
-The coeffect pattern means witnesses OBSERVE pre-computed SSAs, they don't INVENT them.
-
-### 12.5 Process Lessons for Future PRDs
-
-Before implementing ANY new feature:
-
-1. **Review the last 2-3 PRDs** for patterns that might apply
-2. **Read Serena memories** for architectural decisions
-3. **Identify composition points** - what existing code/patterns to extend?
-4. **Document the composition** in the PRD explicitly
-5. **Course correct early** if implementation diverges from patterns
-
-> "The standing art composes up. Use it."
-
-### 12.6 Files Modified (Reference)
-
-**CCS:**
-- `Applications.fs` - Made `collectVarRefs` public, added `computeCaptures`
-- `Coordinator.fs` - `checkLazy` uses `computeCaptures`
-
-**Alex:**
-- `LazyWitness.fs` - Struct pointer passing calling convention
-- `SSAAssignment.fs` - SSA costs (LazyExpr: 5+N, LazyForce: 4)
-- `CCSTransfer.fs` - Simplified LazyForce (uniform, no capture tracking)
+- [C-01: Closures](C-01-Closures.md): shared callable representation and residence.
+- [C-02: Higher-Order Functions](C-02-HigherOrderFunctions.md): callable cached
+  results and lazy values retained by callbacks.
+- [C-03: Recursion](C-03-Recursion.md): recursive initialization and force cycles.
+- [C-06: SimpleSeq](C-06-SimpleSeq.md), [C-07: SeqOperations](C-07-SeqOperations.md):
+  shared capture/layout mechanisms with distinct demand and iteration semantics.

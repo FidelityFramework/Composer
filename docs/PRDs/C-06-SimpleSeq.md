@@ -1,8 +1,10 @@
 # C-06: Simple Sequence Expressions
 
-> **Status:** Native continuation core implemented; aggregate regression gate remains open.
-> **Samples:** FidelityHello `15a_SequenceSemantics`, `15b_SequenceElements`,
-> `15c_SequenceTemplateBorrows`, NativeSequences.
+> **Status:** In-Progress. Native continuation core implemented; full acceptance remains open.
+> **Criteria reconciled:** September 25, 2026; no new execution claim.
+> **Samples:** Original `15_SimpleSeq`, FidelityHello `15a_SequenceSemantics`,
+> `15b_SequenceElements`, `15c_SequenceTemplateBorrows`, `15d_SequenceAdditive`,
+> and the [NativeSequences harness](../../tests/NativeSequences/README.md).
 > **Dependencies:** C-01 closure/capture contracts, C-05 deferred-value context;
 > shared producer ingredients also serve C-07.
 >
@@ -13,6 +15,10 @@
 > acceptance work. [Language coverage waypoints](../Language_Coverage_Waypoints.md)
 > record actual gate evidence. Historical inline function-address layouts,
 > Alex yield scans and imperative state-machine emitters are superseded.
+
+The [shared C-series acceptance contract](C-Series-Acceptance.md) governs evidence,
+profile scope and continuation. This PRD preserves the implemented continuation
+core and identifies the composition work still owed.
 
 ## 1. Feature and source laws
 
@@ -27,6 +33,10 @@ let multiplesOf factor count = seq {
         i <- i + 1
 }
 ```
+
+This illustrates source formation and suspension. Native admission also needs
+the actual call-site numeric ranges, storage and selected-platform premises;
+the generic example alone is not an accepted executable or a fabricated bound.
 
 The source contracts are:
 
@@ -194,6 +204,13 @@ and repeated local uses pass; return, store, opaque use, unknown input and
 missing/shared constructor ownership remain residuals. 15c tests this path with
 shared mutable source cells and independent enumeration.
 
+The later C-07 startup work additionally retains explicit writable program-cell
+authority for scalar external captures. That authority is separate from slot
+layout/capacity and from a descriptor's backing lifetime. Its full-profile 16g
+gate does not establish unrestricted program-lifetime aggregate or sequence
+storage. Read the [current coverage record](../Language_Coverage_Waypoints.md)
+alongside these bounded paths.
+
 ## 6. Passive Alex composition and standard MLIR
 
 [SeqWitness.fs](../../src/MiddleEnd/Alex/Witnesses/SeqWitness.fs) consumes the
@@ -214,6 +231,10 @@ Frame extent and field offsets are literals from placement. The state carrier is
 converted to `index` through the existing typed/range-aware operation when
 required by `scf.index_switch`; frame stores retain their settled carrier.
 
+This describes the recorded native form. Additional expression/profile forms
+follow [M-01](M-01-DialectAdmission.md), with explicit prerequisites and evidence;
+it is not a claim that every operation in those dialects or every target works.
+
 The backend's [LLVM lowering pipeline](../../src/BackEnd/LLVM/Lowering.fs)
 expands memory metadata, lowers memrefs and vectors, converts structured control
 to `cf`, and lowers control, index, function and arithmetic operations before
@@ -224,45 +245,45 @@ upstream proof discharge or target lifetime admission.
 
 ## 7. Completion gates
 
-Implementation exists for the source/graph contracts, frame and machine
-construction, resident evidence and passive pattern paths described above.
-That statement is distinct from completion of all feature gates. The
-`15a_SequenceSemantics` oracle now passes stock MLIR verification and exact native
-output for literals, repeated enumeration, delayed effects, conditional and
-counted loops, empty sequences, supported factories, delegation, independent
-nested iteration, retained mutable child captures, factories within generators
-and chained empty effects. Final compiler, Alex, proof-transfer, tooling and
-ordinary native-control gates remain to be recorded together in the waypoint.
+### 7.1 Recorded implementation evidence
 
-Before marking C-06 complete, record final results against the same compiler
-revision in the waypoint. Do not substitute generated-MLIR-only acceptance for
-source execution or change expected native values to accommodate a failure.
+The [September 20 C-06 checkpoint](../Language_Coverage_Waypoints.md#c-06-native-continuation-settlement--2026-09-20)
+records source/graph, Alex, SMT-transfer, native and editor/client results with
+their artifact hashes. Its historical 23/28 broad regression result is qualified
+by later checkpoints: the formatter regression subsequently closed, and C-07
+added additive-range and scalar-Option transport evidence. No new aggregate
+regression run is implied by this criteria reconciliation.
 
-- [x] Full relevant CCS source/graph suite: accepted NTU element/ownership/control
-  cases and exact rejected source/settlement premises, including participant and
-  provenance retention.
-- [x] Alex component suite: actual Huet child pulls, immutable graph facts,
-  typed slots/descriptors, dispatch, missing prerequisite diagnostics, fresh
-  enumeration, caller destinations and distinct owned regions; real MLIR
-  verification and standard lowering.
-- [x] Native sequence oracle and FidelityHello `15a_SequenceSemantics`: literal and empty
-  sequences, effect order before/after yield, guarded and repeated loops,
-  captures, repeated enumeration, supported factories, delegation and composition
-  within the admitted contract.
-- [ ] Existing ordinary native controls remain correct on the final compiler.
-- [x] CCS.Editor, analyzer-facing projections and actual LSP gates retain public
-  `seq<'T>` types, dimensional errors, source capture definitions and unsaved
-  repairs. Internal generated declarations do not replace source projections.
-- [x] Normative spec, PRD and waypoint describe the final supported boundary and
-  any remaining residuals consistently; final evidence identifies compiler
-  artifacts rather than stale builds.
+| Oracle | Recorded bounded behavior to retain |
+|---|---|
+| 15a | Literal/repeated enumeration, delayed pre/post-yield effects, conditionals and counted loops, effectful empty generators, supported factories, delegation, nested iteration and child captures |
+| 15b | Boolean, observable unit, real and measured element carriers; numeric fractions do not establish fractional measure-exponent admission |
+| 15c | Scoped captured templates with proved covering activations, shared mutable cells and independent enumeration |
+| 15d | Finite additive recurrence evidence, triangular/negative/mixed state, zero trips and non-unit steps in both directions |
+| C-07 16f / 16g | Scalar-payload Option values retained across pulls/exhaustion; program startup and scalar external-cell authority respectively, within their recorded scope |
 
-The implementation waypoint records 848/848 CCS tests, 71/71 Alex cases,
-65/65 SMT-transfer cases, the three native variants and peered projection gates.
-The broad FidelityHello gate remains 23/28: formatter/parsing issues, unresolved
-recursion/lazy widths, and accumulating sequence ranges in the original 15 remain
-open. These failures are not waived or represented as a complete aggregate gate.
-See the waypoint for exact artifact hashes, logs and companion revisions.
+The [later C-07 checkpoint](../Language_Coverage_Waypoints.md#c-07-sequence-operations--implementation-waypoint-acceptance-open-2026-09-20)
+owns those subsequent results. The original15 still has separate coupled and
+multiplicative recurrence obligations. Its Fibonacci and power cases require
+bounds for ordered intermediate updates and stores, not only yielded values.
+
+### 7.2 Remaining acceptance matrix
+
+| Area | Positive gate | Refusal/preservation gate |
+|---|---|---|
+| Original source coverage | Original15 and 15a–d compile and run with their expected values/effects on a coordinated compiler cohort | Keep unsupported recurrence, platform and residence facts explicit; preserve valid neighboring cases and original source spans |
+| Callable transport | Direct, returned, retained and multiple-origin sequences use C-01/C-02's actual function/environment values and truthful signatures | Exact-origin elision requires evidence; no guessed generator or backing lifetime |
+| Element/current transport | Admitted nested aggregate and callable payloads retain types and values after another pull, exhaustion and child return; ownership may select copy, borrow or transfer | Successful-current guard names the exact iterator; reject missing initialization, invalidated backing storage, wrong dimensions or unavailable representation |
+| Residence and capacity | Factory destinations, captured templates, parent-owned children and declared program storage cover every admitted use; repeated formations have distinct dynamic instances | Test absent/ambiguous authority, escape beyond covering activation, alias overwrite, recursive frame growth and insufficient peak capacity at their owning boundaries |
+| Control and recurrence | Ordered evaluation and control occurrences establish cut/resume transfers, definite assignment and live-across storage; C-03/numeric rules establish applicable recurrence bounds | Changed guards, updates, participants or control paths invalidate the corresponding evidence; compiler convergence is separate from runtime termination |
+| Observable enumeration | Repeated/interleaved enumerators have fresh progress and shared external capture identity; no-yield bodies retain demanded effects | No body execution at formation, no default current, no replayed operand initializer and no pull after a decisive downstream stop |
+| Tooling and realization | Public element types, source capture navigation and unsaved repair agree with graph facts; serialized MLIR and native behavior realize those facts | Missing prerequisites fail in the responsible stage; artifact changes and stale editor/proof results cannot retain valid status |
+
+Apply the [common evidence gates](C-Series-Acceptance.md#4-evidence-required-to-close-a-row)
+to every supported form. Full C-06 completion requires the original and lettered
+native gates, relevant ordinary controls and the owning proof/tooling checks on
+the final recorded source/dependency/target cohort. Existing passing component
+and bounded native evidence remains valuable while those gates are open.
 
 ## 8. Related work
 
@@ -274,3 +295,12 @@ See the waypoint for exact artifact hashes, logs and companion revisions.
 - [Closure nanopass architecture](../Closure_Nanopass_Architecture.md) and
   [delimited continuations](../Delimited_Continuations_Architecture.md):
   upstream recipe ownership and proof-bearing graph construction.
+
+## 9. Criteria supersession
+
+The older completion checklist mixed bounded passes with a full-family exit and
+repeated a historical broad-regression failure set as current. Sections 7.1–7.2
+replace that account with dated evidence and explicit remaining gates. The
+implemented frame, control, residence and continuation protocols remain the
+starting point. No compiler code, source fixture, expectation or feature status
+changes in this documentation reconciliation.

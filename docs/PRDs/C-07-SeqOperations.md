@@ -1,10 +1,11 @@
 # C-07: Sequence Operations
 
-> **Status:** Core implementation tested; full acceptance remains open. Native
+> **Status:** In-Progress. Core implementation tested; full acceptance remains open. Native
 > 16a–f cover producer/consumer composition, callbacks, demand and scalar-Option
 > transport; full-profile 16g validates program startup and repeated sequence use.
 > Original16 and retained operation partials still have open acceptance gates. C-07 is not complete; see the dated waypoint for
 > exact artifacts and current failures.
+> **Criteria reconciled:** September 25, 2026; no new execution claim.
 > **Sample:** [16_SeqOperations](../../samples/console/FidelityHelloWorld/16_SeqOperations).
 > **Dependencies:** [C-06](C-06-SimpleSeq.md), [C-01](C-01-Closures.md),
 > [C-02](C-02-HigherOrderFunctions.md); [C-05](C-05-Lazy.md) supplies related
@@ -18,6 +19,11 @@
 > implementation evidence and the C-06 dependency handoff. Historical Alex wrapper
 > layout passes, stored function-address fields, fixed SSA formulas and imperative
 > operation emitters in this PRD are superseded by the direction below.
+
+The [shared C-series acceptance contract](C-Series-Acceptance.md) governs evidence,
+profile scope and continuation, including the FPGA/Colibri and eBPF lessons for
+preservation through actual emitted artifacts. Existing bounded implementation
+is the starting point for the remaining composition gates.
 
 ## 1. Feature and semantic commitments
 
@@ -112,22 +118,25 @@ lifetime alone is not that bound.
 ## 3. Existing implementation inventory
 
 This table distinguishes registration and graph construction from native support.
-The C-06 native gate alone does not complete these operation paths.
+The [September 20 C-07 waypoint](../Language_Coverage_Waypoints.md#c-07-sequence-operations--implementation-waypoint-acceptance-open-2026-09-20)
+records native 16a–g and their actual compiler artifacts. Its bounded successes
+supersede the earlier blanket statements that native producer, consumer and
+search conformance are all pending. Wider forms remain acceptance work.
 
 | Area | Present in source | Remaining work |
 |------|-------------------|----------------|
-| `map`, `filter`, `collect`, `append` | Baker producer recipes snapshot eager arguments, construct typed generator-local capture references and use the shared iterator/delegation ingredient | Validate native composition, captured input residence and the admitted callback form; callback-produced child storage remains a distinct `collect` requirement |
-| `take` | Public scheme and producer dispatch; each enumeration initializes its own remaining count, tests positive demand before the shared pull, and decrements only after success | Native nonpositive/exact/short input and composed demand traces, including upstream post-yield effects and independent enumeration |
-| `iter` | Public scheme and consumer dispatch; callback/input snapshots precede shared ordered iteration, whose action returns unit | Native callback effects and capture identity, logical unit payload/result, empty input and composed producers |
-| `fold` | Public scheme quantifies independent `<'S,'T>`; dispatch supplies the checked initial-state type; callback/state/input snapshots precede a mutable accumulator and shared iteration | Native independent state/payload dimensions and carriers, empty result, callback environment, stored state and source application variants |
-| `exists`, `forall` | Public predicate schemes and dispatch; callback/input snapshots precede `iterateWhile`, which tests the retained decision before the next pull | Native decisive/exhausted/empty traces; exists stops on true, forall on false; validate both polarities through composition |
+| `map`, `filter`, `collect`, `append` | Baker producer recipes snapshot eager arguments, construct typed generator-local capture references and use the shared iterator/delegation ingredient; 16a–d exercise bounded native composition | Extend retained/returned input and callback residence, full callable forms and aggregate captures; preserve the tested child-storage cases while extending `collect` |
+| `take` | Public scheme and producer dispatch; fresh remaining count, positive-demand guard and decrement after success; bounded demand/native composition passes | Extend stored partials and wider source/storage forms without regressing nonpositive/exact/short-input or upstream post-yield traces |
+| `iter` | Public scheme and consumer dispatch; callback/input snapshots precede shared ordered iteration; bounded native effects pass | Stored actions and wider callable/payload residence; preserve unit results, empty-input behavior and ordered effects |
+| `fold` | Independent `<'S,'T>` source scheme, checked state type and eager operand snapshots; bounded native independent-state and empty cases pass | Both retained partial frontiers, aggregate/function state where admitted, general callback environments and source application forms |
+| `exists`, `forall` | Predicate schemes and `iterateWhile` dispatch; native short circuit and empty results are recorded | Stored predicate operations and broader callable/storage composition; preserve both stopping polarities and exact callback counts |
 | `length`, `toList`, `toArray` | Their accumulator construction now uses the same `seqFoldLeft` binding/while path as `fold`, replacing its former recursion; list/array conversion still goes through reversed-list construction and List operations | Own input effects, count/extent/range and materialization contracts plus native gates; the shared iteration change does not establish List allocation or array conversion conformance |
 | `isEmpty` | Recipe makes one pull and negates its result | Establish native source/effect behavior; do not turn a zero-cut effectful input into a skipped pull |
 | `head` | Public scheme and single-pull recipe, whose current read does not retain the successful-pull condition | Establish the source nonempty/result contract and exact current premise before native use |
 | `min`, `max`, `minBy` | Public schemes and older recursive recipes with an initial current read | Retool exact iterator/current identity, initial nonempty admission, comparison/key typing and repeated callback evaluation |
-| `tryHead`, `tryPick` | Public schemes and optional-selection recipes now snapshot supplied operands, retain each candidate once and use guarded `iterateWhile`; `tryPick` extracts its independent result type from the checked option result | Pending source/native gates for empty/exhausted/selected paths, exact stopping and distinct input/result dimensions; the new recipes replace the earlier dormant/recursive paths |
+| `tryHead`, `tryPick` | Public schemes and optional-selection recipes snapshot supplied operands, retain candidates once and use guarded `iterateWhile`; native 16e covers stopping, formation, independent dimensions and nested Option selection | Bare/stored operation values and broader aggregate/callable results; preserve 16e and 16f retention rather than treating search as unimplemented |
 | `maxBy` | Dormant recursive recipe branch; the public Seq resolver does not register the name | Resolve its source contract and current/selection premises before advertising admission |
-| Materialized callbacks | Known regular lambdas captured by sequence producers can retain explicit `ClosureValue`/environment formation, scalar capture slots, an environment formal and actual-environment call operands | Full native validation of the bounded form; returned/opaque/aggregate callables, mutable callable aliases and nested recaptures require additional admitted representation/residence |
+| Materialized callbacks | Known regular lambdas retain explicit `ClosureValue`/environment formation, scalar slots, an environment formal and actual-environment call operands; bounded native 16b composition is recorded | Returned/opaque/aggregate callables, mutable callable aliases, nested recaptures and full function/environment transport require further representation/residence gates |
 | `Seq.empty` | Public polymorphic value and primitive designation | Keep its concrete lowering/admission distinct from the tested C-06 no-yield source generator |
 
 The producer foundation is in
@@ -210,8 +219,9 @@ and an input that can continue indefinitely.
 protocol. Folder state and element types remain independent; callback and input
 snapshots precede enumeration. `exists`/`forall` retain their last Boolean decision
 and admit another pull only while it has not become decisive. Native conformance
-for these paths remains pending. `length`, list/array materialization and search
-operations have additional accumulator, extent, nonempty or stopping contracts.
+for bounded paths is recorded in 16a–g; retained operations and wider callable
+forms remain open. `length`, list/array materialization and extremum operations
+have additional accumulator, extent, nonempty or comparison contracts.
 These are upstream graph and proof obligations, not new Alex loop emitters.
 
 Search/current admission must cite the actual successful guard and iterator.
@@ -225,23 +235,26 @@ before allowing a current read; no default element can fill the gap.
 Use the following dependency order to guide work. It is not a rigid gate against
 an independent consumer improvement whose premises are already settled.
 
-1. **Native append and captured input residence.** Exercise the existing producer
-   and delegation recipes without adding callback storage. Apply the captured
-   template/backing relationship and fresh iterator ownership, then validate
-   delayed input effects, empty prefixes/suffixes, repeated enumeration and
-   supported factory inputs. Preserve the original left/right eager argument
-   order and separate suspension owners. This slice applies C-06's bounded
-   contract for captured templates; escaping and opaque input uses remain explicit
-   residuals until their additional lifetime premises are admitted.
-2. **Native map/filter and callback composition.** Validate and extend the bounded callable/
-   environment form through C-01/C-02 ingredients, retaining immutable and
-   mutable captures. Cover no-capture and captured callbacks, aliases and admitted
-   parameter/factory paths; then extend `collect` with returned child residence.
-3. **Counted demand and eager consumers.** Validate the implemented `take`,
-   `fold`/`iter` and `exists`/`forall` recipes through the settled iterator/action
-   protocol, including independent state typing, eager input order and stopping
-   polarity. Bring the remaining search and materializing consumers onto their
-   own admitted type, storage and proof premises.
+1. **Stored and bare operation values through C-01/C-02.** Use unchanged
+   `16h_SequenceApplications` as the first application gate. Elaborate each
+   partial frontier with retained supplied values and formation effects; preserve
+   public schemes, lexical binding and dimensions. Chasing an alias must not
+   replay its initializer. Full callable use classification must account for
+   every reachable use, including unresolved partials.
+2. **Returned and retained environments.** Extend existing exact-origin and
+   bounded residence paths to the factory/capture uses in unchanged original16.
+   Carry actual environment instances through calls, returns and joins using the
+   canonical callable contract. Callback-produced children and captured inputs
+   need backing-storage evidence across their complete use, including outer
+   suspension. Preserve 16a–g throughout this shared C-01/C-06 work.
+3. **Aggregate results and storage budgets.** Generalize the established
+   scalar-Option retention path to admitted aggregate/callable compositions with
+   explicit copy/borrow/transfer choices, overwrite constraints, peak capacity
+   and reclamation. Share C-04 storage contracts for materialization.
+4. **Successor consumers and final cohort.** Complete the explicit successor
+   rows in §8 after their source contracts and prerequisites are established.
+   Run original16, 16a–h, affected C-06 inputs and ordinary controls on the final
+   coordinated compiler/dependency/target cohort, with proof and tooling gates.
 
 Each slice begins from a source/native oracle with fixed expected values and
 effects, plus exact rejected premises at their owning layer. Complete the related
@@ -269,6 +282,13 @@ function calls, `scf.if`, `scf.while` and `scf.index_switch`. Standard backend
 lowering handles the resulting `func`/`memref`/`arith`/`index`/`scf` operations.
 There is no source-shape recognizer, recursive subtree emitter, mutable semantic
 state in the zipper or operation-specific imperative MoveNext builder.
+
+These are the recorded native forms. Their reconciliation and any additional
+operation/profile forms follow [M-01](M-01-DialectAdmission.md); its general
+admission and evidence transport remain planned. The shared
+[realization integrity criteria](C-Series-Acceptance.md#41-integrity-through-realization-colibri-fpga-and-ebpf)
+apply to transformed outputs as well: demand guards, operand order, environment
+identity and actual storage must correspond to Baker's claims after lowering.
 
 ## 7. Coverage commitments
 
@@ -314,21 +334,32 @@ with source/node provenance where available; accepting any error is insufficient
 
 ## 8. Completion record
 
-The eleven operations in §1 define this core implementation. Other registered
-Seq names do not inherit its native acceptance. Keep these successor contracts
-visible when continuing:
+The eleven operations in §1 define the core implementation. Full acceptance of
+that core includes original16 and 16h, not only the recorded 16a–g successes.
+The September 20 waypoint reports original16 factory/capture and residence
+failures and a still-unpassed 16h staged-callable gate; these remain explicit
+implementation work. No new native run is claimed here.
 
-- C-01/C-02 must admit retained sequence/callable captures for stored and bare
-  Seq operation values. The unchanged `16h_SequenceApplications` oracle exposes
-  missing partial-operation elaboration and the resulting complete-use refusal.
-  Chasing an alias and replaying supplied expressions would violate formation.
-- `head`, `min`, `max`, and `minBy` still require nonempty/current and comparison
-  contracts. Dormant `maxBy` needs source admission before it can be advertised.
-- C-04 owns the collection storage/extent foundation needed by `toList` and
-  `toArray`; their C-07 integration remains unvalidated. Keep native gates for
-  `length`, `isEmpty`, and `Seq.empty` explicit as well.
-- C-05 lazy conformance and the original C-06 coupled/multiplicative recurrence
-  gates remain independent of the successful C-07 oracles.
+Other registered Seq names do not inherit core acceptance. Preserve the
+following successor work under C-07 with explicit source contracts and gates;
+a core checkpoint must not silently mark the full PRD Complete or waive rows.
+
+| Successor surface | Prerequisites and native acceptance |
+|---|---|
+| `Seq.empty` | Its normative no-element behavior, independent instantiation and admitted value/application forms; distinguish the intrinsic from a tested source no-yield generator |
+| `length` | Exact count and count range, effectful empty input, full exhaustion and no duplicate pull/callback |
+| `isEmpty` | One demanded pull, including empty-body effects, and no subsequent pull after the answer |
+| `head` | Establish the source nonempty/failure contract and exact successful-current premise before admitting payload extraction; no fabricated default element |
+| `min`, `max`, `minBy` | Establish nonempty/current, comparison/key typing, evaluation/tie behavior and numeric/resource premises; exact effectful key evaluation and ordered traversal |
+| `maxBy` | Public source admission and settled selection contract before native advertising; an existing dormant recipe is not a supported operation |
+| `toList`, `toArray` | C-04 construction/storage, target authority, length/extent and peak capacity; preserve order, types, effects and retained output lifetime after input exhaustion |
+
+Where a successor's observable behavior is not settled in the normative
+operation chapters, reconcile that contract before implementation rather than
+importing exception or tie behavior from another language. These rows expose
+the work; they do not introduce new semantics through a test expectation.
+C-05 lazy conformance and C-06's original coupled/multiplicative recurrence
+gates remain independently tracked.
 
 - [ ] Registered source schemes, recipes and supported operations agree; dormant
   recipe branches are not advertised as implemented primitives.
@@ -342,6 +373,8 @@ visible when continuing:
 - [ ] CCS.Editor, analyzer-facing and actual LSP gates preserve dimensional public
   signatures, original capture definitions, precise errors and unsaved repairs.
 - [ ] Relevant earlier FidelityHello controls remain correct on the final compiler.
+- [ ] Listed successor rows have their own settled contracts and recorded native
+  gates; core and successor results remain distinguishable.
 - [ ] The operations specification, this PRD and waypoint agree on actual support,
   open representation decisions and final artifact evidence.
 
@@ -349,3 +382,12 @@ visible when continuing:
 [delimited continuations architecture](../Delimited_Continuations_Architecture.md)
 govern this work alongside the normative chapters. Broader C-07 completion must
 not be inferred from the earlier producer graph checkpoint or C-06 native pass.
+
+## 9. Criteria supersession
+
+The earlier native append/map/filter/consumer bring-up sequence is superseded by
+the remaining-work order in §5. Its bounded implementations already have native
+evidence. The earlier blanket pending-native statements are replaced by §3's
+source inventory and the dated waypoint; the accepted producer/consumer laws and
+original source oracles remain intact. This reconciliation changes no compiler
+code, sample expectation or PRD completion status.
