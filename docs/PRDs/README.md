@@ -10,6 +10,15 @@ These are views of the existing PRDs, not additional PRD categories. Planning
 estimates do not change the feature statuses or authorize a separate prerequisite
 project. C-driven extensions and regressions retain their explicit C/F owners.
 
+The September 26 accepted [numeric-selection assessment](Numeric_Selection_PRD_Assessment.md)
+registers [F-11: Numeric Selection](F-11-NumericSelection.md) and
+[C-08: Arithmetic Construction](C-08-ArithmeticConstruction.md), each with four
+lettered acceptance groups. Their [validation inventory](Numeric_Validation_Cases.md)
+maps the normative requirements to concrete cases and existing F/C owners.
+The contracts preserve Baker's rewrite tape, joint constraints and dependency
+evidence for parallel checking and incremental compilation. Acceptance of these
+PRDs establishes delivery scope; passing evidence establishes completion.
+
 Status reconciliation, 2026-09-20: operational capability, PRD completion and
 regression evidence are recorded separately. The foundation is implemented and
 operational within the scope below; **Retrospective** describes how its documents
@@ -47,8 +56,8 @@ continuation experiment, with additional UI/reactive/target dependencies explici
 
 | Prefix | Category | Description | PRD Range |
 |--------|----------|-------------|-----------|
-| **F-xx** | Foundation | Core compilation, Samples 01-10 | F-00 to F-10 |
-| **C-xx** | Computation | Closures, HOFs, Lazy, Seq | C-01 to C-07 |
+| **F-xx** | Foundation | Core compilation, native types and numeric selection | F-00 to F-11 |
+| **C-xx** | Computation | Closures, HOFs, Lazy, Seq, arithmetic construction | C-01 to C-08 |
 | **A-xx** | Async | Async, Await, Regions | A-01 to A-06 |
 | **I-xx** | IO | Sockets, WebSocket | I-01 to I-02 |
 | **D-xx** | Desktop | GTK, WebView | D-01 to D-02 |
@@ -118,6 +127,7 @@ run.
 | [F-08](F-08-OptionType.md) | Option Type | 08, 08a–e | In-Progress | September 26 audit:08 passes;08a–e fail compilation. Restore defaults, alternatives, iteration and fold acceptance through their C-01/C-02/C-04 dependencies; earlier six-sample passes are historical. |
 | [F-09](F-09-ResultType.md) | Result Type | 09, 09a–c | In-Progress | September 26 audit:09 passes;09a–c fail compilation. Restore callbacks, elimination and predicates through the owning callable/selected-branch contracts. Historical unchecked `get`/`getError` sketches are not admitted native operations. |
 | [F-10](F-10-RecordTypes.md) | Record Types | 10 | Complete | Construction, field access, copy/update, nested records and guarded/nested/wildcard record patterns are operational; 10 passes with exact output. |
+| [F-11](F-11-NumericSelection.md) | Numeric Selection and Numeric Obligations | [Numeric inventory](Numeric_Validation_Cases.md) | In-Progress | Accepted September 26: (a) justified ranges and dimensional inference; (b) selection and boundary fidelity; (c) automatic operation obligations; (d) preservation, diagnostics and incremental evidence. Covers the declared integer, IEEE, posit and fixed-point families. |
 
 The foundation PRDs mostly document completed work retrospectively. Their old
 fixed-width layouts, allocation sketches and intermediate closure representations
@@ -154,6 +164,7 @@ migrated to normative memoization alongside the C-05 implementation.
 | [C-05](C-05-Lazy.md) | Lazy Evaluation and Memoization | 14 | In-Progress | Canonical Baker memoization and typed storage are implemented for the recorded14/14a/14b cases, which pass again in the September26 audit. The sample oracle now requires memoization. Broader capture/result/residence and force-control acceptance remains open. |
 | [C-06](C-06-SimpleSeq.md) | Simple Sequences | 15, 15a–d | In-Progress | Native core and bounded scalar/Option transport tested; original recurrence/aggregate and broader residence gates remain separate. |
 | [C-07](C-07-SeqOperations.md) | Sequence Operations | 16, 16a–h | In-Progress | September26 audit:16a/16d/16f/16h pass;16b/16c/16e/16g and original16 fail compilation. Restore those controls and close the full eleven-operation and successor inventories. Older16a–g passes remain dated evidence. |
+| [C-08](C-08-ArithmeticConstruction.md) | Arithmetic Construction and Reduction | [Numeric inventory](Numeric_Validation_Cases.md) | In-Progress | Accepted September 26: (a) construction admission; (b) accumulator/merge laws and capacity; (c) decomposition and joint constraints; (d) functional, parallel and artifact acceptance. F-11 supplies numeric facts; M-01 and the execution/platform owners retain their realization obligations. |
 
 ### Async (A-xx) - Asynchronous Programming
 
@@ -298,7 +309,7 @@ them; they are not a mandatory list or a new serial phase before C/A/T/R work.
 The [workbench and native REPL bridge](../Interactive_Compiler_Workbench.md)
 is a Composer-owned development workstream alongside language completion.
 SageFS is the first bootstrap-host candidate. The initial pilot can run alongside
-C-01–C-07; it does not wait for full self-hosting or advance those PRDs by itself.
+C-01–C-08; it does not wait for full self-hosting or advance those PRDs by itself.
 CCS/Baker retain semantic authority, Alex retains ctx pull witnessing, and
 Lattice/MCP clients share the existing proof and session service. WB identifiers
 are workstream milestones, not another language PRD category.
@@ -306,8 +317,8 @@ are workstream milestones, not another language PRD category.
 | Milestone | Scope | Status | Note |
 |---|---|---|---|
 | [WB-01](../Interactive_Compiler_Workbench.md#pilot-acceptance) | SageFS compiler-workbench pilot | Planned | Evaluate a pinned host on a real coverage case; require rejection controls, saved-source replay, actual owning gates and measured feedback costs. No adapter is implemented by this plan. |
-| [WB-02](../Interactive_Compiler_Workbench.md#proof-responsiveness) | Shared session and responsive proofs | Planned | Reuse the CCS editor/proof service; establish compiler-generation identity, shared-client correctness and measured cvc5 scheduling/reuse. |
-| [WB-03](../Interactive_Compiler_Workbench.md#milestones) | Native interactive execution | Planned | Connect the ordinary lowering to ORC/JITLink with explicit invocation/lifetime contracts and JIT/AOT acceptance for a named slice. |
+| [WB-02](../Interactive_Compiler_Workbench.md#proof-responsiveness) | Shared session and responsive proofs | In-Progress | September 26 scope: PSG-derived change regions, selective nanopasses, proof cross-application, bounded edit scheduling and fresh-check equivalence through the shared service. |
+| [WB-03](../Interactive_Compiler_Workbench.md#milestones) | Native interactive execution | In-Progress | September 26 scope: PSG-authorized regional Alex witnessing, segmented LLD/ORC artifacts, split/merge replacement and explicit state/code-lifetime contracts, validated against fresh execution. |
 | [WB-04](../Interactive_Compiler_Workbench.md#milestones) | Clef-facing clients and host transition | Planned | Extend Lattice clients and preserve the session contract when bootstrap-specific hosting is replaced; notebooks remain separately scoped. |
 
 ### FPGA targeting and artifact verification
@@ -353,10 +364,10 @@ Sequence continuation work is already implemented independently of Lazy's
 remaining memoization migration; both reuse C-01's environment contract.
 
 ```
-Foundation (F-01 to F-10)
-    └── Implemented core baseline; specific regressions/extensions tracked above
+Foundation (F-01 to F-11)
+    └── Core baseline and numeric contracts; scoped evidence tracked above
             │
-            ├── Computation (C-01 to C-07)
+            ├── Computation (C-01 to C-08)
             │       │
             │       ├── C-01 Closures ← F-04 Lambdas, F-10 Records
             │       ├── C-02 HOFs ← C-01 Closures
@@ -364,7 +375,8 @@ Foundation (F-01 to F-10)
             │       ├── C-04 Collections ← C-02, C-03
             │       ├── C-05 Lazy ← C-01 Closures
             │       ├── C-06 SimpleSeq ← C-01/C-02, control/liveness, C-03 numeric work
-            │       └── C-07 SeqOps ← C-06, C-01/C-02; C-04 for materializers
+            │       ├── C-07 SeqOps ← C-06, C-01/C-02; C-04 for materializers
+            │       └── C-08 ArithmeticConstruction ← F-11, C-01/C-02; C-04/C-07 consume reduction contracts
             │
             ├── Async (A-01 to A-06)
             │       │

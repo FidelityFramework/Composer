@@ -169,7 +169,8 @@ combinations from one example.
 | Formation and effects | Ordinary bindings and arguments preserve shared deferred identity; unused arguments and their effects remain deferred. Demands and explicit sequencing establish required effect order; short circuit prevents later demand; aliases do not replay initializers |
 | Capture identity | Immutable captures retain original shared deferred binding identities without forcing formation snapshots; referenced mutable storage remains shared; separate formations of one implementation retain distinct environment instances |
 | Storage | Scope, caller/region and program lifetimes; actual backing allocations, views and aliases; initialization, overwrite, release and peak live capacity; declared immutable/mutable authority |
-| Numeric meaning | Dimensions survive specialization and layout; ranges cover intermediate computations and stores; representation and adaptation come from the selected declarations |
+| Numeric meaning | Dimensions survive specialization and layout; justified ranges drive integer width and real representation selection; capacity, rounding/error, scale and permitted decomposition retain separate obligations and proof correspondence |
+| Inference | Unannotated internal compositions, generic dimensional schemes and constrained boundaries preserve principal measure relationships; pending design-time constraints narrow with additional context and retain their provenance |
 | Data/control boundaries | Empty/singleton/multiple values, branch joins, nested/recursive uses, successful-current/nonempty guards, exhaustion and independent enumeration |
 | Refusal | Contradicted facts, missing premises and unsupported forms have distinct responsible diagnostics; neighboring valid cases remain accepted |
 
@@ -177,6 +178,21 @@ Mutable capture tests distinguish a scalar value from a reference to its cell.
 An origin identifies an allocation site; forwarding must preserve the actual
 runtime activation's storage. A retained descriptor does not extend its backing
 lifetime. An immutable capture can still refer to mutable storage.
+
+Inference coverage shall distinguish a valid quantified dimensional parameter
+from an unresolved constraint awaiting context. Include inferred products and
+quotients, equivalent measure schemes, coupled exponent constraints, measured
+aggregate projections and specialization through shared callable instances.
+Boundary annotations establish domain meaning; internal annotations are not an
+acceptance prerequisite. Progressive narrowing shall preserve source identity
+and dependent proof premises, with required facts settled at their consuming
+compilation boundary. A missing fact supplies no default unit or machine width.
+The accepted [numeric-selection assessment](Numeric_Selection_PRD_Assessment.md)
+maps these obligations to existing owners and the registered
+[F-11 selection](F-11-NumericSelection.md) and
+[C-08 construction](C-08-ArithmeticConstruction.md) contracts. Their
+[validation inventory](Numeric_Validation_Cases.md) includes inferred dimensional
+composition, invalidation and emitted-artifact controls.
 
 ## 4. Evidence required to close a row
 

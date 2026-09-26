@@ -177,6 +177,202 @@ correct; recomputation and transfer measurements can choose among them after
 semantic and evidence closure are established. No general region schema or new
 nanopass protocol is selected by this experiment.
 
+### 2.4 Rewrite independence and the intermediate tape
+
+Numeric selection and arithmetic construction supply immediate acceptance
+pressure for these primitives; see the
+[PRD ownership assessment](PRDs/Numeric_Selection_PRD_Assessment.md).
+Interaction-net lessons apply to the shape of admitted local rewrites. A rule's
+readiness does not establish confluence or termination for arbitrary PSG rules.
+Annihilation has to preserve demand, effects, shared identity, arithmetic meaning
+and every surviving consumer's premises. Removing executable work and preserving
+the account of its reduction are compatible requirements.
+
+For each candidate, retain the matched rule/version, source snapshot, occurrence
+and scope, ordered participants, semantic read dependencies and proposed
+write/rewiring footprint. Reads include absence/lookup facts and supporting joint
+constraints. Record introduced, transferred and invalidated evidence. Two candidates
+with different roots may still conflict through an alias, shared premise, layout,
+storage authority or result-publication location.
+
+A tractable first scheduling component is deterministic greedy coloring over a
+finite conservative conflict graph of eligible candidates. Minimum color count
+is not required. A proper coloring can be checked against every materialized
+conflict edge. This polynomial graph procedure does not establish a complexity
+bound for discovering dependencies or solving numeric premises. Unknown safety
+relationships keep candidates separate or pending under the owning rule.
+
+Joint hyperedges preserve more than pairwise conflict. For example, three proposed
+allocations can exceed one shared capacity even if each pair fits. Retain and check
+the complete joint condition when forming a batch; converting an arbitrary
+hyperedge to ordinary adjacency can change its meaning. Exclusive-use constraints
+can use conservative pairwise edges. More permissive batching requires its own
+admitted resource/independence judgment. Coloring rewrite interference, runtime
+work, frame-slot liveness and target registers remains four distinct problems.
+
+Fold-in validates the observed premises against the receiving snapshot before
+applying a proposal. It reconciles overlaps, retains source/replacement
+correspondence, retracts affected facts and resumes the owning analyses. Batches
+with equal colors are only candidates for concurrent execution; validated
+dependencies, joint constraints and consistent publication authorize execution.
+Sequential integration remains valid when independence is not established.
+
+Maintain a **rewrite tape** through fan-out, fold-in and intermediate serialization:
+
+| Record | Required correspondence |
+|---|---|
+| Match/proposal | Rule identity, input snapshot and pass, source origins, exact participant roles, premises and proposed delta |
+| Fold-in decision | Applied, deferred, rejected, superseded or cancelled; reason and applicable input generation; conflicts and their resolution |
+| Applied change | Original/replacement identities, introduced and retired executable structure, affected interfaces, transferred/retracted facts and new obligations |
+| Intermediate | Input/output revision and artifact identity, parent pass/trace references, serialization view and resolvable references for omitted participants |
+
+The tape is compiler evidence. It does not require a runtime event log, retain
+dead code in the executable, or make a retired node a reachability root. Physical
+storage may use retained snapshots or a checked delta/manifest chain; the chosen
+form must keep the promised history inspectable. A display flag is insufficient.
+Pruned views retain the evidence closure or identify resolvable external trace
+records. Full views expose retained source/rewrite history. A missing record
+cannot be reported as an established absence in the source graph.
+
+Tests follow a source occurrence through multiple rewrites and both serialized
+views; include shared consumers, competing proposals, alternative proof support,
+cancelled work, an old result arriving after a new revision, and semantic
+retirement with surviving evidence references. Remove or alter a trace participant
+and require the dependent validation to fail. Compare admissible integration orders
+under their declared semantic/evidence correspondence, allowing consistent fresh-ID
+renaming. Valid coloring alone does not prove the correspondence.
+
+These are criteria for extending existing recipes and serializers. They select
+no complete interaction-net evaluator, new pass API or optimal graph partition.
+Baker owns the semantic work; Alex retains Huet Element/Pattern/Witness composition
+over settled facts; target realization remains below that boundary.
+
+### 2.5 Edit transactions, proof reuse and segmented publication
+
+The September 26 direction makes segmented compilation a delivery objective for
+the existing compiler/workbench contracts. Establish the dependency and evidence
+structure while the graph families are small; extend that same structure as
+features compose. A source edit seeds a semantic frontier. Re-evaluate affected
+owning nanopasses and cross-application judgments through their recorded reads,
+joint constraints and exported interfaces. The frontier can cross lexical scopes
+and can encompass an entire recursive component. Its size is a result of valid
+dependency closure, never a promise that every edit is local.
+
+The direction is **PSG hyperedge/dependency closure → affected settled semantic
+regions → Alex re-witnessing at those occurrences → replacement backend units**.
+Changes in crossing relations can change the semantic region partition itself.
+Alex receives that new region/boundary judgment from CCS/Baker and preserves it
+through its Huet traversal; object filenames and flat symbol adjacency cannot
+determine the semantic frontier. Backend realization can map or coalesce witnessed
+regions according to its own constraints, with the correspondence retained.
+Alex **witnesses** the boundary already established in the PSG; it does not infer
+or construct a second semantic boundary from the emitted operations. Imports
+include every semantic fact consumed by specialization, inlining or proof use,
+alongside their symbol/ABI interfaces. Checked equivalence of these consumed
+contracts permits automatic reuse; a change propagates through their recorded
+dependencies. Symbol resolution by the linker alone does not establish that
+equivalence. The publication service performs the derived rebuild/relink actions.
+Partitioning a fully emitted module establishes artifact organization only; the
+scoped-recompilation gate requires actual selective Baker work and Alex re-witnessing.
+
+Keep semantic identity, partition identity and artifact content identity distinct.
+An edit can split, merge or replace a partition even when some source declarations
+survive. Rebuilding that affected artifact area is an accepted tradeoff. A
+partition transition identifies retained, replaced and retired contents, including
+old symbols, initializers, storage owners, witness correspondence and evidence.
+Do not retain an invalid boundary merely to preserve a filename or cache hit.
+An immutable previous generation remains usable until the new generation commits;
+its files and code are reclaimed only when their consumers have released them.
+
+The segment manifest carries the following stage-owned correspondence:
+
+| Owner | Required segment account |
+|---|---|
+| CCS/Baker | Checked source/configuration generation; semantic participants and occurrence context; import/export facts; rule and premise identities; joint constraints; support/retraction and boundary readiness |
+| Alex | Accepted source region and boundary evidence; Huet occurrence/path correspondence; witnessed declarations, imports/exports and portable MLIR content identity; preservation checks |
+| Backend | Realization profile, tool/configuration identity, symbol/linkage and concrete ABI/layout; object or other target artifact identity; runtime/storage/startup dependencies; artifact checks |
+| Publication service | Compatible manifest generation; content reused with revalidated dependencies; partition replacement/retirement; current consumers and accepted executable/session publication |
+
+MLIR module/function attributes can transport segment and origin references under
+an explicit preservation contract. MLIR's [symbol scopes and isolation](https://mlir.llvm.org/docs/SymbolsAndSymbolTables/)
+and [nested regions](https://mlir.llvm.org/docs/LangRef/#high-level-structure) still
+apply to each unit. Lowering must map or check those references against actual
+LLVM definitions and object contents; attaching an attribute alone supplies no
+preservation evidence. The manifest retains authoritative correspondence across
+renaming, coalescing, elimination and backends that use another metadata form.
+
+Cross-application proof reuse records the instantiated claim, every premise used
+to select and encode it, admitted law/rule versions, solver/certificate policy and
+source-to-lowered correspondence. An identical query hash alone cannot validate
+changed premises or a changed operation binding. A valid preservation argument
+can avoid redispatch; otherwise recheck the affected claim at its owning boundary.
+Retain independent supporting derivations and invalidate only unsupported results.
+Required pending evidence holds the corresponding executable commitment; the
+editor can already report that pending state for the current generation.
+
+The current `SemanticGraph.FieldRanges`, `ElementRanges`, `Layouts` and
+`StaticStringPool` illustrate required shared judgments. A record field joins
+reachable constructions; an array element range joins applicable stores; layout
+and pool placement consume those aggregate facts and declarations. Their support
+includes membership and absence observations as well as current participants.
+Adding a construction or store can change another region's representation even
+without a direct call edge. Capture that joint support before enabling selective
+reuse of its consumers. An analysis whose read footprint is not established
+retains the conservative whole-input dependency; merely traversing existing
+hyperedges cannot certify that every analysis read was recorded.
+
+The first CPU realization uses separately realized object units and LLD to form
+an ELF. A later release mode may coalesce units or apply whole-program optimization;
+that mode re-establishes affected correspondence and records its wider dependency
+footprint. Reuse and partition granularity are implementation choices under one
+semantic contract. Other targets provide their own segment/artifact realization
+and admissible boundaries; they need not imitate ELF objects or native dynamic
+loading. Circuit partitioning and target scheduling stay with their backends.
+
+For the REPL, LLVM [ORC](https://llvm.org/docs/ORCv2.html) supplies materialization
+and resource tracking; [JITLink](https://llvm.org/docs/JITLink.html) supplies runtime
+object linking. This is a separate publication path from LLD's AOT executable.
+Both consume checked segment contents and compatible interfaces. ORC's symbol
+dependencies do not replace the PSG's semantic/proof dependencies, and lazy code
+materialization does not define Clef's lazy evaluation or effect semantics.
+
+The editing service uses a short, bounded, configurable debounce to coalesce a
+burst and cancels superseded work. An upper coalescing bound and explicit run/flush
+requests prevent indefinite postponement. Bound worker queues and retain the
+latest requested snapshot. Every completion validates its generation and declared
+dependencies before publication, even if cancellation could not stop the worker.
+Diagnostics, proofs and executable readiness may arrive at different times, each
+labelled with the checked generation and stage; an older executable remains
+explicitly older while a current edit is pending or invalid. No edit or hover
+implicitly repeats effectful REPL evaluation.
+
+Measure edit-to-diagnostic, edit-to-proof, edit-to-ready-code and explicit
+run-to-result separately, with queue/debounce/check/proof/witness/realization/link
+times and cold/warm conditions. Record rebuilt/reused region and artifact counts,
+including repartition costs. Choose feedback budgets from those observations and
+test declared bounds; a timer interval alone establishes no latency guarantee.
+
+Hot reload additionally checks live values, closure environments, stored callbacks,
+active frames, initialization and effect ownership. ABI equality alone cannot
+validate changed state meaning or facts cached from an earlier computation.
+Compatible state requires an admitted transfer/reuse contract; otherwise restart
+or reject that replacement. Publish new entry points consistently and retain old
+code while an admitted live reference can invoke it. ORC resource removal occurs
+after that lifetime condition; code unloading itself does not establish it.
+
+Acceptance compares selective and fresh checks on identical inputs, including
+diagnostics, settled interfaces, demand/effect traces and required proof results.
+Exercise local edits; crossing hyperedges; unchanged alternative support; changed
+numeric representation, capture or ABI; absent-to-present lookup; root removal;
+partition split/merge; stale worker completion; edit storms; cancellation; and
+link/materialization failure. Require unchanged independent object contents to be
+reused only with validated dependencies, replaced symbols/initializers to vanish
+from the new manifest, and failed publication to preserve the last accepted
+generation. Runtime tests cover REPL redefinition, explicit effects, retained
+closures/callbacks and safe retirement. The concrete numeric cases belong to
+[F-11(d) and C-08(c/d)](PRDs/Numeric_Validation_Cases.md); workbench integration
+uses the [registered WB milestones](Interactive_Compiler_Workbench.md#milestones).
+
 ## 3. Direction for nanopass input and output
 
 The eventual contract needs to make the following observable, without fixing

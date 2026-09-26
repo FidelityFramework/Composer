@@ -45,6 +45,17 @@ silently counted as implemented or used to defer required interior behavior.
 
 ## 1. Work by owning C/F PRD
 
+The September 26 accepted numeric expansion adds
+[F-11](PRDs/F-11-NumericSelection.md) and
+[C-08](PRDs/C-08-ArithmeticConstruction.md). Their
+[43-case inventory](PRDs/Numeric_Validation_Cases.md) maps every Numeric Selection
+§13 requirement and retains the affected owners below. Incremental acceptance
+requires PSG-driven semantic regions and scoped Alex re-witnessing, with explicit
+segment replacement and proof invalidation; artifact grouping alone is insufficient.
+The [subsequent checkpoint](C_F_Checkpoint_2026-09-26.md#subsequent-dimensional-trace-and-bounded-storage-checkpoint)
+records the 1,499 CCS / 274 Alex / 128 SMT cohort and native14/14a/14b results.
+Earlier figures above retain their historical identity.
+
 The order expresses prerequisites, not relative importance. Independent source
 fixtures, contract reconciliation and artifact checks can proceed alongside the
 current implementation. Coordinate builds sharing CCS/Composer outputs.

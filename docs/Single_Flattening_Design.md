@@ -25,7 +25,18 @@ Semantic structure in this pipeline settles up into the graph and leaves standar
 
 The first observation is on the record in [Delimited_Continuations_Architecture.md](./Delimited_Continuations_Architecture.md). Delimited continuations lifted into the PSG as saturated structure, and the op rendering retired. The delimiter is the boundary a builder extent defines, and the witnessed form is a discriminant, a byte frame, and `scf.index_switch`.
 
-The second observation is interaction nets, and it stands on a firmer floor than analogy. An interaction net is already a graph: agents as nodes, ports as edges, active pairs as redexes, rules as local rewrites licensed by strong confluence. Encoding a net into SSA regions imposes an order the net does not have, which is reconstruction in reverse. The PHG is already the net's kind of object. And Baker's fan-out and fold-in is a deterministic interaction calculus over the PHG. Firing is local. Readiness is the condition the [PSG_Nanopass_Architecture.md](./PSG_Nanopass_Architecture.md) addendum states: "a hyperedge fires only when all of its source nodes are elaborated". Elaboration is monotone and terminating, and it is confluent by the saturation rule: every firing order reaches the same saturated graph.
+The second observation is interaction nets: agents, ports and active pairs give
+a concrete model of local graph rewriting. Baker's fan-out/fold-in offers a place
+to express admitted rules while preserving their source and joint constraints.
+The correspondence must identify the actual rule system and its premises.
+Readiness—having the required participants elaborated—does not establish
+confluence, termination or equivalence for arbitrary PSG transformations.
+Each owning analysis supplies its settlement argument; overlapping rewrites need
+admitted conflict handling. The
+[rewrite and tape criteria](Nanopass_Incremental_Contract_Direction.md#24-rewrite-independence-and-the-intermediate-tape)
+retain participants, premises, replacements and invalidations through intermediate
+artifacts. A static annihilation reduces active computation while preserving the
+evidence required by remaining consumers and inspection.
 
 The case split mirrors the suspension architecture exactly.
 
@@ -43,7 +54,23 @@ Alex, the Library of Alexandria, is a single flattening pass. The Huet zipper, w
 
 The consequence is a redistribution of weight. Alex is more constrained than earlier envisioned: it witnesses and elides what the graph has settled, and it performs no semantic transformation. Baker gains significant structure. The recipes carry the semantic inventory: closures, suspension, dual pairs, and nets. The semantic weight of the pipeline resides in elaboration and saturation.
 
-The difficulty in earlier planning was envisioning structure carried across the Huet zipper. That difficulty dissolves because nothing requires carrying: structure discharges in the graph before the zipper runs, and the zipper carries settled residue only. The standing phrase for the posture: the zipper witnesses what is already settled.
+Numeric construction makes this boundary concrete. Dimensions, justified ranges,
+demand/effects, storage identity and permitted partial/merge arithmetic meet on
+the same source participants. Baker can resolve eligibility and rewrite conflicts
+there, retaining the intermediate tape, before Alex witnesses their admitted
+form. The [PHG coloring research note](../../arxiv-papers/research/PHG/tractable-conflict-coloring.md)
+gives a conditional clique-tree theorem for one tractable conflict class. This
+supports keeping joint semantic decisions together before flattening; it does
+not assert that all PHG regions belong to that class or that MLIR cannot encode
+the same information. Such an encoding would require its own explicit transport
+and authority contract at an additional semantic boundary.
+
+The zipper witnesses what is already settled. Semantic decomposition happens
+in the graph before that boundary; selected representations, participant
+correspondence and proof premises still needed by later consumers travel with
+the witnessed form or its checked evidence. Flattening does not authorize
+discarding those obligations. This preserves the coherence of the joint judgment
+without asking Alex to reconstruct it from emitted operations.
 
 ## 5. Consequences
 

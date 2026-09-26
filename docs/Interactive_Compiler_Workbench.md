@@ -1,9 +1,10 @@
 # Interactive compiler workbench and native REPL bridge
 
-Status: **Planned**, September 25, 2026. Composer owns this workstream. The first
-milestone evaluates SageFS as a host for the current .NET bootstrap compiler
-while language coverage work continues. No adapter, native JIT session, shared
-daemon or latency improvement is established by this document.
+Status: **In-Progress**, updated September 26, 2026. Composer owns this workstream.
+The accepted scope now includes PSG-driven incremental regions and segmented
+execution in WB-02/WB-03. WB-01 evaluates SageFS as a host for the current .NET
+bootstrap compiler alongside language work. This document defines the acceptance
+contract; it establishes no native JIT or latency result by itself.
 
 The purpose is to shorten the feedback loop for completing Clef semantics in
 CCS/Baker and Composer/Alex. Keep the compiler resident, submit actual Clef
@@ -11,7 +12,7 @@ examples, inspect construction and witnessing, dispatch the associated proofs,
 and eventually invoke native code without restarting the bootstrap host for
 every submission. A warm process does not itself make checking incremental.
 
-This is a cross-cutting development workstream alongside C-01 through C-07,
+This is a cross-cutting development workstream alongside C-01 through C-08,
 not another source-language feature or a prerequisite to completing all of them.
 F-06's interactive console parsing is a separate feature. Full native
 self-hosting and notebook support remain broader milestones; a bounded bootstrap
@@ -149,6 +150,31 @@ M-01's general evidence transport remains planned. MCP lifecycle guards and a
 skill can reinforce the workflow; they cannot establish semantic correctness or
 prevent arbitrary source edits through other tools.
 
+## Segmented execution and redefinition
+
+The September 26 [scoped compilation contract](Nanopass_Incremental_Contract_Direction.md#25-edit-transactions-proof-reuse-and-segmented-publication)
+extends the workbench's required evidence. PSG hyperedges and supported dependency
+relationships determine which semantic regions Baker must resettle and Alex must
+re-witness. The resulting changes determine replacement backend artifacts. Regions
+and object groups may split or merge as dependencies change; rebuilding that area
+is permitted. A whole-module object split alone does not satisfy scoped compilation.
+
+WB-02 owns edit generation, bounded debounce, cancellation, proof cross-application
+and latest-result publication. WB-03 consumes validated witnessed regions through
+ORC/JITLink and establishes code, callback, live-state and initializer lifetime
+contracts. Its comparison path links accepted object segments with LLD. Both paths
+retain a manifest of source/witness/artifact correspondence and revalidated reuse.
+Hot reload must establish state compatibility and safe retirement in addition to
+symbol/ABI compatibility. A later coalesced release build follows the same semantic
+and preservation contract with its own optimization dependency footprint.
+
+Acceptance includes partition replacement, obsolete-symbol removal, failed
+link/materialization, stale completion and live callback retention. Compare actual
+selective execution against a fresh reference and measure diagnostic, proof and
+code-ready latency separately. [F-11(d)/C-08(d) cases](PRDs/Numeric_Validation_Cases.md)
+supply the numerical and construction-specific mutations. Lattice presents these
+compiler/session observations without adding another dependency model.
+
 ## Proof responsiveness
 
 cvc5 dispatch is a design-time cross-application over the PSG's own obligations
@@ -197,13 +223,15 @@ promised before a representative coverage workload is measured.
 ## Milestones
 
 WB labels below identify this workstream only; they are not new language PRD
-categories. Every milestone is **Planned**.
+categories. WB-02/WB-03 include the September 26 accepted scope for PSG-driven
+incremental compilation and segmented execution. The correspondence and dependency
+work is in progress; completion requires the selective/fresh and native gates.
 
 | Milestone | Deliverable | Entry and completion boundary |
 |---|---|---|
 | WB-01: SageFS compiler-workbench pilot | A pinned host and small adapter in Composer, running an existing Clef coverage case through real compiler APIs with Baker/Alex inspection. | Can start alongside C-01–C-07. Complete the pilot acceptance below, record Linux compatibility and cold/warm costs, and make an evidence-based hosting decision. No broad REPL or language-completion claim. |
-| WB-02: Shared session and responsive proofs | One versioned service shared by Lattice and MCP/workbench consumers, with compiler-generation identity and measured proof scheduling. | Reuse the current editor/proof service. Complete stale-result, cancellation, isolation and exact-query reuse gates before enabling the corresponding optimization. |
-| WB-03: Native interactive execution | Connect the ordinary Composer lowering to ORC/JITLink, then establish invocation, initialization, result presentation and retained-value lifetimes for a named supported slice. | Use the proven host boundary and the required WB-02 identity/admission subset. Compare JIT and AOT behavior; reject unsupported redefinition/lifetime cases. No dependency on completing self-hosting or all WB-02 optimizations. |
+| WB-02: Shared session and responsive proofs | One versioned service shared by Lattice and MCP/workbench consumers; PSG-derived affected regions, selective nanopass re-evaluation, proof cross-application and bounded edit scheduling. | In progress. Compare actual selective work with fresh checks; validate read/absence and joint-judgment dependencies, partition changes, stale-result rejection, cancellation and isolation before enabling reuse. Record diagnostic/proof latency and actual recomputation. |
+| WB-03: Native interactive execution | Witness settled PSG regions through Alex into segmented artifacts; realize LLD AOT and ORC/JITLink execution with invocation, initialization, result presentation and retained-value lifetimes. | In progress. Use the WB-02 identity/admission subset; prove scoped re-witnessing, unit replacement/reuse and split/merge correspondence. Compare JIT, segmented AOT and fresh behavior; establish redefinition/state-transfer/code-retirement contracts. No dependency on self-hosting or choosing the bootstrap host. |
 | WB-04: Clef-facing clients and host transition | Direct Clef submissions, shared editor/agent observation and lifecycle, with a host-independent session contract. | Extend Lattice protocol/client gates; retire bootstrap-specific hosting when the native host can satisfy the same contracts. Notebook support remains separately scoped. |
 
 Native execution does not inherently require a compile-and-launch stage first.

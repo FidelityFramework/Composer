@@ -193,8 +193,12 @@ of Numeric Selection. Cost can rank eligible realizations preserving the chosen
 representation and required arithmetic contract (§10.4). An estimated speedup
 cannot justify weaker accuracy, changed rounding or a different reduction order.
 Fast-math flags and downstream rewrite options are part of preservation review.
-The platform fact schema, construction registry and selection procedure that
-the standard explicitly leaves open (§14) remain implementation/design work.
+The platform fact schema, construction registry and selection procedure must
+satisfy Numeric Selection §§9–10.5. The
+[numeric-selection assessment](Numeric_Selection_PRD_Assessment.md) records
+accepted ownership in [F-11](F-11-NumericSelection.md) and
+[C-08](C-08-ArithmeticConstruction.md); M-01 retains witness and backend admission
+with their preservation checks.
 
 ### 5.2 Parallel and host execution
 

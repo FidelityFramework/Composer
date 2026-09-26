@@ -26,6 +26,34 @@ invented here; add query fields only with the owning CCS contract and consumer
 tests. The [waypoints](Language_Coverage_Waypoints.md) pin this coordinated
 planning set separately from existing implementation evidence.
 
+### Scoped compilation and native session feedback — 2026-09-26
+
+Lattice consumes the [edit and segment publication contract](Nanopass_Incremental_Contract_Direction.md#25-edit-transactions-proof-reuse-and-segmented-publication)
+for affected-region checking, cross-applied proofs and native REPL/hot-reload
+feedback. CCS discovers the dependency closure from a source change; Baker
+re-evaluates the affected analyses; Alex witnesses settled regions through its
+existing Huet Elements/Patterns/Witnesses. The backend realizes object segments
+for LLD or the admitted ORC/JITLink session path. Lattice neither chooses the
+semantic frontier nor reconstructs an emitter.
+
+Each observation identifies the document/project and compiler generation, checked
+stage and evidence dependencies. Current diagnostics can arrive before current
+native code is ready; the UI retains that distinction and identifies an older
+running generation explicitly. Use bounded debounce, cancellation, latest-result
+checks and separate diagnostic/proof/code-ready latency measurements. Editing or
+hovering never repeats effectful REPL evaluation implicitly.
+
+Segments can split, merge and be replaced as graph dependencies change. Expose
+the affected/reused area and its reason from compiler evidence, including proof
+or representation changes that extend beyond the edited lines. Preserve the
+source/rewrite/witness trace through both full and pruned artifact inspection.
+REPL and hot reload additionally expose state compatibility, restart/refusal and
+code-lifetime decisions from their owning service. Client tests exercise stale
+replies, failed materialization, obsolete symbols and retained callbacks against
+the actual compiler/session service. The [workbench milestones](Interactive_Compiler_Workbench.md#milestones)
+own execution integration; [F-11](PRDs/F-11-NumericSelection.md) and
+[C-08](PRDs/C-08-ArithmeticConstruction.md) own their numeric preservation cases.
+
 ### Current repository responsibilities
 
 The [multi-core CPU plan](./multi-core-cpu.md) uses HelloWayland to exercise
