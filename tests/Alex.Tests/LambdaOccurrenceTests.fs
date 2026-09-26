@@ -110,8 +110,10 @@ let ``shared body reads each lambda occurrence's block argument and restores out
     let verified = MlirComponentTests.mlirOpt ["--verify-each"] text
     Assert.DoesNotContain("unrealized_conversion_cast", verified)
 
-[<Fact>]
-let ``definition discovered inside a dependency is reused by the caller's later call`` () =
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``definition discovered inside a dependency is reused by later reference and structural occurrences`` (structuralOccurrence: bool) =
     let builder = NodeBuilder()
     let functionType = NativeType.TFun(Types.boolType, Types.boolType)
     let makeFunction name (dependencies: SemanticNode list) =
@@ -133,8 +135,22 @@ let ``definition discovered inside a dependency is reused by the caller's later 
         binding, fn
     let dependency, dependencyLambda = makeFunction "dependency" []
     let middle, _ = makeFunction "middle" [dependency]
-    let caller, _ = makeFunction "caller" [middle; dependency]
-    let graph = builder.Build []
+    let caller, callerLambda = makeFunction "caller" [middle; dependency]
+    let raw = builder.Build []
+    let graph =
+        if structuralOccurrence then
+            let bodyId =
+                match callerLambda.Kind with
+                | SemanticKind.Lambda (_, body, _, _, _) -> body
+                | _ -> failwith "Fixture caller is not a lambda"
+            let body = raw.Nodes[bodyId]
+            let children = body.Children.Head :: dependencyLambda.Id :: body.Children.Tail
+            // Materialized ClosureValue nodes and the implementation's named
+            // binding both structurally reference the same code Lambda. Its
+            // canonical parent still identifies the one code declaration.
+            let updated = { body with Kind = SemanticKind.Sequential children; Children = children }
+            { raw with Nodes = Map.add bodyId updated raw.Nodes }
+        else raw
     let operands = MLIRAccumulator.empty ()
     let rootScope = ref (ScopeContext.root ())
     let visited = ref Set.empty

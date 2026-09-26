@@ -425,12 +425,8 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
         TStruct (fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy)), None)
     | NativeType.TUnion (tycon, cases) ->
         settledUnion (sprintf "the union '%s'" tycon.Name) (layoutOf ty) cases.Length
-    | NativeType.TLazy elemTy ->
-        // Lazy<T> - flat closure {computed: i1, value: T, code_ptr}: a Composer-realised
-        // aggregate (PRD-14) whose bytes are its fields' reads; owed to the settled layouts
-        let elemMlir = recurse elemTy
-        let totalBytes = 1 + mlirTypeSize arch elemMlir + mlirTypeSize arch TIndex
-        TMemRefStatic(totalBytes, TInt (IntWidth 8))
+    | NativeType.TLazy _ ->
+        failwithf "Lazy carrier '%s' requires its actual source occurrence and separate thunk/environment operands" (formatType ty)
     | NativeType.TSeq _ | NativeType.TSeqEnumerator _ ->
         failwithf "Sequence carrier '%s' requires its exact graph use and Baker-settled continuation origin" (formatType ty)
     | NativeType.TVar tvar ->

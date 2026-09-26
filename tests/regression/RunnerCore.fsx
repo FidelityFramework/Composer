@@ -46,7 +46,7 @@ type RunResult =
     | RunSkipped of reason: string
 
 type TestResult = { Sample: SampleDef; CompileResult: CompileResult; RunResult: RunResult option }
-type TestConfig = { SamplesRoot: string; CompilerPath: string; DefaultTimeoutSeconds: int }
+type TestConfig = { SamplesRoot: string; CompilerPath: string; DefaultTimeoutSeconds: int; PruneIntermediates: bool }
 type TestReport = { RunId: string; ManifestPath: string; CompilerPath: string; StartTime: DateTime; EndTime: DateTime; Results: TestResult list }
 
 type CliOptions = {
@@ -56,6 +56,7 @@ type CliOptions = {
     TimeoutOverride: int option
     Jobs: int
     ResultsDirectory: string option
+    PruneIntermediates: bool
 }
 
 // =============================================================================
@@ -231,9 +232,10 @@ let private saveProcessLog directory stage (result: ProcessResult) elapsed =
     writeStream "stderr" stderr
     File.WriteAllText(Path.Combine(directory, stage + ".status"), sprintf "%s\nelapsed=%dms\n" status elapsed)
 
-let private compileSampleAsync compilerPath projectDir projectFile outputPath artifactsDirectory timeoutMs = task {
+let private compileSampleAsync compilerPath projectDir projectFile outputPath artifactsDirectory pruneIntermediates timeoutMs = task {
     let artifactsArgs = artifactsDirectory |> Option.map (fun dir -> ["--artifacts-dir"; dir]) |> Option.defaultValue []
-    let! result, ms = runProcessWithLogsAsync artifactsDirectory "compile" compilerPath (["compile"; projectFile; "-o"; outputPath; "-k"; "--no-color"] @ artifactsArgs) projectDir None timeoutMs
+    let artifactMode = if pruneIntermediates then "--prune-intermediates" else "-k"
+    let! result, ms = runProcessWithLogsAsync artifactsDirectory "compile" compilerPath (["compile"; projectFile; "-o"; outputPath; artifactMode; "--no-color"] @ artifactsArgs) projectDir None timeoutMs
     artifactsDirectory |> Option.iter (fun dir -> saveProcessLog dir "compile" result ms)
     return
         match result with
@@ -299,7 +301,8 @@ let loadManifest manifestPath =
         | Some (Fidelity.Data.TOML.TomlValue.Table t) ->
             { SamplesRoot = Path.GetFullPath(Path.Combine(manifestDir, getString "samples_root" t))
               CompilerPath = Path.GetFullPath(Path.Combine(manifestDir, getString "compiler" t))
-              DefaultTimeoutSeconds = getInt "default_timeout_seconds" 30 t }
+              DefaultTimeoutSeconds = getInt "default_timeout_seconds" 30 t
+              PruneIntermediates = false }
         | _ -> failwith "Missing [config] section"
 
     let samples =
@@ -400,7 +403,7 @@ let compileSamplePhaseAsync config (artifactsDirectory: string option) sample = 
             match artifactsDirectory with
             | Some dir -> Path.Combine(dir, Path.GetFileName sample.BinaryName)
             | None -> Path.Combine(sampleDir, sample.BinaryName)
-        let! compileResult = compileSampleAsync config.CompilerPath sampleDir sample.ProjectFile outputPath artifactsDirectory timeoutMs
+        let! compileResult = compileSampleAsync config.CompilerPath sampleDir sample.ProjectFile outputPath artifactsDirectory config.PruneIntermediates timeoutMs
         let binaryPath =
             match compileResult with
             | CompileSuccess _ -> Some outputPath
@@ -503,7 +506,7 @@ let runAllTests jobs runDirectory config samples verbose = task {
 let defaultOptions = {
     ManifestPath = Path.Combine(__SOURCE_DIRECTORY__, "Manifest.toml")
     TargetSamples = []; Verbose = false; TimeoutOverride = None
-    Jobs = 1; ResultsDirectory = None
+    Jobs = 1; ResultsDirectory = None; PruneIntermediates = false
 }
 
 /// Every requested substring must select at least one oracle. A misspelled
@@ -527,6 +530,7 @@ let rec parseArgs args opts =
     | [] -> opts
     | "--sample" :: name :: rest -> parseArgs rest { opts with TargetSamples = name :: opts.TargetSamples }
     | "--verbose" :: rest -> parseArgs rest { opts with Verbose = true }
+    | "--prune-intermediates" :: rest -> parseArgs rest { opts with PruneIntermediates = true }
     | "--timeout" :: sec :: rest -> parseArgs rest { opts with TimeoutOverride = Some (positive "--timeout" sec) }
     | "--jobs" :: count :: rest -> parseArgs rest { opts with Jobs = positive "--jobs" count }
     | "--results" :: path :: rest -> parseArgs rest { opts with ResultsDirectory = Some (Path.GetFullPath path) }
@@ -539,6 +543,7 @@ let rec parseArgs args opts =
         printfn "  --timeout SEC    Override timeout for all samples"
         printfn "  --jobs N         At most N compiler/native jobs per phase (default: 1)"
         printfn "  --results DIR    Parent directory for a unique run and its retained artifacts"
+        printfn "  --prune-intermediates  Keep live PSG nodes and complete joint evidence (default: full dumps)"
         printfn "  --manifest FILE  Use a different sample manifest"
         printfn "  --help           Show this help"
         exit 0
@@ -642,6 +647,7 @@ let private execute argv =
         1
     else
         let (config, allSamples) = loadManifest opts.ManifestPath
+        let config = { config with PruneIntermediates = opts.PruneIntermediates }
         let samples = match opts.TimeoutOverride with Some t -> allSamples |> List.map (fun s -> { s with TimeoutSeconds = t }) | None -> allSamples
         match selectSamples opts.TargetSamples samples with
         | Error message ->
@@ -661,6 +667,7 @@ let private execute argv =
             let provenance =
                 {| Manifest = opts.ManifestPath; SamplesRoot = config.SamplesRoot
                    CompilerSourceOutput = config.CompilerPath; Jobs = opts.Jobs
+                   PruneIntermediates = config.PruneIntermediates
                    Samples = samplesToRun |> List.mapi (fun i sample ->
                        {| Name = sample.Name; Project = Path.GetFullPath(Path.Combine(config.SamplesRoot, sample.Name, sample.ProjectFile))
                           Artifacts = jobDirectory runDirectory i; TimeoutSeconds = sample.TimeoutSeconds

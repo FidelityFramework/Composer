@@ -41,8 +41,8 @@ let main _ =
     let casesOk = kept = 7 && defaulted = 11 && skipped = 7 && recovered = 19 && calls = 1
 
     trace <- 0
-    let eager = Result.defaultValue (fallback ()) (argument true)
-    let eagerOk = eager = 7 && trace = 12
+    let defaulted = Result.defaultValue (fallback ()) (argument true)
+    let eagerOk = defaulted = 7 && trace = 12
     trace <- 0
     let forward = argument false |> Result.defaultWith (makeFallback ())
     let forwardOk = forward = 19 && trace = 213

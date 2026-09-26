@@ -29,6 +29,8 @@ type CompilationOptions = {
     TargetTriple: string option
     NativeLink: Core.Types.Pipeline.NativeLinkOptions
     KeepIntermediates: bool
+    /// Select a diagnostic graph view; never change the graph supplied to Alex.
+    PruneIntermediates: bool
     EmitMLIROnly: bool
     EmitLLVMOnly: bool
     Verbose: bool
@@ -114,7 +116,7 @@ let private requireCompatibleTarget (options: CompilationOptions) (project: Proj
             | _ -> Ok project
     | _ -> Ok project)
 
-let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<string * Set<string>, string> =
+let private runMiddleEnd (project: ProjectCheckResult) (ctx: CompilationContext) : Result<BackEndInput * Set<string>, string> =
     timePhase "MiddleEnd" "MLIR Generation" (fun () ->
         // Get platform context from CCS
         match Core.CCS.Integration.platformContext project.CheckResult with
@@ -144,10 +146,9 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
     Directory.CreateDirectory(buildDir) |> ignore
 
     let intermediatesDir =
-        if options.KeepIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly then
+        if options.KeepIntermediates || options.PruneIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly then
             let dir = Path.Combine(buildDir, "intermediates")
             Directory.CreateDirectory(dir) |> ignore
-            enableAllPhases dir
             Some dir
         else
             None
@@ -186,6 +187,7 @@ let compileProject (options: CompilationOptions) : int =
         invalidArg "Deploy" "Deployment requires a complete build; remove intermediate-only flags"
     // Setup
     setEnabled options.ShowTiming
+    disableEmission()
     if options.Verbose then
         enableVerboseMode()
         enableVerbose()
@@ -204,11 +206,12 @@ let compileProject (options: CompilationOptions) : int =
     let artifactsDirectory = buildDirectory options projectDirectory
     let accessEvidence = Path.Combine(artifactsDirectory, "intermediates", "device-access.json")
     if File.Exists accessEvidence then File.Delete accessEvidence
-    let needsIntermediates = options.KeepIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly
+    let needsIntermediates = options.KeepIntermediates || options.PruneIntermediates || options.EmitMLIROnly || options.EmitLLVMOnly
     if needsIntermediates then
         let intermediatesDir = Path.Combine(artifactsDirectory, "intermediates")
         Directory.CreateDirectory(intermediatesDir) |> ignore
         enableAllPhases intermediatesDir
+        if options.PruneIntermediates then enablePrunedGraphArtifacts()
 
     // Run pipeline: FrontEnd → MiddleEnd → BackEnd
     let result =
@@ -234,11 +237,11 @@ let compileProject (options: CompilationOptions) : int =
 
             // Phase 2: MiddleEnd - Generate MLIR from PSG (target-agnostic)
             runMiddleEnd project ctx
-            |> Result.bind (fun (mlirText, externLibraries) ->
+            |> Result.bind (fun (witnessed, externLibraries) ->
                 // Write MLIR to intermediates (if enabled)
                 if ctx.IntermediatesDir.IsSome then
                     let mlirPath = Path.Combine(ctx.IntermediatesDir.Value, artifactFilename ArtifactId.Mlir)
-                    File.WriteAllText(mlirPath, mlirText)
+                    File.WriteAllText(mlirPath, witnessed.Text)
 
                 if options.EmitMLIROnly then
                     printfn "Stopped after MLIR generation (--emit-mlir)"
@@ -248,6 +251,7 @@ let compileProject (options: CompilationOptions) : int =
                     let declaredCore =
                         Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve project.CheckResult.Graph
                         |> Option.bind (fun p -> p.Core)
+                    let declaredPlatform = Core.CCS.Integration.platformContext project.CheckResult
                     // Backends need disk inputs even without retained diagnostic
                     // dumps. An explicit artifact root owns that working storage
                     // too; this path does not enable CCS/Alex evidence emission.
@@ -263,6 +267,8 @@ let compileProject (options: CompilationOptions) : int =
                         TargetTripleOverride = options.TargetTriple |> Option.orElseWith (fun () -> declaredCore |> Option.map (fun c -> c.Triple) |> Option.filter (fun t -> t <> ""))
                         TargetPointerBits = declaredCore |> Option.bind (fun c -> c.Widths |> List.tryFind (fun w -> w.Name = "Pointer") |> Option.map (fun w -> w.Bits))
                         TargetCpu = declaredCore |> Option.map (fun c -> c.CpuModel) |> Option.filter (fun t -> t <> "")
+                        PlatformOS = declaredPlatform |> Option.bind _.PlatformOS
+                        RuntimeModel = declaredPlatform |> Option.bind _.RuntimeModel
                         DeploymentMode = ctx.DeploymentMode
                         EmitIntermediateOnly = options.EmitLLVMOnly
                         ExternLibraries = externLibraries
@@ -286,7 +292,7 @@ let compileProject (options: CompilationOptions) : int =
                             else None
                         Deploy = options.Deploy
                     }
-                    backEnd.Compile mlirText backEndCtx
+                    backEnd.Compile witnessed backEndCtx
                     |> Result.bind (fun artifact ->
                         printfn ""
                         match artifact with

@@ -15,7 +15,8 @@ open Core.Timing
 /// The CIRCT backend: hw/comb/seq MLIR → SystemVerilog
 let backend : BackEnd = {
     Name = "CIRCT"
-    Compile = fun mlirText ctx ->
+    Compile = fun witnessed ctx ->
+        let mlirText = witnessed.Text
         let intermediateFile name =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, name)

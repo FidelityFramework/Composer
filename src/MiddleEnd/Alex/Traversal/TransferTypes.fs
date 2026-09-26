@@ -252,10 +252,43 @@ module Diagnostic =
 /// A callable's code and actual environment are distinct typed SSA operands.
 /// Construction is internal to the graph-reading callable projection; there is
 /// no scalar/packed fallback and code-only values carry no environment operand.
+type CallableBoundary =
+    | Exact of CallableCarrier
+    | Joined of CallableJoin
+    | Flow of CallableFlow
+    member this.Occurrence = match this with Exact value -> value.Occurrence | Joined value -> value.Occurrence | Flow value -> value.Occurrence
+    member this.SourceType = match this with Exact value -> value.SourceType | Joined value -> value.SourceType | Flow value -> value.SourceType
+
 type CallableOperand = internal {
-    Carrier: CallableCarrier
+    Carrier: CallableBoundary
     Code: Val
     Environment: Val option
+}
+
+/// Only data descriptors reside in a mutable callable cell. The source
+/// contract supplies the finite dispatch which reads its function value.
+type CallableCellOperand = internal {
+    Contract: MutableCallableStorage
+    Discriminator: Val
+    Environment: Val option
+}
+
+/// A sequence keeps the independently typed pull function and its actual
+/// environment. The source family fixes layout; it never selects an instance.
+type SequenceOperand = internal {
+    Flow: SequenceFlow
+    Family: SequenceFamily
+    Code: Val
+    Environment: Val
+}
+
+/// An explicit lazy occurrence retains its separately typed thunk and actual
+/// instance environment. Layout identity alone never identifies that instance.
+type LazyOperand = internal {
+    Occurrence: NodeId
+    Layout: LazyLayout
+    Code: Val
+    Environment: Val
 }
 
 /// One operation scope's complete operand reading. All three maps must move
@@ -263,6 +296,9 @@ type CallableOperand = internal {
 type OperandSnapshot = {
     Scalars: Map<NodeId, SSA * MLIRType>
     Callables: Map<NodeId, CallableOperand>
+    CallableCells: Map<NodeId, CallableCellOperand>
+    Sequences: Map<NodeId, SequenceOperand>
+    Lazies: Map<NodeId, LazyOperand>
     Types: Map<SSA, MLIRType>
 }
 
@@ -276,6 +312,9 @@ type MLIRAccumulator() =
     member val Errors: Diagnostic list = [] with get, set
     member val NodeAssoc: Map<NodeId, SSA * MLIRType> = Map.empty with get, set  // Global SSA bindings (PSG nodes)
     member val CallableAssoc: Map<NodeId, CallableOperand> = Map.empty with get, set
+    member val CallableCellAssoc: Map<NodeId, CallableCellOperand> = Map.empty with get, set
+    member val SequenceAssoc: Map<NodeId, SequenceOperand> = Map.empty with get, set
+    member val LazyAssoc: Map<NodeId, LazyOperand> = Map.empty with get, set
     member val SSATypes: Map<SSA, MLIRType> = Map.empty with get, set            // SSA → type reverse index (for monadic type derivation in Elements)
 
     // Witnessing Coordination State (Dependent Transparency)
@@ -308,6 +347,9 @@ module MLIRAccumulator =
     /// Also populates SSATypes reverse index for monadic type derivation in Elements
     let bindNode (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) (acc: MLIRAccumulator) =
         acc.CallableAssoc <- acc.CallableAssoc.Remove nodeId
+        acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
+        acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
+        acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
         acc.NodeAssoc <- Map.add nodeId (ssa, ty) acc.NodeAssoc
         // Preserve physical SSA type if already registered by an Element (pAlloca, pAlloc, etc.)
         // Elements register physical types (TMemRefStatic from alloca); bindNode carries semantic types
@@ -354,18 +396,82 @@ module MLIRAccumulator =
             Result.Error "Callable operand conflicts with an already witnessed SSA type."
         else
             acc.NodeAssoc <- acc.NodeAssoc.Remove nodeId
+            acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
+            acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
+            acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
             acc.CallableAssoc <- acc.CallableAssoc.Add(nodeId, value)
             for value in operands do acc.SSATypes <- acc.SSATypes.Add(value.SSA, value.Type)
             Result.Ok ()
 
     let recallCallable nodeId (acc: MLIRAccumulator) = acc.CallableAssoc.TryFind nodeId
 
+    let bindCallableCell nodeId (value: CallableCellOperand) (acc: MLIRAccumulator) =
+        let operands = value.Discriminator :: Option.toList value.Environment
+        let expectedEnvironment = value.Contract.EnvironmentBytes |> Option.map (fun bytes ->
+            TMemRefStatic(1, TMemRefStatic(bytes, TInt(IntWidth 8))))
+        if value.Contract.Binding <> nodeId || value.Discriminator.Type <> TMemRefStatic(1, TIndex) ||
+           Option.map (fun (environment: Val) -> environment.Type) value.Environment <> expectedEnvironment then
+            Result.Error "Mutable callable cell does not match its settled source protocol."
+        elif operands |> List.exists (fun value ->
+            acc.SSATypes.TryFind value.SSA |> Option.exists (fun ty -> ty <> value.Type)) then
+            Result.Error "Mutable callable cell conflicts with an already witnessed SSA type."
+        else
+            acc.NodeAssoc <- acc.NodeAssoc.Remove nodeId
+            acc.CallableAssoc <- acc.CallableAssoc.Remove nodeId
+            acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
+            acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
+            acc.CallableCellAssoc <- acc.CallableCellAssoc.Add(nodeId, value)
+            for value in operands do acc.SSATypes <- acc.SSATypes.Add(value.SSA, value.Type)
+            Result.Ok ()
+
+    let recallCallableCell nodeId (acc: MLIRAccumulator) = acc.CallableCellAssoc.TryFind nodeId
+
+    let bindSequence nodeId (value: SequenceOperand) (acc: MLIRAccumulator) =
+        let operands = [value.Code; value.Environment]
+        if value.Flow.Occurrence <> nodeId then
+            Result.Error "Sequence operand belongs to a different source occurrence."
+        elif operands |> List.exists (fun operand ->
+            acc.SSATypes.TryFind operand.SSA |> Option.exists (fun ty -> ty <> operand.Type)) then
+            Result.Error "Sequence operand conflicts with an already witnessed SSA type."
+        else
+            acc.NodeAssoc <- acc.NodeAssoc.Remove nodeId
+            acc.CallableAssoc <- acc.CallableAssoc.Remove nodeId
+            acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
+            acc.LazyAssoc <- acc.LazyAssoc.Remove nodeId
+            acc.SequenceAssoc <- acc.SequenceAssoc.Add(nodeId, value)
+            for operand in operands do acc.SSATypes <- acc.SSATypes.Add(operand.SSA, operand.Type)
+            Result.Ok ()
+
+    let recallSequence nodeId (acc: MLIRAccumulator) = acc.SequenceAssoc.TryFind nodeId
+
+    let bindLazy nodeId (value: LazyOperand) (acc: MLIRAccumulator) =
+        let operands = [value.Code; value.Environment]
+        if value.Occurrence <> nodeId then
+            Result.Error "Lazy operand belongs to a different source occurrence."
+        elif operands |> List.exists (fun operand ->
+            acc.SSATypes.TryFind operand.SSA |> Option.exists (fun ty -> ty <> operand.Type)) then
+            Result.Error "Lazy operand conflicts with an already witnessed SSA type."
+        else
+            acc.NodeAssoc <- acc.NodeAssoc.Remove nodeId
+            acc.CallableAssoc <- acc.CallableAssoc.Remove nodeId
+            acc.CallableCellAssoc <- acc.CallableCellAssoc.Remove nodeId
+            acc.SequenceAssoc <- acc.SequenceAssoc.Remove nodeId
+            acc.LazyAssoc <- acc.LazyAssoc.Add(nodeId, value)
+            for operand in operands do acc.SSATypes <- acc.SSATypes.Add(operand.SSA, operand.Type)
+            Result.Ok ()
+
+    let recallLazy nodeId (acc: MLIRAccumulator) = acc.LazyAssoc.TryFind nodeId
+
     let snapshotOperands (acc: MLIRAccumulator) =
-        { Scalars = acc.NodeAssoc; Callables = acc.CallableAssoc; Types = acc.SSATypes }
+        { Scalars = acc.NodeAssoc; Callables = acc.CallableAssoc; CallableCells = acc.CallableCellAssoc
+          Sequences = acc.SequenceAssoc; Lazies = acc.LazyAssoc; Types = acc.SSATypes }
 
     let restoreOperands (snapshot: OperandSnapshot) (acc: MLIRAccumulator) =
         acc.NodeAssoc <- snapshot.Scalars
         acc.CallableAssoc <- snapshot.Callables
+        acc.CallableCellAssoc <- snapshot.CallableCells
+        acc.SequenceAssoc <- snapshot.Sequences
+        acc.LazyAssoc <- snapshot.Lazies
         acc.SSATypes <- snapshot.Types
 
     /// Recall the type of an SSA value (reverse index lookup)
@@ -471,6 +577,9 @@ module MLIRAccumulator =
 type TransferResult =
     | TRValue of Val                    // Produces a value (SSA + type)
     | TRCallable of CallableOperand    // Code and actual environment remain separate operands
+    | TRCallableCell of CallableCellOperand // Shared data storage, never a packed function value
+    | TRSequence of SequenceOperand    // Pull function and actual continuation environment
+    | TRLazy of LazyOperand            // Thunk function and actual memoization environment
     | TRVoid                             // Produces no value (effect only)
     | TRError of Diagnostic              // Error with structured context
     | TRSkip                             // Node not handled (try next witness)
@@ -594,16 +703,22 @@ let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
 /// Source type alone cannot name a continuation frame or a settled byte buffer.
 let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType =
     let codata = ctx.Graph.Codata.Value
-    match codata.EnvironmentOrigins |> Map.tryFind nodeId, codata.SequenceOrigins |> Map.tryFind nodeId with
-    | Some owner, _ ->
+    match codata.LazyOrigins.TryFind nodeId, codata.EnvironmentOrigins.TryFind nodeId, codata.SequenceOrigins.TryFind nodeId with
+    | Some _, _, _ when (match ty with NativeType.TLazy _ -> true | _ -> false) ->
+        failwithf "Lazy value %d requires its separately witnessed thunk and environment operands" (NodeId.value nodeId)
+    | Some owner, _, _ ->
+        match codata.LazyLayouts.TryFind owner with
+        | Some layout when layout.Bytes > 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
+        | _ -> failwithf "Lazy environment %d has no settled layout %d" (NodeId.value nodeId) (NodeId.value owner)
+    | None, Some owner, _ ->
         match codata.EnvironmentLayouts |> Map.tryFind owner with
         | Some layout when layout.Bytes >= 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
         | _ -> failwithf "Environment value %d has no settled layout %d" (NodeId.value nodeId) (NodeId.value owner)
-    | None, Some owner ->
+    | None, None, Some owner ->
         match ctx.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
         | Some frame when frame.Bytes > 0 -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8))
         | _ -> failwithf "Sequence value %d has no settled frame for origin %d" (NodeId.value nodeId) (NodeId.value owner)
-    | None, None ->
+    | None, None, None ->
         match tryArrayElementTypeAt ctx.Graph nodeId with
         | Some element -> TMemRef element
         | None -> mapType ty ctx

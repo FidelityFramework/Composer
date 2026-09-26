@@ -39,7 +39,7 @@ Partial applications preserve already supplied operands and their effects under
 
 | Binding | Required observation | Acceptance pressure |
 |---|---|---|
-| Immutable | Retain the value at formation with its source type and dimensions | Later formation, updates and shadowing cannot change an earlier capture |
+| Immutable | Retain the original shared deferred binding with its source type and dimensions; use a computed value when its demand is established | Capture does not force unused effects; later formation and shadowing cannot substitute a different binding |
 | Mutable | Retain the original storage cell | Closures share updates; independent enclosing activations retain different cells |
 | Aggregate or view | Preserve value semantics and referenced allocations' required lifetimes | Copying a descriptor does not prove backing-storage residence |
 | Callable | Retain implementation and actual environment | Equal layouts or one code symbol cannot substitute for the captured value |
@@ -239,7 +239,7 @@ refusals and separately scoped future integrations are recorded distinctly.
 
 | Contract | Positive source/native cases | Discriminating negative or preservation cases |
 |---|---|---|
-| Formation | Zero/one/multiple captures, mixed types, shadowing, immutable loop snapshots, repeated formation | Missing identity/capture cannot be omitted; later updates cannot alter saved immutable values |
+| Formation | Zero/one/multiple captures, mixed types, shadowing, iteration-specific immutable bindings, repeated formation | Missing identity/capture cannot be omitted; capture alone cannot force a deferred initializer; demanded values retain sharing |
 | Mutable cells | Shared updates, independent factory activations, recursive forwarding | Copied cells, stale range guards and uncovered residence are rejected |
 | Direct form | Fully accounted named direct calls, recursion, measured signatures | Returned/stored/partial/opaque uses do not receive unproved direct-only admission |
 | Full callable values | Returned/nested functions, parameters/results, conditional selection, record/tuple/DU/collection storage | Different implementations with equal layouts and different formations of one implementation remain distinct |

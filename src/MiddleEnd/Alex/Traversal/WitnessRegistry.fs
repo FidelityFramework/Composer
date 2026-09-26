@@ -90,6 +90,7 @@ let initializeRegistry (targetPlatform: TargetPlatform) =
         NanopassRegistry.empty
         // ─── Fully shared (all platforms) ───
         |> NanopassRegistry.register LiteralWitness.nanopass
+        |> NanopassRegistry.register Alex.Witnesses.RequirementWitness.nanopass
         |> NanopassRegistry.register TypeAnnotationWitness.nanopass
         |> NanopassRegistry.register IntrinsicWitness.nanopass
         |> NanopassRegistry.register StructuralWitness.nanopass

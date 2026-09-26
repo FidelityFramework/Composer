@@ -58,15 +58,22 @@ EnvironmentWrite(environment, slot: Cᵢ, value)        : unit
 
 The internal carrier is `Types.mkArrayType Types.uint8Type`; its physical extent
 comes from the settled environment layout. Source `TFun` types remain unchanged.
-Explicit reads and borrows forward nested formation initializers. The child retains its own flat slots; an immutable capture copies its actual value, while a mutable capture forwards the original cell view. Residence is proved separately.
+Explicit reads and borrows forward nested formation initializers. The child
+retains its own flat slots. An immutable capture retains the original shared
+computation, or its value when demand has already established that value; a
+mutable capture forwards the original cell view. Residence is proved separately.
 
 `F` structurally retains `L` and `E`. The function body stays deferred; formation
-requires `E`, not execution of `L`. Initializers name already evaluated captured
-values. Their reference incidence preserves availability without structurally
-reevaluating the declaration's initializer. The current lexical formation uses
+requires `E`, not execution of `L`. Initializers name actual captured source
+identities. Their reference incidence preserves availability without demanding
+or replaying the declaration's initializer. The current lexical formation uses
 `(Cᵢ, Cᵢ)` for lexical formation. A nested formation can use `(Cᵢ, Iᵢ)` where `Iᵢ` is an explicit parent-environment read or borrow, retaining the original slot identity.
 
-A call is rewritten to an ordinary `Application` whose callee references `B` and whose arguments start with `EnvironmentReference(U)`. A hidden result destination follows it when required, then the source arguments. Destination preparation snapshots the original operands once and in order.
+A call is rewritten to an ordinary `Application` whose callee references `B`
+and whose arguments start with `EnvironmentReference(U)`. A hidden result
+destination follows it when required, then the source arguments. Destination
+preparation preserves the original actuals, their order and demand identities;
+it does not insert an eager snapshot prelude.
 Alex does not perform this call rewrite. `L` has no implicit capture list. Its
 captured references keep their original node IDs/ranges and become explicit
 accesses through `Q` and the original `Cᵢ`.
@@ -143,8 +150,9 @@ and slot participants.
 
 A mutable capture holds its original typed cell descriptor. Reads/writes access
 that cell; creation does not copy its scalar into a substitute cell. The descriptor
-is unboxed address/offset/extent/stride data, not a runtime type object. Immutable
-scalar captures are copied at formation in their settled representation.
+is unboxed address/offset/extent/stride data, not a runtime type object. An
+immutable scalar that has already been demanded can be copied in its settled
+representation. Capture alone cannot justify evaluating a deferred scalar.
 
 [SequenceResidence](../../clef/src/Compiler/PSGSaturation/SemanticGraph/SequenceResidence.fs)
 reuses the finite complete-use covering proof for environments. A
@@ -158,7 +166,7 @@ establishes directional coverage from an ordinary activation with explicit
 program-entry provenance. It follows all incoming complete calls and retains
 deferred-owner prerequisites; lexical enclosure and an unrooted call cycle are
 insufficient. Coverage from a local caller is not a claim of program lifetime.
-Immutable snapshots of an environment projection preserve its exact argument
+Immutable aliases of an environment projection preserve its exact argument
 position; every alias and independent reference remains part of the complete-use
 check. New mutable, escaping or opaque uses retract that conclusion.
 
@@ -166,7 +174,7 @@ Caller-destination preparation is revalidated against the actual final
 constructor, physical formal/argument position, allocation owner/type and
 complete factory call set. A returned descriptor is admitted only when each
 actual captured view's backing allocation covers every destination use. The
-proof follows nested explicit reads and immutable snapshots to their actual
+proof follows nested explicit reads and immutable aliases to their actual
 initializers, preserving the slot identity separately. It checks the source
 storage's uses and the destination's uses together. A destination row, an
 unrelated borrow edge or a matching layout alone cannot discharge this proof.
@@ -239,7 +247,8 @@ composition are delivery work. Canonical layout and identity must hold through
 source checking, graph elaboration, actual-position witnessing and backend realization.
 
 Acceptance checks retain exact source/native oracles, shared mutation, independent
-formations, eager snapshots, sequence restart and short circuit. Negative checks
+formations, shared deferred captures, explicit eager snapshots, sequence restart
+and short circuit. Negative checks
 remove or contradict proof participants and add previously absent consumers.
 Editor checks must observe the same source signatures, definitions, capture
 origins and invalidated dependencies. Follow the [regression policy](Regression_Check_Policy.md)
@@ -247,7 +256,7 @@ for focused changes and the complete gate when closing a C-series area.
 
 The focused [activation](../../clef/tests/Clef.Compiler.Service.Tests/ProgramActivationCases.fs)
 and [residence](../../clef/tests/Clef.Compiler.Service.Tests/SequenceResidenceCases.fs)
-cases exercise complete incoming calls, immutable environment snapshots,
+cases exercise complete incoming calls, immutable environment aliases,
 sequence/callable formal uses, caller destinations and damaged retained-view
 requirements. Test presence describes the intended regression obligation; the
 waypoint records the actual executed cohort and result. Full returned, stored,

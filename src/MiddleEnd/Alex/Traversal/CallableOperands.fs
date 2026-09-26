@@ -11,7 +11,7 @@ open Alex.Traversal.TransferTypes
 open Alex.XParsec.PSGCombinators
 
 type Shape = private {
-    Contract: CallableCarrier
+    Contract: CallableBoundary
     FunctionType: MLIRType
     EnvironmentType: MLIRType option
     ParameterTypes: MLIRType list list
@@ -30,16 +30,52 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
     if Set.contains occurrence seen then Result.Error "Callable signature contains an unresolved recursive component reference."
     else
     let seen = Set.add occurrence seen
-    match ctx.Graph.Codata.Value.CallableCarriers.TryFind occurrence with
-    | None -> Result.Error "Callable occurrence has no settled carrier contract."
-    | Some carrier when carrier.Occurrence <> occurrence -> Result.Error "Callable carrier names a different occurrence."
-    | Some carrier ->
+    match ctx.Graph.Codata.Value.CallableCarriers.TryFind occurrence,
+          ctx.Graph.Codata.Value.CallableJoins.TryFind occurrence,
+          ctx.Graph.Codata.Value.CallableFlows.TryFind occurrence with
+    | None, None, None -> Result.Error "Callable occurrence has no settled carrier contract."
+    | Some _, Some _, _ | Some _, _, Some _ | _, Some _, Some _ -> Result.Error "Callable occurrence has conflicting carrier contracts."
+    | None, None, Some flow ->
+        if flow.Occurrence <> occurrence || flow.Alternatives.IsEmpty ||
+           not (Clef.Compiler.PSGSaturation.SemanticGraph.CallableFlows.validate ctx.Graph flow) then
+            Result.Error "Callable flow no longer has its complete source argument, result and alias participants."
+        else
+            flow.Alternatives |> List.map (projectSeen ctx seen) |> collect |> Result.bind (fun alternatives ->
+                let first = List.head alternatives
+                if alternatives |> List.exists (fun alternative ->
+                    alternative.FunctionType <> first.FunctionType || alternative.EnvironmentType <> first.EnvironmentType ||
+                    alternative.ParameterTypes <> first.ParameterTypes || alternative.ResultTypes <> first.ResultTypes) then
+                    Result.Error "Callable flow alternatives disagree with their settled common physical convention."
+                else Result.Ok { first with Contract = Flow flow })
+    | None, Some joined, None ->
+        if joined.Occurrence <> occurrence || joined.Alternatives.IsEmpty ||
+           not (Clef.Compiler.PSGSaturation.SemanticGraph.MutableCallableStorage.validateJoin ctx.Graph joined) then
+            Result.Error "Callable join no longer has its complete source storage and read participants."
+        else
+            joined.Alternatives |> List.map (projectSeen ctx seen) |> collect |> Result.bind (fun alternatives ->
+                let first = List.head alternatives
+                if alternatives |> List.exists (fun alternative ->
+                    alternative.FunctionType <> first.FunctionType || alternative.EnvironmentType <> first.EnvironmentType ||
+                    alternative.ParameterTypes <> first.ParameterTypes || alternative.ResultTypes <> first.ResultTypes) then
+                    Result.Error "Callable alternatives lack one settled physical parameter, result and environment convention."
+                else
+                    Result.Ok { first with Contract = Joined joined })
+    | Some carrier, None, None when carrier.Occurrence <> occurrence -> Result.Error "Callable carrier names a different occurrence."
+    | Some carrier, None, None ->
+        let validContext = function
+            | LambdaContext.RegularClosure -> true
+            | LambdaContext.LazyThunk ->
+                ctx.Graph.Codata.Value.LazyLayouts.Values |> Seq.exists (fun layout ->
+                    layout.Thunk = carrier.Implementation &&
+                    (LazyOperands.layout ctx layout.Owner |> Option.exists ((=) layout)))
+            | _ -> false
         match ctx.Graph.Nodes.TryFind occurrence, ctx.Graph.Nodes.TryFind carrier.Implementation with
-        | Some source, Some { Kind = SemanticKind.Lambda(parameters, body, [], _, LambdaContext.RegularClosure) }
-            when applySubst (Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.sourceType source) = applySubst carrier.SourceType &&
+        | Some source, Some { Kind = SemanticKind.Lambda(parameters, body, [], _, context) }
+            when validContext context &&
+                 applySubst (Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.sourceType source) = applySubst carrier.SourceType &&
                  parameters = carrier.Parameters && body = carrier.Result ->
             let sourceShape id =
-                ctx.Graph.Nodes.TryFind id |> Option.map Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape
+                ctx.Graph.Nodes.TryFind id |> Option.map (Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph)
             let shapesAgree =
                 (parameters |> List.map (fun (_, _, id) -> sourceShape id)) = (carrier.ParameterShapes |> List.map Some) &&
                 sourceShape body = Some carrier.ResultShape
@@ -66,12 +102,16 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
                         | _ -> Result.Error "Callable occurrence no longer has its settled environment convention."
                     | _ -> Result.Error "Callable environment is not its first physical formal."
                 environment |> Result.map (fun environment ->
-                    { Contract = carrier; FunctionType = TFunc(arguments, results); EnvironmentType = environment
+                    { Contract = Exact carrier; FunctionType = TFunc(arguments, results); EnvironmentType = environment
                       ParameterTypes = groups; ResultTypes = results })
         | _ -> Result.Error "Callable carrier no longer agrees with its source and physical implementation."
 
 and private componentsSeen (ctx: WitnessContext) seen value : Result<MLIRType list, string> =
     match value with
+    | CallableValueShape.Lazy occurrence ->
+        LazyOperands.project ctx occurrence |> Result.map LazyOperands.componentTypes
+    | CallableValueShape.Sequence occurrence ->
+        SequenceOperands.project ctx occurrence |> Result.map SequenceOperands.componentTypes
     | CallableValueShape.Callable occurrence ->
         projectSeen ctx seen occurrence |> Result.map (fun shape -> shape.FunctionType :: Option.toList shape.EnvironmentType)
     | CallableValueShape.Data id ->
@@ -94,6 +134,18 @@ let functionType shape = shape.FunctionType
 let environmentType shape = shape.EnvironmentType
 let parameterTypes shape = shape.ParameterTypes
 let resultTypes shape = shape.ResultTypes
+
+/// Baker's lazy code declaration is an actual Lambda, not a synthetic source
+/// binding. Projection validates its current lazy layout and physical formals
+/// before either a direct call or code-value occurrence may name its symbol.
+let tryThunkDeclaration (ctx: WitnessContext) implementation =
+    match ctx.Graph.Nodes.TryFind implementation with
+    | Some ({ Kind = SemanticKind.Lambda(parameters, body, [], _, LambdaContext.LazyThunk) } as node) ->
+        match project ctx implementation with
+        | Result.Ok shape when (environmentType shape).IsNone ->
+            Some(Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node false, parameters, body)
+        | _ -> None
+    | _ -> None
 
 /// The caller supplies values it actually witnessed at this occurrence. Equal
 /// implementation identities never justify replacing the environment operand.
@@ -118,9 +170,24 @@ let reproject (ctx: WitnessContext) source destination =
     | Some value when value.Carrier.Occurrence <> source -> Result.Error "Source callable was recalled under another occurrence's identity."
     | Some value ->
         project ctx destination |> Result.bind (fun shape ->
-            if value.Carrier.Implementation <> shape.Contract.Implementation ||
-               value.Carrier.Environment <> shape.Contract.Environment ||
-               applySubst value.Carrier.SourceType <> applySubst shape.Contract.SourceType then
+            let sameExact (left: CallableCarrier) (right: CallableCarrier) =
+                left.Implementation = right.Implementation && left.Environment = right.Environment
+            let exactAlternatives = function
+                | Exact carrier -> [carrier]
+                | Flow flow -> flow.Alternatives |> List.choose ctx.Graph.Codata.Value.CallableCarriers.TryFind
+                | Joined _ -> []
+            let sameOrigin =
+                match value.Carrier, shape.Contract with
+                | Exact source, Exact destination ->
+                    sameExact source destination
+                | Joined source, Joined destination ->
+                    source.Storage = destination.Storage && source.Read = destination.Read && source.Alternatives = destination.Alternatives
+                | (Exact _ | Flow _), (Exact _ | Flow _) ->
+                    let sources, destinations = exactAlternatives value.Carrier, exactAlternatives shape.Contract
+                    not sources.IsEmpty && not destinations.IsEmpty &&
+                    (sources |> List.forall (fun source -> destinations |> List.exists (sameExact source)))
+                | _ -> false
+            if not sameOrigin || applySubst value.Carrier.SourceType <> applySubst shape.Contract.SourceType then
                 Result.Error "Callable copy does not preserve its settled code, environment owner, and source type."
             else create shape value.Code value.Environment)
 
@@ -132,3 +199,7 @@ let values (value: CallableOperand) = value.Code :: Option.toList value.Environm
 let code (value: CallableOperand) = value.Code
 let environment (value: CallableOperand) = value.Environment
 let carrier (value: CallableOperand) = value.Carrier
+let exactCarrier (value: CallableOperand) = match value.Carrier with Exact carrier -> Some carrier | Joined _ | Flow _ -> None
+let cellDiscriminator (value: CallableCellOperand) = value.Discriminator
+let cellEnvironment (value: CallableCellOperand) = value.Environment
+let cellContract (value: CallableCellOperand) = value.Contract

@@ -91,7 +91,7 @@ let failedCompilesNeverRun () = task {
         Name = "not-executed"; ProjectFile = "absent.fidproj"; BinaryName = "absent"
         StdinFile = None; ExpectedOutput = ""; TimeoutSeconds = 1
         Skip = false; SkipReason = None }
-    let config = { SamplesRoot = work; CompilerPath = "absent"; DefaultTimeoutSeconds = 1 }
+    let config = { SamplesRoot = work; CompilerPath = "absent"; DefaultTimeoutSeconds = 1; PruneIntermediates = false }
     let! failed = runBinaryPhaseAsync config (sample, CompileFailed (9, "compile out", "compile error", 1L), None)
     check (failed.RunResult.IsNone) "A failed compile attempted native execution."
     let! timedOut = runBinaryPhaseAsync config (sample, CompileTimeout 1000, None)
@@ -111,8 +111,9 @@ let failedCompilesNeverRun () = task {
 }
 
 let argumentAndRootChecks () =
-    let parsed = parseArgs ["--jobs"; "3"; "--timeout"; "2"] defaultOptions
+    let parsed = parseArgs ["--jobs"; "3"; "--timeout"; "2"; "--prune-intermediates"] defaultOptions
     check (parsed.Jobs = 3 && parsed.TimeoutOverride = Some 2) "Positive jobs/timeout arguments were not retained."
+    check (parsed.PruneIntermediates && not defaultOptions.PruneIntermediates) "Explicit artifact pruning or the full-dump default was lost."
     for arguments in
         [ ["--jobs"; "0"]; ["--jobs"; "-1"]; ["--jobs"; "many"]; ["--jobs"]
           ["--timeout"; "0"]; ["--timeout"; "-1"]; ["--timeout"; "many"]; ["--timeout"]

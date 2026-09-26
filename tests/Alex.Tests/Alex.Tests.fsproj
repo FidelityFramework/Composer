@@ -6,6 +6,7 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Fixtures.fs" />
     <Compile Include="ZipperTests.fs" />
     <Compile Include="IndexPatternTests.fs" />
@@ -17,8 +18,19 @@
     <Compile Include="ContinuationPatternTests.fs" />
     <Compile Include="EnvironmentPatternTests.fs" />
     <Compile Include="CallableOperandTests.fs" />
+    <Compile Include="CallableFlowTests.fs" />
+    <Compile Include="CallableTransportTests.fs" />
+    <Compile Include="SequenceTransportTests.fs" />
+    <Compile Include="LazyOperandTests.fs" />
+    <Compile Include="LazyTransportTests.fs" />
     <Compile Include="LambdaOccurrenceTests.fs" />
+    <Compile Include="ControlFlowOccurrenceTests.fs" />
+    <Compile Include="TraversalOccurrenceTests.fs" />
+    <Compile Include="RequirementTests.fs" />
+    <Compile Include="RawConstantMatchTests.fs" />
+    <Compile Include="LLVMRequirementTests.fs" />
     <Compile Include="AggregatePatternTests.fs" />
+    <Compile Include="UnionLayoutPatternTests.fs" />
     <Compile Include="ProgramValuePatternTests.fs" />
     <Compile Include="MutableClosureTests.fs" />
     <Compile Include="CallableSymbolTests.fs" />

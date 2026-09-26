@@ -1,5 +1,10 @@
 # Alex component tests
 
+Tests run serially inside this process because source-backed fixtures and node
+builders share CCS's process-local identity and variable supplies. Parallelize
+independent check jobs in isolated processes, as described in the
+[regression policy](../../docs/Regression_Check_Policy.md#concurrency-evidence-and-honest-outcomes).
+
 Run from Composer after coordinating any shared compiler builds:
 
 ```sh

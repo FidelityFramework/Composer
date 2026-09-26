@@ -1,0 +1,9 @@
+module TerminalMatchGuardFailure
+
+let private choose (input: bool option) =
+    match input with
+    | Some value when false -> value
+
+[<EntryPoint>]
+let main _ =
+    if choose (Some true) then 214 else 215

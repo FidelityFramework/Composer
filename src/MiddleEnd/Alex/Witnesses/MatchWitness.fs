@@ -4,8 +4,8 @@
 /// Platform-agnostic — the Pattern handles TargetPlatform.
 ///
 /// CaseElimination preserves the fold structure from Baker:
-/// - Each arm has enriched bindings (DUEliminate + Binding via letBindAt)
-/// - No DUGetTag/comparison/IfThenElse nodes — those are elision concerns
+/// - Each arm's body contains Baker's selected bindings and source guards
+/// - This boundary selects only the already settled shallow pattern decision
 ///
 /// The witness walks each arm's sub-tree via witnessBranchScope,
 /// then delegates to pBuildMatchElimination for assembly.
@@ -22,6 +22,7 @@ open Alex.Traversal.PSGZipper
 open Alex.XParsec.PSGCombinators
 
 open Alex.Patterns.ControlFlowPatterns
+module Requirements = Clef.Compiler.PSGSaturation.SemanticGraph.Requirements
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BRANCH REGION COLLECTION THROUGH THE SCOPE TRAVERSAL DRIVER
@@ -29,19 +30,36 @@ open Alex.Patterns.ControlFlowPatterns
 
 /// Witness a branch scope and collect operations.
 /// Creates child scope, visits sub-tree, returns collected ops.
+let private visitChild (childId: NodeId) (ctx: WitnessContext) combinator =
+    let position =
+        ctx.Zipper.Focus.Children |> List.tryFindIndex ((=) childId)
+        |> Option.bind (fun index -> down index ctx.Zipper)
+    match position with
+    | Some childZipper ->
+        visitAllNodes combinator { ctx with Zipper = childZipper } childZipper.Focus ctx.TraversalVisited
+    | None ->
+        Diagnostic.error (Some ctx.Zipper.Focus.Id) (Some "CaseElimination") (Some "structural child")
+            $"Cannot descend to declared match child {NodeId.value childId}"
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic ctx.Accumulator
+
 let private witnessBranchScope (rootId: NodeId) (ctx: WitnessContext) (combinator: WitnessContext -> SemanticNode -> WitnessOutput) : MLIROp list =
     let branchScope = ref (ScopeContext.createChild !ctx.ScopeContext BlockLevel)
-    match SemanticGraph.tryGetNode rootId ctx.Graph with
-    | Some branchNode ->
-        match focusOn rootId ctx.Zipper with
-        | Some branchZipper ->
-            let branchCtx = { ctx with
-                                Zipper = branchZipper
-                                ScopeContext = branchScope }
-            visitAllNodes combinator branchCtx branchNode ctx.TraversalVisited
-        | None -> ()
-    | None -> ()
+    visitChild rootId { ctx with ScopeContext = branchScope } combinator
     ScopeContext.getOps !branchScope
+
+/// A terminal refutable arm is selected only after Baker's requirement in this
+/// exact frontier occurrence. A declaration's Parent field cannot establish it.
+let private terminalAdmitted (ctx: WitnessContext) (node: SemanticNode) arms =
+    match arms with
+    | [{ Pattern = Pattern.Const _ | Pattern.Union _ }] ->
+        match Requirements.tryPatternRequirement ctx.Graph node.Id, ctx.Zipper.Path with
+        | Some contract, step :: _ ->
+            step.Parent.Id = contract.Frontier && step.LeftSiblings = [contract.Site] && step.RightSiblings.IsEmpty
+            && Set.contains contract.Site ctx.TraversalVisited.Value
+            && (MLIRAccumulator.recallNode contract.Site ctx.Accumulator |> Option.exists (fun (_, ty) ->
+                ty = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType NTUKind.NTUunit))
+        | _ -> false
+    | _ -> true
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MATCH WITNESS
@@ -51,13 +69,16 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
     let combinator = getCombinator()
 
     match tryMatch pCaseElimination ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+    | Some ((_, arms), _) when arms |> List.exists (fun arm -> not arm.Bindings.IsEmpty || arm.Guard.IsSome) ->
+        WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "selected scope")
+            "Baker must settle pattern bindings and guards inside the selected body before witnessing"
+    | Some ((_, arms), _) when not (terminalAdmitted ctx node arms) ->
+        WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "terminal requirement")
+            "The terminal pattern decision is outside its validated requirement frontier"
     | Some ((scrutineeId, arms), _) ->
 
         // Step 1: Visit scrutinee in CURRENT scope (like ControlFlowWitness condition)
-        match SemanticGraph.tryGetNode scrutineeId ctx.Graph with
-        | Some scrutineeNode ->
-            visitAllNodes combinator ctx scrutineeNode ctx.TraversalVisited
-        | None -> ()
+        visitChild scrutineeId ctx combinator
 
         // Recall scrutinee result
         match MLIRAccumulator.recallNode scrutineeId ctx.Accumulator with
@@ -65,38 +86,10 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
             WitnessOutput.error "CaseElimination: Scrutinee witnessed but no result"
         | Some (scrutineeSSA, scrutineeMLIRType) ->
 
-            // Step 2: For each arm, witness bindings + guard + body via branch scope
+            // Step 2: Pull the selected bodies through their actual occurrences.
+            // Baker owns extraction and guard order inside those bodies.
             let armResults =
                 arms |> List.map (fun arm ->
-                    // Visit binding nodes first (DUEliminate + Binding from Baker)
-                    for bindingId in arm.Bindings do
-                        match SemanticGraph.tryGetNode bindingId ctx.Graph with
-                        | Some bindingNode ->
-                            visitAllNodes combinator ctx bindingNode ctx.TraversalVisited
-                        | None -> ()
-
-                    // For Var pattern arms, the PatternBinding aliases the scrutinee.
-                    // PatternBinding witness is a no-op (designed for function params),
-                    // so we must explicitly bind the PatternBinding to the scrutinee SSA.
-                    match arm.Pattern with
-                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var _ ->
-                        for bindingId in arm.Bindings do
-                            match SemanticGraph.tryGetNode bindingId ctx.Graph with
-                            | Some bindingNode when bindingNode.Kind.ToString().StartsWith("PatternBinding") ->
-                                MLIRAccumulator.bindNode bindingId scrutineeSSA scrutineeMLIRType ctx.Accumulator
-                            | _ -> ()
-                    | _ -> ()
-
-                    // Visit guard if present
-                    match arm.Guard with
-                    | Some guardId ->
-                        match SemanticGraph.tryGetNode guardId ctx.Graph with
-                        | Some guardNode ->
-                            visitAllNodes combinator ctx guardNode ctx.TraversalVisited
-                        | None -> ()
-                    | None -> ()
-
-                    // Visit body in isolated scope
                     let armOps = witnessBranchScope arm.Body ctx combinator
                     let armValueNodeId = findLastValueNode arm.Body ctx.Graph
                     (armOps, armValueNodeId, arm))

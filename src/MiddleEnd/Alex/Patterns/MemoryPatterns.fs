@@ -222,6 +222,9 @@ let extractMemRefShape (arch: Architecture) (ty: MLIRType) =
     | TStruct _ -> (mlirTypeSize arch ty, TInt (IntWidth 8))
     | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
 
+/// One symbol convention for a source-admitted static allocation and its reads.
+let staticValueName (nodeId: NodeId) = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
+
 /// Allocate memory for a constructed value — queries escape analysis coeffect
 /// PULL model: pattern pulls allocation decision from pre-computed coeffects.
 /// Four-point lifetime lattice (closure-representation.md §3.3):
@@ -247,7 +250,7 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
         | EscapeKind.StaticLifetime ->
             let count, elemType = extractMemRefShape state.Platform.TargetArch ty
             let storageTy = TMemRefStatic (count, elemType)
-            let globalName = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
+            let globalName = staticValueName nodeId
             MLIRAccumulator.tryEmitGlobalMemref globalName storageTy state.Accumulator
             return! pMemRefGetGlobal ssa globalName storageTy
         | EscapeKind.EscapesViaReturn | EscapeKind.EscapesViaClosure _ | EscapeKind.EscapesViaByRef ->

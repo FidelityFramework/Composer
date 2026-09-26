@@ -35,6 +35,28 @@ One normative half of the boundary is in the spec: `clef-lang-spec/spec/backend-
 
 This document states the second half, the hard-stop rule in full: **no llvm dialect, and no semantic dialect, in the MLIR witnessed out of the PSG.** The standard dialects, `func`, `memref`, `arith`, `scf`, `index`, are the baseline vocabulary of the witnessed region, extended under M-01's operation/profile admission contract. The first ban reserves target-specific encoding for the backend realization stage; it does not prohibit target-aware witnessing. The second keeps the middle end semantics-free in a precise sense: the semantics ride in the graph, the judgments discharge over its literals, and what reaches MLIR is the settled decomposition. A dialect that encoded closure-ness or continuation-ness into the witnessed region would carry semantics past the point of their discharge.
 
+### Typed handoff and runtime requirements
+
+The backend receives the witnessed `MLIROp` values alongside their portable
+serialization. Retaining those exact operations does not move a PSG analysis
+below the witness boundary. It lets the backend realize a standard operation
+without parsing text or reconstructing its source meaning.
+
+For a terminal refutable match, Baker establishes the typed decision and an
+always-active `Require` before the selected continuation. Its joint relation
+retains the actual condition, body and ordered frontier. Alex checks that
+relation at the current Huet-zipper occurrence and composes the standard
+`cf.assert` through its Element, Pattern and Witness. A selected singleton
+returns the actual body carrier; it does not invent a physical join result.
+
+The LLVM backend preserves the assertion's diagnostic and failure-only effect
+using the selected process runtime. The portable artifact remains unchanged;
+the backend writes its runtime realization separately. Linux AMD64 syscall
+registers and diagnostic-output details belong to that backend profile. No
+source decision, lazy demand, environment placement or match analysis is
+repeated there. Native success and exact failure-diagnostic controls check both
+sides of this boundary.
+
 ## 3. The Evidence
 
 The doctrine has a record. Each time a semantic dialect has been proposed or built for this pipeline, the standard-dialect decomposition has been found sufficient, and the record now has four entries. The cast/plugin entries below are historical episodes: the current standard prohibits unrealized casts above the boundary and requires no closure cast-resolution plugin. They do not authorize reintroducing those mechanisms.

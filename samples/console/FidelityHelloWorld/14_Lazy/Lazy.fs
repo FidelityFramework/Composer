@@ -1,6 +1,6 @@
-/// Sample 14: Lazy Values (PRD-14)
-/// Tests deferred computation with flat closure captures
-/// Key validation: Side effects verify lazy evaluation timing
+/// Sample 14: Lazy Values (C-05)
+/// Tests deferred computation, shared memoization and original capture cells.
+/// Printed results demand each force; effects reveal its execution count.
 module LazySample
 
 open Console
@@ -21,7 +21,7 @@ let lazyAdd a b = lazy (sideEffect "Adding captured values..."; a + b)
 
 [<EntryPoint>]
 let main _ =
-    Console.writeln "=== Lazy Values Test (PRD-14) ==="
+    Console.writeln "=== Lazy Values Test (C-05) ==="
 
     // Test 1: Simple lazy with no captures, no side effects
     Console.writeln "--- No Captures (Simple) ---"
@@ -37,9 +37,8 @@ let main _ =
     Console.write "Result: "
     Console.writeln (Format.int v2)
 
-    // Test 3: Second force - NO memoization initially
-    // Should print "Computing expensive value..." AGAIN (per PRD-14 Option C)
-    Console.writeln "--- Second Force (no memoization) ---"
+    // Test 3: The same instance returns its cached result without another effect.
+    Console.writeln "--- Second Force (memoized) ---"
     let v3 = Lazy.force expensive
     Console.write "Result: "
     Console.writeln (Format.int v3)
@@ -68,7 +67,7 @@ let main _ =
     Console.writeln (Format.int (Lazy.force addResult))
 
     // Test 7: Multiple lazy values from same function
-    // Verifies each call creates independent lazy struct
+    // Verifies each call creates an independent memoized instance.
     Console.writeln "--- Multiple Lazy from Function ---"
     let sum1 = lazyAdd 3 4
     let sum2 = lazyAdd 5 6
@@ -76,5 +75,26 @@ let main _ =
     Console.writeln (Format.int (Lazy.force sum1))
     Console.write "lazyAdd 5 6: "
     Console.writeln (Format.int (Lazy.force sum2))
+
+    // Test 8: Aliasing a returned value preserves its existing cache.
+    let sumAlias = sum1
+    Console.write "Cached factory alias: "
+    Console.writeln (Format.int (Lazy.force sumAlias))
+
+    // Test 9: Captures retain the original cells. The first demanded force
+    // sees the latest input; subsequent forces retain the cached result.
+    Console.writeln "--- Shared Mutable Captures ---"
+    let mutable input = 10
+    let mutable executions = 0
+    let memo = lazy (executions <- executions + 1; input)
+    let memoAlias = memo
+    input <- 20
+    Console.write "First force via alias: "
+    Console.writeln (Format.int (Lazy.force memoAlias))
+    input <- 30
+    Console.write "Cached force after mutation: "
+    Console.writeln (Format.int (Lazy.force memo))
+    Console.write "Thunk executions: "
+    Console.writeln (Format.int executions)
 
     0

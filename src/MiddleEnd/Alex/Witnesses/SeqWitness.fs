@@ -14,9 +14,12 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ContinuationPatterns
 open Alex.Patterns.LiteralPatterns
+open Alex.Patterns.CallablePatterns
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
+module Operands = Alex.Traversal.CallableOperands
+module Sequences = Alex.Traversal.SequenceOperands
 
 let private failure (node: SemanticNode) phase message =
     WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Continuation") (Some phase) message
@@ -50,29 +53,64 @@ let private accessSlot (ctx: WitnessContext) (node: SemanticNode) frameId slotId
                 | Some value -> pWithUnitResult node.Id (pWriteContinuationSlot node.Id frameId value bytes slot)
                 | None when borrow -> pBorrowContinuationSlot node.Id frameId bytes slot
                 | None -> pReadContinuationSlot node.Id frameId bytes slot
-            observe ctx node pattern
+            match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type, write, borrow with
+            | (NativeType.TSeq _ | NativeType.TSeqEnumerator _), None, false
+                when Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph node = CallableValueShape.Sequence node.Id ->
+                match ctx.Graph.Codata.Value.SequenceOrigins.TryFind node.Id, Sequences.project ctx node.Id with
+                | Some owner, Result.Ok shape when (Sequences.flow shape).Owners = Set.singleton owner ->
+                    let family = Sequences.family shape
+                    let generator = ctx.Graph.Nodes[family.Members[owner].Generator]
+                    let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph generator false
+                    let sequence = parser {
+                        let! operations, result = pattern
+                        match result with
+                        | TRValue environment ->
+                            let! code, value = pSequenceValue node.Id shape symbol environment
+                            return operations @ code, value
+                        | _ -> return! fail (Message "Sequence frame read requires its actual descriptor")
+                    }
+                    observe ctx node sequence
+                | _, Result.Error reason -> failure node "sequence frame carrier" reason
+                | _ -> failure node "sequence slot identity" "Descriptor-only sequence capture lacks its exact source-proved function half"
+            | NativeType.TFun _, None, false ->
+                match slot.Holds, ctx.Graph.Codata.Value.CallableCarriers.TryFind node.Id with
+                | CaptureSlotKind.EnvironmentView owner, Some { Environment = Some expected } when expected.Owner = owner ->
+                    match Operands.project ctx node.Id with
+                    | Result.Error reason -> failure node "callable frame carrier" reason
+                    | Result.Ok shape ->
+                        let carrier = ctx.Graph.Codata.Value.CallableCarriers[node.Id]
+                        let implementation = ctx.Graph.Nodes[carrier.Implementation]
+                        let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph implementation false
+                        let callable = parser {
+                            let! operations, result = pattern
+                            match result with
+                            | TRValue environment ->
+                                let! code, value = pCallableValue node.Id shape symbol (Some environment)
+                                return operations @ code, value
+                            | _ -> return! fail (Message "Callable frame read requires its actual loaded environment descriptor")
+                        }
+                        observe ctx node callable
+                | _ -> failure node "callable slot identity" "Callable frame read lacks its exact settled environment-view slot and occurrence carrier"
+            | _ -> observe ctx node pattern
 
 let private witnessIntrinsic (ctx: WitnessContext) (node: SemanticNode) =
     let matcher = pIntrinsicApplication IntrinsicModule.Seq <|> pIntrinsicApplication IntrinsicModule.SeqEnumerator
     match tryMatch matcher ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | None -> WitnessOutput.skip
     | Some ((info, [argument]), _) ->
-        match frameAt ctx argument with
-        | Some (frame, false) ->
+        match MLIRAccumulator.recallSequence argument ctx.Accumulator with
+        | Some sequence ->
             match info.Module, info.Operation with
-            | IntrinsicModule.Seq, "getEnumerator" -> observe ctx node (pGetEnumerator node.Id argument frame)
+            | IntrinsicModule.Seq, "getEnumerator" ->
+                match Sequences.project ctx node.Id, Sequences.copyContract ctx node.Id with
+                | Result.Ok shape, Result.Ok copy -> observe ctx node (pAcquireSequence node.Id sequence shape copy)
+                | Result.Error reason, _ | _, Result.Error reason -> failure node "template copy" reason
             | IntrinsicModule.SeqEnumerator, "moveNext" ->
-                match ctx.Graph.Nodes |> Map.tryFind frame.Generator with
-                | Some ({ Kind = SemanticKind.Lambda _ } as generator) ->
-                    let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph generator false
-                    observe ctx node (pMoveNext node.Id argument frame symbol)
-                | _ -> failure node "generator identity" $"Continuation {NodeId.value frame.Owner} has no settled generator {NodeId.value frame.Generator}"
+                observe ctx node (pPullSequence node.Id sequence)
             | IntrinsicModule.SeqEnumerator, "current" ->
-                if ctx.Graph.Codata.Value.SequenceCurrentReads.Contains node.Id then
-                    accessSlot ctx node argument frame.Current false None
-                else failure node "current admission" $"Current read {NodeId.value node.Id} has no settled successful-pull premise"
+                observe ctx node (pSequenceCurrent node.Id sequence)
             | _ -> failure node "intrinsic settlement" $"{info.FullName} requires Baker elaboration before continuation witnessing"
-        | _ -> failure node "frame identity" $"{info.FullName} operand {NodeId.value argument} has no settled sequence origin"
+        | None -> failure node "sequence operands" $"{info.FullName} operand {NodeId.value argument} has no witnessed pull function and actual environment"
     | Some ((info, arguments), _) ->
         failure node "intrinsic arity" $"{info.FullName} requires one settled frame operand, received {arguments.Length}"
 
@@ -100,7 +138,21 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
         match codata.ContinuationFrames |> Map.tryFind owner with
         | Some frame ->
             match codata.SequenceInitializers |> Map.tryFind node.Id with
-            | Some initializers -> observe ctx node (pConstructSequence node.Id frame initializers)
+            | Some initializers ->
+                match Sequences.project ctx node.Id, ctx.Graph.Nodes.TryFind frame.Generator with
+                | Result.Ok shape, Some ({ Kind = SemanticKind.Lambda _ } as generator) ->
+                    let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph generator false
+                    let formation = parser {
+                        let! operations, result = pConstructSequence node.Id frame initializers
+                        match result with
+                        | TRValue environment ->
+                            let! code, sequence = pSequenceValue node.Id shape symbol environment
+                            return operations @ code, sequence
+                        | _ -> return! fail (Message "Sequence formation did not produce its actual environment")
+                    }
+                    observe ctx node formation
+                | Result.Error reason, _ -> failure node "sequence carrier" reason
+                | _ -> failure node "generator identity" "Sequence formation lacks its exact generated implementation"
             | None -> failure node "capture initialization" $"Sequence constructor {NodeId.value node.Id} has no settled capture initializers"
         | None -> WitnessOutput.error "SeqExpr requires Baker-settled suspension segments, frame and resumption; delimiter ownership alone is insufficient"
     | SemanticKind.Yield _ ->

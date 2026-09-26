@@ -1,0 +1,27 @@
+/// C-05: retain actual immutable backing through typed caches and aliases.
+module LazyStringViews
+
+open Console
+
+let mutable factoryExecutions = 0
+let make () = lazy (factoryExecutions <- factoryExecutions + 1; "factory value")
+
+[<EntryPoint>]
+let main _ =
+    Console.writeln "=== Lazy String Views (C-05) ==="
+    let mutable capturedExecutions = 0
+    let original = "captured value"
+    let delayed = lazy (capturedExecutions <- capturedExecutions + 1; original)
+    let alias = delayed
+    Console.writeln (Lazy.force alias)
+    Console.writeln (Lazy.force delayed)
+    Console.writeln (if capturedExecutions = 1 then "Captured alias cache: 1" else "FAIL: captured alias cache")
+
+    let first = make ()
+    let second = make ()
+    let firstAlias = first
+    Console.writeln (Lazy.force first)
+    Console.writeln (Lazy.force firstAlias)
+    Console.writeln (Lazy.force second)
+    Console.writeln (if factoryExecutions = 2 then "Independent string factories: 2" else "FAIL: string factory instances")
+    0

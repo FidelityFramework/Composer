@@ -3,9 +3,8 @@
 /// Variable references forward immutable values or load mutable binding cells.
 /// The binding SSA is looked up from the accumulator (bindings witnessed first in post-order).
 ///
-/// FUNCTION REFERENCES: VarRef nodes pointing to function bindings (Lambda nodes) build
-/// named functions in value position are elaborated by Baker into lambdas (no thunk here).
-/// For direct calls, ApplicationWitness navigates to VarRef for name resolution independently.
+/// Function values retain separate code/environment operands. Named code in
+/// value position receives a func.constant at this actual source occurrence.
 ///
 /// NANOPASS: This witness handles ONLY VarRef nodes.
 /// All other nodes return WitnessOutput.skip for other nanopasses to handle.
@@ -18,6 +17,10 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemRefPatterns  // pLoadMutableVariable
+open Alex.Patterns.CallablePatterns
+open Alex.Patterns.MutableCallablePatterns
+open Alex.Patterns.SequencePatterns
+open Alex.Patterns.LazyPatterns
 open Alex.Dialects.Core.Types  // TMemRef
 open XParsec
 open XParsec.Parsers
@@ -29,12 +32,83 @@ open XParsec.Combinators
 
 /// Witness variable reference nodes - forwards binding's SSA
 let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    let callable pattern =
+        match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error reason -> WitnessOutput.error $"Callable reference: {reason}"
+    let rec directCallee (position: Alex.Traversal.PSGZipper.PSGZipper) =
+        match Alex.Traversal.PSGZipper.up position with
+        | Some parent ->
+            match parent.Focus.Kind with
+            | SemanticKind.Application(callee, _) -> callee = position.Focus.Id
+            | SemanticKind.TypeAnnotation(inner, _) when inner = position.Focus.Id -> directCallee parent
+            | _ -> false
+        | None -> false
+    let rec assignmentTarget (position: Alex.Traversal.PSGZipper.PSGZipper) =
+        match Alex.Traversal.PSGZipper.up position with
+        | Some parent ->
+            match parent.Focus.Kind with
+            | SemanticKind.Set(target, _) -> target = position.Focus.Id
+            | SemanticKind.TypeAnnotation(inner, _) when inner = position.Focus.Id -> assignmentTarget parent
+            | _ -> false
+        | None -> false
     match tryMatch pVarRef ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((name, bindingIdOpt), _) ->
         match bindingIdOpt with
         | Some bindingId ->
             // Check if the binding references a function (Lambda node)
             match SemanticGraph.tryGetNode bindingId ctx.Graph with
+            | Some bindingNode when isLazyValue ctx node ->
+                match bindingNode.Kind with
+                | SemanticKind.Binding(_, true, _, _) ->
+                    WitnessOutput.error $"Lazy reference '{name}' requires an admitted pair storage read."
+                | _ ->
+                    let pattern =
+                        if ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode then pProgramLazyReference ctx bindingId
+                        else pLazyForward ctx bindingId
+                    match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error reason -> WitnessOutput.error $"Lazy reference '{name}': {reason}"
+            | Some bindingNode when isSequenceValue ctx node ->
+                match bindingNode.Kind with
+                | SemanticKind.Binding(_, true, _, _) ->
+                    WitnessOutput.error $"Sequence reference '{name}' requires an admitted pair storage read."
+                | _ ->
+                    match tryMatchWithDiagnostics (pSequenceForward ctx bindingId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                    | Result.Error reason -> WitnessOutput.error $"Sequence reference '{name}': {reason}"
+            | Some bindingNode when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
+                let declaration =
+                    match bindingNode.Kind, bindingNode.Children with
+                    | SemanticKind.Binding(_, false, _, _), [implementation] ->
+                        match ctx.Graph.Nodes.TryFind implementation with
+                        | Some { Kind = SemanticKind.Lambda(_, _, [], _, _); Metadata = metadata } ->
+                            [ClosureMetadata.LambdaExpression; ClosureMetadata.RequiresClosurePair]
+                            |> List.forall (fun key -> metadata.TryFind key <> Some(MetadataValue.Bool true))
+                        | _ -> false
+                    | SemanticKind.Lambda(_, _, [], _, LambdaContext.LazyThunk), _ ->
+                        (Alex.Traversal.CallableOperands.tryThunkDeclaration ctx bindingId).IsSome
+                    | _ -> false
+                match bindingNode.Kind with
+                | SemanticKind.Binding(_, true, _, _) when assignmentTarget ctx.Zipper ->
+                    // Naming the destination is not a value demand. The write
+                    // witness recalls its shared cell directly.
+                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                | SemanticKind.Binding(_, true, _, _) ->
+                    match MLIRAccumulator.recallCallableCell bindingId ctx.Accumulator with
+                    | None -> WitnessOutput.error $"VarRef '{name}': Binding not yet witnessed"
+                    | Some _ -> callable (pReadMutableCallable ctx bindingId node.Id)
+                | _ when Set.contains bindingId ctx.Graph.Codata.Value.Curry.PartialAppBindings ->
+                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                | _ when declaration && directCallee ctx.Zipper ->
+                    // The direct invocation consumes the settled declaration
+                    // symbol. This actual callee occurrence needs no SSA value.
+                    { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                | _ ->
+                    match MLIRAccumulator.recallCallable bindingId ctx.Accumulator with
+                    | Some _ -> callable (pCallableForward ctx bindingId)
+                    | None when declaration -> callable (pNamedCallable ctx)
+                    | None -> callable (pCallableForward ctx bindingId)
             | Some bindingNode ->
                 // Check binding type
                 match bindingNode.Kind with
@@ -43,6 +117,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     // the scrutinee SSA by MatchWitness, not pre-assigned in coeffects.
                     match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
                     | Some (ssa, ty) ->
+                        // An occurrence-bound formal still has its parameter
+                        // carrier. Transcribe this read's settled refinement,
+                        // just as on the coeffect lookup path below.
                         let (ops, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id ssa ty
                         { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                     | None ->
@@ -76,17 +153,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         |> Option.defaultValue false
 
                     if not isMut && isFunctionBinding then
-                        // Function reference - check if the binding holds a closure value
-                        match MLIRAccumulator.recallNode bindingId ctx.Accumulator with
-                        | Some (closureSSA, closureTy) ->
-                            // Closure-captured function value — return the closure pair
-                            { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = closureSSA; Type = closureTy } }
-                        | None ->
-                            // Call position: ApplicationWitness handles the direct call. A named
-                            // function in value position never reaches here: Baker elaborates it
-                            // into an eta-expanded Lambda marked for closure pair construction,
-                            // witnessed by the closure path like any other lambda.
+                        if directCallee ctx.Zipper then
                             { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                        else WitnessOutput.error $"Callable reference '{name}' has no concrete settled value carrier."
                     elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode then
                         // Module-level value: reload from its slot (valid in any function)
                         let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> name

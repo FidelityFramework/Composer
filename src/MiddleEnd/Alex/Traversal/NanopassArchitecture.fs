@@ -80,6 +80,25 @@ let private isDefinitionOnlyBinding (bindingId: NodeId) (graph: SemanticGraph) :
         | _ -> false
     | _ -> false
 
+/// A materialized code Lambda can be a structural child of its source
+/// ClosureValue as well as its canonical named declaration. Local body walks
+/// must still observe each value occurrence, but this exact code identity emits
+/// one module definition. Legacy closure Lambdas also construct a value and do
+/// not qualify for this reuse.
+let private isDefinitionOnlyLambda (node: SemanticNode) (graph: SemanticGraph) : bool =
+    match node.Kind, node.Parent with
+    | SemanticKind.Lambda (_, _, [], _, LambdaContext.LazyThunk), _
+        when not (Map.containsKey node.Id graph.Codata.Value.Closures) ->
+        graph.Codata.Value.LazyLayouts.Values |> Seq.exists (fun layout ->
+            layout.Thunk = node.Id && Clef.Compiler.Nanopass.LazyRuntime.validate graph layout)
+    | SemanticKind.Lambda (_, _, [], _, _), Some bindingId
+        when not (Map.containsKey node.Id graph.Codata.Value.Closures) ->
+        match SemanticGraph.tryGetNode bindingId graph with
+        | Some { Kind = SemanticKind.Binding (_, false, _, _); Children = [valueId] } ->
+            valueId = node.Id
+        | _ -> false
+    | _ -> false
+
 /// Visit all nodes in post-order (children before parents)
 /// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
 /// Post-order ensures children's SSA bindings are available when parent witnesses
@@ -90,8 +109,17 @@ let rec visitAllNodes
     (visited: ref<Set<NodeId>>)  // Traversal visited set (global on CPU, per-function on FPGA)
     : unit =
 
-    // Check if already visited in this traversal scope
-    if Set.contains currentNode.Id !visited then
+    // A fresh function-body scope deliberately drops local value coverage.
+    // Named code declarations retain their global identity even when reached
+    // through a structural occurrence rather than a VarRef dependency.
+    if currentNode.Id <> visitedCtx.Zipper.Focus.Id
+       || not (obj.ReferenceEquals(visitedCtx.Graph, visitedCtx.Zipper.Graph)) then
+        Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "zipper occurrence")
+            "The traversal node and zipper must identify the same occurrence in the current graph"
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+    elif Set.contains currentNode.Id !visited
+       || (Set.contains currentNode.Id !(visitedCtx.GlobalVisited)
+           && isDefinitionOnlyLambda currentNode visitedCtx.Graph) then
         ()
     else
         // Mark as visited in traversal scope
@@ -121,11 +149,13 @@ let rec visitAllNodes
                         let childCtx = { visitedCtx with Zipper = childZipper }
                         visitAllNodes witness childCtx childNode visited
                     | None ->
-                        // Fallback: child not reachable via zipper navigation (shouldn't happen)
-                        if traceTraversal then printfn "[visitAllNodes] WARNING: Could not navigate down to child %d of node %A" childIndex currentNode.Id
-                        visitAllNodes witness visitedCtx childNode visited
+                        Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "structural child")
+                            $"Cannot descend to declared child {NodeId.value childId} at index {childIndex}"
+                        |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
                 | None ->
-                    printfn "[visitAllNodes] WARNING: Child node %A not found in graph!" childId
+                    Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "structural child")
+                        $"Declared child {NodeId.value childId} is absent from the current graph"
+                    |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
             )
 
         // POST-ORDER Phase 2: Visit VarRef binding targets (reference edges)
@@ -207,6 +237,24 @@ let rec visitAllNodes
             | Result.Ok () -> ()
             | Result.Error reason ->
                 Diagnostic.error (Some currentNode.Id) (Some "Callable") (Some "operand transport") reason
+                |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+        | TRCallableCell value ->
+            match MLIRAccumulator.bindCallableCell currentNode.Id value visitedCtx.Accumulator with
+            | Result.Ok () -> ()
+            | Result.Error reason ->
+                Diagnostic.error (Some currentNode.Id) (Some "Callable") (Some "mutable storage") reason
+                |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+        | TRSequence value ->
+            match MLIRAccumulator.bindSequence currentNode.Id value visitedCtx.Accumulator with
+            | Result.Ok () -> ()
+            | Result.Error reason ->
+                Diagnostic.error (Some currentNode.Id) (Some "Sequence") (Some "operand transport") reason
+                |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+        | TRLazy value ->
+            match MLIRAccumulator.bindLazy currentNode.Id value visitedCtx.Accumulator with
+            | Result.Ok () -> ()
+            | Result.Error reason ->
+                Diagnostic.error (Some currentNode.Id) (Some "Lazy") (Some "operand transport") reason
                 |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
         | TRVoid -> ()
         | TRError diag ->

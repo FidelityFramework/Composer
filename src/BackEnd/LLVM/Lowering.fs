@@ -88,22 +88,26 @@ let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerB
             @ ["reconcile-unrealized-casts"; "canonicalize"]
         let pipeline = "builtin.module(" + String.concat "," passes + ")"
         let mlirOptArgs = sprintf "%s --pass-pipeline=\"%s\" \"%s\"" pluginArgs pipeline mlirPath
-        let mlirOptProcess = new System.Diagnostics.Process()
+        use mlirOptProcess = new System.Diagnostics.Process()
         mlirOptProcess.StartInfo.FileName <- "mlir-opt"
         mlirOptProcess.StartInfo.Arguments <- mlirOptArgs
         mlirOptProcess.StartInfo.UseShellExecute <- false
         mlirOptProcess.StartInfo.RedirectStandardOutput <- true
         mlirOptProcess.StartInfo.RedirectStandardError <- true
         mlirOptProcess.Start() |> ignore
-        let mlirOptOutput = mlirOptProcess.StandardOutput.ReadToEnd()
-        let mlirOptError = mlirOptProcess.StandardError.ReadToEnd()
+        // Diagnostic globals can be large. Drain both pipes concurrently so
+        // an invalid input's stderr cannot block completion of stdout.
+        let mlirOptOutputTask = mlirOptProcess.StandardOutput.ReadToEndAsync()
+        let mlirOptErrorTask = mlirOptProcess.StandardError.ReadToEndAsync()
         mlirOptProcess.WaitForExit()
+        let mlirOptOutput = mlirOptOutputTask.GetAwaiter().GetResult()
+        let mlirOptError = mlirOptErrorTask.GetAwaiter().GetResult()
 
         if mlirOptProcess.ExitCode <> 0 then
             Error (sprintf "mlir-opt failed: %s" mlirOptError)
         else
             // Step 2: mlir-translate to convert LLVM dialect to LLVM IR
-            let mlirTranslateProcess = new System.Diagnostics.Process()
+            use mlirTranslateProcess = new System.Diagnostics.Process()
             mlirTranslateProcess.StartInfo.FileName <- "mlir-translate"
             mlirTranslateProcess.StartInfo.Arguments <- "--mlir-to-llvmir"
             mlirTranslateProcess.StartInfo.UseShellExecute <- false
@@ -111,11 +115,13 @@ let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerB
             mlirTranslateProcess.StartInfo.RedirectStandardOutput <- true
             mlirTranslateProcess.StartInfo.RedirectStandardError <- true
             mlirTranslateProcess.Start() |> ignore
+            let llvmOutputTask = mlirTranslateProcess.StandardOutput.ReadToEndAsync()
+            let translateErrorTask = mlirTranslateProcess.StandardError.ReadToEndAsync()
             mlirTranslateProcess.StandardInput.Write(mlirOptOutput)
             mlirTranslateProcess.StandardInput.Close()
-            let llvmOutput = mlirTranslateProcess.StandardOutput.ReadToEnd()
-            let translateError = mlirTranslateProcess.StandardError.ReadToEnd()
             mlirTranslateProcess.WaitForExit()
+            let llvmOutput = llvmOutputTask.GetAwaiter().GetResult()
+            let translateError = translateErrorTask.GetAwaiter().GetResult()
 
             if mlirTranslateProcess.ExitCode <> 0 then
                 Error (sprintf "mlir-translate failed: %s" translateError)

@@ -105,8 +105,8 @@ let main _ =
             absentInput
     let exhausted = match absent with None -> absentStage = 3 && seenTrue && seenFalse && not repeated | Some _ -> false
 
-    let eager = Seq.tryPick (chooserFactory ()) (inputFactory ())
-    let formedOnce = match eager with Some value -> value && formation = 4 && not formationError | None -> false
+    let picked = Seq.tryPick (chooserFactory ()) (inputFactory ())
+    let formedOnce = match picked with Some value -> value && formation = 4 && not formationError | None -> false
 
     let mutable nestedAdvanced = false
     let nested = Seq.tryHead (seq {

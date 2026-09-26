@@ -9,9 +9,9 @@ behaviors; a successful subset does not close a C-series gate.
 
 | Rule | Required behavior | Governing specification |
 | --- | --- | --- |
-| Immutable capture | Evaluate and retain the value at formation; references contained in it preserve sharing. | Closure §2.2 |
+| Immutable capture | Retain the original shared deferred binding identity. Formation does not demand its initializer; a proved already evaluated value may use its established representation. | Closure §2.2 |
 | Mutable capture | Retain the original storage instance. All reads and writes share it, including across nested and returned functions. | Closure §2.2, §3.3 |
-| Partial application | Evaluate supplied operands once, in source order, at each application frontier. A later call cannot replay them or reread a reassigned source binding. | [Expressions](../../clef-lang-spec/spec/expressions.md), [sequence operations](../../clef-lang-spec/spec/seq-operations-representation.md) |
+| Partial application | Retain supplied computations and their sharing at each application frontier. Demand and explicit `eager` actuals establish evaluation; ordinary supply alone does not. A later call cannot replay a successfully evaluated shared computation. | [Expressions](../../clef-lang-spec/spec/expressions.md), [sequence operations](../../clef-lang-spec/spec/seq-operations-representation.md) |
 | Actual callable boundary | Distinguish declaration currying from a function returned as a value. A `TFun` spine alone does not establish native arity. | Expressions, closure §6 |
 | No captures | Use direct code with no environment. | Closure §3.1, §9 |
 | Named nonescaping function | Use leading capture parameters when complete use proves that form. Syntax and binding parentage are insufficient. | Closure §8, §10.11–12 |
@@ -45,6 +45,16 @@ It preserves every known alternative and explicit unknown participants. Consumer
 use its actual call boundaries. Type-compatible but unrelated functions must not
 pollute a proven call's range or effects. An unknown participant must prevent a
 consumer from treating the known subset as complete.
+
+A declared synchronous callback supplies an activation contract even when its
+library or native body has no source invocation node. Closed ingress records
+the actual containing call, its caller activation, the declared callback formal
+and the declaration's graph participants. It does not invent callback arguments
+or infer a synchronous lifetime from one observed caller. Lifetime summaries
+consume every complete callee alternative; missing declaration authority,
+opaque alternatives and additional external ingress retract the conclusion.
+The declaration names a parameter at its actual callable boundary, never a
+parameter belonging only to a returned function.
 
 ## Formation and storage protocol
 
@@ -82,7 +92,8 @@ A returned environment is initialized at its original formation frontier. A
 caller allocation supplies backing storage without running the initializer there
 or copying an already-invalid callee stack reference. A second call receives a
 distinct destination. Destination insertion preserves the environment-first
-convention and the order/evaluation count of all original operands.
+convention and the demand identities of all original operands. It does not
+insert an eager snapshot prelude for ordinary actuals.
 
 The same storage reasoning applies jointly to a callback retained in a sequence,
 a sequence retained in a partial application, and a child sequence retained by
@@ -92,7 +103,7 @@ premises cannot be proved independently by ignoring each other's uses.
 Before final residence admission, revalidate each destination against its actual
 constructor, returning implementation, physical signature and complete call set.
 For every retained view, resolve the exact call's supplied value through
-immutable snapshots and explicit environment reads, then prove that its backing
+immutable aliases and explicit environment reads, then prove that its backing
 storage covers all uses of each caller destination. Scalar copying and retaining
 a descriptor have different lifetime premises. No pending capture requirement,
 preexisting unrelated witness or successful placement substitutes for the joint
@@ -121,8 +132,8 @@ calls retain their exact constructor and captured-source obligations. A returned
 constructor transfers storage responsibility only through the validated caller
 destination protocol. It cannot inherit the lifetime of a departed factory.
 
-Environment-first argument projections can pass through immutable snapshots
-introduced by operand preparation. Their aliases, actual argument positions and
+Environment-first argument projections can pass through immutable aliases.
+Their source identities, actual argument positions and
 all independent reference uses remain proof participants. Replacing such a path
 with mutable storage, adding an opaque use, detaching an incoming call from its
 activation or changing a capture/destination row requires renewed settlement;
@@ -136,6 +147,10 @@ affected property. A successful MLIR verifier does not establish source semantic
 or residence.
 
 ## Incremental contract
+
+This section concerns compiler reuse after edits. Runtime `Incremental<'T>`,
+observable delivery, lazy memoization and fresh enumeration retain their separate
+[evaluation and dependency contracts](Evaluation_Strategy_Contract.md).
 
 Every conclusion needs its actual read dependencies and complete alternative
 support. These include negative observations: no additional consumer, no opaque
@@ -166,8 +181,8 @@ above contract through the supported compiler pathways. Acceptance includes:
   transport for unknown callees and no packed interior or cast-repair route.
 - Direct, pipeline, aliased, stored, partially applied, returned, recursively
   invoked and aggregate-held function values, with truthful call/return types.
-- Immutable snapshots, shared mutable cells and independent runtime formations;
-  nested capture forwarding retains actual values and cell identity.
+- Shared deferred immutable bindings, shared mutable cells and independent
+  runtime formations; nested forwarding retains demand, value and cell identity.
 - Sequence restart, exhaustion, short circuit, empty inputs, both fold frontiers,
   ordered append/collect and independently measured callback/result domains.
 - Proven stack, region, program and dynamic lifetime choices where admitted by

@@ -202,6 +202,7 @@ let main _ =
     let context: BackEndContext = {
         OutputPath = Path.Combine(directory, "test.elf"); IntermediatesDir = None
         TargetTripleOverride = Some "thumbv8m.main-none-eabi"; TargetPointerBits = Some 32; TargetCpu = Some "cortex-m7"
+        PlatformOS = None; RuntimeModel = Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Bare
         DeploymentMode = Core.Types.Dialects.DeploymentMode.Embedded; EmitIntermediateOnly = false
         ExternLibraries = Set.empty; NativeLink = NativeLinkOptions.Empty; EmbeddedTarget = Some target; XtensaTarget = None; Deploy = false
     }

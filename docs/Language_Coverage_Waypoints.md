@@ -7,6 +7,265 @@ The [review](Clef_Language_Completion_Review_2026-09-19.md) and
 [incremental contract direction](Nanopass_Incremental_Contract_Direction.md)
 retain the wider roadmap and unresolved contracts.
 
+The [C/F completion ledger](C_F_Completion_Ledger.md) turns the current PRD
+criteria into an ordered implementation and acceptance inventory. It records
+remaining work and executable gates; it does not add a passing result.
+
+## Main integration and selected-match checkpoint — 2026-09-26
+
+The [C/F checkpoint report](C_F_Checkpoint_2026-09-26.md) maps delivered behavior
+and the next required gates to every C-01–C-07 and affected F-01–F-10 PRD. All
+Composer changes now reside in the main worktree. The explicit-demand source
+foundation from `d8effc6` has been integrated with the current Lazy, callable,
+sequence and proof protocols; it is no longer only an isolated worktree change.
+Final main source v20 passes **1,355/1,355**, and Alex v20 passes **223/223**,
+including the raw constant CPU/FPGA component controls. The eager-callee factory
+regression's unnecessary Baker eta wrapper is corrected. The default editor
+suite, analyzer integration and actual live LSP gate pass, including clean server
+shutdown. Exact closure/Lazy source-provenance relations preserve public capture
+references while generated storage/cache reads remain internal.
+
+The private v19 compiler is `/tmp/composer-checkpoint-v19/compiler`; source
+compiler SHA-256 is
+`fd0d1f18c43a54a83eab92daa171d645d9ecddf604bb4892e5271cc1aadbeac0`.
+Specification commit `586010e` and site commit `8b6bd57` record the supporting
+contract corrections. Clef `14fb7c7` and the Composer commit containing this
+waypoint close the main-branch checkpoint. The final v20 snapshot and companion
+revisions are in the report. The v20 projection correction passes all source,
+editor, analyzer and live LSP gates, plus fresh native14/16h confirmation; the
+broader v19 executions below retain their actual cohort identity.
+
+Recorded results retain these cohort boundaries:
+
+| Gate | Recorded result and artifacts |
+|---|---|
+| Final integrated source v20 | **1,355/1,355 passed**, `/tmp/clef-checkpoint-full-v20.log`. |
+| Final physical composition v20 | Alex **223/223 passed**, including raw constant CPU/FPGA and backend requirement controls. This is component evidence, not execution on an FPGA device. |
+| Final editor/analyzer/live LSP v20 | Default editor21 groups and analyzer141 reported checks pass; live LSP passes with clean shutdown. `/tmp/composer-checkpoint-live-v20/evidence.json`. |
+| Final native confirmation v20 | **14 and16h: 2/2 compiled and executed**, unchanged oracles. `/tmp/composer-checkpoint-native-v20.log`. |
+| Native v19 Lazy | **14,14a,14b: 3/3 compiled and 3/3 executed**. `/tmp/composer-lazy-main-final.log`. These cover memoization/instance/cell identity, typed scalar results and declared static-string backing. |
+| Native/artifact differential v19 | Full and pruned **01,16a,16h: 6/6 compiled and 6/6 executed**. MLIR, LLVM IR, stdout and stderr are byte-identical between modes; all six outputs match byte-exact manifest oracles. All **nine** PSG pairs preserve exact included nodes and complete joint evidence. `/tmp/composer-pruned-differential-main-v19b.log`, `/tmp/composer-pruned-differential-main-v19b-validate.log`. |
+| Native v19 selected matches | **5/5 passed**: GuardedMatch, LiteralMatch and TerminalMatchSuccess exit 0 with exact empty streams; terminal pattern/guard failures exit 1 with their exact source-located diagnostic. `/tmp/composer-checkpoint-matches-v19.log`. |
+| Proof/process controls v16 | All eight runner gate groups plus parallel-runner checks; StaticStorage **10**; SMT **85** across native, real, integer, loop, dimension, layout and continuation cohorts. These retain their v16 cohort and are not relabeled as v19/source20 executions. |
+
+Selected-match elaboration now places payload reads, original source bindings
+and guards inside their selected source scope. Baker preserves rule order and
+false-guard fallthrough; Alex observes guard-free, binding-free arm metadata
+through the actual Huet occurrence. Terminal `Require` checks retain exact
+condition/input/type/body/frontier participants. The selected-body result repair
+and backend diagnostic realization are verified by the native success and
+failure controls, replacing the earlier pending failure-path result.
+
+Literal patterns use ordinary typed source equality before boolean selection.
+The native control distinguishes Unicode, fractional floating values, equal
+separately formed strings, same-length unequal and empty strings, signed zero,
+unit guard order and runtime NaN. Source retraction tests preserve dimensional
+and selected-input authority. These results do not implement every source
+pattern form: the report assigns the remaining Or/As/And/list/array representation
+and selection work to the source checker/Baker owners and their storage contracts.
+
+Source static-pool proofs cover the declared pool's actual backing, layout and
+capacity. Diagnostic globals and helper code introduced by the backend are
+additional whole-image resource contributions. Their accounting belongs to the
+Platform/backend contract; neither the source pool proof nor F-07 bitwise
+acceptance supplies it implicitly.
+
+The integrated eager syntax and conditional source-demand relations remain
+distinct from ordinary call-by-need storage and native demand delivery. Continue
+the ledger's G0 and every C/F gate after the checkpoint; none of these bounded
+results marks a C PRD Complete.
+
+## Pruned artifacts and complete callable consumption — 2026-09-26
+
+`--prune-intermediates` is available on the compiler and bounded regression
+runner. It selects nodes before kind/type formatting, starting with reachability
+and declared roots and preserving the complete transitive participant set of
+joint evidence. It leaves the compiler graph and its reachability flags intact.
+Full dumps remain the default; the view records source/emitted counts and
+external or missing references. See the [artifact policy](Regression_Check_Policy.md#pruned-diagnostic-artifacts).
+
+Complete callee consumption now has its own joint residence evidence. It cites
+the actual allocation, covering activation, callee and every target's real
+formals, actuals and body. `CallableOrigins` distinguishes a complete invocation
+from a known partial alternative without conflating partial formation with an
+opaque origin. The mixed captured/plain higher-order regression proves bounded
+consumption and retracts it after an opaque alternative or missing argument.
+This resolves the actual11 lifetime failure; establishing its mixed calling
+convention remains part of the active source dispatcher work with actual
+environment identity and complete ingress proof.
+
+Verification against the coordinated CCS source-v3 / test-v4 snapshot and
+Composer build in `/tmp/composer-callable-pruned-build-v1.log`:
+
+| Gate | Evidence |
+|---|---|
+| Focused source cohort | **370 passed**, including projection, complete callable flow/consumption, Lazy layout/residence and corrected canonical closure/Option/Result/Seq assertions. `/tmp/clef-lazy-runtime-flow-focused-v4.log`. Original sample sources and native oracles were unchanged. |
+| Full main CCS | **1,141 passed**, `/tmp/clef-main-full-after-carrier-flow-v4.log`. This is separate from the isolated explicit-demand worktree below. |
+| Full Alex | **149 passed**, zero skips, including the three new common callable-flow cases. `/tmp/composer-callable-pruned-alex-v1.log`. |
+| Bounded .NET runner | All parallel-runner checks passed, including limits, actual overlap, ordered results, barriers, streams, input and descendant/orphan cleanup. `/tmp/composer-pruned-runner-tests-v1.log`. |
+| Source-to-native differential | **6/6 compilation and 6/6 execution passed**, zero skips: full and pruned **01**, **16a**, **16h**, using one private compiler snapshot with three worker processes. MLIR, LLVM IR, stdout and stderr are byte-identical between modes. All six stdout streams match the byte-exact manifest oracles. `/tmp/composer-pruned-differential-v1/run.log`; snapshot hashes, selection and per-job artifacts are retained there. |
+| Artifact integrity | All **nine** paired PSG checkpoints preserve each emitted node exactly and retain every participant of included joint evidence. `/tmp/composer-pruned-differential-v1/validate.log`. |
+
+Final PSG serialization sizes from that differential:
+
+| Sample | Full nodes → pruned nodes | Full bytes → pruned bytes |
+|---|---:|---:|
+| 01 | 31,910 → 68 | 28,610,573 → 134,431 |
+| 16a | 13,850 → 8,835 | 12,176,045 → 7,896,156 |
+| 16h | 10,036 → 5,177 | 8,890,675 → 4,843,084 |
+
+Recorded compilation times came from contending independent jobs; they are not
+a controlled speedup benchmark. The result establishes reduced serialization
+and unchanged compiled behavior for the selected controls. It does not establish
+an incremental partition or complete the C-series language gates.
+
+A subsequent serialization probe found that the structural graph was formatted
+into `01_psg0.json` before reachability and then overwritten by the intended PSG0
+checkpoint. Removing that first write preserves the retained phase artifact.
+The private compiler in `/tmp/composer-pruned-differential-v2/compiler`, built
+against the later Lazy/callable source cohort, recorded these serial Hello runs
+in `/tmp/composer-pruned-differential-v2/timing.log`:
+
+| Artifact mode | Wall time |
+|---|---:|
+| No intermediates | 6,242 ms |
+| Pruned intermediates | 7,898 ms |
+| Full intermediates | 69,499 ms |
+
+The earlier serial probe recorded 6,338 / 27,813 / 87,887 ms respectively.
+These are individual local measurements, not a controlled repeated benchmark.
+The later cohort preserves native01/16a in both artifact modes but exposes a
+16h frame-read callable-provenance regression in both modes. Its run must not
+replace the passing six-job differential above; the complete source access
+relation and its regression checks are being corrected together.
+
+## Explicit demand source foundation — 2026-09-26
+
+The initially isolated Clef worktree `codex/evaluation-foundation-20260926`, at local commit
+`d8effc6e6e10` based on `f898c97e11c5`, carries the source foundation for the
+[evaluation contract](Evaluation_Strategy_Contract.md). The `eager` keyword is
+type-transparent syntax with the same prefix extent as `lazy`. Parser, checker,
+typed-tree projection, remapping and monomorphization preserve the actual marker
+and operand. Value-origin readers preserve callable and sequence identity through
+the marker without treating formation as invocation or enumeration.
+
+Baker projects local conditional demand relations at bindings, actuals,
+components and expression occurrences. An annotation may expose a direct marker;
+an alias, unselected branch or nested deferred computation may not. Projection
+retracts changed or retired premises, records incomplete premises explicitly and
+runs again after continuation rewriting. A source node's reachability is not an
+execution decision. Explicit eager actuals at a partial formation are excluded
+from the later-call deferred-argument set; their original identities remain in
+the saturation contract.
+
+The application staging recipe now preserves each actual's owning call. Its old
+all-argument sequential prelude moved later supplied expressions ahead of the
+body producing the returned callable. The replacement creates the distinct calls
+and leaves their demand/order obligations at those boundaries. The old
+`Supplied expressions are evaluated in order before either staged call` assertion
+has been replaced with source ownership and explicit eager-stage tests, according
+to the specification's [eager expression rules](../../clef-lang-spec/spec/expressions.md#eager-expressions).
+
+Reifying a named function value likewise retains its declaration's real arity;
+the wrapper cannot absorb a function-valued result by counting all type arrows.
+First-boundary evidence includes every known alternative and its actual formals,
+including partial origins. An opaque alternative or an earlier returned-callable
+boundary keeps later actuals pending instead of assigning them to an unproved
+common frontier.
+
+Source verification on this isolated worktree:
+
+| Gate | Evidence |
+|---|---|
+| Parser, source demand and callable cohort | **82 passed**: parser extent/offside/ranges, type/range identity, specialization, direct/annotated frontiers, aggregate order, callable/sequence identity, distinct application stages, partial formation, mixed/opaque alternatives, reification and edit retraction. `/tmp/clef-eager-reification-focused-v1.log`. |
+| Actual continuation rewrite | Included in that cohort at declared **32-bit and 64-bit** profiles. Both cloned markers cite their actual frame operands; retired markers retain no demand authority. |
+| Full foundation assembly | **1,111 passed**, `/tmp/clef-eager-foundation-full-v3.log`. |
+
+These are source-graph gates. G0 delivery continues through the shared deferred
+storage mechanism, operation-specific demand saturation, passive Alex witnessing,
+native effect traces and editor invalidation specified by the
+[completion ledger](C_F_Completion_Ledger.md). The source cohort does not stand in
+for those executable acceptance gates. The source foundation is now integrated
+with main's callable/sequence/Lazy protocols as recorded in the checkpoint above;
+source/Alex/editor/live-LSP and the selected native gates pass on v19. The later
+source20 public-projection change retains its own verification boundary. The
+counts in this subsection remain results from the earlier isolated foundation,
+not final main counts.
+
+## Canonical sequence carriers through native 16h — 2026-09-26
+
+The coupled carrier migration in `Composer-callable-transport` now compiles and
+executes the unchanged `16h_SequenceApplications` sample. All seven semantic
+groups exit successfully, with byte-for-byte `ExpectedOutput.txt` agreement and
+empty stderr. This supersedes the pending native-16h result in the previous
+checkpoint below; it is a bounded C-01/C-06/C-07 gate, not completion of the full
+C-series or the separate evaluation-strategy contract.
+
+Baker publishes exact sequence alternatives and their connected physical
+families. Each member retains its actual generator, formal, complete slot
+representations, source values and proof participants. Common state/current
+storage is source-placed; an empty producer does not acquire a current value.
+Alex transports separate generator-code and actual-environment operands through
+calls, results and value occurrences, including joins with multiple admitted
+origins. It checks source family authority and does not choose an origin by
+frame size, element type or a representative member. Raw generator/result
+storage remains distinct from a source sequence value.
+
+Fresh enumeration has an explicit source-owned representation-copy contract:
+exact template and destination storage, extent, alignment, address space,
+lifetime, nonoverlap and capture identity. The portable opaque `memref.copy`
+lowers through the pinned stock pipeline to LLVM memcpy. Copying representation
+bytes grants no typed initialization or successful-current-read evidence;
+fresh-entry reset establishes only control state. Immutable captured descriptors
+retain their original shared values/cells. Formation and copying do not invoke a
+producer or force a deferred payload.
+
+The last integration defect was duplicate emission of the same materialized
+code Lambda through both its source `ClosureValue` and canonical named binding.
+Traversal now reuses global coverage only for that exact definition-only Lambda
+identity: a capture-free Lambda with its actual immutable sole-child binding and
+no legacy closure-value construction. Local closure/environment formation and
+shared body values still follow their actual Huet occurrence. The new regression
+failed against the preceding binary, then passed alongside the existing
+shared-body/block-argument test and stock MLIR verification.
+
+| Gate | Evidence and limit |
+|---|---|
+| Focused CCS source cohort | **82 passed**, `/tmp/clef-sequence-boundary-v10.log`: exact origins/families, template copy/storage rejection, continuation meets, mutable callable storage, and additive Lazy source/range contracts. This is not a full CCS-suite result. |
+| Composer build | Passed, `/tmp/composer-sequence-carrier-v6.log`, against the coordinated CCS DLL with project-reference rebuilding disabled. |
+| Full Alex assembly | **146 passed**, `/tmp/composer-sequence-alex-full-v1.log`, including family/operand retraction, scoped transport, 32/64-bit stock memcpy lowering, mutable callable controls and the duplicate-definition regression. |
+| Actual native 16h | Stock MLIR verification, LLVM lowering and native link passed; native exit **0**, exact existing output and empty stderr. Artifacts and compile/runtime logs: `/tmp/composer-sequence-native-v3/`. Source and expected output were unchanged. |
+| Four-worker native controls from the same compiler snapshot | **01 and 16a compiled and executed with exact output**. **11 failed source environment admission** (`CCS8403`, `UnsupportedConsumer` at `Closures.fs:86`); **12 failed Alex callable-boundary admission** (missing settled carrier contracts). No samples were skipped. The coupled migration must restore both controls before its checkpoint gate closes. `/tmp/composer-sequence-controls-v1/runner.log`, 98.4 seconds. |
+
+This is a working-tree snapshot, not a committed release: Composer branch
+`codex/callable-transport-20260926` is based on
+`db4bc8b01bb647c251815d5a08ac54889c7a2788`; the coordinated Clef working tree is
+based on `f898c97e11c5a45da91899901bac29250a8d96a2`. Companion revisions remain
+Fidelity.Platform `d42c9988f7fd`, BAREWire `6e212487aef5`, and clef-lang-spec
+`280efcc551a4`, with the specification's current working-copy clarifications.
+The tested binaries precede subsequent Lazy-factory source additions and the
+isolated explicit-demand foundation above. Those changes require their own
+coordinated build and combined gates; this sample's existing formation assertions
+do not establish ordinary call-by-need behavior. A private copy of the verified
+compiler cohort, its file hashes and control-run records are retained under
+`/tmp/composer-sequence-controls-v1/` so later source changes cannot alter that
+cohort's evidence.
+
+**Subsequent demand-contract correction.** The older source fixture requiring
+`Seq.map (effect; fun value -> value)` to have no retained environment assumed
+the supplied computation had already executed at formation. The governing
+[default demand and sharing contract](../../clef-lang-spec/spec/expressions.md#default-demand-and-sharing)
+leaves an unused ordinary argument, including its effects, unevaluated. Code
+identity alone cannot erase that computation. The revised source regression
+requires its original immutable binding, effect and capture initializer to
+remain one shared identity, and requires body reads to retain that exact slot.
+A separate positive case still requires a genuinely pure stateless callable
+to use plain code without an invented environment. Sequence-result destination
+preparation likewise retains each original ordinary actual, introducing only
+destination storage before the actual invocation. Native event-order and
+unused-argument observations belong to the combined G0 runtime gate; the
+earlier native sample pass above does not prove these corrected demand rules.
+
 ## Callable settlement and coordinated verification — 2026-09-26
 
 **Intermediate implementation checkpoint under the C-series delivery contract.**

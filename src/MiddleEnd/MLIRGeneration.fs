@@ -1,16 +1,17 @@
 /// MLIRGeneration - MiddleEnd orchestration layer
 ///
 /// Composer Pipeline Context:
-///   FrontEnd (CCS) → PSG → MiddleEnd → MLIR text → BackEnd (mliropt/LLVM)
+///   FrontEnd (CCS) → PSG → MiddleEnd → typed MLIR + text → BackEnd (mliropt/LLVM)
 ///
 /// This module is the PUBLIC API for the MiddleEnd. It orchestrates:
 ///   1. Alex transfer: witnesses traverse the saturated PSG, reading its codata → structured MLIROp
-///   2. Serialization: MLIROp → MLIR text (exit point)
+///   2. Serialization: MLIROp → portable MLIR text, retaining the exact operations
+///      for backend realization of target runtime primitives.
 ///
 /// Nothing about the program is computed here: every fact the witnesses read is on the graph
 /// (its nodes, layouts, ranges and `Codata`, settled by CCS at saturation). Composer reads.
 ///
-/// Clean signature: PSG + PlatformContext → MLIR text
+/// Clean signature: PSG + PlatformContext → witnessed MLIR and portable text
 module MiddleEnd.MLIRGeneration
 
 open System.IO
@@ -20,6 +21,7 @@ open Alex.Dialects.Core.Types
 open Alex.Dialects.Core.Serialize
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.MLIRTransfer
+open Core.Types.Pipeline
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC API
@@ -46,7 +48,7 @@ let private architectureOf (graph: SemanticGraph) (ctx: PlatformContext) : Archi
 
 /// Generate MLIR from PSG
 /// This is the single entry point for the MiddleEnd
-/// Returns (mlirText, externLibraries) on success.
+/// Returns (witnessed module, externLibraries) on success.
 /// ExternLibraries is the set of shared libraries needed by resolved bindings.
 let private generateCore
     (graph: SemanticGraph)
@@ -54,7 +56,7 @@ let private generateCore
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
     (linkedLibraries: Set<string>)
-    : Result<string * Set<string>, string> =
+    : Result<BackEndInput * Set<string>, string> =
 
     let arch = architectureOf graph platformCtx
     let codata = graph.Codata.Value
@@ -101,7 +103,8 @@ let private generateCore
             match Alex.Traversal.StaticStorageValidation.validate graph transformedOps with
             | Result.Error message -> Result.Error message
             | Result.Ok () ->
-                // Serialize MLIROp → MLIR text (exit point of MiddleEnd)
+                // Serialize the portable module; retain these exact operations
+                // at the backend boundary alongside this diagnostic artifact.
                 // NPU uses unnamed module (MLIR-AIE expects `module { aie.device(...) { } }`)
                 let mlirText =
                     match targetPlatform with
@@ -139,7 +142,10 @@ let private generateCore
                     | None -> ()
                 | _ -> ()
 
-                Result.Ok (mlirText, Set.union codata.Bindings.ExternLibraries linkedLibraries)
+                let witnessed =
+                    { Operations = transformedOps; PointerBits = arch.Pointer; Text = mlirText
+                      ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
+                Result.Ok (witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
         | Result.Error msg -> Result.Error msg
 
 /// Generate MLIR for the graph. A core's leg reads the declared Register and Pointer widths at
@@ -155,7 +161,7 @@ let generateWithLinkedLibraries
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
     (linkedLibraries: Set<string>)
-    : Result<string * Set<string>, string> =
+    : Result<BackEndInput * Set<string>, string> =
     let arch = architectureOf graph platformCtx
     let undeclared =
         match targetPlatform with

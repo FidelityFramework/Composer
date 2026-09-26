@@ -28,11 +28,11 @@
 
       <!-- Core Types -->
       <Compile Include="Core/Types/Dialects.fs" />
-      <Compile Include="Core/Types/Pipeline.fs" />
 
       <!-- Alex MLIR Type System (used by TypeMapping and Elements) -->
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Types.fs" />
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Serialize.fs" />
+      <Compile Include="Core/Types/Pipeline.fs" />
 
       <!-- CCS Integration (thin layer receiving SemanticGraph) -->
       <Compile Include="FrontEnd/CCS/Integration.fs" />
@@ -68,6 +68,8 @@
 
       <!-- Alex XParsec - Composable PSG pattern matchers -->
       <Compile Include="MiddleEnd/Alex/XParsec/PSGCombinators.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/SequenceOperands.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/LazyOperands.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/CallableOperands.fs" />
       <Compile Include="MiddleEnd/Alex/XParsec/Extensions.fs" />
 
@@ -76,6 +78,7 @@
       <Compile Include="MiddleEnd/Alex/Elements/MemRefElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/ArithElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/SCFElements.fs" />
+      <Compile Include="MiddleEnd/Alex/Elements/CFElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/FuncElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/IndexElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/CombElements.fs" />
@@ -92,12 +95,16 @@
       <Compile Include="MiddleEnd/Alex/Patterns/ClosurePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ControlFlowPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/LiteralPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/RequirementPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ContinuationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/EnvironmentPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/LazyPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/StringPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ApplicationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/CallablePatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/SequencePatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/MutableCallablePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MmioPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/BorrowedViewPatterns.fs" />
@@ -105,6 +112,7 @@
 
       <!-- Alex Witnesses - Category-based MLIR generation -->
       <Compile Include="MiddleEnd/Alex/Witnesses/LiteralWitness.fs" />
+      <Compile Include="MiddleEnd/Alex/Witnesses/RequirementWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/TypeAnnotationWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/IntrinsicWitness.fs" />
       <Compile Include="MiddleEnd/Alex/Witnesses/FunctionPointerWitness.fs" />
@@ -156,6 +164,7 @@
       <Compile Include="MiddleEnd/MLIRGeneration.fs" />
 
       <!-- BackEnd - LLVM -->
+      <Compile Include="BackEnd/LLVM/RequirementRealization.fs" />
       <Compile Include="BackEnd/LLVM/Lowering.fs" />
       <Compile Include="BackEnd/LLVM/Codegen.fs" />
       <Compile Include="BackEnd/LLVM/Pipeline.fs" />

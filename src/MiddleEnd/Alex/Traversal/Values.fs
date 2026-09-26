@@ -29,6 +29,8 @@ let returnMeetValue (lambdaId: NodeId) : SSA = V (NodeId.value lambdaId, 1100)
 let unitReturnValue (lambdaId: NodeId) : SSA = V (NodeId.value lambdaId, 1101)
 /// Code materialized alongside an occurrence's ordinary data/environment read.
 let callableCode (nodeId: NodeId) : SSA = V (NodeId.value nodeId, 1200)
+/// Each finite mutable-read arm has its own code value, with no bounded ordinal window.
+let callableAlternative (nodeId: NodeId) alternative : SSA = CallableAlternative (NodeId.value nodeId, alternative)
 /// The k-th value of a closure's callee prologue (capture extraction and env reconstruction).
 let prologueValue (lambdaId: NodeId) (k: int) : SSA = V (NodeId.value lambdaId, 2000 + k)
 /// The fixed work lanes of a settled continuation initializer/copy slot.

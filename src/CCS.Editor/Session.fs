@@ -66,17 +66,21 @@ module private Projection =
         | Some (MetadataValue.Type signature) -> signature
         | _ -> value.Type
 
+    let capturedReference graph =
+        let captured = Clef.Compiler.PSGSaturation.SemanticGraph.ClosureEnvironments.tryCapturedSourceReference graph
+        let lazyCaptured = Clef.Compiler.PSGSaturation.SemanticGraph.LazyValues.tryCapturedSourceReference graph
+        fun occurrence -> captured occurrence |> Option.orElseWith (fun () -> lazyCaptured occurrence)
+
     let sourceDefinition graph =
         let promoted = Clef.Compiler.PSGSaturation.SemanticGraph.ClosureEnvironments.trySourceDeclaration graph
+        let captured = capturedReference graph
         fun (value: SemanticNode) ->
             let declaration =
-                match promoted value.Id with
+                match captured value.Id |> Option.orElseWith (fun () -> promoted value.Id) with
                 | Some declaration -> Some declaration
                 | None ->
                     match value.Kind with
-                    | SemanticKind.VarRef(_, Some declaration)
-                    | SemanticKind.EnvironmentRead(_, declaration)
-                    | SemanticKind.EnvironmentBorrow(_, declaration) -> Some declaration
+                    | SemanticKind.VarRef(_, Some declaration) -> Some declaration
                     | _ -> None
             declaration |> Option.map (Clef.Compiler.PSGSaturation.SemanticGraph.DirectCaptures.sourceDefinition graph)
 
@@ -140,6 +144,7 @@ module private Projection =
                     SmtLib = query; QueryHash = query |> Encoding.UTF8.GetBytes |> hash
                 })
         let sourceDefinition = sourceDefinition graph
+        let capturedReference = capturedReference graph
         let hovers =
             graph.Nodes
             |> Map.toList
@@ -152,7 +157,7 @@ module private Projection =
                         sourceDefinition value |> Option.bind (fun source -> nodes.TryFind source)
                     let name =
                         match view.Name, value.Kind with
-                        | None, (SemanticKind.EnvironmentRead _ | SemanticKind.EnvironmentBorrow _) ->
+                        | None, (SemanticKind.EnvironmentRead _ | SemanticKind.EnvironmentBorrow _ | SemanticKind.LazyRead _) ->
                             definition |> Option.bind (fun declaration -> declaration.Name)
                         | _ -> view.Name
                     let anchors =
@@ -160,7 +165,9 @@ module private Projection =
                         | Some (MetadataValue.StringList values) -> values
                         | _ -> []
                     Some {
-                        NodeId = view.NodeId; Name = name; Kind = view.Kind; Type = view.Type
+                        NodeId = view.NodeId; Name = name
+                        Kind = if capturedReference id |> Option.isSome then "VarRef" else view.Kind
+                        Type = view.Type
                         Range = range; Definition = definition |> Option.bind (fun declaration -> declaration.Range); IsReachable = view.IsReachable
                         ValueRange = view.ValueRange; ObligationIds = anchors
                     })

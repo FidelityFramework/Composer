@@ -232,12 +232,15 @@ let pBuildForLoop (lower: SSA) (upper: SSA) (step: SSA) (bodyOps: MLIROp list) :
 // MATCH ELIMINATION (catamorphism elision)
 // ═══════════════════════════════════════════════════════════
 
-/// Extract the tag index from a CaseArm pattern.
-/// Union patterns carry tagIndex directly; others default to arm position.
-let private getArmTagIndex (armIndex: int) (pattern: Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern) : int =
+/// Read an explicitly supplied discriminant. A pattern's position is never
+/// evidence for its constructor tag or literal value.
+let private pArmDiscriminant (pattern: Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern) : PSGParser<int64> =
     match pattern with
-    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Union (_, tagIndex, _, _) -> tagIndex
-    | _ -> armIndex  // Const/Wildcard/Var patterns use positional index
+    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Union (_, tagIndex, _, _) -> preturn (int64 tagIndex)
+    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Int(value, _)) -> preturn value
+    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.UInt(value, _)) -> preturn (int64 value)
+    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Bool value) -> preturn (if value then 1L else 0L)
+    | _ -> fail (Message "A raw match discriminant requires an admitted constructor or scalar literal")
 
 /// Get the DU union type from a CaseArm pattern (for tag extraction).
 let private getScrutineeUnionType (arms: Clef.Compiler.PSGSaturation.SemanticGraph.Types.CaseArm list) : NativeType option =
@@ -259,7 +262,7 @@ let private getScrutineeUnionType (arms: Clef.Compiler.PSGSaturation.SemanticGra
 ///   arms - list of (armOps, armBodyValueNodeId, pattern) per arm
 ///   result - Some (resultSSA, resultType) if expression-valued, None if void
 ///   nodeId - the CaseElimination node's ID (for SSA allocation)
-let pBuildMatchElimination
+let private pBuildMultipleMatchElimination
     (scrutineeSSA: SSA) (scrutineeType: MLIRType) (scrutineeNodeId: NodeId)
     (arms: (MLIROp list * NodeId * Clef.Compiler.PSGSaturation.SemanticGraph.Types.CaseArm) list)
     (result: (SSA * MLIRType) option)
@@ -347,11 +350,11 @@ let pBuildMatchElimination
                         if armIdx >= numArms - 1 then preturn (List.rev acc)
                         else
                             let (_, _, arm) = arms.[armIdx]
-                            let tagIndex = getArmTagIndex armIdx arm.Pattern
                             let tagLitSSA = allSSAs.[1 + 2 * armIdx]
                             let cmpSSA = allSSAs.[1 + 2 * armIdx + 1]
                             parser {
-                                let! tagLitOp = pConstI tagLitSSA (int64 tagIndex) scrutineeType
+                                let! tagIndex = pArmDiscriminant arm.Pattern
+                                let! tagLitOp = pConstI tagLitSSA tagIndex scrutineeType
                                 let! cmpOp = pCombICmp cmpSSA ICmpPred.Eq scrutineeSSA tagLitSSA scrutineeType
                                 return! buildComparisons (armIdx + 1) ((tagLitOp, cmpOp, cmpSSA) :: acc)
                             }
@@ -528,6 +531,10 @@ let pBuildMatchElimination
                 // match intValue with | 0L -> ... | 1L -> ... | _ -> ...
 
                 let! allSSAs = getNodeSSAs nodeId
+                let! constantValues =
+                    arms |> List.take (numArms - 1)
+                    |> List.map (fun (_, _, arm) -> pArmDiscriminant arm.Pattern)
+                    |> Alex.XParsec.Extensions.sequence
 
                 // Step 1: Recall all arm value SSAs upfront, each at the join's width (its meet)
                 let! armValueSSAs =
@@ -569,16 +576,8 @@ let pBuildMatchElimination
 
                 let outerOps =
                     List.foldBack (fun i currentElseOps ->
-                        let (armOps, _, arm) = arms.[i]
-
-                        // Extract literal value from Pattern.Const
-                        let constValue =
-                            match arm.Pattern with
-                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Int (v, _)) -> v
-                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.UInt (v, _)) -> int64 v
-                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Bool true) -> 1L
-                            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Bool false) -> 0L
-                            | _ -> int64 i  // fallback to positional
+                        let (armOps, _, _) = arms.[i]
+                        let constValue = constantValues.[i]
 
                         let constLitSSA = allSSAs.[ssaOffset]
                         let cmpSSA = allSSAs.[ssaOffset + 1]
@@ -682,10 +681,14 @@ let pBuildMatchElimination
                     | None ->
                         lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
 
+                let! tagValues =
+                    arms |> List.take (numArms - 1)
+                    |> List.map (fun (_, _, arm) -> pArmDiscriminant arm.Pattern)
+                    |> Alex.XParsec.Extensions.sequence
                 let nestedOps =
                     List.foldBack (fun i currentElseOps ->
-                        let (armOps, _, arm) = arms.[i]
-                        let tagIndex = getArmTagIndex i arm.Pattern
+                        let (armOps, _, _) = arms.[i]
+                        let tagIndex = tagValues.[i]
 
                         let tagLitSSA = allSSAs.[ssaOffset]
                         let cmpSSA = allSSAs.[ssaOffset + 1]
@@ -723,4 +726,78 @@ let pBuildMatchElimination
                     return (allOps, TRValue { SSA = resultSSA; Type = resultType })
                 | None ->
                     return (allOps, TRVoid)
+    }
+
+/// A selected singleton has no physical join. Return the actual body carrier,
+/// after its source-settled width adaptation, rather than an undefined join SSA.
+/// MatchWitness has already checked the terminal requirement at this occurrence.
+let pBuildMatchElimination
+    (scrutineeSSA: SSA) (scrutineeType: MLIRType) (scrutineeNodeId: NodeId)
+    (arms: (MLIROp list * NodeId * Clef.Compiler.PSGSaturation.SemanticGraph.Types.CaseArm) list)
+    (result: (SSA * MLIRType) option)
+    (nodeId: NodeId)
+    : PSGParser<MLIROp list * TransferResult> =
+    parser {
+        do! ensure (arms |> List.forall (fun (_, _, arm) -> arm.Guard.IsNone && arm.Bindings.IsEmpty))
+                "Match patterns require Baker's bindings and guards inside the selected body"
+        let allIrrefutable =
+            arms |> List.forall (fun (_, _, arm) ->
+                match arm.Pattern with
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Record _
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Tuple _
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var _ -> true
+                | _ -> false)
+        do! ensure (arms.Length < 2 || not allIrrefutable)
+                "Baker must settle ordered irrefutable arms and their guards before match composition"
+        let hasConstant =
+            arms |> List.exists (fun (_, _, arm) ->
+                match arm.Pattern with Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const _ -> true | _ -> false)
+        if hasConstant then
+            let! state = getUserState
+            let inputType =
+                state.Graph.Nodes.TryFind scrutineeNodeId
+                |> Option.map (fun node -> Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type)
+            let exactInteger value =
+                match inputType, scrutineeType, nodeRange state.Graph scrutineeNodeId with
+                | Some inputType, TInt(IntWidth bits), Some range when Types.isIntegerType inputType && bits > 0 ->
+                    let low, high =
+                        if ValueRange.isNonNegative range then 0I, (1I <<< bits) - 1I
+                        else -(1I <<< (bits - 1)), (1I <<< (bits - 1)) - 1I
+                    ValueRange.width range |> Option.exists (fun width -> width <= bits && value >= low && value <= high)
+                | _ -> false
+            let supported pattern =
+                match pattern with
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const(NativeLiteral.Bool _) ->
+                    inputType = Some Types.boolType && scrutineeType = TInt(IntWidth 1)
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const(NativeLiteral.Int(value, _)) -> exactInteger (bigint value)
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const(NativeLiteral.UInt(value, _)) -> exactInteger (bigint value)
+                | _ -> false
+            let irrefutable pattern =
+                match pattern with
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard -> true
+                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var(_, ty) ->
+                    inputType = Some(Clef.Compiler.NativeTypedTree.UnionFind.applySubst ty)
+                | _ -> false
+            let patterns = arms |> List.map (fun (_, _, arm) -> arm.Pattern)
+            let admitted =
+                match patterns with
+                | [pattern] -> supported pattern
+                | [] -> false
+                | _ -> irrefutable (List.last patterns) && (patterns |> List.take (patterns.Length - 1) |> List.forall supported)
+            do! ensure admitted "Raw constant CaseElimination needs exact scalar literals and an explicit final default; Baker must elaborate other constants through typed equality"
+        else
+            do! preturn ()
+        match arms with
+        | [] -> return! fail (Message "CaseElimination requires a selected body")
+        | [(operations, bodyId, _)] ->
+            match result with
+            | None -> return operations, TRVoid
+            | Some (_, expectedType) ->
+                let! bodySSA, bodyType = pRecallNode bodyId
+                let! adaptations, actualSSA, actualType = pAdapt nodeId bodyId bodySSA bodyType
+                do! ensure (actualType = expectedType) "Selected match body does not satisfy its settled result carrier"
+                return operations @ adaptations, TRValue { SSA = actualSSA; Type = actualType }
+        | _ ->
+            return! pBuildMultipleMatchElimination scrutineeSSA scrutineeType scrutineeNodeId arms result nodeId
     }

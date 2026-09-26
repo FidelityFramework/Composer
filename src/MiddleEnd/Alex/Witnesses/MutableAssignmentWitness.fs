@@ -14,6 +14,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemRefPatterns
+open Alex.Patterns.MutableCallablePatterns
 open Alex.Dialects.Core.Types
 
 // ═══════════════════════════════════════════════════════════
@@ -35,8 +36,26 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
                 | Some bindingNode when ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode -> Some (bindingId, bindingNode)
                 | _ -> None
             | _ -> None
-        match slotTarget with
-        | Some (bindingId, bindingNode) ->
+        let callableTarget =
+            let rec declaration id =
+                match ctx.Graph.Nodes.TryFind id with
+                | Some { Kind = SemanticKind.VarRef(_, Some binding) } ->
+                    match ctx.Graph.Nodes.TryFind binding with
+                    | Some { Kind = SemanticKind.Binding(_, true, _, _); Type = ty } ->
+                        match Clef.Compiler.NativeTypedTree.UnionFind.applySubst ty with
+                        | NativeType.TFun _ -> Some binding
+                        | _ -> None
+                    | _ -> None
+                | Some { Kind = SemanticKind.TypeAnnotation(inner, _) } -> declaration inner
+                | _ -> None
+            declaration targetId
+        match slotTarget, callableTarget with
+        | _, Some binding ->
+            match tryMatchWithDiagnostics (pAssignMutableCallable ctx binding node.Id)
+                          ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error reason -> WitnessOutput.error $"Mutable callable assignment: {reason}"
+        | Some (bindingId, bindingNode), None ->
             match MLIRAccumulator.recallNode valueId ctx.Accumulator with
             | Some (rawSSA, rawTy) ->
                 let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> "value"
@@ -49,7 +68,7 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
                 | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"Module value assignment: {diagnostic}"
             | None -> WitnessOutput.error "Module value assignment: Value not yet witnessed"
-        | None ->
+        | None, None ->
 
         let memrefResult =
             match SemanticGraph.tryGetNode targetId ctx.Graph with

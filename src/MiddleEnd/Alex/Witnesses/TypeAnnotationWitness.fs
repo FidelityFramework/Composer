@@ -16,6 +16,9 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.XParsec.PSGCombinators  // For findLastValueNode
+open Alex.Patterns.CallablePatterns
+open Alex.Patterns.SequencePatterns
+open Alex.Patterns.LazyPatterns
 
 // ═══════════════════════════════════════════════════════════
 // WITNESS IMPLEMENTATION (XParsec patterns only)
@@ -26,6 +29,22 @@ open Alex.XParsec.PSGCombinators  // For findLastValueNode
 let private witnessTypeAnnotation (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     // Use XParsec pattern to extract wrapped node ID
     match tryMatch pTypeAnnotation ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+    | Some ((wrappedId, _), _) when isLazyValue ctx node ->
+        match tryMatchWithDiagnostics (pLazyForward ctx wrappedId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error reason -> WitnessOutput.error $"Lazy annotation: {reason}"
+    | Some ((wrappedId, _), _) when isSequenceValue ctx node ->
+        match tryMatchWithDiagnostics (pSequenceForward ctx wrappedId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error reason -> WitnessOutput.error $"Sequence annotation: {reason}"
+    | Some ((wrappedId, _), _) when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with Clef.Compiler.NativeTypedTree.NativeTypes.NativeType.TFun _ -> true | _ -> false) ->
+        match tryMatch pIntrinsicCalleeAnnotation ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | None ->
+            match tryMatchWithDiagnostics (pCallableForward ctx wrappedId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error reason ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Callable") (Some "annotation") reason
     | Some ((wrappedId, annotatedType), _) ->
         // Traverse Sequential structure to find actual value-producing node
         // Sequential nodes are structural scaffolding - not witnesses

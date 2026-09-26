@@ -40,11 +40,15 @@ the generic example alone is not an accepted executable or a fabricated bound.
 
 The source contracts are:
 
-- Creating the sequence preserves capture formation and eager operand evaluation;
-  it does not execute the deferred generator body.
+- Creating the sequence preserves established capture values and shared deferred
+  identities under the [evaluation strategy contract](../Evaluation_Strategy_Contract.md);
+  it forces neither unused operand initializers nor the deferred generator body.
 - A pull follows source evaluation order until a yield or exhaustion. Resuming
   continues after that yield, including the remainder of the loop body before
   the next guard evaluation.
+- A yielded payload can retain a shared deferred computation. Successful-pull
+  observation alone does not force an unused payload; demand for current's value
+  shares the computation and requires storage valid for every retained use.
 - Every yield in one sequence constrains that owner's element type. Nested
   sequences have independent owners. `yield!` supplies a sequence of the same
   element type, retaining NTU dimensions and type constraints.
@@ -99,7 +103,7 @@ to their Baker recipes.
 | Stage | Current owner | Output and ordering requirement |
 |-------|---------------|---------------------------------|
 | Source checking | CCS computation checking | Actual sequence owner before body checking; one fresh element constraint per owner; real typed generator formal with a source-point anchor |
-| Producer formation | Shared sequence ingredient and producer recipes | Eager operand snapshots, deferred body references and actual `SeqGenerator` nodes; ordinary producer calls retain their public source ranges |
+| Producer formation | Shared sequence ingredient and producer recipes | Established values or shared deferred operands, body references and actual `SeqGenerator` nodes; preserve original captures, demand boundaries and public source ranges; inherited eager snapshots require reconciliation |
 | Consumption | `SequenceConsumption` / `SequenceConsumptionRecipes` | Iterator creation, guarded pulls and an immutable source loop declaration with real identity |
 | Delimiter ownership | `SequenceOwnership` / `SequenceOwnershipRecipes` | Joint owner/generator relation to each owned suspension site; rerun after delegation |
 | Delegation | `SequenceDelegation` / `SequenceDelegationRecipes` | Owner-local iterator binding, while/moveNext, current binding and yield; original `yield!` identity/range retained as a unit wrapper |

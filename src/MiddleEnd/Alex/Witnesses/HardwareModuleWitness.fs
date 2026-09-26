@@ -304,7 +304,15 @@ let private witnessHardwareModule
         let combinator = getCombinator()
         match resolveStepBindingTarget ctx.Graph stepNodeId with
         | Some stepBindingNode ->
-            visitAllNodes combinator ctx stepBindingNode ctx.TraversalVisited
+            // Step resolves a reference to a separate declaration. Enter that
+            // reference boundary explicitly; it is not a child of this binding.
+            match Alex.Traversal.PSGZipper.create ctx.Graph stepBindingNode.Id with
+            | Some stepZipper ->
+                visitAllNodes combinator { ctx with Zipper = stepZipper } stepBindingNode ctx.TraversalVisited
+            | None ->
+                Diagnostic.error (Some node.Id) (Some "HardwareModule") (Some "Step reference")
+                    "The resolved Step declaration is absent from the current graph"
+                |> fun diagnostic -> MLIRAccumulator.addError diagnostic ctx.Accumulator
         | None -> ()
 
         // ── 4. Extract InitialState reset values (preserves NativeLiteral width) ──

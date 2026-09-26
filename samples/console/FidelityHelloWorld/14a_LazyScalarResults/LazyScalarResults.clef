@@ -1,0 +1,47 @@
+/// C-05: demanded typed results and exact effect counts.
+module LazyScalarResults
+
+open Console
+
+[<Measure>] type m
+[<Measure>] type s
+
+let mutable factoryExecutions = 0
+let make value = lazy (factoryExecutions <- factoryExecutions + 1; value)
+
+[<EntryPoint>]
+let main _ =
+    Console.writeln "=== Lazy Scalar Results (C-05) ==="
+
+    let mutable delayedExecutions = 0
+    let delayed = lazy (delayedExecutions <- delayedExecutions + 1; 13)
+    Console.writeln (if delayedExecutions = 0 then "Before demand: 0" else "FAIL: premature force")
+    let delayedAlias = delayed
+    let first = Lazy.force delayedAlias
+    let second = Lazy.force delayed
+    Console.writeln (if first = 13 && second = 13 && delayedExecutions = 1 then "Demanded alias: 1" else "FAIL: alias cache")
+
+    let mutable unitExecutions = 0
+    let action = lazy (unitExecutions <- unitExecutions + 1)
+    // These explicit sequential unit expressions demand the force itself;
+    // passing a force to ignore would leave that ordinary argument deferred.
+    Lazy.force action
+    Lazy.force action
+    Console.writeln (if unitExecutions = 1 then "Unit cache: 1" else "FAIL: unit cache")
+
+    let boolean = lazy false
+    Console.writeln (if not (Lazy.force boolean) && not (Lazy.force boolean) then "Boolean cache: false" else "FAIL: Boolean cache")
+    let integer = lazy -7
+    Console.writeln (if Lazy.force integer = -7 && Lazy.force integer = -7 then "Integer cache: -7" else "FAIL: integer cache")
+    let real = lazy 1.25
+    Console.writeln (if Lazy.force real = 1.25 && Lazy.force real = 1.25 then "Real cache: 1.25" else "FAIL: real cache")
+    let distance = lazy 7<m>
+    Console.writeln (if Lazy.force distance = 7<m> && Lazy.force distance = 7<m> then "Measured integer cache: 7<m>" else "FAIL: measured integer cache")
+    let duration = lazy 2.5<s>
+    Console.writeln (if Lazy.force duration = 2.5<s> && Lazy.force duration = 2.5<s> then "Measured real cache: 2.5<s>" else "FAIL: measured real cache")
+
+    let left = make true
+    let right = make false
+    let leftAlias = left
+    Console.writeln (if Lazy.force left && not (Lazy.force right) && Lazy.force leftAlias && factoryExecutions = 2 then "Independent factories: 2" else "FAIL: factory instances")
+    0

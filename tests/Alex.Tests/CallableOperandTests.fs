@@ -226,13 +226,29 @@ let private higherOrder captured returnsCallable =
     let implementation = builder.Create(SemanticKind.Lambda(["input", parameterType, parameter.Id], body.Id,
                                                             [], None, LambdaContext.RegularClosure), ty, dummyRange)
     let binding = builder.Create(SemanticKind.Binding("higher", false, false, None), ty, dummyRange, children = [implementation.Id])
-    if not returnsCallable then
-        let callee = builder.Create(SemanticKind.VarRef("higher", Some binding.Id), ty, dummyRange)
-        builder.Create(SemanticKind.Application(callee.Id, [fixture.Owner]), body.Type, dummyRange) |> ignore
-    let extension = builder.Build []
+    let main =
+        if returnsCallable then None
+        else
+            // A formal may inherit an actual's carrier only through complete
+            // internal ingress rooted in a real startup activation.
+            let callee = builder.Create(SemanticKind.VarRef("higher", Some binding.Id), ty, dummyRange)
+            let call = builder.Create(SemanticKind.Application(callee.Id, [fixture.Owner]), body.Type, dummyRange)
+            let unit = builder.Create(SemanticKind.PatternBinding "unit", Types.unitType, dummyRange)
+            let entryType = NativeType.TFun(Types.unitType, body.Type)
+            let entry = builder.Create(SemanticKind.Lambda(["unit", Types.unitType, unit.Id], call.Id,
+                                                         [], None, LambdaContext.RegularClosure), entryType, dummyRange)
+            let main = builder.Create(SemanticKind.Binding("main", false, false, Some DeclRoot.EntryPoint), entryType,
+                                      dummyRange, children = [entry.Id])
+            builder.SetParent(entry.Id, main.Id)
+            Some main.Id
+    let roots = main |> Option.map (fun id -> [id, DeclRoot.EntryPoint]) |> Option.defaultValue []
+    let extension = builder.Build roots
     let raw =
         { fixture.Graph with Nodes = extension.Nodes |> Map.fold (fun nodes id node -> Map.add id node nodes) fixture.Graph.Nodes
-                             Edges = fixture.Graph.Edges @ extension.Edges }
+                             Edges = fixture.Graph.Edges @ extension.Edges
+                             DeclarationRoots = roots }
+    let raw, startupErrors = Clef.Compiler.Nanopass.ProgramInitialization.normalize (Option.toList main) raw
+    Assert.Empty startupErrors
     let callable = if returnsCallable then body.Id else parameter.Id
     let inputs =
         if captured then

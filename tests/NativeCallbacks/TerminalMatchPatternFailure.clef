@@ -1,0 +1,9 @@
+module TerminalMatchPatternFailure
+
+let private choose (input: bool option) =
+    match input with
+    | Some value -> value
+
+[<EntryPoint>]
+let main _ =
+    if choose None then 212 else 213

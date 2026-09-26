@@ -15,12 +15,14 @@ checks pass. Record the actual source, component, artifact and execution evidenc
 with the coordinated repository revisions; an intermediate checkpoint does not
 close a whole feature gate.
 
-Keep a coupled migration in an isolated worktree when completing its contract
-would exceed the verified checkpoint. Preserve its code and failing evidence,
-then continue the migration against the new baseline. Do not invent a missing
-origin, relax a lifetime proof, weaken an oracle or introduce an alternate emitter
-to make the checkpoint green. An authorized push contains the reproducible,
-verified scope; the worktree retains the ongoing integration.
+Use the agreed integration branch and keep the working location visible to the
+team. If an isolated worktree is useful during a coupled migration, record its
+branch and integration boundary; bring the coordinated changes into the agreed
+branch at the checkpoint. Preserve failing evidence while correcting its owner.
+Do not invent a missing origin, relax a lifetime proof, weaken an oracle or
+introduce an alternate emitter to make the checkpoint green. An intermediate
+checkpoint contains a reproducible, verified scope and an explicit account of
+the next acceptance work; it does not silently leave companion changes elsewhere.
 
 ## Checks for an implementation step
 
@@ -98,6 +100,23 @@ the projection checks together with source-input, visibility and editing checks.
 the [runner README](../tests/regression/README.md) documents harness checks and
 native case selection.
 
+For capture source projection, the bounded .NET live-server gate checks actual
+stdio hover/definition requests, a located unsaved dimensional error, obsolete
+revision rejection and repair. Build the aligned server before running it; the
+client does not rebuild shared outputs:
+
+```bash
+dotnet build src/Lattice.Server/Lattice.Server.fsproj
+dotnet fsi tests/CCS.Editor.Tests/LiveCaptureChecks.fsx -- \
+  src/Lattice.Server/bin/Debug/net10.0/Lattice.Server.dll \
+  /tmp/lattice-capture-checks
+```
+
+The evidence directory must be new. It retains the complete protocol transcript,
+server stderr and the compiler identity returned by the real server. This is a
+source projection/editing gate, not native execution or a claim of general
+incremental compilation.
+
 ## When to run the broader gates
 
 Run the full relevant regression suites at a major integration checkpoint and
@@ -121,6 +140,40 @@ skipped entries as well as failures; it cannot close promised behavior omitted
 or skipped by that manifest. A full C-xx closure reconciles every promised
 operation and composition against actual evidence and preserves the relevant
 cross-family controls. Passing selected samples cannot stand in for that review.
+
+## Pruned diagnostic artifacts
+
+Use `--prune-intermediates` on the compiler or regression runner for focused
+checks whose artifact inspection begins at reachable code:
+
+```bash
+dotnet fsi tests/regression/Runner.fsx -- \
+  --sample 16h_SequenceApplications --sample 16a_SequenceOperations \
+  --jobs 2 --prune-intermediates --results /tmp/composer-pruned-checks
+```
+
+The flag keeps intermediates and selects PSG nodes before rendering their kinds,
+types and JSON. It starts with reachable nodes and declared roots, then retains
+every participant of any connected joint evidence relation, transitively. A
+non-executable capture, range premise, obligation or lifetime participant can
+therefore remain in this view with `isReachable: false`. This preserves the
+evidence needed to understand the selected facts without marking it executable.
+
+The compiler's graph, Baker saturation and Alex traversal use the same complete
+snapshot in both modes. This projection is not an incremental compilation
+partition or permission to remove semantic dependencies. Ordinary containment
+and reference incidence stays intact; references to nodes outside the view are
+listed in `view.externalNodeIds`. A reference absent even from the original graph
+appears in `view.missingNodeIds`, so pruning cannot disguise a dangling premise.
+The `view` object records the source and emitted node/edge counts; `summary`
+continues to describe the full phase.
+
+Run the compiler with `-k` alone, or omit `--prune-intermediates` from the runner,
+for full dumps when inspecting omitted declarations or reachability itself.
+The runner records the selected mode in `run.json`. For a projection change,
+compare native output and lowered artifacts between full and pruned modes using
+the same compiler snapshot; a smaller JSON file alone is not an equivalence
+check.
 
 ## Concurrency, evidence and honest outcomes
 

@@ -36,6 +36,7 @@ dotnet fsi Runner.fsx -- --timeout 60
 | `--verbose` | Show detailed output including compile errors and diff details. |
 | `--timeout SEC` | Override the default timeout for all samples. |
 | `--jobs N` | Maximum independent compiler/native jobs per phase; positive integer, default `1`. |
+| `--prune-intermediates` | Retain reachable PSG nodes and the complete participant closure of joint evidence. The default retains full dumps. Recorded in `run.json`. |
 | `--results DIR` | Parent directory for a unique run directory and retained artifacts. Defaults to `/tmp/composer-checks` on Linux. |
 | `--manifest FILE` | Read a different sample manifest. |
 | `--help` | Show help message. |
@@ -81,7 +82,7 @@ open. Keep the selected expectations and retain the runner's artifact directory.
 
 1. **Selection**: Reads the manifest and validates every requested filter before building.
 2. **Private Host, Compiler Build and Snapshot**: Builds the .NET process host into this run's private directory, using `--artifacts-path` for isolated build intermediates. Then builds Composer once, including its selected CCS dependency, copies the compiler output into this run's private directory and records its hashes.
-3. **Compilation Phase**: Compiles samples in independent CLI jobs, at most `--jobs N` at a time, **with the full `-k` artifacts retained**.
+3. **Compilation Phase**: Compiles samples in independent CLI jobs, at most `--jobs N` at a time, with full `-k` artifacts retained by default. `--prune-intermediates` selects the [pruned diagnostic view](../../docs/Regression_Check_Policy.md#pruned-diagnostic-artifacts) while preserving compilation semantics and complete joint evidence.
 4. **Execution Phase**: After every compilation finishes, runs successfully compiled binaries with the same worker bound and compares output.
    - If `stdin_file` is set in `Manifest.toml`, Runner pipes that input to the binary (manifest-driven interactive coverage).
    - A native nonzero exit always fails, even if stdout matches the expectation.
@@ -140,7 +141,7 @@ same project or use the same binary name:
     run.stderr.log
     run.status
     <binary>
-    intermediates/          # full -k graph, recipe and lowering artifacts
+    intermediates/          # selected PSG view, recipe and lowering artifacts
 ```
 
 Native execution retains the sample directory as its working directory for

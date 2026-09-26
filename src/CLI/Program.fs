@@ -26,6 +26,7 @@ type CompileArgs =
     | Artifacts_Dir of path: string
     | [<AltCommandLine("-t")>] Target of target: string
     | [<AltCommandLine("-k")>] Keep_Intermediates
+    | Prune_Intermediates
     | [<AltCommandLine("-v")>] Verbose
     | [<AltCommandLine("-T")>] Timing
     | Emit_MLIR
@@ -48,6 +49,7 @@ type CompileArgs =
             | Artifacts_Dir _ -> "Compilation artifact directory (default: project's targets); use a distinct directory per concurrent invocation"
             | Target _ -> "Target triple (default: host platform)"
             | Keep_Intermediates -> "Keep intermediate files (.mlir, .ll, .bc) for debugging"
+            | Prune_Intermediates -> "Keep intermediates with PSG dumps limited to reachable nodes and complete joint evidence; use -k alone for full dumps"
             | Verbose -> "Enable verbose output"
             | Timing -> "Show timing for each compilation phase"
             | Emit_MLIR -> "Emit MLIR and stop (don't generate executable)"
@@ -112,6 +114,7 @@ let private executeCompile (args: ParseResults<CompileArgs>) : int =
             LinkerScript = args.TryGetResult(Linker_Script)
         }
         KeepIntermediates = args.Contains(Keep_Intermediates)
+        PruneIntermediates = args.Contains(Prune_Intermediates)
         EmitMLIROnly = args.Contains(Emit_MLIR)
         EmitLLVMOnly = args.Contains(Emit_LLVM)
         Verbose = args.Contains(Verbose)

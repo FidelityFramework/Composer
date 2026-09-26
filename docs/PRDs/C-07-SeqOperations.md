@@ -27,38 +27,40 @@ is the starting point for the remaining composition gates.
 
 ## 1. Feature and semantic commitments
 
-Sequence operations compose deferred producers and eager consumers over Clef
+Sequence operations compose deferred producers and demand-driven consumers over Clef
 `seq<'T>`. Source NTU element, callback, accumulator and dimensional constraints
 survive graph construction and proof settlement. Physical placement does not
 replace those types with a universal integer width or an erased object carrier.
 
 | Operation | Source contract | Required evaluation behavior |
 |-----------|-----------------|------------------------------|
-| `map` | `('T -> 'U) -> seq<'T> -> seq<'U>` | Lazily invoke the mapper once per pulled input element |
+| `map` | `('T -> 'U) -> seq<'T> -> seq<'U>` | Retain a shared mapped computation per pulled element; demand the mapper result only when the output payload is demanded |
 | `filter` | `('T -> bool) -> seq<'T> -> seq<'T>` | Pull until a predicate accepts an element or the input exhausts; preserve order |
 | `append` | `seq<'T> -> seq<'T> -> seq<'T>` | Enumerate the first input to exhaustion, then the second |
 | `collect` | `('T -> seq<'U>) -> seq<'T> -> seq<'U>` | Invoke the mapper once per outer element and fully enumerate that inner result before advancing the outer input |
 | `take` | `int -> seq<'T> -> seq<'T>` | Yield at most the requested count; stop on earlier input exhaustion; never pull after the limit |
-| `fold` | `('S -> 'T -> 'S) -> 'S -> seq<'T> -> 'S` | Consume immediately in order, preserving independent accumulator and element types |
-| `iter` | `('T -> unit) -> seq<'T> -> unit` | Consume immediately and perform one ordered action per element |
+| `fold` | `('S -> 'T -> 'S) -> 'S -> seq<'T> -> 'S` | On result demand traverse in order; preserve independent state types and leave ignored initial/intermediate states deferred |
+| `iter` | `('T -> unit) -> seq<'T> -> unit` | On effect demand consume and perform one ordered action per element |
 | `exists` | `('T -> bool) -> seq<'T> -> bool` | Stop on the first true predicate; return false on exhaustion |
 | `forall` | `('T -> bool) -> seq<'T> -> bool` | Stop on the first false predicate; return true on exhaustion |
 | `tryHead` | `seq<'T> -> option<'T>` | Return the first successfully pulled value, or None on exhaustion, with no later pull |
 | `tryPick` | `('T -> option<'U>) -> seq<'T> -> option<'U>` | Retain each chooser result once; stop on the first Some, or return None after exhaustion |
 
-Constructing a producer evaluates its supplied expressions in source argument
-order and preserves their values/captured storage. It does not run its deferred
-iterator body or invoke callbacks prematurely. A consumer likewise evaluates its
-supplied expressions before iteration; moving an argument into a loop must not
-repeat its formation effects.
+The [evaluation strategy contract](../Evaluation_Strategy_Contract.md) governs
+formation and demand. Constructing a producer retains supplied established values
+or shared deferred computations and original captured storage; it does not force
+unused initializers, execute its iterator body or invoke callbacks. A consumer
+enumerates when its result or explicit effect is demanded. Moving an operand
+through a recipe must neither force it early nor recreate it on repeated pulls.
 
 Each enumeration owns independent iteration state. Copies of sequence or callback
 values preserve the identities of referenced mutable cells. Re-enumeration must
 not copy another iterator's progress, deep-copy external mutable captures or
-repeat an operand initializer that already ran at producer formation.
+replay an operand initializer that has already been demanded. Capturing an
+unevaluated binding retains its shared identity rather than forcing its value.
 
 `take` checks its remaining count before asking the input for an element. Zero or
-negative remaining count produces no pull. A shorter input completes normally;
+negative remaining count does not demand input formation or produce a pull. A shorter input completes normally;
 this PRD does not import F#/CLR exception behavior. Filtering can require several
 upstream pulls to produce one output, and a downstream limit must stop the entire
 upstream demand chain at the correct point.
@@ -123,12 +125,19 @@ records native 16a–g and their actual compiler artifacts. Its bounded successe
 supersede the earlier blanket statements that native producer, consumer and
 search conformance are all pending. Wider forms remain acceptance work.
 
+Those dated results include inherited strict-operand behavior. They do not settle
+the September 26 lazy-default correction: unused effectful operands remain
+deferred, and repeated demands share one computation. Audit native traces and
+graph tests against that contract, retaining valid type, residence and selected-
+effect assertions while replacing only superseded eager expectations with an
+independent demand oracle and its owning implementation change.
+
 | Area | Present in source | Remaining work |
 |------|-------------------|----------------|
-| `map`, `filter`, `collect`, `append` | Baker producer recipes snapshot eager arguments, construct typed generator-local capture references and use the shared iterator/delegation ingredient; 16a–d exercise bounded native composition | Extend retained/returned input and callback residence, full callable forms and aggregate captures; preserve the tested child-storage cases while extending `collect` |
+| `map`, `filter`, `collect`, `append` | Baker producer recipes historically snapshot arguments eagerly, construct typed generator-local capture references and use the shared iterator/delegation ingredient; 16a–d record bounded native composition | Reconcile formation and yielded-payload demand; extend retained/returned input and callback residence, full callable forms and aggregate captures; preserve child-storage correctness while extending `collect` |
 | `take` | Public scheme and producer dispatch; fresh remaining count, positive-demand guard and decrement after success; bounded demand/native composition passes | Extend stored partials and wider source/storage forms without regressing nonpositive/exact/short-input or upstream post-yield traces |
-| `iter` | Public scheme and consumer dispatch; callback/input snapshots precede shared ordered iteration; bounded native effects pass | Stored actions and wider callable/payload residence; preserve unit results, empty-input behavior and ordered effects |
-| `fold` | Independent `<'S,'T>` source scheme, checked state type and eager operand snapshots; bounded native independent-state and empty cases pass | Both retained partial frontiers, aggregate/function state where admitted, general callback environments and source application forms |
+| `iter` | Public scheme and consumer dispatch with historical pre-iteration snapshots; bounded native effect results are recorded | Demand action only for required successful pulls; stored actions and wider callable/payload residence; preserve unit results, empty-input behavior and ordered effects |
+| `fold` | Independent `<'S,'T>` source scheme, checked state type and historical eager snapshots; bounded native independent-state and empty cases are recorded | Default operand/state demand, both retained partial frontiers, aggregate/function state, general callback environments and source application forms |
 | `exists`, `forall` | Predicate schemes and `iterateWhile` dispatch; native short circuit and empty results are recorded | Stored predicate operations and broader callable/storage composition; preserve both stopping polarities and exact callback counts |
 | `length`, `toList`, `toArray` | Their accumulator construction now uses the same `seqFoldLeft` binding/while path as `fold`, replacing its former recursion; list/array conversion still goes through reversed-list construction and List operations | Own input effects, count/extent/range and materialization contracts plus native gates; the shared iteration change does not establish List allocation or array conversion conformance |
 | `isEmpty` | Recipe makes one pull and negates its result | Establish native source/effect behavior; do not turn a zero-cut effectful input into a skipped pull |
@@ -215,9 +224,11 @@ yield. Retain the original count type/range premises and source formation effect
 This law must hold through a composed filter/map pipeline, including count zero
 and an input that can continue indefinitely.
 
-`fold` and `iter` now compose ordered consumer actions with the shared iterator
-protocol. Folder state and element types remain independent; callback and input
-snapshots precede enumeration. `exists`/`forall` retain their last Boolean decision
+`fold` and `iter` compose consumer actions with the shared iterator protocol.
+Folder state and element types remain independent. The inherited eager snapshot
+path must retain deferred operand/state identities and force them only under the
+specified demand contract; an immediate accumulator requires a strictness proof.
+`exists`/`forall` retain their last Boolean decision
 and admit another pull only while it has not become decisive. Native conformance
 for bounded paths is recorded in 16a–g; retained operations and wider callable
 forms remain open. `length`, list/array materialization and extremum operations
@@ -237,7 +248,8 @@ an independent consumer improvement whose premises are already settled.
 
 1. **Stored and bare operation values through C-01/C-02.** Use unchanged
    `16h_SequenceApplications` as the first application gate. Elaborate each
-   partial frontier with retained supplied values and formation effects; preserve
+   partial frontier with retained established values or shared deferred operands;
+   audit expected effects against the clarified demand contract and preserve
    public schemes, lexical binding and dimensions. Chasing an alias must not
    replay its initializer. Full callable use classification must account for
    every reachable use, including unresolved partials.

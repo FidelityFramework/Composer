@@ -24,6 +24,21 @@ open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 // MEMORY OPERATIONS
 // ═══════════════════════════════════════════════════════════
 
+/// Copy an admitted opaque representation through standard memref.copy. Source
+/// proof owns allocation extent, separation, lifetime and capture identity.
+/// This operation does not load uninitialized fields as source values. Static
+/// contiguous byte views retain memcpy lowering rather than a typed field loop.
+let pOpaqueStorageCopy (destination: SSA) (source: SSA) (bytes: int) (alignment: int) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        do! ensure (bytes > 0) "Opaque storage copy requires a positive admitted extent."
+        do! ensure (alignment > 0 && (alignment &&& (alignment - 1)) = 0) "Opaque storage copy requires a positive power-of-two admitted alignment."
+        let storageType = TMemRefStatic(bytes, TInt(IntWidth 8))
+        do! ensure (MLIRAccumulator.recallSSAType source state.Accumulator = Some storageType) "Opaque storage copy source must be the exact registered static byte view."
+        do! ensure (MLIRAccumulator.recallSSAType destination state.Accumulator = Some storageType) "Opaque storage copy destination must be the exact registered static byte view."
+        return MLIROp.MemRefOp(MemRefOp.Copy(source, destination, storageType, storageType))
+    }
+
 /// Emit memref.load operation (derives types monadically from the accumulator)
 /// memrefType: derived from accumulator SSA type index (the source memref's type)
 /// elemType: the memref's element type (a load yields the slot's value; a read held at another

@@ -11,7 +11,8 @@ open Core.Timing
 /// The AIE backend: MLIR-AIE text → xclbin + NPU instructions
 let backend : BackEnd = {
     Name = "AIE"
-    Compile = fun mlirText ctx ->
+    Compile = fun witnessed ctx ->
+        let mlirText = witnessed.Text
         // Write MLIR-AIE to file for aiecc.py input
         let mlirPath =
             match ctx.IntermediatesDir with

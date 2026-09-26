@@ -32,7 +32,16 @@ let pRecallEnvironment source (layout: EnvironmentLayout) = parser {
     do! ensure ((state.Graph.Codata.Value.EnvironmentOrigins |> Map.tryFind source) = Some layout.Owner)
             $"Environment occurrence {NodeId.value source} lacks its exact layout identity"
     let! expected = pEnvironmentType layout
-    let! value, actual = pRecallNode source
+    let! value, actual =
+        match MLIRAccumulator.recallCallable source state.Accumulator with
+        | Some callable ->
+            match Alex.Traversal.CallableOperands.exactCarrier callable |> Option.bind _.Environment, callable.Environment with
+            | Some contract, Some environment when contract.Owner = layout.Owner -> preturn (environment.SSA, environment.Type)
+            | _ -> fail (Message $"Callable occurrence {NodeId.value source} lacks its actual environment operand")
+        | None ->
+            match state.Graph.Nodes.TryFind source with
+            | Some { Type = NativeType.TFun _ } -> fail (Message $"Callable occurrence {NodeId.value source} has not been witnessed")
+            | _ -> pRecallNode source
     do! ensure (actual = expected) $"Environment occurrence {NodeId.value source} lacks its settled carrier"
     return [], TRValue { SSA = value; Type = expected }
 }

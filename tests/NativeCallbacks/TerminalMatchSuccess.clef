@@ -1,0 +1,12 @@
+module TerminalMatchSuccess
+
+let mutable private guardCount: int = 0
+
+let private choose (input: bool option) =
+    match input with
+    | Some value when (guardCount <- guardCount + 1; true) -> value
+
+[<EntryPoint>]
+let main _ =
+    let selected = choose (Some true)
+    if selected && guardCount = 1 then 0 else 211

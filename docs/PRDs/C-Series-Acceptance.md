@@ -104,7 +104,7 @@ waypoints for compiler hashes, companion revisions, scope and partial reruns.
 | PRD | Established work to preserve | Remaining acceptance focus |
 |---|---|---|
 | [C-01](C-01-Closures.md) | Direct immutable capture passing and bounded known-callee environments, native capture/callback controls | General callable transport, actual environment instances, mutable direct-call signature authority, aggregate/callable captures, residence and release |
-| [C-02](C-02-HigherOrderFunctions.md) | Native callback applications and typed Option/Result/Seq recipe families | Stored/bare operation values, staged argument snapshots, retained operands and full callable application forms; unchanged 16h |
+| [C-02](C-02-HigherOrderFunctions.md) | Native callback applications and typed Option/Result/Seq recipe families | Stored/bare operation values, actual callable boundaries with shared deferred operands, retained values and full application forms; unchanged 16h |
 | [C-03](C-03-Recursion.md) | Recursive binding identity, nested capture discovery and existing native recursive paths | Original13 generic-width failure, recursive-group effects/captures and admitted numeric recurrence rules |
 | [C-04](C-04-CoreCollections.md) | Tested Option operations, range-loop work, collection schemes/recipes and existing array consumers | Canonical collection storage, sentinel/link/guard/capacity evidence, persistent operations and registered 13a native gates |
 | [C-05](C-05-Lazy.md) | Source admission and inherited lazy realization | Canonical environment/result representation and memoization; explicit correction of sample14's obsolete recomputation expectation |
@@ -119,6 +119,12 @@ as a newly measured state; later focused passes do not constitute a full rerun.
 
 ## 3. Acceptance matrix for each capability
 
+Apply the [evaluation strategy contract](../Evaluation_Strategy_Contract.md)
+when shared callable, capture, storage or continuation machinery serves different
+computation forms. Formation, activation, demand, delivery, memoization and
+dependency invalidation have distinct oracles. Runtime reactive stabilization
+and scope-aware incremental compilation also retain separate contracts.
+
 Before implementation, give each promised operation/form a row naming its
 specification clause, owning passes, existing evidence, open cases and target
 selection. Expand the following dimensions where applicable; use representative
@@ -129,8 +135,8 @@ combinations from one example.
 |---|---|
 | Application | Direct, pipeline, alias, bare operation value, each partial-application frontier, returned and stored use; lexical shadowing and explicit specialization where admitted |
 | Values and types | Scalar and measured values, independent callback/accumulator/result types, nested Option/Result, tuples/records and function-valued payloads supported by the contract |
-| Formation and effects | Supplied arguments evaluated in source order once at the actual application stage; deferred bodies remain deferred; short circuit prevents later demand; aliases do not replay initializers |
-| Capture identity | Immutable values retain formation snapshots; referenced mutable storage remains shared; separate formations of one implementation retain distinct environment instances |
+| Formation and effects | Ordinary bindings and arguments preserve shared deferred identity; unused arguments and their effects remain deferred. Demands and explicit sequencing establish required effect order; short circuit prevents later demand; aliases do not replay initializers |
+| Capture identity | Immutable captures retain original shared deferred binding identities without forcing formation snapshots; referenced mutable storage remains shared; separate formations of one implementation retain distinct environment instances |
 | Storage | Scope, caller/region and program lifetimes; actual backing allocations, views and aliases; initialization, overwrite, release and peak live capacity; declared immutable/mutable authority |
 | Numeric meaning | Dimensions survive specialization and layout; ranges cover intermediate computations and stores; representation and adaptation come from the selected declarations |
 | Data/control boundaries | Empty/singleton/multiple values, branch joins, nested/recursive uses, successful-current/nonempty guards, exhaustion and independent enumeration |

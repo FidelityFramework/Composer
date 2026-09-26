@@ -1,0 +1,14 @@
+[package]
+name = "TerminalMatchPatternFailure"
+version = "0.1.0"
+
+[compilation]
+target = "cpu"
+
+[dependencies]
+platform = { path = "../../../Fidelity.Platform/Environments/Linux/x86_64/Fidelity.Platform.CompilerSurface.fidproj" }
+
+[build]
+sources = ["TerminalMatchPatternFailure.clef"]
+output = "terminal-match-pattern-failure"
+output_kind = "console"

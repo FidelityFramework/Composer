@@ -1,0 +1,57 @@
+module LiteralMatch
+
+let mutable private trace: int = 0
+
+let private character input =
+    match input with
+    | 'λ' when (trace <- trace * 10 + 1; true) -> 10
+    | 'Ω' when (trace <- trace * 10 + 2; false) -> 20
+    | 'Ω' when (trace <- trace * 10 + 3; true) -> 30
+    | _ -> 40
+
+let private real input =
+    match input with
+    | 0.25 when (trace <- trace * 10 + 1; true) -> 10
+    | 1.5 when (trace <- trace * 10 + 2; false) -> 20
+    | 1.5 when (trace <- trace * 10 + 3; true) -> 30
+    | _ -> 40
+
+let private text input =
+    match input with
+    | "lame" when (trace <- trace * 10 + 1; true) -> 10
+    | "same" when (trace <- trace * 10 + 2; false) -> 20
+    | "same" when (trace <- trace * 10 + 3; true) -> 30
+    | _ -> 40
+
+let private empty input = match input with "" -> 7 | _ -> 8
+let private zero input = match input with -0.0 -> 7 | _ -> 8
+let private unitChoice input =
+    match input with
+    | () when (trace <- trace * 10 + 2; false) -> 20
+    | () when (trace <- trace * 10 + 3; true) -> 30
+
+[<EntryPoint>]
+let main _ =
+    let selectedCharacter = character 'Ω'
+    if selectedCharacter <> 30 || trace <> 23 then 221
+    else
+        trace <- 0
+        let selectedReal = real 1.5
+        if selectedReal <> 30 || trace <> 23 then 222
+        else
+            trace <- 0
+            let selectedText = text ("sa" + "me")
+            if selectedText <> 30 || trace <> 23 then 223
+            else
+                let selectedEmpty = empty ""
+                if selectedEmpty <> 7 then 224
+                else
+                    let selectedZero = zero 0.0
+                    if selectedZero <> 7 then 225
+                    else
+                        trace <- 0
+                        let selectedUnit = unitChoice ()
+                        if selectedUnit <> 30 || trace <> 23 then 226
+                        else
+                            let notANumber = zero (0.0 / 0.0)
+                            if notANumber <> 8 then 227 else 0

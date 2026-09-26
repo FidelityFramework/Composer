@@ -32,14 +32,16 @@ staging, representation, effects and residence are observable obligations.
 | Function result | Retain implementation/environment with residence covering subsequent uses |
 | Composition | Preserve callback order, independent environments and intermediate types/dimensions |
 | Conditional/matched selection | Select the whole function value; equal layouts do not imply equal implementations |
-| Stored alias | Snapshot the value observed at binding, including aliases of mutable function bindings |
-| Partial application | Evaluate supplied operands once in source order and retain them until remaining arguments arrive |
+| Stored alias | Retain the shared deferred computation; first demand establishes the selected value, and later demands share it. Explicit `eager` establishes a snapshot at its activated frontier |
+| Partial application | Retain supplied computations and their identities until demand; direct eager actuals establish ordered shallow demand at the activated application frontier |
 | Bare operation value | Admit its full function type and subsequent stages through the ordinary graph contract |
 
-Direct syntax and forward/backward pipes preserve source evaluation order.
-Producer formation evaluates supplied expressions; deferred iteration and callback
-invocation occur only when the operation requires them. Aliasing a partial cannot
-replay an earlier operand initializer.
+Direct syntax and forward/backward pipes preserve demand and required effect
+order. Producer formation retains ordinary supplied computations without forcing
+their effects. Iteration and callback invocation occur at their specified
+activation boundaries. Aliasing a partial cannot replay a successfully evaluated
+shared operand initializer. The [evaluation contract](../Evaluation_Strategy_Contract.md)
+governs the distinction between ordinary supply and explicit eager demand.
 
 ### 2.2 Type Representation
 
@@ -67,10 +69,10 @@ support does not automatically transport specialized foreign ABI provenance.
 ## 3. CCS Layer Implementation
 
 CCS owns typing, generic instantiation, source identity and argument admission.
-Existing callable application and operation recipes establish staged applications
-and snapshots for admitted paths. Extension preserves evaluated values and their
-identities through Baker fan-out/fold-in; tracing an alias to a source expression
-does not authorize evaluating it again.
+Callable application and operation recipes establish stages at actual declared
+boundaries. They preserve original operand identities through Baker fan-out/fold-in;
+tracing an alias to a source expression does not authorize forcing it, replaying
+it, or moving its effects ahead of its demand frontier.
 
 Known-callee environment admission supports bounded scalar captures and complete
 direct uses in sequence producers. Stored/bare Seq operations and broader
@@ -79,7 +81,7 @@ returned, opaque, aggregate or nested callable captures retain open contracts.
 identify the boundaries; later waypoints supersede interim native-status prose.
 
 Front-end/Baker work is more than checking an existing `TFun`: callable origins,
-stage frontiers, snapshots, environments, types, effects and residence must survive
+stage frontiers, shared demand, environments, types, effects and residence must survive
 each transformation.
 
 ## 4. Composer/Alex Layer Implementation
@@ -132,8 +134,8 @@ environment identity as well as return values.
 | Completion row | Positive cases | Rejection/preservation cases |
 |---|---|---|
 | Parameter/result transport | Named/literal/captured callbacks, returned functions, repeated invocation | Wrong dimensions or missing environment facts produce the responsible located diagnostic |
-| Stages | Direct/both pipe directions, bare aliases, multiple partial frontiers | Supplied operands are neither delayed improperly nor repeated |
-| Selection/storage | Different implementations/equal layouts; same code/distinct environments; mutable selection snapshots | Saved values cannot reread later selections; joins retain both halves |
+| Stages | Direct/both pipe directions, bare aliases, multiple partial frontiers, ordinary and explicit eager actuals | Unused ordinary effects stay deferred; explicit eager order and shared successful results survive staging |
+| Selection/storage | Different implementations/equal layouts; same code/distinct environments; deferred and explicit eager reads of mutable selection | First demand establishes the selection unless explicit eager demand occurred earlier; later demands share that value; joins retain both halves |
 | Composition | Captured HOFs, nested functions, generic/measure instantiations | Independent parameters, captures and intermediate dimensions remain distinct |
 | Deferred operations | Eleven C-07 core operations in admitted forms, including children and stopping | Complete-use/residence failures stay explicit; no post-decision pull/callback |
 | Aggregates | Functions through records, tuples, options/results and collections with valid storage | Elimination preserves code identity/lifetime; a descriptor alone cannot admit arbitrary `TFun` storage |
@@ -144,7 +146,7 @@ environment identity as well as return values.
 | Owner | Existing implementation to extend |
 |---|---|
 | Source typing | CCS `NativeTypedTree/Expressions/Applications.fs`, binding/generalization and scheme owners |
-| Staging/snapshots | `Nanopass/CallableApplications.fs`, `Baker/Recipes/ApplicationRecipes.fs`, owning operation recipes |
+| Staging/demand | `Nanopass/CallableApplications.fs`, `Baker/Recipes/ApplicationRecipes.fs`, owning operation recipes |
 | Captures/residence | C-01 construction/settlement; C-04/C-06 storage owners |
 | Physical expression | Alex `Traversal/Values.fs`, `Dialects/Core/Types.fs`, lambda/application/environment witnesses/patterns |
 | Acceptance | NativeCallbacks, original12/16/16h, source/graph negatives, Alex/proof and shared editor/client gates |

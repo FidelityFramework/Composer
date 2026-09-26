@@ -1,0 +1,50 @@
+module GuardedMatch
+
+let mutable private trace: int = 0
+
+let private choose input firstGuard =
+    match input with
+    | Some first when (trace <- trace * 10 + 1; firstGuard) -> first + 10
+    | Some second when (trace <- trace * 10 + 2; true) -> second
+    | None when (trace <- trace * 10 + 3; true) -> 30
+    | _ -> 40
+
+let private tupleChoice input =
+    match input with
+    | (Some left, Some right) when (trace <- trace * 10 + 1; false) -> left
+    | (_, Some selected) when (trace <- trace * 10 + 2; true) -> selected
+    | _ -> 30
+
+let private constantChoice input =
+    match input with
+    | 1 when (trace <- trace * 10 + 1; true) -> 10
+    | 2 when (trace <- trace * 10 + 2; false) -> 20
+    | 2 when (trace <- trace * 10 + 3; true) -> 21
+    | _ -> 30
+
+[<EntryPoint>]
+let main _ =
+    // Each result is demanded before observing/resetting its guard trace.
+    let absent = choose None true
+    if absent <> 30 || trace <> 3 then 201
+    else
+        trace <- 0
+        let fallthrough = choose (Some 7) false
+        if fallthrough <> 7 || trace <> 12 then 202
+        else
+            trace <- 0
+            let first = choose (Some 7) true
+            if first <> 17 || trace <> 1 then 203
+            else
+                trace <- 0
+                let leftAbsent = tupleChoice (None, Some 8)
+                if leftAbsent <> 8 || trace <> 2 then 204
+                else
+                    trace <- 0
+                    let rightAbsent = tupleChoice (Some 9, None)
+                    if rightAbsent <> 30 || trace <> 0 then 205
+                    else
+                        trace <- 0
+                        let constants = constantChoice 2
+                        if constants <> 21 || trace <> 23 then 206
+                        else 0

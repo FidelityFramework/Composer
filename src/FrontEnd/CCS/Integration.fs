@@ -4,13 +4,13 @@
 /// CCS provides:
 /// - Native type checking with types attached during construction
 /// - SRTP resolution during type checking (not post-hoc)
-/// - Hard-pruned SemanticGraph (only reachable nodes)
+/// - SemanticGraph with reachability and joint constraint evidence
 /// - No BCL types, no IL imports, no obj
 /// - Baker enrichment (module classification metadata)
 ///
-/// Composer receives SemanticGraph and applies:
-/// - Lowering nanopasses (FlattenApplications, LowerStrings, etc.)
-/// - Alex emission (Zipper + XParsec + Bindings → MLIR)
+/// Composer receives the saturated SemanticGraph. Baker owns semantic
+/// elaboration and saturation in CCS; Alex witnesses its settled operations
+/// through the Huet zipper and Elements/Patterns/Witnesses into typed MLIR.
 module Core.CCS.Integration
 
 // Re-export CCS types for use throughout Composer

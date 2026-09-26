@@ -17,6 +17,10 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.MemRefPatterns
+open Alex.Patterns.CallablePatterns
+open Alex.Patterns.MutableCallablePatterns
+open Alex.Patterns.SequencePatterns
+open Alex.Patterns.LazyPatterns
 open Alex.Dialects.Core.Types
 
 // ═══════════════════════════════════════════════════════════
@@ -25,6 +29,10 @@ open Alex.Dialects.Core.Types
 
 /// Witness binding nodes - forwards bound value's SSA (immutable) or emits memref.alloca (mutable)
 let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
+    let forward source =
+        match tryMatchWithDiagnostics (pCallableForward ctx source) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+        | Result.Error reason -> WitnessOutput.error $"Callable binding: {reason}"
     match tryMatch pBinding ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((name, isMut, _isRec, isEntry), _) ->
         // Binding has one child - the value being bound
@@ -39,16 +47,43 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                 // Only immutable Lambda bindings forward the function value directly.
                 // A mutable binding stores that value in the ordinary mutable cell.
                 match SemanticGraph.tryGetNode valueId ctx.Graph with
+                | _ when isLazyValue ctx node ->
+                    if isMut then
+                        WitnessOutput.error $"Lazy binding '{name}' requires an admitted pair storage contract."
+                    else
+                        let pattern =
+                            if ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then pProgramLazyBinding ctx valueId
+                            else pLazyForward ctx valueId
+                        match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error reason -> WitnessOutput.error $"Lazy binding '{name}': {reason}"
+                | _ when isSequenceValue ctx node ->
+                    if isMut || ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then
+                        WitnessOutput.error $"Sequence binding '{name}' requires an admitted pair storage contract."
+                    else
+                        match tryMatchWithDiagnostics (pSequenceForward ctx valueId) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error reason -> WitnessOutput.error $"Sequence binding '{name}': {reason}"
                 | Some { Kind = SemanticKind.Lambda _ } when not isMut ->
-                    // Function binding - Lambda child already generated FuncDef (post-order)
-                    // Check if Lambda produced a closure value (escaping lambda with captures)
-                    match MLIRAccumulator.recallNode valueId ctx.Accumulator with
-                    | Some (closureSSA, closureTy) ->
-                        // Closure: forward the closure pair as this binding's value
-                        { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = closureSSA; Type = closureTy } }
-                    | None ->
-                        // Named function (no captures) — structural, no SSA value
+                    // A definition emits its FuncDef. Value occurrences obtain
+                    // their own code constant; captured values use two operands.
+                    match MLIRAccumulator.recallCallable valueId ctx.Accumulator with
+                    | Some _ -> forward valueId
+                    | None -> { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                | _ when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
+                    if Set.contains node.Id ctx.Graph.Codata.Value.Curry.PartialAppBindings then
                         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                    elif isMut then
+                        match MLIRAccumulator.recallCallable valueId ctx.Accumulator with
+                        | None -> WitnessOutput.error $"Mutable binding '{name}': Initial value not yet witnessed"
+                        | Some _ ->
+                            match tryMatchWithDiagnostics (pCreateMutableCallable ctx node.Id)
+                                          ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                            | Result.Error reason -> WitnessOutput.error $"Mutable callable binding '{name}': {reason}"
+                    elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph node then
+                        WitnessOutput.error $"Program callable binding '{name}' requires an admitted callable storage contract."
+                    else forward valueId
                 | _ ->
                     // Check if this binding holds a partial application (curry flattening)
                     if Set.contains node.Id ctx.Graph.Codata.Value.Curry.PartialAppBindings then

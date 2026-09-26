@@ -1,99 +1,90 @@
-/// LazyWitness - Witness Lazy<'T> operations via XParsec
-///
-/// Uses XParsec combinators from PSGCombinators to match PSG structure,
-/// then delegates to Patterns for MLIR elision.
-///
-/// NANOPASS: This witness handles ONLY Lazy-related nodes.
-/// All other nodes return WitnessOutput.skip for other nanopasses to handle.
+/// Passive observation of Baker's explicit lazy storage and value primitives.
+/// The existing Huet traversal observes the source guard/computation/store/
+/// publication graph through ordinary control-flow and application witnesses.
 module Alex.Witnesses.LazyWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
-open Alex.Patterns.ClosurePatterns
+open Alex.Patterns.ContinuationPatterns
+open Alex.Patterns.LazyPatterns
+open Alex.Patterns.LiteralPatterns
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
+module Operands = Alex.Traversal.LazyOperands
 
-// ═══════════════════════════════════════════════════════════════════════════
-// CATEGORY-SELECTIVE WITNESS (Private)
-// ═══════════════════════════════════════════════════════════════════════════
+let private failure (node: SemanticNode) phase reason =
+    WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Lazy") (Some phase) reason
 
-/// Witness Lazy operations - category-selective (handles only Lazy nodes)
-let private witnessLazy (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    // Try LazyExpr pattern
-    match tryMatch pLazyExpr ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-    | Some ((bodyId, captureInfos), _) ->
-        // Extract SSAs monadically
-        let lazyExprPattern =
-            parser {
-                let! state = getUserState
-                let arch = state.Coeffects.Platform.TargetArch
+let private observe (ctx: WitnessContext) (node: SemanticNode) pattern =
+    match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+    | Result.Ok ((operations, result), _) ->
+        { InlineOps = operations; TopLevelOps = MLIRAccumulator.drainPendingStaticGlobals ctx.Accumulator; Result = result }
+    | Result.Error reason -> failure node "settled operands" reason
 
-                // Extract result SSAs for LazyExpr (monadic)
-                let! ssas = getNodeSSAs node.Id
+/// Formation consumes the source declarations as typed storage fields. They
+/// have no executable initializer to traverse (the cache is uninitialized),
+/// but a successfully observed layout accounts for their declaration identity.
+let private formation (ctx: WitnessContext) (node: SemanticNode) (layout: LazyLayout) initializers =
+    let output = observe ctx node (pCreateLazyEnvironment node.Id layout initializers)
+    match output.Result with
+    | TRValue _ ->
+        ctx.GlobalVisited.Value <-
+            ctx.GlobalVisited.Value |> Set.add layout.Computed |> Set.add layout.Cached
+        output
+    | _ -> output
 
-                // Captures come from accumulator (already witnessed nodes)
-                let captures =
-                    captureInfos
-                    |> List.choose (fun capture ->
-                        capture.SourceNodeId
-                        |> Option.bind (fun id -> MLIRAccumulator.recallNode id state.Accumulator)
-                        |> Option.map (fun (ssa, ty) -> { SSA = ssa; Type = ty }))
+let private access (ctx: WitnessContext) (node: SemanticNode) environment slotId borrow write =
+    match Operands.layoutAt ctx environment with
+    | None -> failure node "storage identity" "Lazy access has no current source layout and complete-use proof."
+    | Some layout ->
+        match layout.Slots |> List.tryFind (fun slot -> slot.Source = slotId) with
+        | None -> failure node "slot identity" "Lazy access does not name a field of its actual instance."
+        | Some slot ->
+            let pattern =
+                match write with
+                | Some value -> pWithUnitResult node.Id (pWriteContinuationSlot node.Id environment value layout.Bytes slot)
+                | None when borrow -> pBorrowContinuationSlot node.Id environment layout.Bytes slot
+                | None -> pReadContinuationSlot node.Id environment layout.Bytes slot
+            observe ctx node pattern
 
-                match MLIRAccumulator.recallNode bodyId state.Accumulator with
-                | None -> return! fail (Message "LazyExpr: Body not yet witnessed")
-                | Some (codePtr, codePtrTy) ->
-                    // Get Lazy<T> type from node
-                    // TODO(AX1002): Extract value type from Lazy<T> node type via mapType
-                    let valueTy = TIndex  // Lazy<T> value type extraction not yet implemented
-                    return! pBuildLazyStruct valueTy codePtrTy codePtr captures ssas arch
-            }
+let private witness (ctx: WitnessContext) (node: SemanticNode) =
+    match node.Kind with
+    | SemanticKind.LazyRead(environment, slot) -> access ctx node environment slot false None
+    | SemanticKind.LazyBorrow(environment, slot) -> access ctx node environment slot true None
+    | SemanticKind.LazyWrite(environment, slot, value) -> access ctx node environment slot false (Some value)
+    | SemanticKind.LazyEnvironment(owner, initializers) ->
+        match Operands.layout ctx owner with
+        | Some layout -> formation ctx node layout initializers
+        | None -> failure node "formation" "Lazy formation lacks its complete typed storage contract."
+    | SemanticKind.LazyAllocate owner ->
+        match Operands.layout ctx owner with
+        | Some layout -> observe ctx node (pAllocateLazyEnvironment node.Id layout)
+        | None -> failure node "allocation" "Lazy allocation lacks its complete typed storage contract."
+    | SemanticKind.LazyEnvironmentReference value ->
+        match Operands.layoutAt ctx value with
+        | Some layout -> observe ctx node (pRecallLazyEnvironment value layout)
+        | None -> failure node "actual instance" "Lazy force lacks the settled actual environment operand."
+    | SemanticKind.LazyValue(thunk, environment) ->
+        match Operands.project ctx node.Id with
+        | Result.Error reason -> failure node "value boundary" reason
+        | Result.Ok shape ->
+            let layout = Operands.contract shape
+            if layout.Thunk <> thunk then failure node "thunk identity" "Lazy value and settled thunk disagree."
+            else
+                let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph ctx.Graph.Nodes[thunk] false
+                observe ctx node (parser {
+                    let! operations, result = pRecallLazyEnvironment environment layout
+                    match result with
+                    | TRValue environment ->
+                        let! code, value = pLazyValue node.Id shape symbol environment
+                        return operations @ code, value
+                    | _ -> return! fail (Message "Lazy formation requires its actual witnessed environment.")
+                })
+    | SemanticKind.LazyExpr _ | SemanticKind.LazyForce _ ->
+        failure node "source settlement" "Explicit lazy source operations require their Baker memoization and storage contracts."
+    | _ -> WitnessOutput.skip
 
-        match tryMatchWithDiagnostics lazyExprPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-        | Result.Error diagnostic -> WitnessOutput.error $"LazyExpr: {diagnostic}"
-
-    | None ->
-        // Try LazyForce pattern
-        match tryMatch pLazyForce ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-        | Some (lazyNodeId, _) ->
-            // Extract SSAs monadically
-            let lazyForcePattern =
-                parser {
-                    let! state = getUserState
-                    let arch = state.Coeffects.Platform.TargetArch
-
-                    // Extract result SSAs for LazyForce (monadic)
-                    let! ssas = getNodeSSAs node.Id
-
-                    if ssas.Length < 4 then
-                        return! fail (Message $"LazyForce: Expected 4 SSAs, got {ssas.Length}")
-                    else
-                        match MLIRAccumulator.recallNode lazyNodeId state.Accumulator with
-                        | None -> return! fail (Message "LazyForce: Lazy value not yet witnessed")
-                        | Some (lazySSA, lazyTy) ->
-                            // LazyForce SSAs: [0]=code_ptr, [1]=const1, [2]=alloca, [3]=result
-                            let resultSSA = ssas.[3]
-                            let intermediateSsas = [ssas.[0]; ssas.[1]; ssas.[2]]
-                            let resultTy = Alex.CodeGeneration.TypeMapping.mapNativeTypeWithGraphForArch arch state.Graph node.Type
-                            return! pBuildLazyForce lazySSA lazyTy resultSSA resultTy intermediateSsas arch
-                }
-
-            match tryMatchWithDiagnostics lazyForcePattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | Result.Error diagnostic -> WitnessOutput.error $"LazyForce: {diagnostic}"
-
-        | None -> WitnessOutput.skip
-
-// ═══════════════════════════════════════════════════════════════════════════
-// NANOPASS REGISTRATION (Public)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Lazy nanopass - witnesses LazyExpr and LazyForce nodes
-let nanopass : Nanopass = {
-    Name = "Lazy"
-    Witness = witnessLazy
-}
+let nanopass : Nanopass = { Name = "Lazy"; Witness = witness }

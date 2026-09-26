@@ -475,21 +475,20 @@ isOdd 7: true
 
 # =============================================================================
 # Sample 14: Lazy
-# Lazy values with flat closure captures (PRD-14)
+# Shared memoization, distinct factory instances and original mutable cells (C-05)
 # =============================================================================
 [[samples]]
 name = "14_Lazy"
 project = "Lazy.fidproj"
 binary = "targets/Lazy"
 expected_output = """
-=== Lazy Values Test (PRD-14) ===
+=== Lazy Values Test (C-05) ===
 --- No Captures (Simple) ---
 lazy 42 = 42
 --- First Force (with side effect) ---
 Computing expensive value...
 Result: 42
---- Second Force (no memoization) ---
-Computing expensive value...
+--- Second Force (memoized) ---
 Result: 42
 --- Local Variable Captures ---
 lazy (10 + 20) = 30
@@ -503,6 +502,45 @@ lazyAdd 3 4: Adding captured values...
 7
 lazyAdd 5 6: Adding captured values...
 11
+Cached factory alias: 7
+--- Shared Mutable Captures ---
+First force via alias: 20
+Cached force after mutation: 20
+Thunk executions: 1
+"""
+
+# Typed lazy results and demand traces; no ordinary ignore argument forces work.
+[[samples]]
+name = "14a_LazyScalarResults"
+project = "LazyScalarResults.fidproj"
+binary = "targets/LazyScalarResults"
+expected_output = """
+=== Lazy Scalar Results (C-05) ===
+Before demand: 0
+Demanded alias: 1
+Unit cache: 1
+Boolean cache: false
+Integer cache: -7
+Real cache: 1.25
+Measured integer cache: 7<m>
+Measured real cache: 2.5<s>
+Independent factories: 2
+"""
+
+# Retained views require current declared immutable backing, including captures.
+[[samples]]
+name = "14b_LazyStringViews"
+project = "LazyStringViews.fidproj"
+binary = "targets/LazyStringViews"
+expected_output = """
+=== Lazy String Views (C-05) ===
+captured value
+captured value
+Captured alias cache: 1
+factory value
+factory value
+factory value
+Independent string factories: 2
 """
 
 # =============================================================================

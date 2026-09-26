@@ -19,7 +19,7 @@ let sample = {
     Name = "oracle"; ProjectFile = "unused.fidproj"; BinaryName = "unused"
     StdinFile = None; ExpectedOutput = "expected\n"; TimeoutSeconds = 2
     Skip = false; SkipReason = None }
-let config = { SamplesRoot = work; CompilerPath = "unused"; DefaultTimeoutSeconds = 2 }
+let config = { SamplesRoot = work; CompilerPath = "unused"; DefaultTimeoutSeconds = 2; PruneIntermediates = false }
 Directory.CreateDirectory(Path.Combine(work, sample.Name)) |> ignore
 
 let report result = {

@@ -11,7 +11,8 @@ open Core.Timing
 /// The GPU backend: portable MLIR text → .hsaco code object
 let backend : BackEnd = {
     Name = "GPU"
-    Compile = fun mlirText ctx ->
+    Compile = fun witnessed ctx ->
+        let mlirText = witnessed.Text
         // Write the middle end's portable MLIR for the lowering to consume
         let mlirPath =
             match ctx.IntermediatesDir with

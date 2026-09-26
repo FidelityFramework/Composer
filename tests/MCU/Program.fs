@@ -63,6 +63,7 @@ let main args =
         let ctx: Core.Types.Pipeline.BackEndContext = {
             OutputPath = output; IntermediatesDir = None
             TargetTripleOverride = Some "thumbv8m.main-none-eabi"; TargetPointerBits = Some 32; TargetCpu = Some "cortex-m33"
+            PlatformOS = None; RuntimeModel = Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Bare
             DeploymentMode = Core.Types.Dialects.DeploymentMode.Embedded; EmitIntermediateOnly = false
             ExternLibraries = Set.empty; NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
             EmbeddedTarget = Some target; XtensaTarget = None; Deploy = false

@@ -23,10 +23,17 @@ assets to reconcile with the specification, not evidence of complete support.
 
 ## 1. Executive Summary
 
-C-04 covers persistent eager Lists, Maps and Sets, Option operations, collection
+C-04 covers persistent Lists, Maps and Sets, Option operations, collection
 range expressions, tuple binding/projection and the supporting operations in §3.
 Map and Set completion is part of this PRD. Completing Option and a minimal List
 sample does not complete C-04.
+
+All forms obey the [evaluation strategy contract](../Evaluation_Strategy_Contract.md):
+Clef is lazy by default, and unused ordinary operands retain their effects
+deferred. Collection structure, payload demand and complete traversal are
+separate obligations. A materialized native layout does not by itself authorize
+eager evaluation. Historical strict-operand traces below require reconciliation
+against the clarified source contract, not preservation as current semantics.
 
 Acceptance requires source admission, semantic graph construction, settled
 representation and storage obligations, physical witnessing, and native behavior
@@ -122,12 +129,15 @@ payload representation. None is not an absent interior pointer. Its HOFs expand
 through Baker case recipes; callable payloads and state retain their separate
 function boundaries and C-01 lifetime obligations.
 
-All supplied operands are evaluated eagerly in source order. `defaultWith` and
-`orElseWith` evaluate the producer expression eagerly but invoke the resulting
-function only for None. `iter`, `map`, `bind`, predicates and folds invoke their
-callback only in the specified case. Stored partials snapshot supplied function
-and value operands; storage captured by those functions remains shared according
-to its binding contract. `forall None` is true; `exists None` is false.
+Demand follows the operation and selected case. An unselected fallback or
+callback expression remains deferred, including its initializer effects.
+`defaultWith` and `orElseWith` demand their producer only for a demanded None
+branch. Case tests do not force unused payloads; mapping a payload retains its
+shared deferred computation until that payload is needed. A demanded `iter`
+performs its selected action. Stored partials retain established values or shared
+deferred identities without replay; mutable captured storage retains its original
+cell. `forall None` is true; `exists None` is false. Both folds retain independent
+state/payload types and leave an unused folder or state undemanded.
 
 `Option.get` remains in scope as the specified payload extraction primitive.
 Its absent-case admission must be recorded explicitly before claiming complete
@@ -141,7 +151,8 @@ and CCS admission work before a native implementation is accepted.
 
 Promised syntax includes `[first .. last]`, `[first .. step .. last]`, the
 corresponding array forms, and the range producer consumed by `seq { ... }`.
-List and array results are eager; sequence realization belongs jointly with
+List and array ranges retain their respective collection contracts and demand
+behavior; sequence realization belongs jointly with
 [C-06](C-06-SimpleSeq.md) and [C-07](C-07-SeqOperations.md).
 
 Acceptance covers ascending, descending, singleton, empty and stepped cases,
@@ -236,9 +247,9 @@ to the same constructors and guards as explicit operations.
 | `None`, `Some` | `'T option`, `'T -> 'T option` | Concrete case construction and matching |
 | `Option.map` | `('T -> 'U) -> 'T option -> 'U option` | Transform Some payload |
 | `Option.bind` | `('T -> 'U option) -> 'T option -> 'U option` | Return selected callback result |
-| `Option.defaultValue` | `'T -> 'T option -> 'T` | Eager fallback value |
+| `Option.defaultValue` | `'T -> 'T option -> 'T` | Demand fallback only for selected None result |
 | `Option.defaultWith` | `(unit -> 'T) -> 'T option -> 'T` | Invoke producer only for None |
-| `Option.orElse` | `'T option -> 'T option -> 'T option` | Eager fallback option |
+| `Option.orElse` | `'T option -> 'T option -> 'T option` | Demand fallback option only for selected None result |
 | `Option.orElseWith` | `(unit -> 'T option) -> 'T option -> 'T option` | Invoke optional producer only for None |
 | `Option.iter` | `('T -> unit) -> 'T option -> unit` | Invoke action once for Some; retain unit result |
 | `Option.fold` | `('S -> 'T -> 'S) -> 'S -> 'T option -> 'S` | None retains state; Some applies folder to state then payload |
@@ -314,7 +325,7 @@ Much of the machinery exists:
 | Current owner | Existing implementation | Remaining acceptance boundary |
 |---|---|---|
 | Source typing and specialization | [Intrinsics](../../../clef/src/Compiler/NativeTypedTree/Expressions/Intrinsics.fs), [NativeTypes](../../../clef/src/Compiler/NativeTypedTree/NativeTypes.fs), [Monomorphization](../../../clef/src/Compiler/Nanopass/Monomorphization.fs) | Reachable source forms, independent schemes, complete types and located rejection for every claimed operation |
-| Baker decomposition | [ListRecipes](../../../clef/src/Compiler/Baker/Recipes/ListRecipes.fs), [MapRecipes](../../../clef/src/Compiler/Baker/Recipes/MapRecipes.fs), [SetRecipes](../../../clef/src/Compiler/Baker/Recipes/SetRecipes.fs), [OptionRecipes](../../../clef/src/Compiler/Baker/Recipes/OptionRecipes.fs) | Correct algorithms, eager operands, guarded payload reads, graph/reference incidence, layout/lifetime/obligations and complete residuals |
+| Baker decomposition | [ListRecipes](../../../clef/src/Compiler/Baker/Recipes/ListRecipes.fs), [MapRecipes](../../../clef/src/Compiler/Baker/Recipes/MapRecipes.fs), [SetRecipes](../../../clef/src/Compiler/Baker/Recipes/SetRecipes.fs), [OptionRecipes](../../../clef/src/Compiler/Baker/Recipes/OptionRecipes.fs) | Correct algorithms, operation-specific demand and sharing, guarded payload reads, graph/reference incidence, layout/lifetime/obligations and complete residuals |
 | Reusable ingredients | [Primitives](../../../clef/src/Compiler/Baker/Ingredients/Primitives.fs), [Patterns](../../../clef/src/Compiler/Baker/Ingredients/Patterns.fs), [Options](../../../clef/src/Compiler/Baker/Ingredients/Options.fs) | Sentinel/node/traversal forms and recipe laws agree with the current standard |
 | Alex physical expression | [CollectionPatterns](../../src/MiddleEnd/Alex/Patterns/CollectionPatterns.fs), [ListWitness](../../src/MiddleEnd/Alex/Witnesses/ListWitness.fs), [MapWitness](../../src/MiddleEnd/Alex/Witnesses/MapWitness.fs), [SetWitness](../../src/MiddleEnd/Alex/Witnesses/SetWitness.fs), [OptionWitness](../../src/MiddleEnd/Alex/Witnesses/OptionWitness.fs) | Consume settled facts and emit the admitted sentinel/arena form; no source-name algorithm selection or invented storage premise |
 | Integer range normalization | [LoopRanges](../../../clef/src/Compiler/Nanopass/LoopRanges.fs), [LoopRangeRecipes](../../../clef/src/Compiler/Baker/Recipes/LoopRangeRecipes.fs) | Preserve the existing bounded loop subset; extend materialized and stepped forms only with their own contracts |
@@ -391,8 +402,9 @@ collection support.
 4. Complete persistent Map/Set primitives, comparisons, all rotations, updates,
    deletion and the promised traversals/transforms/set algebra. Keep earlier
    versions live in tests so mutation or dropped subtrees cannot pass unnoticed.
-5. Complete eager ranges, tuple/supporting operations and bounded real-library
-   consumers. Join lazy range/conversion acceptance with C-06/C-07.
+5. Complete collection ranges, tuple/supporting operations and bounded real-library
+   consumers under the default demand contract. Join sequence range/conversion
+   acceptance with C-06/C-07.
 6. Reconcile every promised operation with exact accepted forms, negative cases,
    supported profiles and retained evidence. Update the standard only where an
    actual unresolved contract was settled, then the PRD and waypoints together.
@@ -405,12 +417,12 @@ negative cases outside the final C-04 gate.
 | Area | Positive and adversarial cases |
 |---|---|
 | Source and specialization | Direct calls, pipes, aliases, stored partials, records/functions/unit/measured payloads; wrong arity/type/dimension, shadowed operation names and unresolved reachable types |
-| Evaluation | Callback factories and mutable snapshots expose order and exactly-once invocation; empty/None cases expose unwanted calls; distinct fold/foldBack order and state types |
+| Evaluation | Unused effectful arguments/fallbacks/callbacks produce no trace; repeated demand of one binding produces one trace; demanded mutable reads preserve observation order; case-tag tests leave payloads deferred; ignored fold state is not forced; distinct fold/foldBack order and state types |
 | Lists | Empty/singleton/many, repeated tail of empty, guarded head, unguarded-head rejection, stable map/filter/append, short-circuit search and prior-version sharing |
 | Maps/Sets | Sorted/reverse insertion, duplicate insert/replace, all four AVL rotations, deletion of absent/leaf/one-child/two-child/root/last entry, order and height consistency, retained earlier roots, Set-map collisions and all empty set-algebra combinations |
 | Storage | Missing immutable/mutable authority, exact capacity and one-node excess, alignment, floor-preserving reset, attempted sentinel mutation, cross-arena sharing and escaping lifetimes; actual placement correspondence |
-| Ranges | Eager List/Array and lazy producer boundaries, positive/negative steps, singleton/zero-trip, zero step, unsupported types, exact endpoint/step evaluation, count/byte overflow and final-step limits |
-| Tuples/supporting operations | One RHS evaluation, nested bindings and wildcards, lexical shadowing, arity/type failure, array-copy overlap/bounds, empty and capacity-limited string concatenation |
+| Ranges | List/Array materialization and sequence demand boundaries, positive/negative steps, singleton/zero-trip, zero step, unsupported types, shared endpoint/step computations with correct demand, count/byte overflow and final-step limits |
+| Tuples/supporting operations | One shared RHS computation, demanded projections and undemanded wildcard payloads, nested bindings, lexical shadowing, arity/type failure, array-copy overlap/bounds, empty and capacity-limited string concatenation |
 | Graph and emission | Resident guard/derivation/residence identities survive recipe replacement; no unresolved HOF residual reaches a primitive witness; stock verification and native results agree with independent oracles |
 | Backend correspondence | Actual artifact storage/access agrees with graph evidence after transforms; changed widths, placement, guards or artifacts cannot reuse an unrelated earlier verdict |
 
@@ -426,9 +438,15 @@ this document realignment. Their detailed logs, revisions and limitations remain
 in [Language Coverage Waypoints](../Language_Coverage_Waypoints.md). Older Clef
 hashes follow that document's repository-history mapping.
 
+The September 26 owner clarification establishes lazy-by-default ordinary
+arguments and bindings. Any historical test requiring eager fallback/operand
+effects is evidence of the old implementation only. Migrate its expectation with
+the governing demand clause and owning implementation change; retain all valid
+typing, identity, lifetime, guard and selected-effect assertions.
+
 | Dated increment | Recorded implementation and evidence | Limit |
 |---|---|---|
-| September 19 Option defaults | 311/311 CCS tests; nine native callback executables; `08a_OptionDefaults` and `08b_OptionDefaultWith` exact-output gates; graph, Alex, editor/analyzer and LSP checks | Eager fallback versus deferred invocation, partial snapshots and unit formals; not full closure residence or collection completion |
+| September 19 Option defaults | 311/311 CCS tests; nine native callback executables; `08a_OptionDefaults` and `08b_OptionDefaultWith` exact-output gates; graph, Alex, editor/analyzer and LSP checks | Historical eager-fallback traces are superseded by the clarified demand contract; partial identity and unit-formal coverage remain bounded evidence, not full closure residence or collection completion |
 | September 20 Option alternatives | 395/395 CCS tests including alternatives and temporal range regressions; four native executables; `08c_OptionAlternatives` | May-write invalidation and saved-predicate observation timing matter to callback correctness; no complete mutable-cell claim |
 | September 20 Option iteration | 419/419 CCS tests; 25/25 Alex component cases; two native executables; `08d_OptionIteration` | Includes unit-valued conditional results; does not establish all collection callbacks |
 | September 20 Option folds | 482/482 CCS tests; 15 native fold groups; `08e_OptionFolds`; editor/analyzer/LSP projection | Independent state/payload, both partial frontiers and graph dominance for shared state; other families remain open |
@@ -474,7 +492,7 @@ the common representation and remaining operation inventory are still work.
 |---|---|
 | C-01 / C-02 | Callable identity, captures, partial application, environment representation and callback lifetime |
 | C-03 | Recursive traversal, mutual tree helpers and justified stack/tail behavior |
-| C-05 | Lazy values used as payloads; eager collections do not become lazy by sharing their carrier machinery |
+| C-05 | Default call-by-need and explicit Lazy payloads share representation obligations; explicit memoization, persistent collection structure and fresh sequence enumeration retain distinct contracts |
 | C-06 / C-07 | Range generators, collection/sequence conversion, repeat traversal and consumer lifetime |
 | A-04 | Wider region surface; required collection lifetime/capacity facts cannot be postponed behind a global arena |
 | M-01 | Target-specific physical-form admission and preservation, including any demanded vector realization |

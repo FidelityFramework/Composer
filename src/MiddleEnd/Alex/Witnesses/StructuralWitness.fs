@@ -15,6 +15,9 @@ open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.RecordPatterns  // pRecordFieldGet
+open Alex.Patterns.CallablePatterns
+open Alex.Patterns.SequencePatterns
+open Alex.Patterns.LazyPatterns
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -27,6 +30,30 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
         // Module definition - structural container, children already witnessed
         // Return TRVoid per Domain Responsibility Principle
         { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+
+    | SemanticKind.Sequential childIds when isLazyValue ctx node ->
+        match List.tryLast childIds with
+        | None -> WitnessOutput.error "Lazy-valued block has no final occurrence."
+        | Some source ->
+            match tryMatchWithDiagnostics (pLazyForward ctx source) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error reason -> WitnessOutput.error $"Lazy-valued block: {reason}"
+
+    | SemanticKind.Sequential childIds when isSequenceValue ctx node ->
+        match List.tryLast childIds with
+        | None -> WitnessOutput.error "Sequence-valued block has no final occurrence."
+        | Some source ->
+            match tryMatchWithDiagnostics (pSequenceForward ctx source) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error reason -> WitnessOutput.error $"Sequence-valued block: {reason}"
+
+    | SemanticKind.Sequential childIds when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
+        match List.tryLast childIds with
+        | None -> WitnessOutput.error "Callable sequence has no final value occurrence."
+        | Some source ->
+            match tryMatchWithDiagnostics (pCallableForward ctx source) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error reason -> WitnessOutput.error $"Callable sequence: {reason}"
 
     | SemanticKind.Sequential childIds ->
         // Sequential: value is the LAST child's value (F# semantics: a; b; c evaluates to c)

@@ -54,6 +54,28 @@ let pCallableApplication nodeId invocation arguments shape = parser {
     return [operation], TRCallable value
 }
 
+let pSequenceApplication nodeId invocation arguments shape = parser {
+    let code = { SSA = Alex.Traversal.Values.value nodeId 0; Type = Alex.Traversal.SequenceOperands.functionType shape }
+    let environment = { SSA = Alex.Traversal.Values.value nodeId 1; Type = Alex.Traversal.SequenceOperands.environmentType shape }
+    let! value =
+        match Alex.Traversal.SequenceOperands.create shape code environment with
+        | Result.Ok value -> preturn value
+        | Result.Error reason -> fail (Message reason)
+    let! operation = pInvoke invocation arguments (Alex.Traversal.SequenceOperands.values value)
+    return [operation], TRSequence value
+}
+
+let pLazyApplication nodeId invocation arguments shape = parser {
+    let code = { SSA = Alex.Traversal.Values.value nodeId 0; Type = Alex.Traversal.LazyOperands.functionType shape }
+    let environment = { SSA = Alex.Traversal.Values.value nodeId 1; Type = Alex.Traversal.LazyOperands.environmentType shape }
+    let! value =
+        match Alex.Traversal.LazyOperands.create shape code environment with
+        | Result.Ok value -> preturn value
+        | Result.Error reason -> fail (Message reason)
+    let! operation = pInvoke invocation arguments (Alex.Traversal.LazyOperands.values value)
+    return [operation], TRLazy value
+}
+
 let pIndirectApplication nodeId code arguments resultType = parser {
     let value = { SSA = Alex.Traversal.Values.value nodeId 0; Type = resultType }
     let! operation = pInvoke (Indirect code) arguments [value]
@@ -393,6 +415,19 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
 
         let! state = getUserState
         match targetPlatform, lhsType with
+        | _, _ when argIds |> List.take 2 |> List.forall (fun id ->
+                        Types.tryGetNTUKind state.Graph.Nodes.[id].Type = Some NTUKind.NTUunit) ->
+            // Both unit operands have already been witnessed at their source
+            // demand sites. Unit has a canonical physical carrier, not an
+            // integer range from which to derive a new representation.
+            let unitType = mapNTUKindToMLIRType NTUKind.NTUunit
+            do! ensure (lhsType = unitType && rhsType = unitType) "Unit comparison requires the canonical witnessed unit carriers"
+            do! ensure (predName = "eq" || predName = "ne") "Unit equality requires an equality predicate"
+            let predicate = if predName = "eq" then ICmpPred.Eq else ICmpPred.Ne
+            let! op =
+                if targetPlatform = FPGA then pCombICmp ssas.[0] predicate lhsSSA rhsSSA unitType
+                else pCmpI ssas.[0] predicate lhsSSA rhsSSA unitType
+            return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = ssas.[0]; Type = TInt(IntWidth 1) })
         | _, TIndex when rhsType = TIndex && targetPlatform <> FPGA &&
                           (argIds |> List.take 2 |> List.forall (fun id -> Types.tryGetNTUKind state.Graph.Nodes.[id].Type = Some NTUKind.NTUptr)) ->
             do! ensure (predName = "eq" || predName = "ne") "Opaque handles support identity equality, not numeric ordering"

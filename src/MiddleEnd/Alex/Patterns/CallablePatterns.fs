@@ -15,6 +15,31 @@ open Alex.Elements.FuncElements
 module Operands = Alex.Traversal.CallableOperands
 module Values = Alex.Traversal.Values
 
+/// An annotation around a directly applied intrinsic carries source type
+/// information, not a first-class function operand. Follow only transparent
+/// annotation positions; the application witness owns the intrinsic operation.
+let pIntrinsicCalleeAnnotation : PSGParser<MLIROp list * TransferResult> = parser {
+    let! state = getUserState
+    let rec callee position =
+        match Alex.Traversal.PSGZipper.up position with
+        | Some parent ->
+            match parent.Focus.Kind with
+            | SemanticKind.Application(target, _) -> target = position.Focus.Id
+            | SemanticKind.TypeAnnotation(inner, _) when inner = position.Focus.Id -> callee parent
+            | _ -> false
+        | None -> false
+    let rec intrinsic seen id =
+        if Set.contains id seen then false
+        else
+            match state.Graph.Nodes.TryFind id with
+            | Some { Kind = SemanticKind.Intrinsic _ } -> true
+            | Some { Kind = SemanticKind.TypeAnnotation(inner, _) } -> intrinsic (Set.add id seen) inner
+            | _ -> false
+    do! ensure (state.Current.Id = state.Zipper.Focus.Id && callee state.Zipper && intrinsic Set.empty state.Current.Id)
+            "Annotation does not occupy an applied intrinsic's transparent callee position."
+    return [], TRVoid
+}
+
 /// The witness supplies the already resolved implementation symbol and the
 /// environment value it actually witnessed. No environment is selected by code.
 let pCallableValue occurrence (shape: Operands.Shape) symbol (environment: Val option) : PSGParser<MLIROp list * TransferResult> = parser {
@@ -61,6 +86,9 @@ let pNamedCallable (ctx: WitnessContext) : PSGParser<MLIROp list * TransferResul
             match Alex.CodeGeneration.CallableSymbols.tryBinding state.Graph binding.Id with
             | Some symbol -> preturn symbol
             | None -> fail (Message "Callable implementation has no resolved declaration symbol.")
-        | _ -> fail (Message "Callable implementation is not an admitted named code declaration.")
+        | _ ->
+            match Operands.tryThunkDeclaration ctx implementation.Id with
+            | Some (symbol, _, _) -> preturn symbol
+            | None -> fail (Message "Callable implementation is not an admitted named code declaration.")
     return! pCallableValue state.Current.Id shape symbol None
 }

@@ -15,6 +15,7 @@ open Alex.Elements.MLIRAtomics
 open Alex.Elements.MemRefElements
 open Alex.Elements.FuncElements
 module Values = Alex.Traversal.Values
+module Sequences = Alex.Traversal.SequenceOperands
 
 let private pSlotType (slot: ContinuationSlot) : PSGParser<MLIRType> = parser {
     let! state = getUserState
@@ -133,7 +134,36 @@ let pBorrowContinuationSlot nodeId frameId bytes (slot: ContinuationSlot) : PSGP
 /// Other slots store the provided value at the graph's exact physical carrier.
 let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot) : PSGParser<MLIROp list * TransferResult> = parser {
     let! frameSSA, frameType, offset, fieldType = pPlacedSlot frameId bytes slot
-    let! rawValue, rawType = pRecallNode valueId
+    let! state = getUserState
+    let! rawValue, rawType =
+        match slot.Holds with
+        | CaptureSlotKind.EnvironmentView owner ->
+            match MLIRAccumulator.recallCallable valueId state.Accumulator with
+            | Some callable ->
+                match Alex.Traversal.CallableOperands.exactCarrier callable |> Option.bind _.Environment, callable.Environment with
+                | Some contract, Some environment when contract.Owner = owner -> preturn (environment.SSA, environment.Type)
+                | _ -> fail (Message $"Environment store {NodeId.value valueId} lacks its actual instance")
+            | None ->
+                match state.Graph.Nodes.TryFind valueId, state.Graph.Codata.Value.EnvironmentOrigins.TryFind valueId with
+                | Some node, Some actualOwner when actualOwner = owner &&
+                    Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type =
+                        Clef.Compiler.PSGSaturation.SemanticGraph.ClosureEnvironments.environmentType -> parser {
+                    let! environment, actual = pRecallNode valueId
+                    do! ensure (actual = fieldType) $"Environment descriptor {NodeId.value valueId} disagrees with its exact placed environment view"
+                    return environment, actual
+                  }
+                | _ -> fail (Message $"Environment store {NodeId.value valueId} has neither witnessed callable operands nor its exact environment descriptor")
+        | CaptureSlotKind.ValueView (NativeType.TSeq _ | NativeType.TSeqEnumerator _) ->
+            match MLIRAccumulator.recallSequence valueId state.Accumulator with
+            | Some sequence when state.Graph.Codata.Value.SequenceOrigins.TryFind valueId |> Option.exists (fun owner -> sequence.Flow.Owners = Set.singleton owner) ->
+                preturn (sequence.Environment.SSA, sequence.Environment.Type)
+            | None when
+                Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape state.Graph state.Graph.Nodes[valueId] = CallableValueShape.Data valueId &&
+                Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape state.Graph state.Graph.Nodes[slot.Source] = CallableValueShape.Data slot.Source &&
+                state.Graph.Codata.Value.SequenceOrigins.TryFind valueId = state.Graph.Codata.Value.SequenceOrigins.TryFind slot.Source &&
+                state.Graph.Codata.Value.SequenceOrigins.ContainsKey valueId -> pRecallNode valueId
+            | _ -> fail (Message "Descriptor-only sequence store requires the exact source-proved function half and actual environment")
+        | _ -> pRecallNode valueId
     let! adaptations, value, valueType = pAdapt nodeId valueId rawValue rawType
     let s = Values.value nodeId
     match slot.Holds, fieldType with
@@ -190,9 +220,14 @@ let private pFrameType (frame: ContinuationFrame) = parser {
 
 let private pRecallContinuationValue sourceId = parser {
     let! state = getUserState
-    match MLIRAccumulator.recallNode sourceId state.Accumulator with
-    | Some value -> return value
-    | None ->
+    match MLIRAccumulator.recallSequence sourceId state.Accumulator, MLIRAccumulator.recallNode sourceId state.Accumulator with
+    | Some sequence, _ ->
+        do! ensure (state.Graph.Codata.Value.SequenceOrigins.TryFind sourceId |> Option.exists (fun owner ->
+                        sequence.Flow.Owners = Set.singleton owner))
+                "A descriptor-only continuation capture requires the source-proved unique function half"
+        return sequence.Environment.SSA, sequence.Environment.Type
+    | None, Some value -> return value
+    | None, None ->
         // A formal can be used before its first read. Its assigned argument
         // SSA/type already belongs to this function; no source walk is needed.
         do! ensure (match state.Graph.Nodes |> Map.tryFind sourceId with Some { Kind = SemanticKind.PatternBinding _ } -> true | _ -> false) $"Continuation operand {NodeId.value sourceId} is not yet witnessed"
@@ -270,7 +305,16 @@ let pInitializeEnvironmentSlots nodeId frameSSA frameType bytes (slots: Continua
                 | Some slot -> preturn slot
                 | None -> fail (Message $"Continuation initializer {NodeId.value sourceId} names an absent capture slot {NodeId.value slotId}")
             let! offset, expected = pSlotPlacement bytes slot
-            let! value, recalled = pRecallContinuationValue sourceId
+            let! value, recalled =
+                match slot.Holds with
+                | CaptureSlotKind.EnvironmentView owner ->
+                    match MLIRAccumulator.recallCallable sourceId state.Accumulator with
+                    | Some callable ->
+                        match Alex.Traversal.CallableOperands.exactCarrier callable |> Option.bind _.Environment, callable.Environment with
+                        | Some contract, Some environment when contract.Owner = owner -> preturn (environment.SSA, environment.Type)
+                        | _ -> fail (Message $"Environment capture {NodeId.value sourceId} lacks its actual instance")
+                    | None -> fail (Message $"Environment capture {NodeId.value sourceId} has no witnessed callable operands")
+                | _ -> pRecallContinuationValue sourceId
             // Mutable bindings expose a semantic dynamic view, while their
             // allocating operation records the exact bounded cell descriptor.
             let actual = MLIRAccumulator.recallSSAType value state.Accumulator |> Option.defaultValue recalled
@@ -283,7 +327,7 @@ let pInitializeEnvironmentSlots nodeId frameSSA frameType bytes (slots: Continua
                     return [cast], s 3
                   }
                 | _ when storedType = expected -> preturn ([], stored)
-                | _ -> fail (Message $"Continuation capture {NodeId.value sourceId} lacks its settled descriptor or scalar carrier")
+                | _ -> fail (Message $"Continuation capture {NodeId.value sourceId} lacks its settled descriptor or scalar carrier: actual {storedType}, expected {expected}")
             let! store = pTypedInsertView frameSSA stored offset (s 0) (s 1) (s 2) expected frameType
             return adaptations @ viewOps @ store
         }) |> Alex.XParsec.Extensions.sequence
@@ -328,4 +372,120 @@ let pGetEnumerator nodeId templateId (frame: ContinuationFrame) : PSGParser<MLIR
             return read @ write
         }) |> Alex.XParsec.Extensions.sequence
     return allocation @ initialState @ List.concat captures, TRValue { SSA = frameSSA; Type = frameType }
+}
+
+/// Formation names the actual generator independently of the environment just
+/// constructed. It never discovers or emits that generator's body.
+let pSequenceValue nodeId shape symbol (environment: Val) = parser {
+    let code = { SSA = Values.callableCode nodeId; Type = Sequences.functionType shape }
+    let! value =
+        match Sequences.create shape code environment with
+        | Result.Ok value -> preturn value
+        | Result.Error reason -> fail (Message reason)
+    let! operation = pFuncConstant code.SSA symbol code.Type
+    return [operation], TRSequence value
+}
+
+let pPullSequence nodeId (sequence: SequenceOperand) = parser {
+    do! ensure sequence.Flow.IsEnumerator "A pull requires an actual enumerator occurrence"
+    let result = { SSA = Values.value nodeId 0; Type = TInt(IntWidth 1) }
+    let! call = pFuncCallIndirectResults [result] sequence.Code.SSA [sequence.Environment]
+    return [call], TRValue result
+}
+
+/// Current placement belongs to the common family. No representative owner's
+/// source current identity is substituted at a multi-origin boundary.
+let pSequenceCurrent nodeId (sequence: SequenceOperand) = parser {
+    let! state = getUserState
+    do! ensure (sequence.Flow.IsEnumerator && state.Graph.Codata.Value.SequenceCurrentReads.Contains nodeId)
+            "Current access requires its exact successful-pull premise"
+    let! field =
+        match sequence.Family.CurrentField with
+        | Some field -> preturn field
+        | None -> fail (Message "A sequence family without a yielded payload has no current value")
+    let! ty, inlineValue =
+        match sequence.Family.CurrentRepresentation, field.Slot with
+        | Some(_, CaptureSlotKind.Scalar scalar), settled when scalar = settled ->
+            match settled with
+            | SettledSlot.Integer(bits, _) when bits > 0 -> preturn (TInt(IntWidth bits), false)
+            | SettledSlot.Bool -> preturn (TInt(IntWidth 1), false)
+            | SettledSlot.Char | SettledSlot.Unit -> preturn (TInt(IntWidth 32), false)
+            | SettledSlot.Real 32 -> preturn (TFloat F32, false)
+            | SettledSlot.Real 64 -> preturn (TFloat F64, false)
+            | _ -> fail (Message "Sequence scalar current has an unsupported settled representation")
+        | Some(valueType, CaptureSlotKind.InlineValue native), SettledSlot.InlineBytes(bytes, alignment)
+            when valueType = native && bytes > 0 && alignment > 0 && field.Size = Some bytes && field.Align = Some alignment ->
+            match settledLayout state.Graph native with
+            | Some(SettledLayout.Union(_, _, Some actualBytes, Some actualAlignment)) when actualBytes = bytes && actualAlignment = alignment ->
+                preturn (TMemRefStatic(bytes, TInt(IntWidth 8)), true)
+            | _ -> fail (Message "Sequence aggregate current no longer matches its exact source union layout")
+        | _ -> fail (Message "Sequence common current requires its settled physical value protocol")
+    let! offset =
+        match field.Offset, field.Size, field.Align with
+        | Some offset, Some bytes, Some alignment when offset >= 0 && bytes > 0 && alignment > 0 &&
+                                                       offset % alignment = 0 && int64 offset + int64 bytes <= int64 sequence.Family.Bytes -> preturn offset
+        | _ -> fail (Message "Sequence common current has no bounded aligned field placement")
+    let s = Values.value nodeId
+    let! read =
+        if inlineValue then parser {
+            let! index = pConstI (s 1) (int64 offset) TIndex
+            let! view = pMemRefView (s 0) sequence.Environment.SSA (s 1) sequence.Environment.Type ty
+            return [index; view]
+        }
+        else pTypedExtractView (s 0) sequence.Environment.SSA offset (s 1) (s 2) (s 3) ty sequence.Environment.Type
+    let! adaptations, result, resultType = pAdapt nodeId nodeId (s 0) ty
+    return read @ adaptations, TRValue { SSA = result; Type = resultType }
+}
+
+/// An opaque representation copy preserves descriptor identity and partial
+/// definedness. It establishes only fresh-entry state, never a current value.
+let pAcquireSequence nodeId (template: SequenceOperand) shape (copy: SequenceTemplateCopy) = parser {
+    let! state = getUserState
+    let family = Sequences.family shape
+    do! ensure (not template.Flow.IsEnumerator && (Sequences.flow shape).IsEnumerator &&
+                copy.Template = template.Flow.Occurrence && copy.Family = family.Identity &&
+                family.Identity = template.Family.Identity && copy.Bytes = family.Bytes && copy.Alignment = family.Alignment &&
+                copy.AddressSpace = NTUMemorySpace.Default)
+            "Sequence copy requires its exact source/destination protocol and admitted address space"
+    let environment = { SSA = Values.value nodeId 0; Type = Sequences.environmentType shape }
+    let! allocation =
+        match copy.Region with
+        | Some region -> parser {
+            let! parent =
+                match state.Graph.Codata.Value.ContinuationFrames.TryFind region.ParentOwner with
+                | Some parent when parent.Formal = region.ParentFormal && region.Bytes = family.Bytes &&
+                                   region.Alignment = family.Alignment && region.Offset >= 0 &&
+                                   region.Offset % family.Alignment = 0 && int64 region.Offset + int64 family.Bytes <= int64 parent.Bytes -> preturn parent
+                | _ -> fail (Message "Fresh sequence destination lost its exact enclosing region")
+            let! parentSSA, parentType = pRecallContinuationValue region.ParentFormal
+            do! ensure (parentType = TMemRefStatic(parent.Bytes, TInt(IntWidth 8))) "Sequence region parent has a different physical carrier"
+            let offsetSSA = Values.value nodeId 1
+            let! offset = pConstI offsetSSA (int64 region.Offset) TIndex
+            let! view = pMemRefView environment.SSA parentSSA offsetSSA parentType environment.Type
+            return [offset; view]
+          }
+        | None ->
+            match copy.Residence with
+            | EscapeKind.StackScoped -> parser {
+                let! allocation = pAlloca environment.SSA family.Bytes (TInt(IntWidth 8)) (Some family.Alignment)
+                return [allocation]
+              }
+            | EscapeKind.StaticLifetime -> parser {
+                let! allocation = Alex.Patterns.MemoryPatterns.pAllocValue nodeId environment.SSA environment.Type
+                return [allocation]
+              }
+            | _ -> fail (Message "Fresh sequence storage has no supported admitted residence")
+    let! representation = pOpaqueStorageCopy environment.SSA template.Environment.SSA copy.Bytes copy.Alignment
+    let! stateType, offset =
+        match family.StateField.Slot, family.StateField.Offset with
+        | SettledSlot.Integer(bits, _), Some offset when bits > 0 -> preturn (TInt(IntWidth bits), offset)
+        | _ -> fail (Message "Fresh sequence entry state lacks its common integer placement")
+    let s = Values.continuationValue nodeId 0
+    let! zero = pConstI (s 0) 0L stateType
+    let! reset = pTypedInsertView environment.SSA (s 0) offset (s 1) (s 2) (s 3) stateType environment.Type
+    let! result =
+        match Sequences.create shape template.Code environment with
+        | Result.Ok value -> preturn value
+        | Result.Error reason -> fail (Message reason)
+    return allocation @ [representation; zero] @ reset, TRSequence result
 }

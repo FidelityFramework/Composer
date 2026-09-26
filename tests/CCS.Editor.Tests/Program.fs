@@ -383,11 +383,12 @@ let main _ =
 """
     let file = write "closure-environments/Main.clef" source
     let session = EditorSession(project)
-    let lines = source.Split('\n')
-    let at (snapshot: EditorSnapshot) (marker: string) (name: string) =
+    let atText (text: string) (snapshot: EditorSnapshot) (marker: string) (name: string) =
+        let lines = text.Split('\n')
         let line = lines |> Array.findIndex (fun text -> text.Contains(marker, StringComparison.Ordinal))
         let column = lines[line].LastIndexOf(name, StringComparison.Ordinal)
         session.TryHover(snapshot.Revision, file, line, column) |> get
+    let at snapshot marker name = atText source snapshot marker name
     let checkedSnapshot inputs =
         let snapshot = session.CheckAsync(inputs).Result |> get
         check snapshot.Failure.IsNone $"Closure environment fixture failed: {snapshot.Failure}"
@@ -405,12 +406,16 @@ let main _ =
         for name in ["offset"; "bias"] do
             let declaration = at snapshot (if name = "offset" then "let mutable offset" else "let bias") name
             let captured = at snapshot "let mapper" name
-            equal "EnvironmentRead" captured.Kind
+            // Hover is a source projection. The compiler's exact occurrence
+            // relation preserves this reference even when its storage is read
+            // through a materialized environment.
+            equal "VarRef" captured.Kind
             equal (Some name) captured.Name
             equal "int<m>" captured.Type
             equal declaration.Range (captured.Definition |> get)
     let first = checkedSnapshot Map.empty
     checkProjection first
+    let originalBiasRange = (at first "let bias" "bias").Range
     let retained = sprintf "%A" first
     let changed = source.Replace("offset = 7<m>", "offset = 7<s>")
     let invalid = session.CheckAsync(Map.ofList [file, changed]).Result |> get
@@ -422,9 +427,71 @@ let main _ =
     let repaired = checkedSnapshot Map.empty
     checkProjection repaired
     check (repaired.Revision > invalid.Revision) "Repair did not produce a fresh closure projection."
+    let shadowedSource = source.Replace("    let mapper =", "    let bias = 3<m>\n    let mapper =")
+    let shadowed = checkedSnapshot (Map.ofList [file, shadowedSource])
+    let shadow = atText shadowedSource shadowed "bias = 3<m>" "bias"
+    let capturedShadow = atText shadowedSource shadowed "let mapper" "bias"
+    equal "VarRef" capturedShadow.Kind
+    equal shadow.Range (capturedShadow.Definition |> get)
+    check (shadow.Range <> originalBiasRange) "Shadowed capture reused the previous declaration identity."
+    check (session.TryHover(repaired.Revision, file, 7, 4).IsNone) "The editor accepted a stale pre-shadow revision."
+    let restored = checkedSnapshot Map.empty
+    checkProjection restored
     equal retained (sprintf "%A" first)
     equal source (File.ReadAllText file)
     printfn "PASS materialized callback signatures, captured declaration identities and dimensional edit/repair"
+
+let lazyCaptureChecks () =
+    let project = write "lazy-captures/Editor.fidproj" """[package]
+name = "editor-lazy-captures"
+[compilation]
+target = "library"
+[build]
+sources = ["Main.clef"]
+output_kind = "library"
+"""
+    let source = """module LazyCaptures
+[<Measure>] type m
+[<Measure>] type s
+[<EntryPoint>]
+let main _ =
+    let evaluationSeed = 7<m>
+    let mutable cell = 3<m>
+    let delayed = lazy (evaluationSeed + cell)
+    ignore (Lazy.force delayed)
+    0
+"""
+    let file = write "lazy-captures/Main.clef" source
+    let session = EditorSession(project)
+    let lines = source.Split('\n')
+    let at (snapshot: EditorSnapshot) (marker: string) (name: string) =
+        let line = lines |> Array.findIndex (fun text -> text.Contains(marker, StringComparison.Ordinal))
+        let column = lines[line].IndexOf(name, StringComparison.Ordinal)
+        session.TryHover(snapshot.Revision, file, line, column) |> get
+    let verify (snapshot: EditorSnapshot) =
+        check snapshot.Failure.IsNone $"Lazy source check failed: {snapshot.Failure}"
+        check snapshot.ParseFailures.IsEmpty $"Lazy source parse failed: {snapshot.ParseFailures}"
+        check (snapshot.Diagnostics |> List.forall (fun diagnostic -> diagnostic.EffectiveSeverity <> "Error"))
+            $"Lazy source check has errors: {snapshot.Diagnostics}"
+        for name, declaration in ["evaluationSeed", "let evaluationSeed"; "cell", "let mutable cell"] do
+            let defined = at snapshot declaration name
+            let captured = at snapshot "let delayed" name
+            equal "VarRef" captured.Kind
+            equal (Some name) captured.Name
+            equal "int<m>" captured.Type
+            equal (Some defined.Range) captured.Definition
+    let first = session.CheckAsync(Map.empty).Result |> get
+    verify first
+    let retained = sprintf "%A" first
+    let invalid = session.CheckAsync(Map.ofList [file, source.Replace("7<m>", "7<s>")]).Result |> get
+    check (invalid.Diagnostics |> List.exists (fun diagnostic -> diagnostic.Code = "CCS8040" && diagnostic.EffectiveSeverity = "Error"))
+        "Changing a lazy capture dimension lost its diagnostic."
+    check (session.TryHover(first.Revision, file, 7, 24).IsNone) "A stale lazy capture hover remained available."
+    let repaired = session.CheckAsync(Map.empty).Result |> get
+    verify repaired
+    equal retained (sprintf "%A" first)
+    equal source (File.ReadAllText file)
+    printfn "PASS lazy captured source references, dimensions, stale-revision rejection and edit/repair"
 
 let sequenceApplicationChecks () =
     let project = write "sequence-applications/Editor.fidproj" """[package]
@@ -760,6 +827,7 @@ let main _ = if message = "proof fixture" then 0 else 1
     integerLiteralChecks ()
     directCaptureChecks ()
     closureEnvironmentChecks ()
+    lazyCaptureChecks ()
     sequenceApplicationChecks ()
     loopObligationChecks ()
     callEffectRangeChecks ()
@@ -794,13 +862,14 @@ let main args =
             | [| "--sample"; project |] -> inspectSample project
             | [| "--direct-captures" |] -> directCaptureChecks ()
             | [| "--closure-environments" |] -> closureEnvironmentChecks ()
+            | [| "--lazy-captures" |] -> lazyCaptureChecks ()
             | [| "--sequence-applications" |] -> sequenceApplicationChecks ()
             | [| "--loop-obligations" |] -> loopObligationChecks ()
             | [| "--call-effects" |] -> callEffectRangeChecks ()
             | [| "--program-lifetime" |] -> programLifetimeChecks ()
             | [| "--string-encoding" |] -> StringEncodingChecks.run root
             | [||] -> checks ()
-            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --sequence-applications | --loop-obligations | --call-effects | --program-lifetime | --string-encoding]"
+            | _ -> failwith "Usage: CCS.Editor.Tests [--sample path.fidproj | --direct-captures | --closure-environments | --lazy-captures | --sequence-applications | --loop-obligations | --call-effects | --program-lifetime | --string-encoding]"
             0
         with error -> eprintfn "%O" error; 1
     finally if Directory.Exists root then Directory.Delete(root, true)

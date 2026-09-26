@@ -10,6 +10,11 @@ proof migration or a truth-maintenance engine implemented.
 
 ## 1. Existing boundaries to preserve
 
+The [evaluation strategy contract](Evaluation_Strategy_Contract.md) distinguishes
+runtime `Incremental<'T>` and observable delivery from compiler reuse after edits.
+Alex's ctx pull and Huet observation do not select the source program's runtime
+push/pull strategy.
+
 Baker ingredients, patterns and recipes elaborate semantics through nanopass
 fan-out and fold-in. Today a [Recipe](../../clef/src/Compiler/Nanopass/Recipe.fs)
 names its original node, replacement root, new nodes and elaboration origin.

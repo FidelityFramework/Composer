@@ -10,7 +10,8 @@ open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 /// an Xtensa image is ROM-loaded into SRAM behind a vector block of code.
 let backend: BackEnd = {
     Name = "LLVM / MCU image (Cortex-M or Xtensa)"
-    Compile = fun mlirText ctx ->
+    Compile = fun witnessed ctx ->
+        let mlirText = witnessed.Text
         try
             let directory = ctx.IntermediatesDir |> Option.defaultWith (fun () ->
                 let path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath ctx.OutputPath), "intermediates")

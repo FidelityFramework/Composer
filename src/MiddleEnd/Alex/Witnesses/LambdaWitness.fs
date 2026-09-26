@@ -25,6 +25,7 @@ open Alex.CodeGeneration.TypeMapping
 open Alex.Elements.MLIRAtomics  // For pUndef, pInsertValue, pExtractValue
 open Alex.Elements.FuncElements  // For pFuncConstant
 module Values = Alex.Traversal.Values
+module CallableOperands = Alex.Traversal.CallableOperands
 open XParsec
 open XParsec.Parsers
 open XParsec.Combinators
@@ -69,6 +70,29 @@ let private structuralMembers (position: PSGZipper) =
                 | None -> found) seen
     collect Set.empty position
 
+/// Each real formal owns one scalar or a settled callable's separate operand
+/// components. This reads a signature; it neither visits nor emits a body.
+type private ParameterShape = Scalar | Callable of CallableOperands.Shape | Sequence of Alex.Traversal.SequenceOperands.Shape | Lazy of Alex.Traversal.LazyOperands.Shape
+
+let private parameterComponents (ctx: WitnessContext) parameters =
+    let groups = parameters |> List.map (fun (_, ty, id) ->
+        match Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph ctx.Graph.Nodes[id] with
+        | CallableValueShape.Callable _ ->
+            CallableOperands.project ctx id |> Result.map (fun shape ->
+                (CallableOperands.functionType shape :: Option.toList (CallableOperands.environmentType shape)), Callable shape)
+        | CallableValueShape.Sequence _ ->
+            Alex.Traversal.SequenceOperands.project ctx id |> Result.map (fun shape ->
+                Alex.Traversal.SequenceOperands.componentTypes shape, Sequence shape)
+        | CallableValueShape.Lazy _ ->
+            Alex.Traversal.LazyOperands.project ctx id |> Result.map (fun shape ->
+                Alex.Traversal.LazyOperands.componentTypes shape, Lazy shape)
+        | CallableValueShape.Data _ ->
+            try Result.Ok([mapTypeAt id ty ctx |> narrowType ctx.Coeffects ctx.Graph id], Scalar)
+            with ex -> Result.Error ex.Message)
+    match groups |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
+    | Some reason -> Result.Error reason
+    | None -> Result.Ok(groups |> List.choose (function Result.Ok group -> Some group | _ -> None))
+
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
@@ -79,8 +103,12 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
     // Get the full combinator (including ourselves) via Y-combinator fixed point
     let combinator = getCombinator()
 
-    match tryMatch pLambdaWithCaptures ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-    | Some ((params', bodyId, captureInfos), _) ->
+    let reading =
+        tryMatch pLambdaWithCaptures ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator
+        |> Option.map (fun (((parameters, _, _), _) as matched) -> matched, parameterComponents ctx parameters)
+    match reading with
+    | Some (_, Result.Error reason) -> WitnessOutput.error $"Callable formal components: {reason}"
+    | Some (((params', bodyId, captureInfos), _), Result.Ok parameterTypes) ->
         // Check if this is a declaration root Lambda
         let nodeIdValue = NodeId.value node.Id
         let declRootOpt = Map.tryFind node.Id ctx.Graph.Codata.Value.DeclarationRootLambdas
@@ -165,12 +193,14 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | Some plan when plan.EntryLambda = node.Id -> plan.Symbol
                 | _ -> Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node closureLayoutOpt.IsSome
 
-            // Read each actual formal at this lambda occurrence. Shared Parent
-            // fields do not determine its block argument position.
-            let mlirParams =
-                params' |> List.mapi (fun index (_, ty, id) ->
-                    let physical = mapTypeAt id ty ctx |> narrowType ctx.Coeffects ctx.Graph id
-                    SSA.Arg(index + (if closureLayoutOpt.IsSome then 1 else 0)), physical)
+            // The actual lambda occurrence supplies ordered formals. A callable
+            // formal expands into code and its actual environment; subsequent
+            // formals start after all preceding components, not their type arrows.
+            let parameterValues, _ =
+                parameterTypes |> List.mapFold (fun ordinal (types, _) ->
+                    let values = types |> List.mapi (fun offset ty -> { SSA = SSA.Arg(ordinal + offset); Type = ty })
+                    values, ordinal + types.Length) (if closureLayoutOpt.IsSome then 1 else 0)
+            let mlirParams = parameterValues |> List.concat |> List.map (fun value -> value.SSA, value.Type)
 
             // For closures: prepend env parameter (Arg 0 = raw pointer as index)
             // The call site passes the env as an index (raw pointer from the uniform pair).
@@ -199,8 +229,30 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Operand recall is scoped independently of pure SSA naming. Bind
             // the actual formals here, shadowing any parent-scope occurrence;
             // The complete operand scope is restored after the body is witnessed.
-            for ((_, _, paramId), (ssa, ty)) in List.zip params' mlirParams do
-                MLIRAccumulator.bindNode paramId ssa ty ctx.Accumulator
+            for ((_, _, paramId), ((_, shape), values)) in List.zip params' (List.zip parameterTypes parameterValues) do
+                match shape, values with
+                | Scalar, [value] -> MLIRAccumulator.bindNode paramId value.SSA value.Type ctx.Accumulator
+                | Callable shape, code :: environment ->
+                    match CallableOperands.create shape code (List.tryHead environment)
+                          |> Result.bind (fun value -> MLIRAccumulator.bindCallable paramId value ctx.Accumulator) with
+                    | Result.Ok () -> ()
+                    | Result.Error reason ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some paramId) (Some "Lambda") (Some "Callable formal") reason) ctx.Accumulator
+                | Sequence shape, [code; environment] ->
+                    match Alex.Traversal.SequenceOperands.create shape code environment
+                          |> Result.bind (fun value -> MLIRAccumulator.bindSequence paramId value ctx.Accumulator) with
+                    | Result.Ok () -> ()
+                    | Result.Error reason ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some paramId) (Some "Lambda") (Some "Sequence formal") reason) ctx.Accumulator
+                | Lazy shape, [code; environment] ->
+                    match Alex.Traversal.LazyOperands.create shape code environment
+                          |> Result.bind (fun value -> MLIRAccumulator.bindLazy paramId value ctx.Accumulator) with
+                    | Result.Ok () -> ()
+                    | Result.Error reason ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some paramId) (Some "Lambda") (Some "Lazy formal") reason) ctx.Accumulator
+                | _ ->
+                    MLIRAccumulator.addError (Diagnostic.error (Some paramId) (Some "Lambda") (Some "Formal components")
+                        "Settled formal components do not match their witnessed argument values") ctx.Accumulator
 
             // ═══ SAVE CAPTURE SOURCE SSAs BEFORE EXTRACTION REGISTRATION ═══
             // Capture extraction (below) registers inner-function SSAs in NodeAssoc via bindNode,
@@ -330,6 +382,39 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Get body result for return value
             let actualValueNode = findLastValueNode bodyId ctx.Graph
             let bodyResult = MLIRAccumulator.recallNode actualValueNode ctx.Accumulator
+            let bodyCallable =
+                match MLIRAccumulator.recallCallable actualValueNode ctx.Accumulator with
+                | Some _ ->
+                    match CallableOperands.reproject ctx actualValueNode bodyId with
+                    | Result.Ok value -> Some value
+                    | Result.Error reason ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some bodyId) (Some "Lambda") (Some "Callable result") reason) ctx.Accumulator
+                        None
+                | None -> None
+            let bodySequence =
+                match MLIRAccumulator.recallSequence actualValueNode ctx.Accumulator with
+                | Some _ ->
+                    match Alex.Traversal.SequenceOperands.reproject ctx actualValueNode bodyId with
+                    | Result.Ok value -> Some value
+                    | Result.Error reason ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some bodyId) (Some "Lambda") (Some "Sequence result") reason) ctx.Accumulator
+                        None
+                | None -> None
+            let bodyLazy =
+                match MLIRAccumulator.recallLazy actualValueNode ctx.Accumulator with
+                | Some _ ->
+                    match Alex.Traversal.LazyOperands.reproject ctx actualValueNode bodyId with
+                    | Result.Ok value -> Some value
+                    | Result.Error reason ->
+                        MLIRAccumulator.addError (Diagnostic.error (Some bodyId) (Some "Lambda") (Some "Lazy result") reason) ctx.Accumulator
+                        None
+                | None -> None
+            let bodyComponents =
+                match bodyCallable, bodySequence, bodyLazy with
+                | Some value, _, _ -> Some(CallableOperands.values value)
+                | _, Some value, _ -> Some(Alex.Traversal.SequenceOperands.values value)
+                | _, _, Some value -> Some(Alex.Traversal.LazyOperands.values value)
+                | _ -> None
             MLIRAccumulator.restoreOperands savedOperands ctx.Accumulator
 
             // Determine return type from Lambda type signature
@@ -341,16 +426,20 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
                 printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
                     funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
-            let rawReturnType = mapTypeAt bodyId innerReturnNativeType2 ctx
+            let rawReturnType =
+                match bodyComponents with
+                | Some values -> (List.head values).Type
+                | None -> mapTypeAt bodyId innerReturnNativeType2 ctx
             let nativeVoid =
                 Clef.Compiler.PSGSaturation.SemanticGraph.CallbackDeclarations.forLambda ctx.Graph node.Id
                 |> Option.exists (fun callback -> callback.ReturnsVoid)
             let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
             let returnType =
-                match returnMeet, bodyResult with
-                | Some (meet, _), Some _ -> TInt (IntWidth meet.To)
-                | _, Some (_, actualTy) -> actualTy
-                | _, None -> narrowType ctx.Coeffects ctx.Graph bodyId rawReturnType
+                match bodyComponents, returnMeet, bodyResult with
+                | Some values, _, _ -> (List.head values).Type
+                | None, Some (meet, _), Some _ -> TInt (IntWidth meet.To)
+                | None, _, Some (_, actualTy) -> actualTy
+                | None, _, None -> narrowType ctx.Coeffects ctx.Graph bodyId rawReturnType
             let returnMeetOps =
                 match returnMeet, bodyResult with
                 | Some (meet, result), Some (ssa, _) -> [ meetOp meet result ssa ]
@@ -359,10 +448,11 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
 
             // Handle bodyResult based on return type
             let returnSSA =
-                match returnMeet, bodyResult with
-                | Some (_, result), Some _ -> Some result
-                | _, Some (ssa, _) -> Some ssa
-                | _, None ->
+                match bodyComponents, returnMeet, bodyResult with
+                | Some values, _, _ -> Some (List.head values).SSA
+                | None, Some (_, result), Some _ -> Some result
+                | None, _, Some (ssa, _) -> Some ssa
+                | None, _, None ->
                     match innerReturnNativeType2 with
                     | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
                         None
@@ -386,14 +476,26 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                         None
 
             // Delegate function wrapping to Pattern — coeffect determines func.func vs hw.module
+            let expandedNames =
+                List.zip params' parameterValues |> List.collect (fun ((name, _, _), values) ->
+                    if values.Length = 1 then [name]
+                    else values |> List.mapi (fun index _ -> sprintf "%s_%d" name index))
             let paramNames =
                 match closureLayoutOpt with
-                | Some _ -> "env" :: (params' |> List.map (fun (name, _, _) -> name))
-                | None -> params' |> List.map (fun (name, _, _) -> name)
+                | Some _ -> "env" :: expandedNames
+                | None -> expandedNames
             let visibility = if declRootOpt = Some DeclRoot.EntryPoint then FuncVisibility.Public else FuncVisibility.Private
+            let resultTypes =
+                match bodyComponents with
+                | Some values -> values |> List.map _.Type
+                | None -> [returnType]
             let definition =
-                pFunctionDef visibility funcName funcParams (Some paramNames) returnType bodyOps returnSSA
-                    (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)
+                match bodyComponents, Clef.Compiler.NativeTypedTree.UnionFind.applySubst innerReturnNativeType2 with
+                | Some values, _ -> pFunctionDefResults visibility funcName funcParams (Some paramNames) resultTypes bodyOps values
+                | None, (NativeType.TFun _ | NativeType.TSeq _ | NativeType.TSeqEnumerator _ | NativeType.TLazy _) -> fail (Message "Body result has no witnessed canonical function/environment operands")
+                | None, _ ->
+                    pFunctionDef visibility funcName funcParams (Some paramNames) returnType bodyOps returnSSA
+                        (match SemanticGraph.tryGetNode bodyId ctx.Graph with Some b when Values.isUnitTyped b.Type -> Some (Values.unitReturnValue node.Id) | _ -> None)
             match tryMatchWithDiagnostics definition ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok (funcDefOp, _) ->
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
@@ -412,6 +514,8 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 // If this Lambda has captures, build closure struct + uniform pair in parent scope
                 // All stores use memref.reinterpret_cast to create typed views at byte offsets
                 match closureLayoutOpt with
+                | Some _ when resultTypes.Length <> 1 ->
+                    WitnessOutput.error "Legacy closure placement cannot transport a callable result; a canonical source carrier is required."
                 | Some layout ->
                     // 1. Get code pointer (func.constant @funcName → real function type → index)
                     // func.constant must use actual function type; we cast to index for storage

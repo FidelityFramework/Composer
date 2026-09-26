@@ -1,7 +1,7 @@
 [package]
 name = "Lazy"
 version = "0.1.0"
-description = "Sample 14: Lazy Values (PRD-14)"
+description = "Sample 14: Lazy Values and shared memoization (C-05)"
 authors = ["SpeakEZ Technologies, Inc."]
 license = "MIT"
 

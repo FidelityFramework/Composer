@@ -40,10 +40,10 @@ let main _ =
         values <- values * 10 + value
     let restarted = values = 123 && trace = 12345
 
-    let eager = Seq.append (makeInput 1 7) (makeInput 2 8)
+    let appended = Seq.append (makeInput 1 7) (makeInput 2 8)
     let formed = constructed = 12
     let mutable eagerValues = 0
-    for value in eager do
+    for value in appended do
         eagerValues <- eagerValues * 10 + value
     let eagerInputs = formed && constructed = 12 && eagerValues = 78
 

@@ -13,6 +13,15 @@ open Alex.Dialects.Core.Types
 let symbolName (name: string) : string =
     name |> String.map (fun c -> if c = '\'' then '$' elif System.Char.IsLetterOrDigit c || c = '_' || c = '.' || c = '$' then c else '_')
 
+/// MLIR string attributes carry bytes. Escape non-printable and non-ASCII UTF8
+/// bytes as two hexadecimal digits, preserving embedded NUL and line breaks.
+let private stringAttributeValue (value: string) =
+    System.Text.UTF8Encoding(false, true).GetBytes(value)
+    |> Array.map (fun value ->
+        if value >= 32uy && value <= 126uy && value <> 34uy && value <> 92uy then string (char value)
+        else sprintf "\\%02X" value)
+    |> String.concat ""
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPE SERIALIZATION
@@ -99,6 +108,7 @@ let rec hwTypeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
 let ssaToString (ssa: SSA) : string =
     match ssa with
     | V (n, k) -> sprintf "%%v%d_%d" n k
+    | CallableAlternative (n, alternative) -> sprintf "%%callable_%d_alternative_%d" n alternative
     | Arg n -> sprintf "%%arg%d" n
 
 /// Convert Val (SSA + type) to typed SSA value string
@@ -419,6 +429,10 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
                 (ssaToString result) alignment (typeToString pointer memrefType)
         | None ->
             sprintf "%s = memref.alloc() : %s" (ssaToString result) (typeToString pointer memrefType)
+    | MemRefOp.Copy (source, destination, sourceType, destinationType) ->
+        sprintf "memref.copy %s, %s : %s to %s"
+            (ssaToString source) (ssaToString destination)
+            (typeToString pointer sourceType) (typeToString pointer destinationType)
     | MemRefOp.SubView (result, source, offsets, resultType) ->
         let offsetsStr = offsets |> List.map ssaToString |> String.concat ", "
         sprintf "%s = memref.subview %s[%s] : %s"
@@ -672,7 +686,7 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
         | _ ->
             sprintf "// TODO: Serialize IndexOp %A" iop
     | MLIROp.Assert (condition, message) ->
-        sprintf "cf.assert %s, \"%s\"" (ssaToString condition) (message.Replace("\\", "\\\\").Replace("\"", "\\\""))
+        sprintf "cf.assert %s, \"%s\"" (ssaToString condition) (stringAttributeValue message)
     | MLIROp.SCFOp scfOp ->
         match scfOp with
         | SCFOp.While (condOps, bodyOps) ->

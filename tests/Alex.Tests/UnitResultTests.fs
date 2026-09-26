@@ -117,3 +117,50 @@ let ``effectful unit conditional verifies and lowers through standard MLIR`` () 
     Assert.Contains("llvm.return", lowered)
     Assert.DoesNotContain("scf.if", lowered)
     Assert.DoesNotContain("unrealized_conversion_cast", lowered)
+
+let private unitComparison () =
+    let builder = NodeBuilder()
+    let left = builder.Create(SemanticKind.PatternBinding "left", Types.unitType, dummyRange)
+    let right = builder.Create(SemanticKind.PatternBinding "right", Types.unitType, dummyRange)
+    let equal = builder.Create(SemanticKind.Intrinsic
+        { Module = IntrinsicModule.Operators; Operation = "op_Equality"
+          Category = IntrinsicCategory.Comparison; FullName = "Operators.op_Equality" },
+        NativeType.TFun(Types.unitType, NativeType.TFun(Types.unitType, Types.boolType)), dummyRange)
+    let call = builder.Create(SemanticKind.Application(equal.Id, [left.Id; right.Id]), Types.boolType, dummyRange)
+    let graph = builder.Build []
+    let operands = MLIRAccumulator.empty ()
+    MLIRAccumulator.bindNode left.Id (Arg 0) unitType operands
+    MLIRAccumulator.bindNode right.Id (Arg 1) unitType operands
+    let position = Zipper.create graph call.Id |> require "Missing unit equality occurrence"
+    position, left.Id, right.Id, operands
+
+[<Theory>]
+[<InlineData("eq")>]
+[<InlineData("ne")>]
+let ``unit equality compares already witnessed carriers without inventing numeric ranges`` predicate =
+    let position, left, right, operands = unitComparison ()
+    Assert.True(position.Graph.Nodes[left].ValueRange.IsNone)
+    Assert.True(position.Graph.Nodes[right].ValueRange.IsNone)
+    match matchAt (Alex.Patterns.ApplicationPatterns.pComparisonOp position.Focus.Id predicate) position 64 operands with
+    | Result.Ok (([MLIROp.ArithOp(ArithOp.CmpI(_, actual, Arg 0, Arg 1, carrier))] as operations, TRValue result), _) ->
+        Assert.Equal((if predicate = "eq" then ICmpPred.Eq else ICmpPred.Ne), actual)
+        Assert.Equal(unitType, carrier)
+        let definition = MLIROp.FuncOp(FuncOp.FuncDef("unit_equality", [Arg 0, unitType; Arg 1, unitType], [result.Type],
+            operations @ [MLIROp.FuncOp(FuncOp.Return [result])], FuncVisibility.Private))
+        let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "unit_equality" [definition]
+        let verified = MlirComponentTests.mlirOpt ["--verify-each"] text
+        Assert.Contains("arith.cmpi " + predicate, verified)
+    | other -> failwithf "Unit comparison lost its actual carriers: %A" other
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``unit equality refuses absent or noncanonical witnessed operands`` absent =
+    let position, _, right, operands = unitComparison ()
+    if absent then operands.NodeAssoc <- operands.NodeAssoc.Remove right
+    else MLIRAccumulator.bindNode right (Arg 1) (TInt(IntWidth 8)) operands
+    match matchAt (Alex.Patterns.ApplicationPatterns.pComparisonOp position.Focus.Id "eq") position 64 operands with
+    | Result.Error message ->
+        Assert.Contains((if absent then "not yet witnessed" else "canonical witnessed unit"), message)
+    | Result.Ok _ -> failwith "Unit comparison manufactured an operand"
+    Assert.Empty operands.AllOps

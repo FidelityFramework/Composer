@@ -1,249 +1,166 @@
-/// ApplicationWitness - Witness function application nodes (non-intrinsic)
-///
-/// Accumulator-driven dispatch:
-/// - Closure pair in accumulator → pClosureCall (indirect through pair)
-/// - No closure pair → pDirectCall (known function name)
-///
-/// Curry flattening: coeffect-driven direct call (Baker optimization)
-/// Intrinsics: delegated to domain-specific witnesses
-///
-/// NANOPASS: This witness handles ONLY non-intrinsic Application nodes.
+/// Application witnesses read settled call boundaries and already witnessed
+/// operands at the current Huet occurrence. Function bodies remain the common
+/// traversal's responsibility; Patterns compose the physical invocation.
 module Alex.Witnesses.ApplicationWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Clef.Compiler.PSGSaturation.SemanticGraph.Core
 open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.UnionFind
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.ApplicationPatterns
 open Alex.Dialects.Core.Types
+module Operands = Alex.Traversal.CallableOperands
 
-// ═══════════════════════════════════════════════════════════
-// CATEGORY-SELECTIVE WITNESS (Private)
-// ═══════════════════════════════════════════════════════════
-
-/// Read the function node through one explicit TypeAnnotation wrapper.
-let private resolveFunctionNode funcId graph =
-    match SemanticGraph.tryGetNode funcId graph with
-    | Some funcNode ->
-        match funcNode.Kind with
-        | SemanticKind.TypeAnnotation (innerFuncId, _) ->
-            SemanticGraph.tryGetNode innerFuncId graph
-        | _ -> Some funcNode
-    | None -> None
-
-/// Extract parameter names from a Binding's Lambda child (for hw.instance port names)
-/// Navigates: Binding → Lambda chain → parameter name list
-let private extractParamNames (bindingId: NodeId) (graph: SemanticGraph) : string list option =
-    match SemanticGraph.tryGetNode bindingId graph with
-    | Some bindingNode ->
-        // Find Lambda child of Binding
-        let lambdaChild =
-            bindingNode.Children
-            |> List.tryPick (fun childId ->
-                match SemanticGraph.tryGetNode childId graph with
-                | Some child ->
-                    match child.Kind with
-                    | SemanticKind.Lambda (params', _, _, _, _) -> Some params'
-                    | _ -> None
-                | None -> None)
-        match lambdaChild with
-        | Some params' -> Some (params' |> List.map (fun (name, _, _) -> name))
-        | None -> None
-    | None -> None
-
-/// Each argument of a call adapted to the slot it meets (the parameter node's width for a
-/// direct call, the declared Register width through a value): the meets SSAAssignment derived
-/// for (call, argument), read and transcribed here.
-let private adaptArguments (ctx: WitnessContext) (callId: NodeId) (args: (NodeId * (SSA * MLIRType)) list) : MLIROp list * (SSA * MLIRType) list =
-    let adapted =
-        args |> List.map (fun (argId, (ssa, ty)) ->
-            let (ops, ssa', ty') = adaptOperand ctx.Coeffects ctx.Graph callId argId ssa ty
-            (ops, (ssa', ty')))
-    (adapted |> List.collect fst, adapted |> List.map snd)
-
-/// The body of the lambda a binding holds (through an annotation): the node whose held width
-/// is the width the callee returns at.
-let private calleeBody (graph: SemanticGraph) (bindingId: NodeId) : NodeId option =
-    match SemanticGraph.tryGetNode bindingId graph with
-    | Some ({ Kind = SemanticKind.Binding _ } as binding) ->
-        binding.Children
-        |> List.tryPick (fun childId ->
-            match SemanticGraph.tryGetNode childId graph with
-            | Some { Kind = SemanticKind.Lambda (_, bodyId, _, _, _) } -> Some bodyId
-            | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } ->
-                match SemanticGraph.tryGetNode inner graph with
-                | Some { Kind = SemanticKind.Lambda (_, bodyId, _, _, _) } -> Some bodyId
-                | _ -> None
-            | _ -> None)
+/// Read the declaration's actual lambda boundary, without visiting its body.
+let private declaration (ctx: WitnessContext) binding =
+    match ctx.Graph.Nodes.TryFind binding with
+    | Some { Kind = SemanticKind.Binding(_, false, _, _); Children = [child] } ->
+        let child =
+            match ctx.Graph.Nodes[child].Kind with
+            | SemanticKind.TypeAnnotation(inner, _) -> ctx.Graph.Nodes[inner]
+            | _ -> ctx.Graph.Nodes[child]
+        match child.Kind with
+        | SemanticKind.Lambda(parameters, body, [], _, _) -> Some(parameters, body)
+        | _ -> None
     | _ -> None
 
-/// A direct call's result: the callee returns at its body's width; the call node reads it at its
-/// own through the meet derived for (call, call).
-let private callResult (ctx: WitnessContext) (node: SemanticNode) (ops: MLIROp list) (result: TransferResult) : WitnessOutput =
-    match result with
-    | TRValue v ->
-        let (meetOps, ssa, ty) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id v.SSA v.Type
-        { InlineOps = ops @ meetOps; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
-    | other -> { InlineOps = ops; TopLevelOps = []; Result = other }
+let private failure (node: SemanticNode) phase message =
+    WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some phase) message
 
-/// The type a direct call returns: the callee's body at its held width (a scalar), or the
-/// mapped result type.
-let private calleeReturnType (ctx: WitnessContext) (node: SemanticNode) (bodyId: NodeId option) : MLIRType =
-    match bodyId with
-    | Some body -> mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
-    | None -> mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+/// Logical arguments retain their actual operands. Callable values expand from
+/// their witnessed carrier and never enter the scalar type mapping.
+let private arguments (ctx: WitnessContext) call sources =
+    let readings =
+        sources |> List.map (fun source ->
+            match MLIRAccumulator.recallCallable source ctx.Accumulator with
+            | Some callable -> Result.Ok([], Operands.values callable)
+            | None ->
+                match MLIRAccumulator.recallSequence source ctx.Accumulator with
+                | Some sequence -> Result.Ok([], Alex.Traversal.SequenceOperands.values sequence)
+                | None ->
+                match MLIRAccumulator.recallLazy source ctx.Accumulator with
+                | Some lazyValue -> Result.Ok([], Alex.Traversal.LazyOperands.values lazyValue)
+                | None ->
+                match ctx.Graph.Nodes.TryFind source with
+                | Some node when (match applySubst node.Type with NativeType.TFun _ | NativeType.TLazy _ -> true | _ -> false) ->
+                    Result.Error $"Callable argument {NodeId.value source} has no witnessed operands"
+                | _ ->
+                    match MLIRAccumulator.recallNode source ctx.Accumulator with
+                    | Some (ssa, ty) ->
+                        let operations, value, actual = adaptOperand ctx.Coeffects ctx.Graph call source ssa ty
+                        Result.Ok(operations, [{ SSA = value; Type = actual }])
+                    | None -> Result.Error $"Argument {NodeId.value source} has not been witnessed")
+    match readings |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
+    | Some reason -> Result.Error reason
+    | None ->
+        let values = readings |> List.choose (function Result.Ok value -> Some value | _ -> None)
+        Result.Ok(List.collect fst values, List.collect snd values)
 
-/// Witness application nodes - emits function calls (non-intrinsic only)
-let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
-    // A settled foreign call belongs to PlatformWitness, including saturated
-    // calls. Emitting the generated placeholder body would bypass the ABI.
+let private observe (ctx: WitnessContext) (node: SemanticNode) prefix pattern =
+    match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+    | Result.Error reason -> failure node "physical invocation" reason
+    | Result.Ok ((operations, result), _) ->
+        match result with
+        | TRValue value ->
+            let meets, ssa, ty = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id value.SSA value.Type
+            { InlineOps = prefix @ operations @ meets; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
+        | _ -> { InlineOps = prefix @ operations; TopLevelOps = []; Result = result }
+
+let private invoke (ctx: WitnessContext) (node: SemanticNode) invocation sources body names environment expected =
+    match arguments ctx node.Id sources with
+    | Result.Error reason -> failure node "argument operands" reason
+    | Result.Ok (meets, operands) ->
+        let actuals = Option.toList environment @ operands
+        let agrees = expected |> Option.forall (fun types -> types = List.map (fun (value: Val) -> value.Type) actuals)
+        if not agrees then failure node "parameter boundary" "Direct invocation operands disagree with its settled physical parameter components"
+        else
+        let deferred = sources |> List.collect (fun source -> MLIRAccumulator.getDeferredInlineOps source ctx.Accumulator)
+        let prefix = deferred @ meets
+        match applySubst node.Type with
+        | NativeType.TFun _ ->
+            match Operands.project ctx node.Id with
+            | Result.Error reason -> failure node "callable result" reason
+            | Result.Ok shape -> observe ctx node prefix (pCallableApplication node.Id invocation actuals shape)
+        | NativeType.TSeq _ | NativeType.TSeqEnumerator _ ->
+            match Alex.Traversal.SequenceOperands.project ctx node.Id with
+            | Result.Error reason -> failure node "sequence result" reason
+            | Result.Ok shape -> observe ctx node prefix (pSequenceApplication node.Id invocation actuals shape)
+        | NativeType.TLazy _ ->
+            match Alex.Traversal.LazyOperands.project ctx node.Id with
+            | Result.Error reason -> failure node "lazy result" reason
+            | Result.Ok shape -> observe ctx node prefix (pLazyApplication node.Id invocation actuals shape)
+        | _ ->
+            let resultType =
+                mapTypeAt node.Id node.Type ctx
+                |> narrowType ctx.Coeffects ctx.Graph (Option.defaultValue node.Id body)
+            match invocation with
+            | Direct symbol ->
+                observe ctx node prefix (pDirectCall node.Id symbol (actuals |> List.map (fun value -> value.SSA, value.Type)) resultType names)
+            | Indirect code ->
+                match code.Type with
+                | TFunc(_, [actualResult]) -> observe ctx node prefix (pIndirectApplication node.Id code actuals actualResult)
+                | _ -> failure node "result boundary" "Scalar application requires exactly one result in its witnessed function signature"
+
+let private direct (ctx: WitnessContext) (node: SemanticNode) binding (sources: NodeId list) =
+    let declared =
+        match Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph binding, declaration ctx binding with
+        | Some symbol, Some(parameters, body) -> Some(symbol, parameters, body)
+        | _ -> Operands.tryThunkDeclaration ctx binding
+    match declared with
+    | Some(symbol, parameters, body) ->
+        if parameters.Length <> sources.Length then
+            failure node "declared boundary" "Settled direct call does not supply its actual declared parameters"
+        else
+            let names =
+                parameters |> List.collect (fun (name, _, formal) ->
+                    match Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph ctx.Graph.Nodes[formal] with
+                    | CallableValueShape.Callable _ ->
+                        match Operands.project ctx formal with
+                        | Result.Ok shape -> (name + "_code") :: (if (Operands.environmentType shape).IsSome then [name + "_environment"] else [])
+                        | Result.Error _ -> [name] // the component reading below reports the absent boundary
+                    | CallableValueShape.Sequence _ -> [name + "_pull"; name + "_environment"]
+                    | CallableValueShape.Lazy _ -> [name + "_thunk"; name + "_environment"]
+                    | _ -> [name])
+            let components =
+                parameters |> List.map (fun (_, _, formal) ->
+                    Clef.Compiler.PSGSaturation.SemanticGraph.CallableCarriers.valueShape ctx.Graph ctx.Graph.Nodes[formal]
+                    |> Operands.components ctx)
+            match components |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
+            | Some reason -> failure node "parameter boundary" reason
+            | None ->
+                let expected = components |> List.collect (function Result.Ok types -> types | _ -> [])
+                invoke ctx node (Direct symbol) sources (Some body) (Some names) None (Some expected)
+    | _ -> failure node "declaration identity" "Direct call lacks its settled declaration symbol and actual lambda boundary"
+
+let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) =
+    // Foreign admission and its explicit ABI remain PlatformWitness's concern.
     if Map.containsKey node.Id ctx.Coeffects.Platform.Bindings.Bindings
        || (match node.Kind with
-           | SemanticKind.Application (callee, _) -> (Clef.Compiler.PSGSaturation.SemanticGraph.MappedBindings.tryFindCall ctx.Graph callee).IsSome
+           | SemanticKind.Application(callee, _) -> (Clef.Compiler.PSGSaturation.SemanticGraph.MappedBindings.tryFindCall ctx.Graph callee).IsSome
            | _ -> false) then WitnessOutput.skip
     else
     match tryMatch pApplication ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-    | Some ((funcId, argIds), _) ->
-        // ═══════════════════════════════════════════════════════════
-        // CURRY FLATTENING: Check for saturated call or partial app
-        // ═══════════════════════════════════════════════════════════
-        let curryResult = ctx.Graph.Codata.Value.Curry
-        match Map.tryFind node.Id curryResult.SaturatedCalls with
-        | Some satInfo ->
-            // Saturated call: emit direct call to flattened function with ALL args
-            let funcName =
-                Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph satInfo.TargetBindingId
-                |> Option.defaultWith (fun () -> sprintf "saturated_%d" (NodeId.value node.Id))
-
-            let argsResult =
-                satInfo.AllArgNodes
-                |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
-            let allWitnessed = argsResult |> List.forall Option.isSome
-            if not allWitnessed then
-                let unwitnessedArgs =
-                    List.zip satInfo.AllArgNodes argsResult
-                    |> List.filter (fun (_, r) -> Option.isNone r)
-                    |> List.map fst
-                WitnessOutput.error $"Saturated call to {funcName}: some args not witnessed: {unwitnessedArgs}"
-            else
-                // each argument at its parameter's width: the call's derived meets
-                let (meetOps, args) = adaptArguments ctx node.Id (List.zip satInfo.AllArgNodes (argsResult |> List.choose id))
-                let retType = calleeReturnType ctx node (calleeBody ctx.Graph satInfo.TargetBindingId)
-
-                // Retrieve deferred InlineOps for partial app arguments
-                let deferredOps =
-                    satInfo.AllArgNodes
-                    |> List.collect (fun argId -> MLIRAccumulator.getDeferredInlineOps argId ctx.Accumulator)
-
-                let paramNames = extractParamNames satInfo.TargetBindingId ctx.Graph
-                match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Result.Ok ((ops, result), _) -> callResult ctx node (deferredOps @ meetOps @ ops) result
-                | Result.Error diagnostic -> WitnessOutput.error $"Saturated call '{funcName}': {diagnostic}"
-        | None ->
-        match Map.tryFind node.Id curryResult.PartialApplications with
-        | Some _ ->
-            // Partial application: no MLIR emitted, args captured for saturated call site
+    | None -> WitnessOutput.skip
+    | Some ((callee, supplied), _) ->
+        let curry = ctx.Graph.Codata.Value.Curry
+        match curry.SaturatedCalls.TryFind node.Id with
+        | Some call -> direct ctx node call.TargetBindingId call.AllArgNodes
+        | None when curry.PartialApplications.ContainsKey node.Id ->
             { InlineOps = []; TopLevelOps = []; Result = TRVoid }
         | None ->
+            match MLIRAccumulator.recallCallable callee ctx.Accumulator with
+            | Some callable ->
+                invoke ctx node (Indirect(Operands.code callable)) supplied None None (Operands.environment callable) None
+            | None ->
+                let calleeNode =
+                    match ctx.Graph.Nodes.TryFind callee with
+                    | Some { Kind = SemanticKind.TypeAnnotation(inner, _) } -> ctx.Graph.Nodes.TryFind inner
+                    | other -> other
+                match calleeNode with
+                | Some { Kind = SemanticKind.Intrinsic _ } -> WitnessOutput.skip
+                | Some { Kind = SemanticKind.VarRef(_, Some binding) } -> direct ctx node binding supplied
+                | _ -> failure node "callable occurrence" "Application callee has no witnessed callable operands or settled direct declaration"
 
-        // ═══════════════════════════════════════════════════════════
-        // STANDARD APPLICATION HANDLING (non-intrinsic only)
-        // ═══════════════════════════════════════════════════════════
-        // Uniform calling convention: all function values are closure pairs.
-        // VarRefWitness produces pairs for named functions (via thunk) and closures.
-        // One path: recall function SSA from accumulator → pClosureCall.
-
-        match resolveFunctionNode funcId ctx.Graph with
-        | Some funcNode ->
-            match funcNode.Kind with
-            | SemanticKind.Intrinsic _ ->
-                // Intrinsic operations handled by domain witnesses
-                // (MemoryIntrinsicWitness, StringIntrinsicWitness, ArithIntrinsicWitness, PlatformWitness)
-                WitnessOutput.skip
-
-            | _ ->
-                // Uniform closure call — function node must have been witnessed with a closure pair
-                let closureLookup =
-                    match funcNode.Kind with
-                    | SemanticKind.VarRef (_, Some defId) ->
-                        // Check the definition binding first (for Bindings that hold closures),
-                        // then the VarRef node itself (function parameters witnessed by VarRefWitness)
-                        match MLIRAccumulator.recallNode defId ctx.Accumulator with
-                        | Some (ssa, ty) when (match ty with TMemRefStatic _ -> true | _ -> false) -> Some (ssa, ty)
-                        | _ ->
-                            match MLIRAccumulator.recallNode funcNode.Id ctx.Accumulator with
-                            | Some (ssa, ty) when (match ty with TMemRefStatic _ -> true | _ -> false) -> Some (ssa, ty)
-                            | _ -> None
-                    | _ ->
-                        // Non-VarRef function expression (e.g. inline lambda result)
-                        match MLIRAccumulator.recallNode funcId ctx.Accumulator with
-                        | Some (ssa, ty) when (match ty with TMemRefStatic _ -> true | _ -> false) -> Some (ssa, ty)
-                        | _ -> None
-
-                // Recall arguments (shared by both paths)
-                let argsResult =
-                    argIds
-                    |> List.map (fun argId -> MLIRAccumulator.recallNode argId ctx.Accumulator)
-                let allWitnessed = argsResult |> List.forall Option.isSome
-
-                match closureLookup with
-                | Some (closureSSA, _closureTy) ->
-                    // ═══ CLOSURE CALL: function value is a closure pair ═══
-                    if not allWitnessed then
-                        let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
-                        WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "ClosureCall")
-                            (sprintf "Closure call: arguments not yet witnessed (missing nodes: %A)" missing)
-                    else
-                        // a call through a value: every argument at the declared Register width
-                        // (ruling 1), the call's derived meets
-                        let (meetOps, args) = adaptArguments ctx node.Id (List.zip argIds (argsResult |> List.choose id))
-                        let retType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-
-                        match tryMatchWithDiagnostics (pClosureCall node.Id closureSSA args retType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
-                        | Result.Error diagnostic ->
-                            WitnessOutput.errorCoded AX2004 (Some node.Id) (Some "Application") (Some "ClosureCall")
-                                (sprintf "Closure call: %s" diagnostic)
-                | None ->
-                    // ═══ DIRECT CALL: no closure pair (extern functions, non-HOF calls) ═══
-                    // Resolve qualified function name from PSG
-                    let funcName =
-                        match funcNode.Kind with
-                        | SemanticKind.VarRef (localName, Some defId) ->
-                            Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph defId
-                            |> Option.defaultValue localName
-                        | SemanticKind.VarRef (localName, None) -> localName
-                        | _ -> sprintf "func_%d" (NodeId.value funcId)
-
-                    if not allWitnessed then
-                        let missing = List.zip argIds argsResult |> List.choose (fun (id, r) -> if r.IsNone then Some (NodeId.value id) else None)
-                        WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "Application") (Some "DirectCall")
-                            (sprintf "Call to '%s': arguments not yet witnessed (missing nodes: %A)" funcName missing)
-                    else
-                        // each argument at its parameter's width: the call's derived meets
-                        let (meetOps, args) = adaptArguments ctx node.Id (List.zip argIds (argsResult |> List.choose id))
-                        let defIdOpt = match funcNode.Kind with SemanticKind.VarRef (_, d) -> d | _ -> None
-                        let retType = calleeReturnType ctx node (defIdOpt |> Option.bind (calleeBody ctx.Graph))
-                        let paramNames = defIdOpt |> Option.bind (fun d -> extractParamNames d ctx.Graph)
-                        match tryMatchWithDiagnostics (pDirectCall node.Id funcName args retType paramNames) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Result.Ok ((ops, result), _) -> callResult ctx node (meetOps @ ops) result
-                        | Result.Error diagnostic ->
-                            WitnessOutput.errorCoded AX2003 (Some node.Id) (Some "Application") (Some "DirectCall")
-                                (sprintf "Call to '%s': %s" funcName diagnostic)
-        | None ->
-            WitnessOutput.errorCoded AX2002 (Some node.Id) (Some "Application") (Some "ResolveFunctionNode")
-                (sprintf "Could not resolve function node %d" (NodeId.value funcId))
-    | None ->
-        WitnessOutput.skip
-
-// ═══════════════════════════════════════════════════════════
-// NANOPASS REGISTRATION (Public)
-// ═══════════════════════════════════════════════════════════
-
-/// Application nanopass - witnesses function applications (non-intrinsic)
-let nanopass : Nanopass = {
-    Name = "Application"
-    Witness = witnessApplication
-}
+let nanopass : Nanopass = { Name = "Application"; Witness = witnessApplication }

@@ -156,6 +156,7 @@ let mlirTypeSize (arch: Architecture) (ty: MLIRType) : int =
 [<Struct>]
 type SSA =
     | V of node: int * ordinal: int   // %v<node>_<k>
+    | CallableAlternative of node: int * alternative: int // Source-settled mutable read dispatch arm
     | Arg of int                      // %arg0, %arg1, ...
 
 /// Block label reference
@@ -224,6 +225,9 @@ type MemRefOp =
     | Store of SSA * SSA * SSA list * MLIRType * MLIRType              // value, memref, indices, elemType, memrefType
     | LoadAligned of SSA * SSA * SSA list * MLIRType * MLIRType * int // explicit byte alignment, including packed fields
     | StoreAligned of SSA * SSA * SSA list * MLIRType * MLIRType * int
+    /// Standard contiguous representation copy. This confers no source-value
+    /// initialization or current-read evidence on the destination.
+    | Copy of source: SSA * destination: SSA * sourceType: MLIRType * destinationType: MLIRType
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment (stack, compile-time size)
     | Alloc of SSA * SSA * MLIRType                                    // result, sizeSSA, elementType (heap, runtime size)
     | Dealloc of SSA * MLIRType                                        // owned heap memref, released after its last use
