@@ -57,6 +57,45 @@ per case; success without reachable platform formatting or startup does not
 establish full-profile behavior. Cross-width component checks are valuable but
 do not establish execution on another hardware target.
 
+### 1.1 Baker construction, Alex witnessing and backend realization
+
+Every C-series slice preserves the nanopass architecture and the boundary between
+front-end semantic construction and middle-end witnessing. The
+[incremental contract direction](../Nanopass_Incremental_Contract_Direction.md#8-baker-settlement-and-extensible-alex-witnessing)
+governs their evolution; extending the language surface cannot collapse them
+into a single traversal or move unfinished settlement into emission.
+
+| Owner | Required responsibility |
+|---|---|
+| CCS/Baker front end | Elaborate through reusable ingredients and operation recipes; fan out applicable work and fold in graph changes with origins, ordered occurrences and joint participants intact. Owning nanopasses propagate and saturate semantic, evaluation, capture, layout and proof facts under the selected declarations. |
+| Alex middle end | Navigate the settled graph at its actual Huet occurrence. Witnesses pull facts through context and invoke Patterns, which compose Elements into admitted portable physical MLIR forms. Preserve this composition and graph-to-operation correspondence as coverage grows. |
+| Selected backend | Perform target realization and its preservation checks. On the FPGA path this includes circuit transformations, scheduling, buffering, Colibri selection/composition, HDL emission and technology mapping. These mechanisms do not become Alex algorithms. |
+
+Baker's graph construction and Alex's observation have different topologies.
+Preserve zipper navigation and reconstruction laws, including focus, path,
+snapshot and occurrence-dependent scope, without requiring both phases to share
+one concrete zipper type. A structural path does not enumerate all participants
+of a joint constraint. Dependency discovery, pass scheduling, proof support and
+solver state retain their owning infrastructure; they are not semantic state
+hidden inside a zipper.
+
+Baker saturation must distinguish settled work from missing prerequisites and
+contradictions. Quiescence, cancellation or an exhausted budget cannot establish
+readiness. Each affected analysis owns its refinement and convergence rules;
+Alex consumes the resulting admitted facts. Flattened MLIR means the semantic
+decomposition has already occurred above Alex's witness boundary. Structured
+operations, regions, results and block arguments remain valid physical forms.
+Alex's emission bookkeeping does not become a second elaboration or saturation
+engine.
+
+Alex remains target-aware through selected declarations and admitted portable
+physical forms. The [target-commitment boundary](../../../clef-lang-spec/spec/backend-lowering-architecture.md#2-portable-middle-end-target-committing-backend)
+places target-specific dialects and encoding in the backend. That awareness
+neither imports backend circuit algorithms nor permits
+reconstructing missing source semantics. A new form needs its owning Baker
+contract where semantics change, Element/Pattern/Witness coverage where physical
+expression changes, and backend admission where realization changes.
+
 ## 2. Established work and the next unsettled contract
 
 These are dated recorded observations, not a fresh baseline. Consult the linked
@@ -107,9 +146,10 @@ lifetime. An immutable capture can still refer to mutable storage.
 | Boundary | Acceptance evidence |
 |---|---|
 | CCS source admission | Positive cases assert the inferred source types/dimensions and contain no reachable error nodes. Negative cases require the owning phase, effective error severity, expected diagnostic identity and exact source span. A parser crash, unrelated error or unreachable finding cannot satisfy a checker rejection. |
-| Baker graph construction | Inspect types, ordered operand occurrences, binding/capture identities, generated formals, evaluation/control relations, placement and applicable obligations. Fold-in preserves origins and all proof participants. |
+| Baker graph construction | Inspect types, ordered operand occurrences, binding/capture identities, generated formals, evaluation/control relations, placement and applicable obligations. Nanopass fold-in preserves origins and all proof participants; affected facts are rebuilt or invalidated before renewed settlement. |
 | Settlement and proofs | Required properties are discharged by their owning rules before commitment. Record actual checking outcomes and premises. Changed/missing participants, contradicted bounds and stale evidence must not be reported as valid. Finite incidence alone is not a lifetime or termination proof. |
-| Alex and backend | Witnesses consume settled facts through ctx/Huet positions; component tests reject missing prerequisites. The real serializer, MLIR verifier and admitted standard lowering accept the resulting program. Altered layout/operand/representation artifacts exercise affected correspondence checks. |
+| Alex witnessing | Witnesses consume settled facts through actual ctx/Huet positions and compose Patterns/Elements. Exercise shared occurrences, lambda/match/control-region traversal and scoped operand/block-argument recall, including the distinction between a deliberate graph-root entry and loss of structural ancestry. Component tests reject missing prerequisites; no semantic repair or backend circuit algorithm is introduced. The real serializer and MLIR verifier accept the resulting portable physical forms. |
+| Backend realization | Admitted lowering accepts those forms and preserves their claims under the selected target contracts. Altered layout/operand/representation artifacts exercise affected correspondence checks at their owning boundary. |
 | Native behavior | Fresh source compilation produces the executed artifact; require successful exit and exact values/ordered effects/demand. Retained aggregate and environment tests observe values after subsequent calls, pulls or returns that could invalidate storage. |
 | Editor and clients | CCS.Editor, analyzer projection and actual LSP retain public types, original definitions, located errors, invalidation and unsaved repair for affected constructs. Record unaffected/inactive clients explicitly. |
 | Integration | Relevant foundation/C controls and selected BAREWire/Platform consumers pass on the final coordinated source/target cohort. Record known unrelated failures without treating the overall run as green. |
@@ -127,6 +167,11 @@ contract, document the old expectation, governing clause and replacement before
 changing it. C-05's second-force output is a known such migration. An implementation
 failure alone never justifies weakening an expected value or skipping a case.
 
+Keep failure attribution distinct: an unsettled Baker prerequisite, absent Alex
+coverage for a settled form, and failed component/artifact correspondence are
+different conditions. Preserve their source/graph origins and responsible
+boundary rather than reporting each as a source type error.
+
 ### 4.1 Integrity through realization: Colibri, FPGA and eBPF
 
 The [FPGA workstream](../fpga-targeting/README.md) and
@@ -136,6 +181,14 @@ concrete at circuit and verified-machine boundaries: preserve the program's
 meaning and its justification through the delivered implementation. Additional
 target deployment remains separately gated; the preservation discipline applies
 to Baker and Alex on every admitted path.
+
+This is a directional guide to integrity at each boundary, under
+[the ownership contract](#11-baker-construction-alex-witnessing-and-backend-realization).
+The C-series adopts the discipline of justified composition and checked
+correspondence. FPGA scheduling, circuit selection, handshake/buffer insertion,
+HDL generation and physical mapping remain backend work. Their existence does
+not authorize a circuit compiler inside Alex or circuit-specific elaboration in
+the general C-series witness vocabulary.
 
 Colibri contributes a maintained circuit basis with implementation sources,
 self-checking simulations, properties and formal tasks. The
@@ -189,6 +242,41 @@ target plans do not establish Composer's planned complete circuit proof chain;
 the C-series imports their concrete admission and correspondence discipline.
 Planned integrations must use the shared proof service and source-linked CCS
 projection; this requirement does not claim completed target integration.
+
+### 4.2 Scope-aware design-time nanopass continuation
+
+C-series work must preserve a path toward incremental Baker elaboration and
+saturation. Follow the
+[nanopass incremental direction](../Nanopass_Incremental_Contract_Direction.md)
+without prematurely fixing its pass protocol or claiming selective recompilation
+already exists. Current fan-out uses a shared fresh-ID allocator; fold-in rebuilds
+the graph and invalidates analyses. Those mechanisms are the baseline to evolve.
+
+The scope of a design-time change is its affected semantic dependency region.
+Lexical scope and the zipper path contribute context; cross-scope bindings,
+captures, aliases, calls, storage, effects and joint proof participants can carry
+the change farther. A subtree boundary alone cannot justify retaining a fact.
+Each new recipe or owning analysis must expose the identities, origins and
+premises needed to determine that region rather than hiding them in an emitter.
+
+As selective reuse enters a C-series slice, its acceptance includes these cases:
+
+| Change or boundary | Required observation |
+|---|---|
+| Binding, argument, capture or rule changes, including newly present alternatives | Retain the actual dependency footprint, including lookup scope and relevant absence/selection facts. Invalidate affected elaborations, facts and proof supports. |
+| A fact crosses a region boundary or has several independent supports | Preserve ordered joint participants and alternative derivations. Stop propagation only when the exported interface remains equivalent for its consumers and their supporting evidence remains valid. |
+| Recursive dependencies or a withdrawn premise | Re-establish the owning domains' admitted fixed points across cycles and joins; retract unsupported conclusions. An unchanged output value alone is insufficient. |
+| Work resumes after a newer edit or changed target/rule selection | Validate snapshot, occurrence/path, query and premise identities. Stale completion cannot publish into the current graph; zipper navigation alone does not establish freshness. |
+| Incremental result reaches the witness boundary | Compare its settled graph, readiness and located diagnostics with a fresh check of the same inputs, allowing valid identity renaming with retained correspondence. Then check realized artifact/behavior equivalence separately. |
+
+Use the C forms themselves as acceptance pressure: shadowed or shared callable
+occurrences, changed staged operands and captures, a recursive-group edit, changed
+collection storage authority, a lazy capture edit, and changed sequence demand or
+current-read premises. Observe both the affected dependents and the justification
+for retained unaffected work. Measure recomputation and latency after correctness;
+a full-check fallback remains valid while selective reuse is unimplemented.
+This compiler infrastructure direction is distinct from implementing the Clef
+runtime Incremental library and does not move Baker work into Alex or the editor.
 
 ## 5. Dependency-led continuation
 

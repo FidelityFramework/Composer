@@ -23,6 +23,12 @@ and distinguish dated evidence from remaining gates. This documentation change
 advances no feature status. FPGA/Colibri and eBPF supply concrete
 [realization-integrity criteria](C-Series-Acceptance.md#41-integrity-through-realization-colibri-fpga-and-ebpf)
 for Baker, Alex and downstream artifact checks across the series.
+The [ownership boundary](C-Series-Acceptance.md#11-baker-construction-alex-witnessing-and-backend-realization)
+preserves Baker nanopass elaboration/saturation and Alex Huet
+Element/Pattern/Witness composition; FPGA realization mechanisms remain in the
+backend. [Design-time continuation criteria](C-Series-Acceptance.md#42-scope-aware-design-time-nanopass-continuation)
+keep C work aligned with scope-aware incremental nanopasses without claiming
+that selective reuse is already implemented.
 
 ---
 

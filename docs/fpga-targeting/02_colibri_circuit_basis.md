@@ -11,8 +11,9 @@ component policy, including generated logic and the direct HelloArty path.
 ## A single controlled realization boundary
 
 The [Dynamatic fork](01_dynamatic_fork.md) constructs and transforms an admitted
-dataflow circuit. Its backend selects components from a versioned implementation
-set centered on Colibri. Each selected operation has a behavioral contract,
+dataflow circuit. Composer's selected FPGA backend selects components from a
+versioned implementation set centered on Colibri, for both elastic and direct
+synchronous realization. Each selected operation has a behavioral contract,
 parameter constraints, an implementation identity and a preservation obligation.
 The [VHDL emitter](03_widths_and_vhdl_lowering.md) serializes that selection.
 

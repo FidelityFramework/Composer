@@ -35,10 +35,13 @@ The claim has two halves, and both are required:
 2. **The legibility half.** Passing the verifier is not just about *being* safe —
    it is about being *visibly* safe in the specific idioms the checker recognizes.
    The notorious pain of the clang→BPF path is the optimizer transforming a sound
-   bounds check into a shape the verifier cannot track. Fidelity owns every emitted
-   shape: witnesses observe coeffects, patterns elide known-good idioms, and
-   transformations must establish preservation before proceeding. CI then checks
-   the actual artifact on the pinned hosts. This is evidence about admission;
+   bounds check into a shape the verifier cannot track. The planned path requires
+   Alex to express settled facts through ctx/Huet Element/Pattern/Witness
+   composition into admitted portable MLIR forms. The selected BPF backend owns encoding,
+   register allocation and optimization; its transformations must preserve both
+   meaning and required verifier legibility. Witnesses do not become a bytecode
+   backend or host verifier. The planned CI gate checks the delivered artifact
+   on pinned hosts. This is evidence about admission;
    payload preservation, application policy and numerical accuracy have separate
    contracts. The verifier, JIT and helpers remain part of the trusted boundary.
 
@@ -103,7 +106,8 @@ concurrency/async track.
 
 - [C-series acceptance](../PRDs/C-Series-Acceptance.md#41-integrity-through-realization-colibri-fpga-and-ebpf)
   applies the distinction between semantic settlement, faithful realization and
-  independent artifact admission to current Baker/Alex work. This shared
+  independent artifact admission to current CCS/Baker settlement and Alex
+  witnessing. This shared
   integrity requirement does not depend on completing an eBPF deployment first.
 - [wasm-targeting/](../wasm-targeting/) — the other hosted verified ISA; the
   class-level constructs proposed here (versioned capability matrix,

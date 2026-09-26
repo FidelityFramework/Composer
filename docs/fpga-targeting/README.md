@@ -28,6 +28,12 @@ apply this component/admission and artifact-correspondence discipline to the
 current functional-language work. Colibri's concrete circuit implementations
 and verification assets inform Baker/Alex integrity now, while each FPGA
 realization milestone retains its own implementation and evidence gates.
+This guidance preserves the
+[Baker/Alex/backend boundary](../PRDs/C-Series-Acceptance.md#11-baker-construction-alex-witnessing-and-backend-realization):
+Baker elaborates and saturates semantic facts; Alex witnesses admitted portable
+forms through its Huet Element/Pattern/Witness composition. FPGA circuit
+transformations, scheduling, handshake/buffer insertion, Colibri component
+selection/composition, HDL emission and technology mapping remain backend work.
 
 ## Decisions
 
@@ -58,7 +64,7 @@ realization milestone retains its own implementation and evidence gates.
 ```mermaid
 flowchart TD
     A[Clef and selected platform contracts] --> B[CCS / Baker settled graph and obligations]
-    B --> C[Alex and admitted hardware forms]
+    B --> C[Alex: Huet witnessing into admitted portable MLIR]
     C --> D[Dynamatic fork: admitted dataflow transformations]
     C --> E[Direct synchronous realization]
     D --> F[Checked Colibri component selection and composition]
@@ -72,6 +78,12 @@ flowchart TD
     K --> L[Artifact extraction and reconstruction]
     L --> I
 ```
+
+The arrows leaving Alex enter backend-owned realization. The diagram places no
+Dynamatic scheduling or Colibri circuit-selection machinery in the middle end.
+Target-specific Handshake/CIRCT expression begins in that declared backend leg;
+existing target-specific emission in Alex is reconciliation work, not an
+exception to the portable receiving contract.
 
 HelloArty's fixed-clock Mealy design remains a useful first oracle; it need not
 acquire dynamic scheduling to participate. Dynamatic adds an elastic dataflow
@@ -94,6 +106,7 @@ device, circuit, timing or whole-system correctness.
 | [05 — Artifact verification](05_artifact_verification.md) | HelloProof analogy, evidence bundles, certificate checking and netlist/bitstream boundaries |
 | [06 — Platform and shared edges](06_platform_and_shared_edges.md) | Existing contract owners, Arty, portable peripherals, editor projection and other targets |
 | [07 — Roadmap](07_roadmap.md) | Milestones, dependency order, positive and rejection gates, restart instructions |
+| [08 — Functional continuation case study](08_functional_continuation_case_study.md) | Planned Arty parallel frame composition; language prerequisites, bounded suspension/join and circuit-overlap evidence |
 
 ## Baseline versus planned work
 

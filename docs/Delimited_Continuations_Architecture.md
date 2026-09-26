@@ -127,6 +127,17 @@ On a freestanding single-core leg, frames are static (the program-lifetime place
 
 Stack switching is the one target whose native structure is itself a delimited continuation. When the proposal matures, the realization is a true continuation expression, atomized from the PSG into low-level MLIR below the boundary, with no state-machine reification. This is explicitly outside current remit. Two WAMI lowering patterns are recorded here as reference material for that day: the block nest whose branches carry an on-tag successor and a fallback successor, and the recursive cont-type declarations that let a continuation's type mention itself. Both belong below the boundary.
 
+### 8.6 FPGA: Bounded Concurrent Frame Composition
+
+The [Arty continuation case study](fpga-targeting/08_functional_continuation_case_study.md)
+is a planned FPGA admission experiment: independent bounded computations suspend,
+retain request-specific captures and join under backpressure. Baker owns delimiter,
+segment, frame and resumption semantics; Alex retains the portable witnessed form.
+The FPGA backend maps the settled structure to admitted circuit state/dataflow and
+checks its preservation. Continuation suspension does not itself establish
+hardware parallelism or progress; those require the case study's separate gates.
+The existing imperative HelloArty remains its own fixed-clock regression oracle.
+
 ## 9. Status and Sequencing
 
 The [delimited-continuation specification](../../clef-lang-spec/spec/dcont-representation.md) already adopts this graph-resident architecture and explicitly retires the earlier `cont.*` operation surface above the witness boundary. Its frame, segment and proof contracts are normative; target realizations in Section 8 remain design work.

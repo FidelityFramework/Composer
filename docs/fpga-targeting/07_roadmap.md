@@ -28,6 +28,14 @@ parallel once FPGA-01 has fixed their shared boundary. Acceptance follows the
 dependencies above. This does not make all language C/A/T/R work a prerequisite
 for a bounded hardware oracle or change those families' existing priorities.
 
+The [functional continuation case study](08_functional_continuation_case_study.md)
+provides a planned application-level oracle across these milestones: bounded
+parallel frame producers, retained captures, suspension, matching joins and
+backpressure. It makes the benefit of C-series functional composition observable,
+while its additional continuation/parallelism and FPGA contracts remain explicit
+prerequisites. It supplements HelloArty's existing fixed-clock oracle; neither
+case substitutes for the other's timing or semantic acceptance.
+
 ## FPGA-01 — Freeze the first contract, not the whole architecture
 
 **Scope:** HelloArty's single-clock state machine and one small elastic dataflow

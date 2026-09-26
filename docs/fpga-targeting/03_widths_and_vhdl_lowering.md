@@ -11,7 +11,11 @@ the [owned Dynamatic fork](01_dynamatic_fork.md).
 `RangeAnalysis.heldWidth` and settled aggregate layouts from CCS. The hardware
 [witness](../../src/MiddleEnd/Alex/Witnesses/HardwareModuleWitness.fs) and
 [patterns](../../src/MiddleEnd/Alex/Patterns/HardwareModulePatterns.fs) produce
-CIRCT structure. Current [lowering](../../src/BackEnd/CIRCT/Lowering.fs) maps
+CIRCT structure. This is an existing implementation seam to reconcile with the
+[portable middle-end boundary](../../../clef-lang-spec/spec/backend-lowering-architecture.md#2-portable-middle-end-target-committing-backend),
+which places target-specific CIRCT operations in FPGA backend realization. New
+target work must not extend that seam as an architectural exception. Current
+[lowering](../../src/BackEnd/CIRCT/Lowering.fs) maps
 residual arithmetic to `comb`, canonicalizes/CSEs, then lowers through `sv` and
 calls `export-verilog`. None of that establishes a VHDL preservation result.
 

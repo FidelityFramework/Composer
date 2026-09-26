@@ -113,6 +113,22 @@ or structured `scf` operations. The standard baseline includes `func`, `memref`,
 `arith`, `scf` and `index`; further forms need the operation/profile contract in
 M-01. Target-specific realization belongs to the selected backend leg.
 
+The [FPGA workstream](fpga-targeting/README.md) is a guide to preservation and
+artifact integrity across these boundaries. Its circuit transformations,
+scheduling, handshake/buffer insertion, Colibri component selection/composition,
+HDL emission and technology mapping belong to the FPGA backend. They do not
+expand Alex's responsibility beyond positional observation and admitted
+Element/Pattern/Witness composition. Target-aware selection of admitted portable
+physical forms expresses settled facts; target-specific vocabulary and encoding
+belong below the declared backend boundary.
+
+Likewise, [incremental nanopass restructuring](Nanopass_Incremental_Contract_Direction.md#8-baker-settlement-and-extensible-alex-witnessing)
+preserves Baker's elaboration, dependency propagation and saturation ownership.
+Alex's zipper retains the actual occurrence and scope through witnessing;
+dependency invalidation, semantic fixed points and design-time scheduling stay
+with their owning compiler infrastructure. Reusing a navigation position does
+not establish that its graph facts or proofs are still current.
+
 The current post-witness middle-end pass in
 [`MLIRNanopass.fs`](../src/MiddleEnd/Alex/Pipeline/MLIRNanopass.fs) collects and
 validates external function declarations. It is not a second closure,
@@ -141,6 +157,14 @@ settled facts. They do not establish source admission, proof discharge, capture
 lifetime or native behavior. The current array-index Pattern, for example, does
 not itself reject absent range evidence; upstream and full-pipeline gates own
 that requirement.
+
+The existing [zipper tests](../tests/Alex.Tests/ZipperTests.fs) check shared-node
+occurrences with different enclosing scopes and the path loss caused by
+re-rooting. Those navigation laws do not establish that every scope-owning
+witness preserves the correct occurrence. C-series acceptance also exercises
+lambda, match and control-region traversal with scoped operand/block-argument
+recall. Deliberate graph-root or cross-reference entry and accidental loss of
+structural ancestry must remain distinguishable.
 
 No architecture CI workflow or parallel-equivalence test from the earlier
 version of this overview is present as described. Those sketches were proposals,

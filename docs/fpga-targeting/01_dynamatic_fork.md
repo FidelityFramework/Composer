@@ -26,8 +26,9 @@ The selected pathway is:
 ```text
 Clef source and selected platform/profile
   -> CCS/Baker: settled PSG, realization requirements and resident obligations
-  -> passive Alex: admitted Handshake expression + correlated graph evidence
-  -> owned fork: permitted optimization, scheduling and buffer realization
+  -> passive Alex: admitted portable MLIR + correlated graph evidence
+  -> FPGA backend: admitted conversion to the selected Handshake form
+  -> owned fork in that backend: permitted optimization, scheduling and buffer realization
   -> selected Colibri-derived / admitted hardware components
   -> closed hw/comb/seq and external-entity interface
   -> VHDL-2008 + artifact correspondence
@@ -36,7 +37,13 @@ Clef source and selected platform/profile
 This extends [M-01](../PRDs/M-01-DialectAdmission.md), particularly M-01.a/b/f.
 It creates no second source-semantics IR and no independent proof database.
 MLIR is the target expression; its evidence refers to the authoritative graph.
-The fixed-clock `hw/comb/seq` pathway remains separately admissible. A Mealy
+The [portable/target-committing boundary](../../../clef-lang-spec/spec/backend-lowering-architecture.md#2-portable-middle-end-target-committing-backend)
+governs this planned handoff. Handshake circuit expression and its scheduling
+live in the FPGA backend; Alex preserves the computation and correlated facts
+needed by that conversion. Current hardware witnesses do not establish that this
+separation has already been implemented throughout the existing FPGA path.
+
+The fixed-clock `hw/comb/seq` backend pathway remains separately admissible. A Mealy
 machine with cycle-visible behavior must not silently acquire variable latency
 because a Handshake backend is available.
 
