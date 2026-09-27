@@ -130,7 +130,7 @@ let private linkArguments target mode libraries (options: NativeLinkOptions) bit
     @ (libraries |> Set.toList |> List.map (fun name -> "-l" + name))
     @ endFiles
 
-let compileToNativeWithStorage
+let compileToNativeWithArtifacts
     (llvmPath: string)
     (outputPath: string)
     (targetTriple: string)
@@ -138,7 +138,8 @@ let compileToNativeWithStorage
     (externLibraries: Set<string>)
     (linkOptions: NativeLinkOptions)
     (cpu: string option)
-    (storage: (string * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry) list) : Result<unit, string> =
+    (storage: (string * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry) list)
+    (pool: Clef.Compiler.PSGSaturation.SemanticGraph.Types.StaticStringPool option) : Result<unit, string> =
     try
         if not (elfTarget targetTriple) then
             Error (sprintf "The direct LLVM backend currently emits ELF. Target %s requires a separate LLD PE/COFF, Mach-O or Wasm link profile." targetTriple)
@@ -167,13 +168,16 @@ let compileToNativeWithStorage
             // This verifies and serializes IR without running an optimization pipeline.
             // Keep the bitcode beside retained LLVM IR for inspecting the exact LLD input.
             run "opt" ["-mtriple=" + targetTriple; "-passes=no-op-module"; llvmPath; "-o"; bitcodePath]
-            |> Result.bind (fun () -> StorageCommitment.realizeBitcode bitcodePath plans)
+            |> Result.bind (fun () -> StorageCommitment.realizeBitcodeWithPool bitcodePath plans pool)
             |> Result.bind (fun () -> run "ld.lld" arguments)
             |> Result.bind (fun () -> StorageCommitment.verifyNative outputPath plans)
             |> Result.map (fun commitments ->
                 if not commitments.IsEmpty then
                     File.WriteAllText(Path.ChangeExtension(llvmPath, ".storage.json"), System.Text.Json.JsonSerializer.Serialize commitments))
     with ex -> Error (sprintf "Native compilation failed: %s" ex.Message)
+
+let compileToNativeWithStorage llvmPath outputPath targetTriple deploymentMode externLibraries linkOptions cpu storage =
+    compileToNativeWithArtifacts llvmPath outputPath targetTriple deploymentMode externLibraries linkOptions cpu storage None
 
 /// Components with no source-owned writable objects retain the same backend
 /// entry point. Real compilation always supplies its checked inventory.

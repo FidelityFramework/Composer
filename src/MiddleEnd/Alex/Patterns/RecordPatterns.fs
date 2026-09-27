@@ -57,41 +57,31 @@ let pBuildRecord
 
         match platform with
         | Core.Types.Dialects.FPGA ->
-            // FPGA: hw.struct_create at the record type's settled field widths (structTy, narrowed
-            // by the witness through FieldRanges). A field value narrower than its field is
-            // extended by the sign of its own range (extui / extsi, read from the value's node);
-            // a value wider than its field cannot occur, since the field's range is the join of
-            // every construction's, and is a stop. SSA layout: [0] = result, [1 + 3*i] = the
-            // extension of field i where one is needed (the per-field SSAs the CPU layout derives).
+            // The source owns each field slot and its exact consumer/operand
+            // adaptation. Fabric construction only composes those held facts.
             let resultSSA = ssas.[0]
-            let! state = getUserState
             let! declared =
                 match structTy with
                 | TStruct (fields, _) -> preturn fields
                 | other -> fail (Message $"PSG settlement (Layouts) did not settle a struct type for the record construction at node {NodeId.value nodeId} on fabric: its type is {other}")
-            let bits (ty: MLIRType) = match ty with TInt (IntWidth b) -> b | _ -> 0
+            do! ensure (fieldValues.Length = fieldNodes.Length && List.map (fun (name, _, _) -> name) fieldValues = List.map fst declared)
+                    "Record operands differ from the ordered source-published field layout."
             let! placed =
                 List.zip fieldValues fieldNodes
-                |> List.mapi (fun i ((name, valueSSA, valueTy), valueNode) ->
+                |> List.map (fun ((name, valueSSA, valueTy), valueNode) ->
                     parser {
                         let! fieldTy =
                             match declared |> List.tryFind (fun (n, _) -> n = name) with
                             | Some (_, fieldTy) -> preturn fieldTy
                             | None -> fail (Message $"PSG settlement (FieldRanges) did not settle field '{name}' for the record construction at node {NodeId.value nodeId} on fabric: the settled struct has no such field")
-                        match bits valueTy, bits fieldTy with
-                        | v, f when v > 0 && f > 0 && v < f ->
-                            let extSSA = ssas.[1 + 3 * i]
-                            return ([ extensionOp state.Graph valueNode extSSA valueSSA valueTy fieldTy ], (extSSA, fieldTy))
-                        | v, f when v > 0 && f > 0 && v > f ->
-                            return! fail (Message $"PSG settlement (FieldRanges) did not settle field '{name}' wide enough for the record construction at node {NodeId.value nodeId}: the field is {f} bits but its value (node {NodeId.value valueNode}) is {v} bits; the field's range is the join of every construction's")
-                        | _ -> return ([], (valueSSA, valueTy))
+                        let! operations, value = pSettledAdaptTo nodeId valueNode fieldTy { SSA = valueSSA; Type = valueTy }
+                        return operations, (value.SSA, value.Type)
                     })
                 |> Alex.XParsec.Extensions.sequence
             let extOps = placed |> List.collect fst
             let fieldVals = placed |> List.map snd
-            let actualStructTy = TStruct (List.zip fieldValues fieldVals |> List.map (fun ((name, _, _), (_, ty)) -> (name, ty)), None)
-            let! createOp = pHWStructCreate resultSSA fieldVals actualStructTy
-            return (extOps @ [createOp], TRValue { SSA = resultSSA; Type = actualStructTy })
+            let! createOp = pHWStructCreate resultSSA fieldVals structTy
+            return (extOps @ [createOp], TRValue { SSA = resultSSA; Type = structTy })
 
         | _ ->
             // CPU: alloca + pTypedInsertView per field at its settled offset; a field value

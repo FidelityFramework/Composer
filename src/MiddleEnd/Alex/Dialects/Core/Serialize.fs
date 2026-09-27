@@ -6,6 +6,7 @@
 module Alex.Dialects.Core.Serialize
 
 open Alex.Dialects.Core.Types
+module Native = Clef.Compiler.NativeTypedTree.NativeTypes
 
 /// MLIR symbol names are bare identifiers ([A-Za-z_][A-Za-z0-9_$.]*). A Clef function name may
 /// carry an apostrophe (`process'`), which is legal in F# and in the linked ELF symbol but not
@@ -27,16 +28,10 @@ let private stringAttributeValue (value: string) =
 // TYPE SERIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Convert IntWidth to MLIR type string.
-/// IntWidth 0 is a sentinel for "abstract width — must be resolved by interval analysis."
-/// If it reaches serialization, width inference has failed — this is a hard error.
+/// Spell an exact positive source-published integer width.
 let intWidthToString (IntWidth bits) : string =
-    if bits = 0 then
-        failwith
-            "Width inference failure: IntWidth 0 reached MLIR serialization. \
-             A hardware integer's width is the width of the range CCS wrote on its node \
-             (RangeAnalysis); a sentinel here is a value the witness did not narrow through \
-             narrowType, a defect of the pipeline rather than of the program."
+    if bits <= 0 then
+        failwith "An unresolved or nonpositive integer width reached serialization; a complete source-published representation is required."
     sprintf "i%d" bits
 
 /// Convert FloatWidth to MLIR type string
@@ -58,8 +53,7 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
     | TMemRefStatic (size, elemTy) ->
         sprintf "memref<%dx%s>" size (typeToString pointer elemTy)
     | TMemRefScalar elemTy ->
-        // Scalar memref (0D) is represented as 1-element static memref in MLIR
-        sprintf "memref<1x%s>" (typeToString pointer elemTy)
+        sprintf "memref<%s>" (typeToString pointer elemTy)
     | TVector (count, elemTy) ->
         sprintf "vector<%dx%s>" count (typeToString pointer elemTy)
     | TIndex -> "index"
@@ -107,6 +101,7 @@ let ssaToString (ssa: SSA) : string =
     match ssa with
     | V (n, k) -> sprintf "%%v%d_%d" n k
     | CallableAlternative (n, alternative) -> sprintf "%%callable_%d_alternative_%d" n alternative
+    | ArrayElementIndex (n, element) -> sprintf "%%array_%d_element_%d" n element
     | Arg n -> sprintf "%%arg%d" n
 
 /// Convert Val (SSA + type) to typed SSA value string
@@ -411,6 +406,9 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
                 (ssaToString result) alignment (typeToString pointer memrefType)
         | None ->
             sprintf "%s = memref.alloca() : %s" (ssaToString result) (typeToString pointer memrefType)
+    | MemRefOp.AllocaDynamic (result, count, elementType, alignment) ->
+        sprintf "%s = memref.alloca(%s) {alignment = %d : i64} : %s"
+            (ssaToString result) (ssaToString count) alignment (typeToString pointer (TMemRef elementType))
     | MemRefOp.Alloc (result, sizeSSA, elemType) ->
         // Heap allocation with runtime size: memref.alloc(%size) : memref<?xelemType>
         let memrefType = TMemRef elemType
@@ -461,56 +459,15 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
         sprintf "%s = memref.subview %s[%s] [%s] [%s] : %s to %s"
             (ssaToString result) (ssaToString source) offsetsStr sizesStr stridesStr
             (typeToString pointer sourceType) stridedTypeStr
-    | MemRefOp.SubViewCopy (result, source, offsets, sizes, strides, sizeIndexSSA, sourceType) ->
-        // SubView + Alloc + Copy: create a fresh contiguous buffer from a slice.
-        // This is needed because memref.extract_aligned_pointer_as_index on a subview
-        // gives the BASE pointer, not the data pointer. Copying to a fresh alloc fixes this.
-        let fmtParam = function
-            | SubViewParam.Static n -> string n
-            | SubViewParam.Dynamic s -> ssaToString s
-        let offsetsStr = offsets |> List.map ssaToString |> String.concat ", "
-        let sizesStr = sizes |> List.map fmtParam |> String.concat ", "
-        let stridesStr = strides |> List.map fmtParam |> String.concat ", "
-        let elemType =
-            match sourceType with
-            | TMemRef t | TMemRefStatic (_, t) | TMemRefScalar t -> t
-            | t -> failwithf "memref.subview copy: Alex emission did not supply a memref source for SSA %s: the source is typed %A" (ssaToString result) t
-        let elemStr = typeToString pointer elemType
-        let sizeStr =
-            match sizes with
-            | [SubViewParam.Static n] -> string n
-            | _ -> "?"
-        let strideStr =
-            match strides with
-            | [SubViewParam.Static n] -> string n
-            | _ -> "?"
-        let stridedTypeStr = sprintf "memref<%sx%s, strided<[%s], offset: ?>>" sizeStr elemStr strideStr
-        let plainTypeStr = sprintf "memref<?x%s>" elemStr
-        let intermSSA = ssaToString result + "_sv"
-        // 1. SubView: create strided view into source
-        let subviewLine = sprintf "%s = memref.subview %s[%s] [%s] [%s] : %s to %s"
-                            intermSSA (ssaToString source) offsetsStr sizesStr stridesStr
-                            (typeToString pointer sourceType) stridedTypeStr
-        // 2. Alloc: fresh contiguous buffer
-        let allocLine = sprintf "%s = memref.alloc(%s) : %s"
-                            (ssaToString result) (ssaToString sizeIndexSSA) plainTypeStr
-        // 3. Copy via scf.for loop (avoids memref.copy → memrefCopy runtime dependency)
-        let resultName = ssaToString result
-        let c0Name = resultName + "_c0"
-        let c1Name = resultName + "_c1"
-        let ivName = resultName + "_iv"
-        let ldName = resultName + "_ld"
-        let c0Line = sprintf "%s = arith.constant 0 : index" c0Name
-        let c1Line = sprintf "%s = arith.constant 1 : index" c1Name
-        let loadLine = sprintf "%s = memref.load %s[%s] : %s" ldName intermSSA ivName stridedTypeStr
-        let storeLine = sprintf "memref.store %s, %s[%s] : %s" ldName resultName ivName plainTypeStr
-        let forLoop = sprintf "scf.for %s = %s to %s step %s {\n      %s\n      %s\n    }" ivName c0Name (ssaToString sizeIndexSSA) c1Name loadLine storeLine
-        sprintf "%s\n    %s\n    %s\n    %s\n    %s" subviewLine allocLine c0Line c1Line forLoop
     | MemRefOp.ExtractBasePtr (result, memref, ty) ->
         // Extract pointer as platform word (index type) - PORTABLE!
         // Returns index (platform word size), caller must cast to target type if needed
         sprintf "%s = memref.extract_aligned_pointer_as_index %s : %s -> index"
             (ssaToString result) (ssaToString memref) (typeToString pointer ty)
+    | MemRefOp.ExtractStridedMetadata(baseBuffer, offset, size, stride, source, sourceType, elementType) ->
+        sprintf "%s, %s, %s, %s = memref.extract_strided_metadata %s : %s -> %s, index, index, index"
+            (ssaToString baseBuffer) (ssaToString offset) (ssaToString size) (ssaToString stride)
+            (ssaToString source) (typeToString pointer sourceType) (typeToString pointer (TMemRefScalar elementType))
     | MemRefOp.GetGlobal (result, globalName, memrefType) ->
         // memref.get_global @symbol_name : memref<...>
         sprintf "%s = memref.get_global @%s : %s"
@@ -591,6 +548,10 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             let paramsStr = BoundaryAbi.parameters declaration |> List.map (typeToString pointer) |> String.concat ", "
             sprintf "func.func private @%s(%s) -> %s" (symbolName declaration.Symbol) paramsStr
                 (resultTypesToString pointer (BoundaryAbi.results declaration))
+        | IntrinsicWriteDecl declaration ->
+            let paramsStr = IntrinsicWriteAbi.parameters declaration |> List.map (typeToString pointer) |> String.concat ", "
+            sprintf "func.func private @%s(%s) -> %s" (symbolName declaration.Symbol) paramsStr
+                (resultTypesToString pointer (IntrinsicWriteAbi.results declaration))
         | FuncCall (results, funcName, args) ->
             let argSSAs = args |> List.map (fun v -> ssaToString v.SSA) |> String.concat ", "
             let argTypes = args |> List.map (fun v -> typeToString pointer v.Type) |> String.concat ", "
@@ -647,6 +608,20 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             | None ->
                 failwithf "PSG settlement (program storage) did not settle a storage entry for the writable global @%s: an unowned global has no alignment to write" name
         sprintf "memref.global \"private\" @%s : %s = uninitialized%s" name (typeToString pointer memrefType) alignment
+    | MLIROp.GlobalArray(name, memrefType, authority) ->
+        let values =
+            authority.Initializers |> Option.defaultWith (fun () -> invalidOp "Immutable array lacks its source-published initializer.")
+            |> List.map (function
+                | Native.NativeLiteral.Int(value, _) -> string value
+                | Native.NativeLiteral.UInt(value, _) -> string value
+                | Native.NativeLiteral.Bool value -> if value then "true" else "false"
+                | Native.NativeLiteral.Char value -> string (int value)
+                | Native.NativeLiteral.Float(value, _) when System.Double.IsFinite value ->
+                    let text = value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                    if text.Contains('.') || text.Contains('E') || text.Contains('e') then text else text + ".0"
+                | other -> invalidOp (sprintf "Unsupported published array initializer: %A" other))
+        sprintf "memref.global \"private\" constant @%s : %s = dense<[%s]> {alignment = %d : i64}"
+            name (typeToString pointer memrefType) (String.concat ", " values) authority.Alignment
     | MLIROp.IndexOp iop ->
         match iop with
         | IndexOp.IndexConst (result, value) ->
@@ -669,6 +644,8 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
             sprintf "%s = index.cmp %s(%s, %s)" (ssaToString result) predStr (ssaToString lhs) (ssaToString rhs)
         | IndexOp.IndexAdd (result, lhs, rhs) ->
             sprintf "%s = index.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
+        | IndexOp.IndexMul (result, lhs, rhs) ->
+            sprintf "%s = index.mul %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
         | _ ->
             failwithf "backend (MLIR text) has no serialization for the index operation %A; it was emitted without one and is never written as a comment" iop
     | MLIROp.Assert (condition, message) ->
@@ -727,6 +704,14 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
     | MLIROp.HWOp hop -> hwOpToString pointer (opToString pointer) hop
     | MLIROp.SeqOp sop -> seqOpToString pointer sop
     | MLIROp.SMTOp sop -> smtOpToString pointer (opToString pointer) sop
+    | MLIROp.SpatialModule declaration ->
+        let name,site,kind =
+            match declaration with
+            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SpatialModuleWitness.Hardware plan -> plan.Name,plan.Site,"hardware"
+            | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SpatialModuleWitness.Kernel plan -> plan.Name,plan.Site,"kernel"
+        let (Native.NodeId sourceId) = site
+        sprintf "module @%s attributes {clef.spatial_source = \"%d\", clef.spatial_kind = \"%s\"} {}"
+            (symbolName name) sourceId kind
     | MLIROp.RawMLIR text -> text
     | _ ->
         // Block and Region have no text form here: reaching one is a stop, never a comment.

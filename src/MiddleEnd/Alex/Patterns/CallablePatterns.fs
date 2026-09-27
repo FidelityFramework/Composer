@@ -16,6 +16,15 @@ open Alex.Elements.MemRefElements
 module Operands = Alex.Traversal.CallableOperands
 module Values = Alex.Traversal.Values
 
+/// Classification is a published source fact, including negative membership.
+/// An absent projection cannot be interpreted as a data value.
+let isCallableValue (ctx: WitnessContext) (node: SemanticNode) =
+    match Operands.valueShape ctx node.Id with
+    | Result.Ok (CallableValueShape.Callable owner) when owner = node.Id -> true
+    | Result.Ok (CallableValueShape.Callable _) -> invalidOp "Callable value shape belongs to another occurrence."
+    | Result.Ok _ -> false
+    | Result.Error reason -> invalidOp reason
+
 /// An annotation around a directly applied intrinsic carries source type
 /// information, not a first-class function operand. Follow only transparent
 /// annotation positions; the application witness owns the intrinsic operation.

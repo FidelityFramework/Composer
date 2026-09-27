@@ -8,6 +8,57 @@ open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Tests.Fixtures
 module Zipper = Alex.Traversal.PSGZipper
+module Publication = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission
+
+// This fixture declares its complete numeric offer locally. Full-width literal
+// acceptance is independent of a host default or the shared narrow fixture.
+let private normalizedProgram category =
+    let authority = """module MatchAuthority
+type WidthDeclaration = { Name: string; Bits: int }
+type Representation = { Name: string; Capability: string; Family: string; Bits: int; MinMagnitude: string; MaxMagnitude: string; Boundary: string }
+type TargetCore = { Runtime: string; Widths: WidthDeclaration array; Representations: Representation array }
+type PlatformDescription = { Id: string; Core: TargetCore option }
+let description: PlatformDescription = {
+    Id = "normalized-match"
+    Core = Some {
+        Runtime = "libc"
+        Widths = [| { Name="Pointer"; Bits=64 }; { Name="Register"; Bits=64 } |]
+        Representations = [|
+            { Name="int8"; Capability="native"; Family="int"; Bits=8; MinMagnitude="-128"; MaxMagnitude="127"; Boundary="wrap" }
+            { Name="uint8"; Capability="native"; Family="uint"; Bits=8; MinMagnitude="0"; MaxMagnitude="255"; Boundary="wrap" }
+            { Name="int64"; Capability="native"; Family="int"; Bits=64; MinMagnitude="-9223372036854775808"; MaxMagnitude="9223372036854775807"; Boundary="wrap" }
+            { Name="uint64"; Capability="native"; Family="uint"; Bits=64; MinMagnitude="0"; MaxMagnitude="18446744073709551615"; Boundary="wrap" } |] } }
+"""
+    let representation name family bits minimum maximum : NumericRepresentation =
+        { Name=name; Family=family; Bits=bits; Capability="native"; MinMagnitude=minimum; MaxMagnitude=maximum; Boundary="wrap" }
+    let offers =
+        [ representation "int8" "int" 8 "-128" "127"
+          representation "uint8" "uint" 8 "0" "255"
+          representation "int64" "int" 64 "-9223372036854775808" "9223372036854775807"
+          representation "uint64" "uint" 64 "0" "18446744073709551615" ]
+    let platform : PlatformContext =
+        { PlatformId="normalized-match"; Dimensions=Map.ofList ["Pointer",64; "Register",64]
+          Representations=offers |> List.map (fun offer -> offer.Name,offer) |> Map.ofList; EndpointReturns=Map.empty
+          PlatformLibraryPath=None; PlatformDescription=Some "MatchAuthority.description"; PlatformArchitecture=None; PlatformOS=None
+          PlatformSourcePaths=Set.singleton (System.IO.Path.GetFullPath "match-authority.clef"); Predicates=Map.empty; FreestandingStartup=None; SubstrateKind=None
+          RuntimeModel=Some RuntimeModel.Libc; AvailableMemorySpaces=[]; DefaultMemorySpace=None
+          ClockFrequencyMhz=None; NsPerWeightUnit=None }
+    let parameterType, literal, expected =
+        match category with
+        | "bool" -> "bool", "true", "arith.constant true"
+        | "int64" -> "int", "-1099511627779", "arith.constant -1099511627779 : i64"
+        | _ -> "int", "1099511627779", "arith.constant 1099511627779 : i64"
+    let source = sprintf "module NormalizedMatch\nlet choose (value: %s) =\n    match value with\n    | %s -> true\n    | _ -> false\n[<EntryPoint>]\nlet main _ = if choose (%s) then 0 else 1\n" parameterType literal literal
+    let parse source path =
+        match Clef.Compiler.NativeService.parseStringWithDefaults source path with
+        | Clef.Compiler.NativeService.ParseSuccess input -> input
+        | Clef.Compiler.NativeService.ParseError errors -> failwithf "Match fixture parse failed: %A" errors
+    let checkedProgram = Clef.Compiler.NativeService.checkParsedInputsWithPlatform
+                            [parse authority "match-authority.clef"; parse source "normalized-match.clef"] (Some platform)
+    let errors = checkedProgram.Diagnostics |> List.filter (fun diagnostic ->
+        diagnostic.Severity = Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.NativeDiagnosticSeverity.Error)
+    Assert.Empty errors
+    prepareSource checkedProgram.Graph, expected
 
 let private runOn target inputType inputCarrier patterns =
     let builder = NodeBuilder()
@@ -15,13 +66,9 @@ let private runOn target inputType inputCarrier patterns =
     let bodies = patterns |> List.mapi (fun index _ -> builder.Create(SemanticKind.PatternBinding(sprintf "body%d" index), Types.boolType, dummyRange))
     let arms = List.map2 (fun pattern body -> { Pattern = pattern; Guard = None; Body = body.Id; Bindings = [] }) patterns bodies
     let choice = builder.Create(SemanticKind.CaseElimination(input.Id, arms), Types.boolType, dummyRange)
-    let raw = builder.Build []
-    let graph =
-        match Types.isIntegerType inputType, inputCarrier with
-        | true, TInt(IntWidth bits) ->
-            { raw with Nodes = raw.Nodes.Add(input.Id, { raw.Nodes[input.Id] with ValueRange = Some(ValueRange.Bounded(0I, (1I <<< bits) - 1I)) }) }
-        | _ -> raw
-    let graph = prepareSource graph
+    // A negative component boundary: raw source syntax has no executable
+    // publication. The Pattern must refuse before reading numeric premises.
+    let graph = builder.Build []
     let position = Zipper.create graph choice.Id |> require "Missing raw decision"
     let operands = MLIRAccumulator.empty ()
     for index, body in List.indexed bodies do
@@ -39,36 +86,55 @@ let private run inputType inputCarrier patterns = runOn Core.Types.Dialects.CPU 
 [<InlineData("bool")>]
 [<InlineData("int64")>]
 [<InlineData("uint64")>]
-let ``FPGA raw scalar decisions preserve the actual full discriminant without ordinal or int32 narrowing`` category =
-    let inputType, carrier, literal, expected =
+let ``raw constants require source normalization even when their scalar values fit on fabric`` category =
+    let inputType, carrier, literal =
         match category with
-        | "bool" -> Types.boolType, TInt(IntWidth 1), NativeLiteral.Bool true, 1L
+        | "bool" -> Types.boolType, TInt(IntWidth 1), NativeLiteral.Bool true
         | "int64" ->
             let value = (1L <<< 40) + 3L
-            Types.intType, TInt(IntWidth 64), NativeLiteral.Int(value, NTUKind.NTUint(NTUWidth.Fixed 64)), value
-        | _ -> Types.intType, TInt(IntWidth 64), NativeLiteral.UInt(System.UInt64.MaxValue, NTUKind.NTUuint(NTUWidth.Fixed 64)), -1L
+            Types.intType, TInt(IntWidth 64), NativeLiteral.Int(value, NTUKind.NTUint(NTUWidth.Fixed 64))
+        | _ -> Types.intType, TInt(IntWidth 64), NativeLiteral.UInt(System.UInt64.MaxValue, NTUKind.NTUuint(NTUWidth.Fixed 64))
     match runOn Core.Types.Dialects.FPGA inputType carrier [Pattern.Const literal; Pattern.Wildcard] with
-    | Result.Ok ((operations, TRValue _), _) ->
-        let actual = operations |> List.choose (function MLIROp.ArithOp(ArithOp.ConstI(_, value, ty)) -> Some(value, ty) | _ -> None) |> Assert.Single
-        Assert.Equal((expected, carrier), actual)
-    | other -> failwithf "FPGA scalar discriminant lost its source value: %A" other
+    | Result.Error reason -> Assert.Contains("typed equality and conditional normalization", reason)
+    | other -> failwithf "Raw scalar match was interpreted by a witness: %A" other
 
 [<Theory>]
 [<InlineData("bool")>]
 [<InlineData("int")>]
-let ``raw scalar decisions use actual admitted literal values and an explicit default`` category =
+let ``raw constants require source normalization even with an explicit final default`` category =
     let inputType, inputCarrier, literal =
         if category = "bool" then Types.boolType, TInt(IntWidth 1), NativeLiteral.Bool true
         else Types.intType, TInt(IntWidth 16), NativeLiteral.Int(937L, NTUKind.NTUint(NTUWidth.Fixed 64))
     match run inputType inputCarrier [Pattern.Const literal; Pattern.Wildcard] with
-    | Result.Ok ((operations, TRValue value), _) ->
-        let declaration =
-            MLIROp.FuncOp(FuncOp.FuncDef("raw_constant", [Arg 0, inputCarrier; Arg 1, value.Type; Arg 2, value.Type], [value.Type],
-                operations @ [MLIROp.FuncOp(FuncOp.Return [value])], FuncVisibility.Private))
-        let text = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "raw_constant" [declaration]
-        let verified = MlirComponentTests.mlirOpt ["--verify-each"] text
-        Assert.Contains((if category = "bool" then "arith.constant true" else "arith.constant 937"), verified)
-    | other -> failwithf "Admitted scalar decision failed: %A" other
+    | Result.Error reason -> Assert.Contains("typed equality and conditional normalization", reason)
+    | other -> failwithf "Raw scalar match was interpreted by a witness: %A" other
+
+[<Theory>]
+[<InlineData("bool")>]
+[<InlineData("int64")>]
+[<InlineData("uint64")>]
+let ``source normalized constant decisions retain exact full width values through the registry`` category =
+    let graph, expected = normalizedProgram category
+    let rawConstants = graph.Nodes.Values |> Seq.filter (fun node ->
+        node.IsReachable &&
+        (match node.Kind with
+        | SemanticKind.CaseElimination(_, arms) -> arms |> List.exists (fun arm -> match arm.Pattern with Pattern.Const _ -> true | _ -> false)
+        | _ -> false))
+    Assert.Empty rawConstants
+    let numeric = Publication.tryNumeric graph |> Result.defaultWith failwith
+    let comparison = numeric.Operations.Values |> Seq.filter (fun operation -> operation.Kind = NumericOperationKind.Equal && graph.Nodes[operation.Site].IsReachable) |> Assert.Single
+    let expectedSlot, expectedForm =
+        match category with
+        | "bool" -> SettledSlot.Bool, NumericOperationForm.Boolean
+        | "int64" -> SettledSlot.Integer(64,Some "int64"), NumericOperationForm.Integer true
+        | _ -> SettledSlot.Integer(64,Some "uint64"), NumericOperationForm.Integer false
+    Assert.Equal(Some expectedSlot, comparison.OperationCarrier)
+    Assert.Equal(expectedForm, comparison.Form)
+    let sourceProof = Core.ProofDispatch.dischargeSource graph None |> Result.defaultWith failwith
+    let witnessed, _ = MiddleEnd.MLIRGeneration.generateWithLinkedLibrariesAndProof graph graph.Platform.Value
+                           Core.Types.Dialects.Console Core.Types.Dialects.CPU None Set.empty (Some sourceProof) |> Result.defaultWith failwith
+    let verified = MlirComponentTests.mlirOpt ["--verify-each"] witnessed.Text
+    Assert.Contains(expected, verified)
 
 [<Theory>]
 [<InlineData("char")>]

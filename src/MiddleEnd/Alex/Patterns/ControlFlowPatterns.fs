@@ -15,6 +15,7 @@ open Alex.Traversal.TransferTypes
 open Alex.Elements.SCFElements  // pSCFIf, pSCFWhile, pSCFFor
 open Alex.Elements.CombElements // pCombICmp, pCombMux (FPGA combinational logic)
 open Alex.Elements.ArithElements // pTruncI, pExtSI (FPGA width harmonization)
+open Alex.Elements.IndexElements
 open Alex.Elements.MLIRAtomics  // pConstI (tag literal constants)
 open Alex.CodeGeneration.TypeMapping
 open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
@@ -51,29 +52,36 @@ let pBuildIndexSwitch (selector: Val) (cases: (int64 * (MLIROp list * Val list))
         return [operation]
     }
 
-/// Observe a Baker dispatch's explicit operands. Width adaptation is the
-/// consumer's existing settled meet; integer-to-index conversion preserves
-/// the selector's established sign using the shared index conversion pattern.
+/// Shared scalar/lazy/sequence dispatch transport. Numeric publication owns
+/// the cast sign, selected index width and complete range-coverage proof.
+let pPublishedDispatchSelector site operand result : PSGParser<MLIROp list * Val> = parser {
+    let! state = getUserState
+    let! numeric =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryNumeric state.Graph with
+        | Result.Ok numeric -> preturn numeric
+        | Result.Error reason -> fail (Message reason)
+    let! transport =
+        match numeric.IndexTransports.TryFind site with
+        | Some transport when transport.Operand = operand -> preturn transport
+        | _ -> fail (Message "Dispatch selector lacks its exact source-published index transport.")
+    let! value, valueType = pRecallNode operand
+    do! ensure (valueType = scalarCarrierType transport.Carrier && state.Platform.TargetArch.Pointer = Ok transport.PointerBits)
+            "Dispatch selector or target differs from its source-published index transport."
+    let! operation =
+        if transport.Unsigned then pIndexCastU result value valueType TIndex
+        else pIndexCastS result value valueType TIndex
+    return [operation], { SSA = result; Type = TIndex }
+}
+
+/// Observe a Baker dispatch's explicit operands and settled branch adaptations.
 let pBuildContinuationDispatch (nodeId: NodeId) (selectorId: NodeId)
                                (cases: (int * NodeId * MLIROp list) list)
                                (otherwise: NodeId * MLIROp list)
                                (result: (SSA * MLIRType) option)
                                : PSGParser<MLIROp list * TransferResult> =
     parser {
-        let! state = getUserState
-        let! selectorSSA, selectorType = pRecallNode selectorId
         let! indexOps, indexValue =
-            match selectorType with
-            | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
-            | TInt (IntWidth width) when width > 0 ->
-                let indexSSA = Alex.Traversal.Values.value nodeId 1
-                (match nodeRange state.Graph selectorId with
-                 | Some range ->
-                     let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range indexSSA selectorSSA selectorType
-                     preturn ([operation], { SSA = indexSSA; Type = TIndex })
-                 | None ->
-                     fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the ContinuationDispatch selector (node {NodeId.value selectorId}) at node {NodeId.value nodeId}"))
-            | _ -> fail (Message $"ContinuationDispatch selector {NodeId.value selectorId} has unsupported carrier {selectorType}")
+            pPublishedDispatchSelector nodeId selectorId (Alex.Traversal.Values.value nodeId 1)
         let arm bodyId operations = parser {
             match result with
             | None -> return operations, []
@@ -152,40 +160,10 @@ let pBuildConditional (condSSA: SSA)
                 let! (thenSSA, thenTy) = pRecallNode thenValueNodeId
                 let! (elseSSA, elseTy) = pRecallNode elseValueNodeId
 
-                // Harmonize mux operand widths to resultType
-                // FPGA comb.mux requires all operands at matching bit widths.
-                let resBits = match resultType with | TInt (IntWidth b) -> b | _ -> 0
-                let thenBits = match thenTy with | TInt (IntWidth b) -> b | _ -> 0
-                let elseBits = match elseTy with | TInt (IntWidth b) -> b | _ -> 0
-                let needThenHarm = resBits > 0 && thenBits > 0 && thenBits <> resBits
-                let needElseHarm = resBits > 0 && elseBits > 0 && elseBits <> resBits
-                // A branch carrier that is not harmonized must already be the result carrier.
-                do! ensure ((needThenHarm || thenTy = resultType) && (needElseHarm || elseTy = resultType))
-                        $"PSG settlement (RangeAnalysis) did not settle harmonizable branch carriers for the FPGA conditional at node {NodeId.value nodeId}: then {thenTy}, else {elseTy}, result {resultType}"
-
-                if needThenHarm || needElseHarm then
-                    let! allSSAs = getNodeSSAs nodeId
-                    let! state = getUserState
-                    // SSA layout: [0]=result, [1]=thenHarm, [2]=elseHarm. A branch value narrower
-                    // than the result is extended by the sign of its own range (extui / extsi,
-                    // read from its node); one wider (a reference refined below its binding's
-                    // width) is truncated to the result's range width.
-                    let harmonize (harmSSA: SSA) (valueSSA: SSA) (valueTy: MLIRType) (valueBits: int) (valueNodeId: NodeId) =
-                        if valueBits > resBits then MLIROp.ArithOp (ArithOp.TruncI (harmSSA, valueSSA, valueTy, resultType))
-                        else extensionOp state.Graph valueNodeId harmSSA valueSSA valueTy resultType
-                    let (thenHarmOps, effThenSSA) =
-                        if needThenHarm then ([ harmonize allSSAs.[1] thenSSA thenTy thenBits thenValueNodeId ], allSSAs.[1])
-                        else ([], thenSSA)
-                    let (elseHarmOps, effElseSSA) =
-                        if needElseHarm then ([ harmonize allSSAs.[2] elseSSA elseTy elseBits elseValueNodeId ], allSSAs.[2])
-                        else ([], elseSSA)
-                    let! muxOp = pCombMux resultSSA condSSA effThenSSA effElseSSA resultType
-                    let allOps = thenOps @ elseBranchOps @ thenHarmOps @ elseHarmOps @ [muxOp]
-                    return (allOps, TRValue { SSA = resultSSA; Type = resultType })
-                else
-                    let! muxOp = pCombMux resultSSA condSSA thenSSA elseSSA resultType
-                    let allOps = thenOps @ elseBranchOps @ [muxOp]
-                    return (allOps, TRValue { SSA = resultSSA; Type = resultType })
+                let! thenMeetOps, thenValue = pSettledAdaptTo nodeId thenValueNodeId resultType { SSA = thenSSA; Type = thenTy }
+                let! elseMeetOps, elseValue = pSettledAdaptTo nodeId elseValueNodeId resultType { SSA = elseSSA; Type = elseTy }
+                let! muxOp = pCombMux resultSSA condSSA thenValue.SSA elseValue.SSA resultType
+                return (thenOps @ thenMeetOps @ elseBranchOps @ elseMeetOps @ [muxOp], TRValue { SSA = resultSSA; Type = resultType })
             | None ->
                 return! fail (Message "FPGA comb.mux requires both branches")
 
@@ -253,10 +231,7 @@ let pBuildForLoop (lower: SSA) (upper: SSA) (step: SSA) (bodyOps: MLIROp list) :
 let private pArmDiscriminant (pattern: Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern) : PSGParser<int64> =
     match pattern with
     | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Union (_, tagIndex, _, _) -> preturn (int64 tagIndex)
-    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Int(value, _)) -> preturn value
-    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.UInt(value, _)) -> preturn (int64 value)
-    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const (NativeLiteral.Bool value) -> preturn (if value then 1L else 0L)
-    | _ -> fail (Message "A raw match discriminant requires an admitted constructor or scalar literal")
+    | _ -> fail (Message "A constructor match requires a source-published constructor discriminant")
 
 /// Get the DU union type from a CaseArm pattern (for tag extraction).
 let private getScrutineeUnionType (arms: Clef.Compiler.PSGSaturation.SemanticGraph.Types.CaseArm list) : NativeType option =
@@ -307,15 +282,15 @@ let private pBuildMultipleMatchElimination
                         let (_, armValueNodeId, _) = arms.[idx]
                         parser {
                             let! (armSSA, armTy) = pRecallNode armValueNodeId
-                            return! recallAll (idx + 1) ((armSSA, armTy) :: acc)
+                            let! adaptation, value = pSettledAdaptTo nodeId armValueNodeId resultType { SSA = armSSA; Type = armTy }
+                            return! recallAll (idx + 1) ((adaptation, value) :: acc)
                         }
                 recallAll 0 []
 
-            let armValueSSAs = armValues |> List.map fst
-            let armValueTypes = armValues |> List.map snd
+            let armValueSSAs = armValues |> List.map (fun (_, value) -> value.SSA)
 
             // All arm ops inline (combinational — all evaluate unconditionally)
-            let allArmOps = arms |> List.collect (fun (ops, _, _) -> ops)
+            let allArmOps = List.map2 (fun (ops, _, _) (adaptation, _) -> ops @ adaptation) arms armValues |> List.concat
 
             if numArms = 1 then
                 return (allArmOps, TRValue { SSA = armValueSSAs.[0]; Type = resultType })
@@ -327,42 +302,8 @@ let private pBuildMultipleMatchElimination
                 //   [1 + 2*i]        = tagLit for arm i     (i in 0..numArms-2)
                 //   [1 + 2*i + 1]    = cmpSSA for arm i
                 //   [tagCmpEnd + j]  = intermediate mux SSA (j in 0..numArms-3)
-                //   [muxEnd + k]     = harmonized arm SSA   (k in 0..numArms-1)
                 //   outermost mux reuses resultSSA (index 0)
                 let tagCmpEnd = 1 + 2 * (numArms - 1)
-                let muxIntermediateEnd = tagCmpEnd + max 0 (numArms - 2)
-
-                // Phase 1.5: Harmonize arm values to resultType width
-                // FPGA comb.mux requires all operands at matching bit widths.
-                // Arm values (e.g. DU tag constants at i8) may differ from resultType (e.g. i3).
-                let resBits = match resultType with | TInt (IntWidth b) -> b | _ -> 0
-                let! state = getUserState
-                let! (harmonizedSSAs, harmonizeOps) =
-                    let rec harmonize idx accSSAs accOps =
-                        if idx >= numArms then preturn (List.rev accSSAs, List.concat (List.rev accOps))
-                        else
-                            let armSSA = armValueSSAs.[idx]
-                            let armTy = armValueTypes.[idx]
-                            let armBits = match armTy with | TInt (IntWidth b) -> b | _ -> 0
-                            if resBits > 0 && armBits > 0 && armBits <> resBits then
-                                let harmSSA = allSSAs.[muxIntermediateEnd + idx]
-                                if armBits > resBits then
-                                    parser {
-                                        let! truncOp = pTruncI harmSSA armSSA armTy resultType
-                                        return! harmonize (idx + 1) (harmSSA :: accSSAs) ([truncOp] :: accOps)
-                                    }
-                                else
-                                    // extended by the sign of the arm value's range (extui / extsi)
-                                    let (_, armValueNodeId, _) = arms.[idx]
-                                    let extOp = extensionOp state.Graph armValueNodeId harmSSA armSSA armTy resultType
-                                    harmonize (idx + 1) (harmSSA :: accSSAs) ([extOp] :: accOps)
-                            elif armTy = resultType then
-                                harmonize (idx + 1) (armSSA :: accSSAs) ([] :: accOps)
-                            else
-                                // A carrier that is not harmonized must already be the result carrier.
-                                let (_, armValueNodeId, _) = arms.[idx]
-                                fail (Message $"PSG settlement (RangeAnalysis) did not settle a harmonizable carrier for arm {idx} (node {NodeId.value armValueNodeId}) of the FPGA match at node {NodeId.value nodeId}: arm {armTy}, result {resultType}")
-                    harmonize 0 [] []
 
                 // Phase 2: Tag comparisons (fold over non-last arms, composing Elements)
                 let! tagResults =
@@ -394,12 +335,12 @@ let private pBuildMultipleMatchElimination
                                 if armIdx = 0 then resultSSA
                                 else allSSAs.[tagCmpEnd + muxCount]
                             parser {
-                                let! muxOp = pCombMux muxResultSSA cmpSSAs.[armIdx] harmonizedSSAs.[armIdx] currentElseSSA resultType
+                                let! muxOp = pCombMux muxResultSSA cmpSSAs.[armIdx] armValueSSAs.[armIdx] currentElseSSA resultType
                                 return! buildMuxChain (armIdx - 1) muxResultSSA (muxCount + 1) (muxOp :: acc)
                             }
-                    buildMuxChain (numArms - 2) harmonizedSSAs.[numArms - 1] 0 []
+                    buildMuxChain (numArms - 2) armValueSSAs.[numArms - 1] 0 []
 
-                let allOps = allArmOps @ harmonizeOps @ tagOps @ muxOps
+                let allOps = allArmOps @ tagOps @ muxOps
                 return (allOps, TRValue { SSA = resultSSA; Type = resultType })
 
         | _ ->
@@ -421,114 +362,6 @@ let private pBuildMultipleMatchElimination
                 return! fail (Message $"Baker match recipe did not settle the ordered irrefutable arms and guards of the match at node {NodeId.value nodeId} before composition")
             else
 
-            // Detect constant match (arms are Const/Wildcard/Var — scrutinee IS the discriminant)
-            // Var patterns are the default/else case binding the scrutinee value.
-            let isConstMatch =
-                arms |> List.exists (fun (_, _, arm) ->
-                    match arm.Pattern with
-                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const _ -> true
-                    | _ -> false)
-                &&
-                arms |> List.forall (fun (_, _, arm) ->
-                    match arm.Pattern with
-                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const _ -> true
-                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard -> true
-                    | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var _ -> true
-                    | _ -> false)
-
-            if isConstMatch then
-                // ── Constant match path: no tag extraction, scrutinee compared directly ──
-                // match intValue with | 0L -> ... | 1L -> ... | _ -> ...
-
-                let! allSSAs = getNodeSSAs nodeId
-                let! constantValues =
-                    arms |> List.take (numArms - 1)
-                    |> List.map (fun (_, _, arm) -> pArmDiscriminant arm.Pattern)
-                    |> Alex.XParsec.Extensions.sequence
-
-                // Step 1: Recall all arm value SSAs upfront, each at the join's width (its meet)
-                let! armValueSSAs =
-                    match result with
-                    | Some (_, resultType) ->
-                        let rec recallAll idx acc =
-                            if idx >= numArms then preturn (List.rev acc)
-                            else
-                                let (_, armValueNodeId, _) = arms.[idx]
-                                parser {
-                                    let! (rawSSA, rawTy) = pRecallNode armValueNodeId
-                                    let! (meetOps, armSSA, armTy) = pAdapt nodeId armValueNodeId rawSSA rawTy
-                                    do! ensure (armTy = resultType)
-                                            $"PSG settlement (SSAAssignment) did not settle the meet of arm {idx} (node {NodeId.value armValueNodeId}) to the result carrier of the match at node {NodeId.value nodeId}: arm {armTy}, result {resultType}"
-                                    return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
-                                }
-                        recallAll 0 []
-                    | None -> preturn []
-                let arms = arms |> List.mapi (fun i (armOps, v, arm) -> (armOps @ (match List.tryItem i armValueSSAs with Some (_, ops) -> ops | None -> []), v, arm))
-                let armValueSSAs = armValueSSAs |> List.map fst
-
-                // Step 2: Build nested scf.if chain — compare scrutinee against each constant
-                // SSA layout: [0] = result, then 2 per non-final arm (constLit + cmp),
-                // then one result SSA per nested (inner) scf.if. Every scf.if in the chain
-                // needs its own result SSA: the inner ifs live in the else regions of the
-                // outer ones, and an SSA name cannot be defined twice along that path.
-                let mutable ssaOffset = 1
-                let (lastArmOps, _, _) = arms.[numArms - 1]
-                let innerResultBase = 1 + 2 * (numArms - 1)
-                let levelResultSSA (i: int) =
-                    if i = 0 then (match result with Some (r, _) -> r | None -> allSSAs.[0])
-                    else allSSAs.[innerResultBase + (i - 1)]
-
-                let lastArmElseOps =
-                    match result with
-                    | Some (_, resultType) ->
-                        let lastSSA = armValueSSAs.[numArms - 1]
-                        lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])]
-                    | None ->
-                        lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
-
-                let outerOps =
-                    List.foldBack (fun i currentElseOps ->
-                        let (armOps, _, _) = arms.[i]
-                        let constValue = constantValues.[i]
-
-                        let constLitSSA = allSSAs.[ssaOffset]
-                        let cmpSSA = allSSAs.[ssaOffset + 1]
-                        ssaOffset <- ssaOffset + 2
-
-                        let constLitOp = MLIROp.ArithOp (ArithOp.ConstI (constLitSSA, constValue, scrutineeType))
-                        let cmpOp = MLIROp.ArithOp (ArithOp.CmpI (cmpSSA, ICmpPred.Eq, scrutineeSSA, constLitSSA, scrutineeType))
-
-                        let thenOps =
-                            match result with
-                            | Some (_, resultType) ->
-                                let armSSA = armValueSSAs.[i]
-                                armOps @ [MLIROp.SCFOp (SCFOp.Yield [(armSSA, resultType)])]
-                            | None ->
-                                armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
-
-                        match result with
-                        | Some (_, resultType) ->
-                            let thisResultSSA = levelResultSSA i
-                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, Some (thisResultSSA, resultType)))
-                            // Each intermediate output becomes the else body of the next outer scf.if,
-                            // so it must end with scf.yield of this level's result. The outermost
-                            // trailing yield is stripped below (it goes in the function body, not a region).
-                            [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [(thisResultSSA, resultType)])]
-                        | None ->
-                            let ifOp = MLIROp.SCFOp (SCFOp.If (cmpSSA, thenOps, Some currentElseOps, None))
-                            [constLitOp; cmpOp; ifOp; MLIROp.SCFOp (SCFOp.Yield [])]
-                    ) [0 .. numArms - 2] lastArmElseOps
-
-                // Strip the trailing yield from the outermost ops — those go in the
-                // function body, not inside an scf.if region.
-                let outerOps = outerOps |> List.take (outerOps.Length - 1)
-
-                match result with
-                | Some (resultSSA, resultType) ->
-                    return (outerOps, TRValue { SSA = resultSSA; Type = resultType })
-                | None ->
-                    return (outerOps, TRVoid)
-            else
                 // ── DU match path: DUGetTag + nested scf.if chain ──
 
                 // Step 1: Extract tag from scrutinee
@@ -669,41 +502,8 @@ let pBuildMatchElimination
         let hasConstant =
             arms |> List.exists (fun (_, _, arm) ->
                 match arm.Pattern with Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const _ -> true | _ -> false)
-        if hasConstant then
-            let! state = getUserState
-            let inputType =
-                state.Graph.Nodes.TryFind scrutineeNodeId
-                |> Option.map (fun node -> Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type)
-            let exactInteger value =
-                match inputType, scrutineeType, nodeRange state.Graph scrutineeNodeId with
-                | Some inputType, TInt(IntWidth bits), Some range when Types.isIntegerType inputType && bits > 0 ->
-                    let low, high =
-                        if ValueRange.isNonNegative range then 0I, (1I <<< bits) - 1I
-                        else -(1I <<< (bits - 1)), (1I <<< (bits - 1)) - 1I
-                    ValueRange.width range |> Option.exists (fun width -> width <= bits && value >= low && value <= high)
-                | _ -> false
-            let supported pattern =
-                match pattern with
-                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const(NativeLiteral.Bool _) ->
-                    inputType = Some Types.boolType && scrutineeType = TInt(IntWidth 1)
-                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const(NativeLiteral.Int(value, _)) -> exactInteger (bigint value)
-                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Const(NativeLiteral.UInt(value, _)) -> exactInteger (bigint value)
-                | _ -> false
-            let irrefutable pattern =
-                match pattern with
-                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Wildcard -> true
-                | Clef.Compiler.PSGSaturation.SemanticGraph.Types.Pattern.Var(_, ty) ->
-                    inputType = Some(Clef.Compiler.NativeTypedTree.UnionFind.applySubst ty)
-                | _ -> false
-            let patterns = arms |> List.map (fun (_, _, arm) -> arm.Pattern)
-            let admitted =
-                match patterns with
-                | [pattern] -> supported pattern
-                | [] -> false
-                | _ -> irrefutable (List.last patterns) && (patterns |> List.take (patterns.Length - 1) |> List.forall supported)
-            do! ensure admitted "Raw constant CaseElimination needs exact scalar literals and an explicit final default; Baker must elaborate other constants through typed equality"
-        else
-            do! preturn ()
+        do! ensure (not hasConstant)
+                "Raw constant CaseElimination requires Baker's typed equality and conditional normalization."
         match arms with
         | [] -> return! fail (Message "CaseElimination requires a selected body")
         | [(operations, bodyId, _)] ->

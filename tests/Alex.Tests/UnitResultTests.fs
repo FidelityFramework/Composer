@@ -118,30 +118,32 @@ let ``effectful unit conditional verifies and lowers through standard MLIR`` () 
     Assert.DoesNotContain("scf.if", lowered)
     Assert.DoesNotContain("unrealized_conversion_cast", lowered)
 
-let private unitComparison () =
-    let builder = NodeBuilder()
-    let left = builder.Create(SemanticKind.PatternBinding "left", Types.unitType, dummyRange)
-    let right = builder.Create(SemanticKind.PatternBinding "right", Types.unitType, dummyRange)
-    let equal = builder.Create(SemanticKind.Intrinsic
-        { Module = IntrinsicModule.Operators; Operation = "op_Equality"
-          Category = IntrinsicCategory.Comparison; FullName = "Operators.op_Equality" },
-        NativeType.TFun(Types.unitType, NativeType.TFun(Types.unitType, Types.boolType)), dummyRange)
-    let call = builder.Create(SemanticKind.Application(equal.Id, [left.Id; right.Id]), Types.boolType, dummyRange)
-    let graph = builder.Build [] |> prepareSource
+let private unitComparison predicate =
+    let source = sprintf "module UnitOperation\nlet compare (left:unit) (right:unit) = left %s right\n[<EntryPoint>]\nlet main _ = if compare () () then 0 else 1\n" (if predicate = "eq" then "=" else "<>")
+    let graph = checkScalarProgram source "unit-operation.clef"
+    let numeric = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryNumeric graph |> Result.defaultWith failwith
+    let operation = numeric.Operations.Values |> Seq.filter (fun operation -> graph.Nodes[operation.Site].IsReachable) |> Assert.Single
+    Assert.Equal(NumericOperationForm.Unit, operation.Form)
+    let left, right =
+        match operation.Operands with
+        | [left; right] -> left.Actual, right.Actual
+        | _ -> failwith "Unit comparison lost its source ordered operands"
     let operands = MLIRAccumulator.empty ()
-    MLIRAccumulator.bindNode left.Id (Arg 0) unitType operands
-    MLIRAccumulator.bindNode right.Id (Arg 1) unitType operands
-    let position = Zipper.create graph call.Id |> require "Missing unit equality occurrence"
-    position, left.Id, right.Id, operands
+    for actual, ssa in [left,Arg 0; right,Arg 1] do
+        let ty = Alex.CodeGeneration.TypeMapping.valueTypeAt graph actual
+        Assert.Equal(unitType, ty)
+        MLIRAccumulator.bindNode actual ssa ty operands
+    let position = Zipper.create graph operation.Site |> require "Missing unit equality occurrence"
+    position, left, right, operands
 
 [<Theory>]
 [<InlineData("eq")>]
 [<InlineData("ne")>]
 let ``unit equality compares already witnessed carriers without inventing numeric ranges`` predicate =
-    let position, left, right, operands = unitComparison ()
+    let position, left, right, operands = unitComparison predicate
     Assert.True(position.Graph.Nodes[left].ValueRange.IsNone)
     Assert.True(position.Graph.Nodes[right].ValueRange.IsNone)
-    match matchAt (Alex.Patterns.ApplicationPatterns.pComparisonOp position.Focus.Id predicate) position 64 operands with
+    match matchAt (Alex.Patterns.ApplicationPatterns.pNumericOperation position.Focus.Id) position 64 operands with
     | Result.Ok (([MLIROp.ArithOp(ArithOp.CmpI(_, actual, Arg 0, Arg 1, carrier))] as operations, TRValue result), _) ->
         Assert.Equal((if predicate = "eq" then ICmpPred.Eq else ICmpPred.Ne), actual)
         Assert.Equal(unitType, carrier)
@@ -156,11 +158,11 @@ let ``unit equality compares already witnessed carriers without inventing numeri
 [<InlineData(false)>]
 [<InlineData(true)>]
 let ``unit equality refuses absent or noncanonical witnessed operands`` absent =
-    let position, _, right, operands = unitComparison ()
+    let position, _, right, operands = unitComparison "eq"
     if absent then operands.NodeAssoc <- operands.NodeAssoc.Remove right
     else MLIRAccumulator.bindNode right (Arg 1) (TInt(IntWidth 8)) operands
-    match matchAt (Alex.Patterns.ApplicationPatterns.pComparisonOp position.Focus.Id "eq") position 64 operands with
+    match matchAt (Alex.Patterns.ApplicationPatterns.pNumericOperation position.Focus.Id) position 64 operands with
     | Result.Error message ->
-        Assert.Contains((if absent then "not yet witnessed" else "canonical witnessed unit"), message)
+        Assert.Contains((if absent then "not yet witnessed" else "operand differs from its source-published carrier"), message)
     | Result.Ok _ -> failwith "Unit comparison manufactured an operand"
     Assert.Empty operands.AllOps

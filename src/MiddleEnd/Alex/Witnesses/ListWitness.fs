@@ -29,7 +29,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
     | Some (info, _) ->
         match info.Operation with
         | "empty" ->
-            let listType = mapType node.Type ctx
+            let listType = mapTypeAt node.Id ctx
 
             match tryMatchWithDiagnostics (pListEmpty node.Id listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -51,7 +51,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (listSSA, _) ->
-                    let elementType = mapType node.Type ctx
+                    let elementType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pListHead node.Id listSSA elementType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -64,7 +64,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (listSSA, _) ->
-                    let tailType = mapType node.Type ctx
+                    let tailType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pListTail node.Id listSSA tailType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -79,7 +79,7 @@ let private witnessList (ctx: WitnessContext) (node: SemanticNode) : WitnessOutp
                 | Some (headSSA, headType), Some (tailSSA, tailType) ->
                     let head = { SSA = headSSA; Type = headType }
                     let tail = { SSA = tailSSA; Type = tailType }
-                    let listType = mapType node.Type ctx
+                    let listType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pListCons node.Id head tail listType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

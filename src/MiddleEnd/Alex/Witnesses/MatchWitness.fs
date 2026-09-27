@@ -63,7 +63,7 @@ let private terminalAdmitted (ctx: WitnessContext) (node: SemanticNode) arms : R
                 step.Parent.Id = contract.Frontier && step.LeftSiblings = [contract.Site] && step.RightSiblings.IsEmpty
                 && Set.contains contract.Site ctx.TraversalVisited.Value
                 && (MLIRAccumulator.recallNode contract.Site ctx.Accumulator |> Option.exists (fun (_, ty) ->
-                    ty = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType NTUKind.NTUunit)))
+                    ty = mapTypeAt contract.Site ctx)))
         | _ -> Result.Ok false
     | _ -> Result.Ok true
 
@@ -111,17 +111,13 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
             let result =
                 if isUnit then Result.Ok None
                 else
-                    match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with
-                    | NativeType.TVar _ ->
-                        Result.Error $"CCS source checking did not settle the result type for CaseElimination node {NodeId.value node.Id}: it remains an unresolved type variable"
-                    | _ ->
-                        let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-                        match tryMatchWithDiagnostics (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Result.Ok (ssa :: _, _) -> Result.Ok (Some (ssa, resultType))
-                        | Result.Ok ([], _) ->
-                            Result.Error $"PSG settlement (SSA assignment) did not settle a result value for expression-valued CaseElimination node {NodeId.value node.Id}"
-                        | Result.Error reason ->
-                            Result.Error $"PSG settlement (SSA assignment) did not settle a result value for expression-valued CaseElimination node {NodeId.value node.Id}: {reason}"
+                    let resultType = mapTypeAt node.Id ctx
+                    match tryMatchWithDiagnostics (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                    | Result.Ok (ssa :: _, _) -> Result.Ok (Some (ssa, resultType))
+                    | Result.Ok ([], _) ->
+                        Result.Error $"PSG settlement (SSA assignment) did not settle a result value for expression-valued CaseElimination node {NodeId.value node.Id}"
+                    | Result.Error reason ->
+                        Result.Error $"PSG settlement (SSA assignment) did not settle a result value for expression-valued CaseElimination node {NodeId.value node.Id}: {reason}"
 
             match result with
             | Result.Error reason ->

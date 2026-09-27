@@ -375,11 +375,10 @@ module MLIRAccumulator =
                 match existingTy, ty with
                 | TMemRefStatic (_, elemA), TMemRef elemB when elemA = elemB -> true
                 | TMemRef elemA, TMemRefStatic (_, elemB) when elemA = elemB -> true
-                // Physical TMemRefStatic from alloca → logical TStruct from witness (record types)
-                // Prefer TStruct: it carries field names needed by RecordWitness FieldGet
-                | TMemRefStatic _, TStruct _ ->
-                    acc.SSATypes <- Map.add ssa ty acc.SSATypes
-                    true
+                // The node association retains the logical record fields.
+                // The SSA register must retain the Element's actual byte
+                // buffer: taking an address witnesses that same storage.
+                | TMemRefStatic _, TStruct _ -> true
                 | _ -> false
             if not isBenignMemRefRefinement then
                 let ssaStr = Alex.Dialects.Core.Serialize.ssaToString ssa
@@ -764,40 +763,9 @@ let meetFor (graph: SemanticGraph) (consumer: NodeId) (operand: NodeId) : (Meet 
 let targetArch (ctx: WitnessContext) : Architecture =
     ctx.Coeffects.Platform.TargetArch
 
-/// Witness-layer type mapping — delegates to mapNativeTypeForTarget.
-/// Extracts platform, architecture, and graph from WitnessContext.
-/// Drains any AX1001 diagnostics collected during mapping into the accumulator.
-let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
-    let result = mapNativeTypeForTarget ctx.Coeffects.TargetPlatform ctx.Coeffects.Platform.TargetArch ctx.Graph ty
-    // AX1001: a type variable reached witnessing unresolved. That is a settlement gap in
-    // CCS; it is reported as an error, never carried as an invented index type.
-    for message in drainTypeMappingErrors () do
-        MLIRAccumulator.addError (Diagnostic.error None (Some "TypeMapping") (Some "type settlement") message) ctx.Accumulator
-    result
-
-/// A value's specialized physical carrier is keyed by its exact graph use.
-/// Source type alone cannot name a continuation frame or a settled byte buffer.
-let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType =
-    let codata = ctx.Graph.Codata.Value
-    match codata.LazyOrigins.TryFind nodeId, codata.EnvironmentOrigins.TryFind nodeId, codata.SequenceOrigins.TryFind nodeId with
-    | Some _, _, _ when (match ty with NativeType.TLazy _ -> true | _ -> false) ->
-        failwithf "Lazy value %d requires its separately witnessed thunk and environment operands" (NodeId.value nodeId)
-    | Some owner, _, _ ->
-        match codata.LazyLayouts.TryFind owner with
-        | Some layout when layout.Bytes > 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
-        | _ -> failwithf "Codata (LazyLayouts) did not settle a layout for lazy owner %d of environment value %d" (NodeId.value owner) (NodeId.value nodeId)
-    | None, Some owner, _ ->
-        match codata.EnvironmentLayouts |> Map.tryFind owner with
-        | Some layout when layout.Bytes >= 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
-        | _ -> failwithf "Codata (EnvironmentLayouts) did not settle a layout for environment owner %d of value %d" (NodeId.value owner) (NodeId.value nodeId)
-    | None, None, Some owner ->
-        match ctx.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
-        | Some frame when frame.Bytes > 0 -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8))
-        | _ -> failwithf "Codata (ContinuationFrames) did not settle a frame for sequence origin %d of value %d" (NodeId.value owner) (NodeId.value nodeId)
-    | None, None, None ->
-        match tryArrayElementTypeAt ctx.Graph nodeId with
-        | Some element -> TMemRef element
-        | None -> mapType ty ctx
+/// Physical form at the exact source occurrence.
+let mapTypeAt (nodeId: NodeId) (ctx: WitnessContext) : MLIRType =
+    valueTypeAt ctx.Graph nodeId
 
 /// Get platform-aware word width for string length, array length, etc.
 let wordWidth (ctx: WitnessContext) : IntWidth =

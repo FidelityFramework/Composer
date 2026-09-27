@@ -124,7 +124,7 @@ and private componentsSeen (ctx: WitnessContext) seen permitted value : Result<M
                 Result.Error "Callable data participant lacks its source-settled closed or quantified signature authority."
             else
                 try
-                    let ty = mapTypeAt id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph id
+                    let ty = mapTypeAt id ctx
                     Result.Ok(if ty = TVoid then [] else [ty])
                 with ex -> Result.Error ex.Message
         | _, None -> Result.Error "Callable signature data participant is absent."

@@ -196,20 +196,8 @@ let pLazyConditional (ctx: WitnessContext) (condition: Val)
 }
 
 let pLazyDispatch (ctx: WitnessContext) selectorId cases otherwise = parser {
-    let! state = getUserState
-    let! selectorSSA, selectorType = pRecallNode selectorId
     let! prefix, selector =
-        match selectorType with
-        | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
-        | TInt(IntWidth width) when width > 0 ->
-            let result = { SSA = Values.value ctx.Zipper.Focus.Id 2; Type = TIndex }
-            (match nodeRange state.Graph selectorId with
-             | Some range ->
-                 let operation = indexCastForRange range result.SSA selectorSSA selectorType
-                 preturn ([operation], result)
-             | None ->
-                 fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the lazy dispatch selector (node {NodeId.value selectorId}) at node {NodeId.value ctx.Zipper.Focus.Id}"))
-        | _ -> fail (Message "Lazy dispatch selector lacks an admitted index carrier.")
+        pPublishedDispatchSelector ctx.Zipper.Focus.Id selectorId (Values.value ctx.Zipper.Focus.Id 2)
     let branches = cases |> List.map (fun (label, source, operations) -> int64 label, source, operations)
     let! operations, result = pLazySwitch ctx selector branches otherwise
     return prefix @ operations, result

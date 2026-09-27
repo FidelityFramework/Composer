@@ -84,7 +84,7 @@ let private parameterComponents (ctx: WitnessContext) parameters =
                 Alex.Traversal.LazyOperands.project ctx id |> Result.map (fun shape ->
                     Alex.Traversal.LazyOperands.componentTypes shape, Lazy shape)
             | Result.Ok(CallableValueShape.Data _) ->
-                try Result.Ok([mapTypeAt id ty ctx |> narrowType ctx.Coeffects ctx.Graph id], Scalar)
+                try Result.Ok([mapTypeAt id ctx], Scalar)
                 with ex -> Result.Error ex.Message)
         match groups |> List.tryPick (function Result.Error reason -> Some reason | _ -> None) with
         | Some reason -> Result.Error reason
@@ -271,31 +271,26 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | _ -> None
             MLIRAccumulator.restoreOperands savedOperands ctx.Accumulator
 
-            // Determine return type from Lambda type signature
-            // For flattened Lambdas with N params, unroll N levels of TFun. The result is held at
-            // the body node's width (the width every caller reads for the call); the last value
-            // is brought to it by the return meet SSAAssignment derived, the last value of this
-            // scope (an escaping lambda's body sits at the declared Register width, ruling 1).
+            // The result occurrence and return conversion are source facts.
             match ctx.Graph.Nodes.TryFind bodyId with
             | None ->
                 WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Lambda") (Some "return type")
                     $"PSG settlement did not keep the body {NodeId.value bodyId} of lambda {NodeId.value node.Id} resident in the graph; its return type has no source"
-            | Some bodyNode ->
-            let innerReturnNativeType2 = bodyNode.Type
+            | Some _ ->
             if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
-                printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
-                    funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
+                printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A"
+                    funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult
             let rawReturnType =
                 match bodyComponents with
                 | Some values -> (List.head values).Type
-                | None -> mapTypeAt bodyId innerReturnNativeType2 ctx
+                | None -> mapTypeAt bodyId ctx
             let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
             let returnType =
                 match bodyComponents, returnMeet, bodyResult with
                 | Some values, _, _ -> (List.head values).Type
                 | None, Some (meet, _), Some _ -> TInt (IntWidth meet.To)
                 | None, _, Some (_, actualTy) -> actualTy
-                | None, _, None -> narrowType ctx.Coeffects ctx.Graph bodyId rawReturnType
+                | None, _, None -> requireValueType ctx.Graph bodyId rawReturnType
             let returnMeetOps =
                 match returnMeet, bodyResult with
                 | Some (meet, result), Some (ssa, _) -> [ meetOp meet result ssa ]
@@ -309,16 +304,13 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 | None, Some (_, result), Some _ -> Some result
                 | None, _, Some (ssa, _) -> Some ssa
                 | None, _, None ->
-                    match innerReturnNativeType2 with
-                    | NativeType.TApp ({ NTUKind = Some NTUKind.NTUunit }, []) ->
-                        None
-                    | _ ->
+                    if Values.isUnitTyped ctx.Graph bodyId then None
+                    else
                         let bodyNodeKindStr =
                             match SemanticGraph.tryGetNode actualValueNode ctx.Graph with
                             | Some bodyNode ->
                                 let kindStr = sprintf "%A" bodyNode.Kind |> fun s -> s.Split('\n').[0]
-                                let typeStr = sprintf "%A" bodyNode.Type
-                                sprintf "Body node %d is %s (type: %s)" (NodeId.value actualValueNode) kindStr typeStr
+                                sprintf "Body node %d is %s" (NodeId.value actualValueNode) kindStr
                             | None ->
                                 sprintf "Body node %d not found in graph" (NodeId.value actualValueNode)
                         let hint =

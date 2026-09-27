@@ -44,18 +44,19 @@ let private generateCore
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
     (linkedLibraries: Set<string>)
+    (sourceProof: Core.Types.WitnessArtifacts.SourceProofReceipt option)
     : Result<BackEndInput * Set<string>, string> =
 
     let arch = architectureOf platformCtx
     let codata = graph.Codata.Value
 
     // Representation decisions inside type mapping that depend on the target (enum DU tags)
-    Alex.CodeGeneration.TypeMapping.setTargetPlatform targetPlatform
 
-    // Proof obligations are graph citizens: minted into the PSG by the Baker obligation recipes
-    // at saturation (CCS Pass 5), discharged from F at design time by CCS (06a/06b). This is a
-    // READ of the same records for the build-time dispatch below (09).
+    // Always witness the complete source inventory. Keeping intermediates only
+    // controls files; source and backend orchestration own actual proof dispatch.
     let proofObligations = Clef.Compiler.Nanopass.ObligationDischarge.ofGraph graph
+    let proofOperations = Alex.Traversal.SMTTransfer.operations proofObligations
+    let proofText = Alex.Traversal.SMTTransfer.transfer proofObligations
 
     let coeffects : TransferCoeffects = {
         Platform = { TargetArch = arch; LinkedLibraries = linkedLibraries }
@@ -99,7 +100,7 @@ let private generateCore
                     // obligations the graph carries (same shape as XDC from the pins)
                     if not (List.isEmpty proofObligations) then
                         let smtPath = Path.Combine(dir, "09_obligations.mlir")
-                        File.WriteAllText(smtPath, Alex.Traversal.SMTTransfer.transfer proofObligations + "\n")
+                        File.WriteAllText(smtPath, proofText)
                         if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
                             printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Length
                 | None -> ()
@@ -127,7 +128,10 @@ let private generateCore
                         match targetPlatform with
                         | Core.Types.Dialects.TargetPlatform.FPGA | Core.Types.Dialects.TargetPlatform.NPU -> Core.Types.WitnessArtifacts.TargetModuleActivation
                         | _ -> Core.Types.WitnessArtifacts.CheckedProgramStartup
-                    Core.WitnessArtifacts.create scope activation definitions topLevelOps mlirText writableStorage
+                    let proof: Core.Types.WitnessArtifacts.ProofEnvelope =
+                        { Scope = scope; Source = sourceProof; Obligations = proofObligations
+                          Operations = proofOperations; Text = proofText; Mlir = None }
+                    Core.WitnessArtifacts.createWithProof proof scope activation definitions topLevelOps mlirText writableStorage
                     |> Result.map (fun catalog ->
                         let witnessed =
                             { Operations = topLevelOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
@@ -142,13 +146,14 @@ let private generateCore
 /// the code PlatformDeclaration reports for a missing declaration (CCS8203). The fabric leg reads
 /// neither, so a description declaring none compiles for it. The deployment mode is the
 /// project's; runtime and library requirements are settled by CCS/Baker.
-let generateWithLinkedLibraries
+let generateWithLinkedLibrariesAndProof
     (graph: SemanticGraph)
     (platformCtx: PlatformContext)
     (_deploymentMode: Core.Types.Dialects.DeploymentMode)
     (targetPlatform: Core.Types.Dialects.TargetPlatform)
     (intermediatesDir: string option)
     (linkedLibraries: Set<string>)
+    (sourceProof: Core.Types.WitnessArtifacts.SourceProofReceipt option)
     : Result<BackEndInput * Set<string>, string> =
     // Refuse changed source input before any platform/codata reader or output.
     match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead graph with
@@ -165,7 +170,12 @@ let generateWithLinkedLibraries
         match undeclared with
         | Some message ->
             Result.Error (sprintf "CCS8203: %s; a core's leg reads the Register and Pointer width dimensions at its boundaries and layouts and cannot start without them" message)
-        | None -> generateCore graph platformCtx targetPlatform intermediatesDir linkedLibraries
+        | None -> generateCore graph platformCtx targetPlatform intermediatesDir linkedLibraries sourceProof
+
+/// Isolated witness callers may inspect the exact proof transcription without
+/// executing tools. Production backend admission still requires source receipts.
+let generateWithLinkedLibraries graph platformCtx deploymentMode targetPlatform intermediatesDir linkedLibraries =
+    generateWithLinkedLibrariesAndProof graph platformCtx deploymentMode targetPlatform intermediatesDir linkedLibraries None
 
 /// Callers without project link declarations retain the source-settled library requirements.
 let generate graph platformCtx deploymentMode targetPlatform intermediatesDir =

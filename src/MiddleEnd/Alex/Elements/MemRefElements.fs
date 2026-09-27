@@ -85,6 +85,11 @@ let pStore (value: SSA) (memref: SSA) (indices: SSA list) (elemType: MLIRType) (
         return MLIROp.MemRefOp (MemRefOp.Store (value, memref, indices, elemType, memrefType))
     }
 
+/// Typed load whose descriptor and result carrier were supplied by the owning
+/// Pattern's published access contract.
+let pLoadTyped result source indices elementType sourceType : PSGParser<MLIROp> =
+    preturn (MLIROp.MemRefOp(MemRefOp.Load(result, source, indices, elementType, sourceType)))
+
 /// Emit memref.alloca operation (stack allocation with compile-time size)
 /// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation
 let pAlloca (ssa: SSA) (count: int) (elemType: MLIRType) (alignment: int option) : PSGParser<MLIROp> =
@@ -93,6 +98,14 @@ let pAlloca (ssa: SSA) (count: int) (elemType: MLIRType) (alignment: int option)
         let memrefType = TMemRefStatic (count, elemType)
         MLIRAccumulator.registerSSAType ssa memrefType state.Accumulator
         return MLIROp.MemRefOp (MemRefOp.Alloca (ssa, memrefType, alignment))
+    }
+
+/// Stack storage with the source-published descriptor extent and alignment.
+let pAllocaDynamic (result: SSA) (count: SSA) (elementType: MLIRType) (alignment: int) : PSGParser<MLIROp> =
+    parser {
+        let! state = getUserState
+        MLIRAccumulator.registerSSAType result (TMemRef elementType) state.Accumulator
+        return MLIROp.MemRefOp(MemRefOp.AllocaDynamic(result, count, elementType, alignment))
     }
 
 /// Emit memref.alloc operation (heap allocation with runtime size)
@@ -132,7 +145,7 @@ let pMemRefView (result: SSA) (source: SSA) (byteOffset: SSA) (sourceType: MLIRT
 let pSubView (ssa: SSA) (source: SSA) (offsets: SSA list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let ty = mapNativeTypeForTarget state.Coeffects.TargetPlatform state.Platform.TargetArch state.Graph state.Current.Type
+        let ty = valueTypeAt state.Graph state.Current.Id
         let memrefType = TMemRef ty
         return MLIROp.MemRefOp (MemRefOp.SubView (ssa, source, offsets, memrefType))
     }
@@ -144,6 +157,10 @@ let pExtractBasePtr (result: SSA) (memref: SSA) (memrefTy: MLIRType) : PSGParser
     parser {
         return MLIROp.MemRefOp (MemRefOp.ExtractBasePtr (result, memref, memrefTy))
     }
+
+/// Observe every physical component needed to preserve a view's actual place.
+let pExtractStridedMetadata baseBuffer offset size stride source sourceType elementType : PSGParser<MLIROp> =
+    preturn (MLIROp.MemRefOp(MemRefOp.ExtractStridedMetadata(baseBuffer, offset, size, stride, source, sourceType, elementType)))
 
 /// Get reference to global memref
 /// Registers the created SSA's memref type in the accumulator for downstream pLoad derivation

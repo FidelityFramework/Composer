@@ -119,7 +119,7 @@ let ``physical thunk formal uses the exact environment extent of its lazy value`
     let shape = Operands.project ctx first |> ok
     let layout = Operands.contract shape
     let contract = Clef.Compiler.PSGSaturation.SemanticGraph.LazyValues.instance graph layout.Owner |> Option.get
-    let actual = mapTypeAt contract.Formal graph.Nodes[contract.Formal].Type ctx
+    let actual = mapTypeAt contract.Formal ctx
     Assert.Equal(Operands.environmentType shape, actual)
     match Operands.functionType shape with
     | TFunc([formal], _) -> Assert.Equal(actual, formal)

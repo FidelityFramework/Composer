@@ -1,7 +1,7 @@
 /// Passive observation of Baker's materialized callable environments.
 module Alex.Witnesses.EnvironmentWitness
 
-open Clef.Compiler.NativeTypedTree.NativeTypes
+open Clef.Compiler.NativeTypedTree.NativeTypes // NodeId identities
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -35,13 +35,17 @@ let private observeCallable (ctx: WitnessContext) (node: SemanticNode) environme
     match Operands.project ctx node.Id with
     | Result.Error reason -> failure node "callable carrier" reason
     | Result.Ok shape ->
-        match ctx.Graph.Codata.Value.CallableCarriers.TryFind node.Id
-              |> Option.bind (fun carrier -> ctx.Graph.Nodes.TryFind carrier.Implementation) with
-        | None ->
+        let symbol =
+            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+            |> Result.map (fun projection ->
+                projection.Carriers.TryFind node.Id
+                |> Option.bind (fun carrier -> Alex.CodeGeneration.CallableSymbols.tryBinding ctx.Graph carrier.Implementation))
+        match symbol with
+        | Result.Error reason -> failure node "callable carrier" reason
+        | Result.Ok None ->
             failure node "callable carrier"
-                $"Codata (CallableCarriers) did not settle a carrier with a resident implementation for callable occurrence {NodeId.value node.Id}"
-        | Some implementation ->
-            let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph implementation false
+                $"The published callable occurrence {NodeId.value node.Id} lacks its implementation symbol."
+        | Result.Ok (Some symbol) ->
             let pattern = parser {
                 let! operations, result = environmentPattern
                 match result with
@@ -64,9 +68,13 @@ let private access (ctx: WitnessContext) (node: SemanticNode) environment slotId
                 | Some value -> pWithUnitResult node.Id (pWriteContinuationSlot node.Id environment value layout.Bytes slot)
                 | None when borrow -> pBorrowContinuationSlot node.Id environment layout.Bytes slot
                 | None -> pReadContinuationSlot node.Id environment layout.Bytes slot
-            match node.Type, write, borrow with
-            | NativeType.TFun _, None, false -> observeCallable ctx node pattern
-            | (NativeType.TSeq _ | NativeType.TSeqEnumerator _), None, false ->
+            let shape =
+                if write.IsSome || borrow then Result.Ok None
+                else Operands.valueShape ctx node.Id |> Result.map Some
+            match shape with
+            | Result.Error reason -> failure node "value shape" reason
+            | Result.Ok (Some (CallableValueShape.Callable owner)) when owner = node.Id -> observeCallable ctx node pattern
+            | Result.Ok (Some (CallableValueShape.Sequence occurrence)) when occurrence = node.Id ->
                 match ctx.Graph.Codata.Value.SequenceOrigins.TryFind node.Id,
                       Alex.Traversal.SequenceOperands.project ctx node.Id with
                 | Some owner, Result.Ok shape when (Alex.Traversal.SequenceOperands.flow shape).Owners = Set.singleton owner ->
@@ -88,7 +96,9 @@ let private access (ctx: WitnessContext) (node: SemanticNode) environment slotId
                         observe ctx node sequence
                 | _, Result.Error reason -> failure node "sequence carrier" reason
                 | _ -> failure node "sequence capture" "Descriptor-only sequence capture lacks its exact source-proved function half"
-            | _ -> observe ctx node pattern
+            | Result.Ok None -> observe ctx node pattern
+            | Result.Ok (Some (CallableValueShape.Data owner)) when owner = node.Id -> observe ctx node pattern
+            | Result.Ok _ -> failure node "value shape" "The environment read lacks its supported, source-published value form."
 
 let private witness (ctx: WitnessContext) (node: SemanticNode) =
     match node.Kind with

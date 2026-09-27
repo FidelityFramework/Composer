@@ -1,6 +1,6 @@
 /// AIE Pipeline - Composes MLIR-AIE lowering into a BackEnd value
 ///
-/// This is the AIE backend: MLIR-AIE → aiecc.py → xclbin + insts.bin.
+/// This is the AIE backend: MLIR-AIE → native target tools → xclbin + insts.bin.
 /// Assembled as a function value, consumed by the orchestrator without dispatch.
 module BackEnd.AIE.Pipeline
 
@@ -12,8 +12,11 @@ open Core.Timing
 let private implementation : BackEnd = {
     Name = "AIE"
     Compile = fun witnessed ctx ->
-        let mlirText = witnessed.Text
-        // Write MLIR-AIE to file for aiecc.py input
+        match KernelRealization.realize ctx witnessed with
+        | Error reason -> Error reason
+        | Ok (realized,plan) ->
+        let mlirText = realized.Text
+        // Write the target realization for the native AIE tools.
         let mlirPath =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, "output.mlir")
@@ -34,10 +37,10 @@ let private implementation : BackEnd = {
             let instsPath = Path.Combine(outputDir, baseName + "_insts.bin")
 
             timePhase ctx.Timing "BackEnd.AIECompile" "Compiling MLIR-AIE to xclbin" (fun () ->
-                Lowering.lowerToXclbin mlirPath xclbinPath instsPath)
+                Lowering.lowerToXclbin plan.Target.Device (plan.Tiles |> List.map (fun tile -> tile.Column,tile.ComputeRow)) plan.Tiles.Length mlirPath xclbinPath instsPath)
             |> Result.map (fun () -> Xclbin (xclbinPath, instsPath))
 }
 
 /// Current source/witness ownership is validated before target realization.
 let backend: BackEnd =
-    { implementation with Compile = WitnessedInput.compile implementation.Compile }
+    { implementation with Compile = WitnessedInput.compileWithBoundary KernelRealization.validate implementation.Compile }

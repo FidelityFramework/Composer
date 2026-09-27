@@ -1,1056 +1,522 @@
-# Clef / Composer checkpoint: C-series coverage and affected F-series gates
+# Clef / Composer architecture checkpoint
 
-**Checkpoint, 2026-09-26, after the owner's removal of fallbacks and vestiges.
-The original boundary slice is committed and its full suites are measured
-below; subsequent corrections are still in progress. No C/F acceptance is
-claimed.** The owner authorized
-rearchitecture directly in the existing trees. No Python, worktrees, recovery of
-deleted implementation, or middle-end semantic repair is authorized.
+Updated 2026-09-27 for the owner and the implementer continuing this
+rearchitecture. This replaces the accumulated checkpoint history with the
+architecture, implementation, evidence and remaining work of the current tree.
 
-The owner-supplied handoff reports **0/51 samples compiling, 300/1,605 CCS tests
-failing (235 with CCS8011 only), and 51/307 Alex tests failing**. These are the
-post-cleanup baseline observations, not runs performed during the boundary work
-below. The 27/51 and 21/48 cohorts later in this document are historical and do
-not describe the current tree. Failures exposed by removing fallbacks identify
-missing source contracts; they are not a reason to restore those fallbacks.
+**This is a recorded implementation notch. The shared representation-selection
+path and substantial source-semantic construction have been removed from Alex.
+Baker establishes the decisions in the PSG; Alex witnesses those resolved facts.
+F01 has completed the three native proof stages and executed successfully.
+Complete compiler acceptance and sample parity remain unfinished.**
 
-## Boundary publication rearchitecture — committed slice
+The final bounded checks are **Array source 11/12, linked Composer controls
+48/54, spatial controls 18/18, and the previously completed SMT transfer
+controls 163/163**. The six Composer failures and one source failure remain
+visible below. This is a documented implementation notch, not a green
+acceptance checkpoint.
 
-This slice is **Clef `d372adb8e4eb01ed885943bf67d4324dffa65024`, Composer
-`05af77a34d2ad568e3400742535c4ad8025e0797`, and Fidelity.Platform
-`e69948daec67ccc3bcabf3fa9c6616e9b54c875d`**. This supersedes the earlier statement
-that its compiler and Composer changes were uncommitted. The independent
-[reading assessment](C_F_Independent_Assessment_2026-09-26.md#assessment-of-the-boundary-publication-checkpoint)
-identifies architectural gaps in this committed slice; it remains unchanged.
+## The north star: Baker constructs; Alex witnesses; the backend realizes
 
-The governing references are the
-[shared C/F ownership requirements](PRDs/C-Series-Acceptance.md#11-baker-construction-alex-witnessing-and-backend-realization),
-[M-01 dialect admission](PRDs/M-01-DialectAdmission.md),
-[FFI boundary specification](../../clef-lang-spec/spec/ffi-boundary.md),
-[platform bindings specification](../../clef-lang-spec/spec/platform-bindings.md), and
-[site nanopass guidance](../../clef-lang-site/hugo/content/docs/internals/concepts/nanopass-navigation.md).
-**CCS/Baker publishes settled facts; Alex witnesses them through Huet
-Element/Pattern/Witness composition; Composer's backend owns target realization.**
+The architectural correction is the central accomplishment of this work. The
+early form of Alex combined witnessing with decisions and transformations that
+belong to the source compiler. Removing that vestigial responsibility is
+substantive rearchitecture: the implementation now has explicit, inspectable
+source contracts where witness-time selection or repair previously occurred.
 
-[BoundaryEmission.fs](../../clef/src/Compiler/PSGSaturation/SemanticGraph/BoundaryEmission.fs)
-adds a source-owned executable boundary projection to witness publication.
-It retains exact descriptor and binding identities, declaration paths, module
-ownership, ordered actual/formal correspondence, immutable declaration facts
-and type identities (including numeric carrier and dimension), and the existing
-source-proved numeric adaptations.
-Missing or inconsistent premises refuse publication. The test-only source
-re-admission path checks the projection against the current graph. The committed
-production reader does not perform that comparison after an arbitrary graph
-record copy; this remains distinct from helper-driven invalidation.
+CCS/Baker owns source semantics through elaboration and saturation: numeric
+selection, operation construction, declaration and ABI settlement, demand,
+storage residence, callable correspondence and proof premises. The PSG retains
+the actual source occurrences, scope, joint constraints, hyperedges, proof
+citizens and intermediate rewrite records that establish those decisions.
+Publication makes the settled facts available; it must not become a second
+semantic solver.
 
-Source publication also identifies external declaration leaves and their
-exclusive placeholder/formal/body nodes. These remain available as proof
-participants and produce no ordinary function definition. CCS rejects outside
-structural or reference uses of those placeholder nodes. The source incidence
-check includes attached children such as a Binding's value, not only references
-encoded in its Kind.
+Alex is a passive witness of those facts through the Huet zipper:
 
-The first admitted boundary is an explicitly declared libc scalar C call:
-integer or boolean parameters, integer/boolean/void result, and `CDecl`.
-The committed check requires an explicit project runtime claim of libc;
-reading that fact from the resolved source platform description is an assessed
-correction below. Freestanding
-startup does not imply absence of libc, and hosted startup does not supply a
-missing library declaration. Other libraries, system intrinsics, reference,
-pointer and aggregate adapters require their own complete source contracts;
-this change does not invent them. The admitted scalar contract is exercised by
-fixtures only. The assessment records **109 libc externs across nine
-Fidelity.Platform binding files with no FunctionDescriptor**; those declarations
-cannot satisfy this contract. No library or manifest case was restored by the
-recorded scalar fixtures.
+- **Elements** provide typed atomic operations and physical spelling for settled
+  facts. They do not select a source width, storage policy or semantic meaning.
+- **Patterns** compose Elements using the published operands, adaptations,
+  relationships and guards. A Pattern can serve multiple Witnesses. Shared
+  composition is the intended reuse mechanism.
+- **Witnesses** observe the current occurrence and select its applicable
+  published composition. They do not reconstruct an algorithm, inspect mutable
+  checker cells, infer a type, rediscover declarations or repair absent facts.
 
-Alex's former platform signature discovery, marshalling construction, system
-call selection and inline declaration construction have been removed.
-`PlatformPatterns` now witnesses published imports at their exact source module
-scope and published calls using recalled operands and settled adaptations.
-Elements provide the shared physical scalar spelling and atomic operations;
-Patterns compose them and are reusable by multiple Witnesses. Witnesses select
-those compositions for the current occurrence and published facts.
-Traversal recognizes source-authorized declaration scopes independently of
-runtime reachability. No emitted-operation pass hoists or reconciles imports.
-The existing declaration Elements that lack source authority remain refusals.
+The backend owns target-specific realization. A selected platform can inform
+portable witnessing; that does not authorize LLVM, CIRCT or AIE target
+commitments in the common middle end. Target realization preserves the source
+contract and its proof correspondence.
 
-The real traversal check exposed two missing source distinctions during this
-work. Ordinary demand had treated the extern placeholder's unused formals as
-proof that C arguments could be omitted. CCS now excludes external declaration
-implementations from that body-use proof, so ordinary settlement retains the
-actuals. The next check exposed an ordinary `FuncDef` for the placeholder;
-the published declaration-leaf contract removes that executable interpretation.
-Alex follows those facts through reusable Patterns and shared traversal.
-Coverage still requires every runtime occurrence and published import scope,
-including import scopes without runtime reachability.
+A missing fact is information about the owning source contract. A green build
+does not establish acceptance, and a failed gate never authorizes a fallback.
+Clef's native dimensional type universe and lazy-default semantics remain
+authoritative. .NET is the compiler/tooling host, not the language model.
 
-The OrdinaryDemand regression checks also contained obsolete expectations of
-silent empty results or allocation after proof rows were removed. Those tests
-now require the owning refusal and retain their valid re-settlement controls.
-The eager arithmetic case checks its required CCS8011 diagnostic without first
-passing through a fixture that forbids every diagnostic. No fallback or relaxed
-proof premise was introduced to satisfy those checks.
+The three governing documentation sources agree:
 
-**Original focused evidence, now included in the committed slice:**
+- Composer [C/F ownership](PRDs/C-Series-Acceptance.md),
+  [M-01 admission](PRDs/M-01-DialectAdmission.md) and
+  [core collections](PRDs/C-04-CoreCollections.md).
+- clef-lang-spec [backend boundary](../../clef-lang-spec/spec/backend-lowering-architecture.md),
+  [numeric selection](../../clef-lang-spec/spec/numeric-selection.md),
+  [native type universe](../../clef-lang-spec/spec/native-type-universe.md) and
+  [native mappings](../../clef-lang-spec/spec/native-type-mappings.md).
+- clef-lang-site [Baker Saturation Engine](../../clef-lang-site/hugo/content/docs/internals/pipeline/baker-saturation-engine.md),
+  [Nanopass Navigation](../../clef-lang-site/hugo/content/docs/internals/concepts/nanopass-navigation.md),
+  [Learning to Walk](../../clef-lang-site/hugo/content/docs/internals/pipeline/learning-to-walk.md)
+  and the [Weaving the Braid blog](../../clef-lang-site/hugo/content/blog/weaving-the-braid.md).
 
-| Check | Result | Evidence |
+These are design oracles, not retrospective explanations of whatever the
+current code happens to do. Baker Saturation Engine places executable
+algorithms and their joint relations in source recipes and preserves identity
+through fold-in. Nanopass Navigation establishes the sequence from settled PSG
+publication through passive Elements/Patterns/Witnesses to the target backend.
+Learning to Walk requires ordering, captures, lifetime and SSA decisions before
+zipper traversal. Weaving the Braid requires every joint premise to refer to
+the same instantiated facts and distinguishes an obligation from its discharge
+and from preservation of that evidence downstream.
+
+Those principles determine both the implementation and the tests: publication
+must retract when the actual source premise changes; witnessing must preserve
+that same identity; each proof stage must have its own checked evidence.
+Read those contracts before targeted implementation work. The old code is not
+architectural authority.
+
+## Repository revisions and owner boundaries
+
+| Repository | Base revision before this notch |
+|---|---|
+| clef | `38d184a7b85c501b4d7e1bd1b7481ea3292c3b48` |
+| Composer | `3a5b7af4f80a614a564bdb47d6865520593e0e4a` |
+| Fidelity.Platform | `e69948daec67ccc3bcabf3fa9c6616e9b54c875d` |
+
+The corresponding notch revisions are:
+
+| Repository | Notch revision |
+|---|---|
+| clef | `b77f8885d62db447f3473f92338f112fe7aa5cce` |
+| Fidelity.Platform | `d7cc3b77f20f80720cea6e79c2bed1e6ee756be1` |
+| Composer | The commit containing this rewritten checkpoint and the witness/backend implementation |
+
+Work was performed in the existing trees. The commits include the required new
+source and test files, not only previously tracked modifications.
+Fidelity.Platform changes are in `Contracts/PlatformContracts.clef` and
+`Environments/Linux/x86_64/Console.clef`. The boundary/backend ownership
+correction in the base revisions is the foundation for this source and witness
+rewrite.
+
+No Python, side worktrees, deleted implementation recovery or custom MLIR
+plugins were used for this slice. No evidence directory was created. The owner
+explicitly authorized committing and pushing these changes with the checkpoint
+on 2026-09-27. Production scope is frozen at this notch. The bounded final
+verification is complete; remaining failures are retained for the next
+source-contract corrections. No background work remains running.
+
+## Decisions and transforms removed from Alex
+
+The following inventory names the architectural change, its source authority,
+and the passive composition that replaces the vestige. It includes the boundary
+ownership foundation already in the base revisions and this notch's
+numeric, memory, string, callable and spatial reimplementation.
+
+| Removed decision or transform | Authority established in the PSG | Alex's remaining role |
 |---|---|---|
-| CCS `BoundaryEmissionCases` and `OrdinaryDemandCases` | **56/56 passed**, zero skips: 23 boundary and 33 ordinary-demand cases | [Source test transcript](evidence/2026-09-26-boundary-source-tests.txt) |
-| Alex `ForeignDeclarationTests` and `TraversalOccurrenceTests` | **16/16 passed**, zero skips | [Alex test transcript](evidence/2026-09-26-boundary-alex-tests.txt) |
-| Initial full traversal, before source demand repair | Required foreign actual was not witnessed; retained as evidence of the missing contract | [Initial failure transcript](evidence/2026-09-26-boundary-initial-traversal-failure.txt) |
+| Shared type/width selection from ranges and native type cells | Baker Numeric settlement publishes immutable scalar and composite representations with exact source premises | TypeMapping spells the held representation; PSGCombinators checks correspondence |
+| The proposed local MemoryWitness width correction | One source-settled result carrier, shared with other occurrences and operations | MemoryWitness reads the published operation; no independent width path |
+| Numeric operation signedness, intermediate carrier and adaptation choices | NumericOperationRecipes retains ordered operands, operation/result carriers, selected declaration, Meets and proof obligations | Shared numeric composition follows the exact operation and adaptations |
+| Memory field-name/type interpretation and collection-specific width guessing | Memory settlement retains element slot, actual descriptor, access guard, residence and extent | Shared memory Pattern composes typed accesses |
+| Taking an address by copying a scalar into new storage | Source actual-place identity: mutable cell, array element, record field or existing reference | Witness the real descriptor base, offset, stride, index and element-byte extent |
+| Duplicate Array intrinsic loops and SubViewCopy construction | Baker creates allocation, initialization and copy source graphs, with exact construction/copy receipts | Dynamic allocation and access are small published memory operations |
+| String equality/substring helper paths, including the old memcmp route | Source equality uses descriptor lengths and guarded readonly byte traversal; a proved empty operand has its own source length construction | Witness the ordinary source operations |
+| String search loop, concatenation allocation/copy and byte-based character indexing | These require proper source constructions; Unicode codepoint semantics remain required | The old algorithms are deleted; missing positive capabilities remain explicit |
+| fromBytes/toBytes identity shortcuts based on equal carriers | Source snapshot/copy lineage, byte/text evidence, exact source/result carriers and independent storage | StringIntrinsicWitness uses the shared memory projection and admitted view transport |
+| Scalar/lazy/sequence dispatch choosing index-cast signedness from ranges | Numeric index transport retains sign, selected Pointer dimension and an actual range-coverage proof | All three use one passive dispatch-selector Pattern |
+| Structural/annotation/environment shape discovery | Published value shape, callable symbol and actual child correspondence | Forward the published value or symbol; no recursive last-value or Lambda discovery |
+| VarRef classification by looking for child Lambdas/captures | Published DefinitionOnlyBindings/DefinitionOnlyLambdas and complete alias/formal identity paths | Read the current occurrence's declared role |
+| Raw constant-match reconstruction in the middle end | Baker normalizes it into typed comparisons, ordinary control flow and requirements | Existing control-flow composition witnesses the source construction |
+| Hardware declaration traversal, reset/pin/clock interpretation and module construction in its Pattern | Hardware source recipe publishes the Mealy contract and source proof citizens | Thin Hardware Witness, shared spatial Pattern and Element; CIRCT backend realization |
+| Kernel opcode discovery and target text construction | Source publication retains the full ordered scalar computation, declared ingress and partition | Thin Kernel Witness and the same spatial composition; AIE backend realization |
+| Platform signature discovery, marshalling construction, system-call selection and inline declaration construction | Source boundary facts retain declaration identity/scope, ordered actual/formal correspondence and ABI adaptations | Published import/call Patterns; declarations appear directly at their settled scope |
 
-The Alex checks include the real witness registry, no placeholder `FuncDef`,
-stock `mlir-opt --verify-each`, exact module placement, missing-scope coverage
-and invalidated-publication refusals. Ordered operands and signed extension
-were asserted only in the seeded component test, not the full registry output;
-the strengthened traversal assertion is part of the in-progress correction.
-The existing deferred-helper traversal fixtures now obtain
-complete publication using explicit source platform authority shared with the
-boundary fixtures; target-free checking is not treated as executable authority.
+This is the architecture to preserve. Calling a CCS function from Alex would
+still violate it if that function performs selection or semantic repair.
+Likewise, renaming a transform or moving it into a publication reader would
+not make it passive.
 
-Commands, run in their respective existing repositories:
+The reusable lower tiers are part of this correction. Memory and String
+witnesses share published memory composition; Hardware and Kernel share spatial
+composition; scalar, lazy and sequence dispatch share the published index
+selector. The individual Witness does not need its own variant of a decision
+already established by Baker. Further rewrites should simplify the Witness
+around these contracts and add shared composition only where the resolved
+facts really are common.
+
+### Implementation map for the next implementer
+
+These are entry points into the retained architecture, not alternative places
+to solve the same semantics.
+
+| Contract | Source construction and settlement | Passive publication/composition |
+|---|---|---|
+| Value representations and operations | clef `Baker/Ingredients/ValueRepresentations.fs`, `NumericValues.fs`, `NumericOperations.fs`; `Baker/Recipes/NumericCarrierRecipes.fs`, `NumericOperationRecipes.fs`; `Nanopass/NumericSettlement.fs` | clef `PSGSaturation/SemanticGraph/NumericPublication.fs`; Composer `Alex/CodeGeneration/TypeMapping.fs`, `Alex/XParsec/PSGCombinators.fs` |
+| Actual storage, extents and access | clef `Baker/Ingredients/MemoryValues.fs`, `ArrayShapes.fs`; `Baker/Recipes/MemoryExtentRecipes.fs`, `MemoryAccessRecipes.fs`; `Nanopass/MemoryAccessElaboration.fs`, `MemorySettlement.fs` | clef `PSGSaturation/SemanticGraph/MemoryPublication.fs`; Composer `Alex/Patterns/MemoryPatterns.fs`, `Alex/Elements/MemRefElements.fs`, `Alex/Witnesses/MemoryWitness.fs` |
+| Array algorithms and retained copy authority | clef `Baker/Recipes/ArrayConstructionRecipes.fs`, `ArrayMemoryRecipes.fs`; `Nanopass/ArrayConstruction.fs` | Same Memory publication and composition; `Alex/Dialects/Core/Types.fs` and `Serialize.fs` carry the typed dynamic stack operation |
+| String semantics and byte/text lineage | clef `Baker/Ingredients/StringBytes.fs`; `Baker/Recipes/StringComparisonRecipes.fs`, `StringViewRecipes.fs`, `StringBorrowRecipes.fs`; existing callable reification and Array construction | clef Memory/Boundary publication; Composer `Alex/Witnesses/StringIntrinsicWitness.fs` and shared Memory composition; old `Alex/Patterns/StringPatterns.fs` deleted |
+| Closed callable inputs and dispatch transport | clef `PSGSaturation/SemanticGraph/CallableIngress.fs`, `CallableEmission.fs`, `Curry.fs`; source callable recipes and NumericIndexTransport | Composer `Alex/Patterns/ControlFlowPatterns.fs` shared by ControlFlow, Lazy and Sequence; exact adaptation checks in PSGCombinators |
+| Hardware and kernel declarations | clef `Baker/Ingredients/SpatialValues.fs`; `Baker/Recipes/HardwareModuleRecipes.fs`, `KernelDeclarations.fs`, `KernelModuleRecipes.fs`; `Nanopass/SpatialSettlement.fs` | clef `PSGSaturation/SemanticGraph/SpatialPublication.fs`; Composer `Alex/Patterns/SpatialPatterns.fs`, `Alex/Elements/SpatialElements.fs`, thin Hardware/Kernel Witnesses |
+
+All clef paths in this table are relative to `src/Compiler`; Composer `Alex/`
+paths are relative to `src/MiddleEnd`. The source recipes construct executable
+meaning and its retained relationships. Settlement publishes a coherent domain.
+Publication checks that the retained facts still belong to the current graph.
+The final column witnesses that authority. None is permission to create a
+parallel range solver or alias analyzer in a downstream reader.
+
+### Shared representation authority
+
+The removed shared selector affected Application, Lambda, FunctionPointer,
+Binding, VarRef, MutableAssignment, Match, ControlFlow, Record, DU, Option and
+HardwareModule in addition to Memory. Fixing one memory operation's width
+would have left the architectural defect in all of these paths. The correction
+therefore lives at their shared source/publication/composition boundary.
+
+Source entry points include `NumericCarrierRecipes.fs`,
+`NumericOperationRecipes.fs`, `NumericSettlement.fs` and
+`NumericPublication.fs`. Alex's `CodeGeneration/TypeMapping.fs` and
+`XParsec/PSGCombinators.fs` read and check immutable facts. They no longer
+invoke range selection, follow mutable native type cells or complete
+placeholder representations.
+
+The source premises include exact integer/real literal bits, record field
+names/types/order, constructor placement, native type identities, ranges and
+actual-place identity. Changing one retracts the affected publication. Width,
+signedness, dimension and layout are not interchangeable pieces of metadata.
+
+### Memory and actual places
+
+`MemoryWitness.fs` now dispatches through
+`MemoryPatterns.pPublishedMemoryOperation`. The source contract identifies
+the actual operand and its complete access/storage authority. A descriptor's
+nonzero offset and stride survive address witnessing; a convenient scalar
+copy cannot stand in for the original location.
+
+For the migrated memory families, readonly global inventory, mutable local
+residence, source guards and exact element-byte extents are held facts. The
+Pattern checks that recalled values agree with them. It does not choose a
+replacement storage class when a contract is missing. BorrowedView still has
+separate access/guard/width vestiges and is explicitly queued below.
+
+### Array construction belongs to Baker
+
+`ArrayConstructionRecipes.fs` creates explicit count/offset requirements,
+fresh storage, default initialization and ordinary guarded loops.
+`ArrayShapes.fs` preserves actual descriptor extents from literal cardinality
+or the original allocation Count, including their complete dependencies.
+Ranges enclose that count; they never replace the runtime descriptor extent.
+
+`ArrayMemoryRecipes.fs` validates the retained construction and publishes
+allocation/copy receipts. Allocation has layout, capacity, index and address
+coverage proof citizens. Copies retain actual reads, stores, advance/loop
+structure, Requirements, participants and their intermediate access rewrites.
+The per-read/per-store numeric adaptations remain the existing source authority.
+
+This distinction matters for byte conversions: a byte source and a native
+integer destination can have the same logical element meaning and different
+physical storage widths. The source read/store Meets govern that conversion.
+Requiring equal physical widths would be an incorrect extra restriction;
+letting Alex invent a cast would be a second architectural error.
+
+Overlapping `Array.blit` completes a fresh source snapshot before writeback.
+Empty copies retain their zero-count authority without phantom read/write
+loops. Unforced unused construction must remain deferred and must not demand
+writable storage. The executable/deferred inventory is shared with the existing
+source demand owner.
+
+The positive unused-let control currently fails: an unforced
+`let unused: int array = Array.zeroCreate 3` followed by `0` is still treated
+as requiring writable stack storage. This is an open source demand defect,
+not an accepted exception to lazy-default semantics. The empty eager
+zeroCreate/sub cases and the retained guard/copy retractions pass.
+
+Alex's dynamic allocation Pattern recalls the held Count, uses the published
+index conversion, element and alignment, and composes the declared stack
+allocation. Initialization and copying remain ordinary source operations.
+Escaping/actor allocation and unsupported native default values are capability
+gaps, not excuses for heap or CLR/null defaults.
+
+### Strings and independent snapshots
+
+The entire old `Patterns/StringPatterns.fs` was deleted. That removed both
+dead alternative implementations and active middle-end algorithms. Search,
+concatenation and character access have not been falsely counted as complete:
+their proper source constructions are still required. Character indexing must
+respect Unicode codepoints, not reinterpret a UTF-8 byte index as a character.
+
+Source equality uses exact descriptor lengths and readonly byte traversal.
+A proved empty operand selects the source length-only construction. One
+validation failure exposed a literal occurrence shared across disjoint
+branches; the source recipe now creates distinct occurrences, preserving
+valid SSA scope rather than repairing the resulting operations afterward.
+
+Ordinary, qualified, local-alias, curried and first-class length forms are
+required to use source extent authority. First-class extent reification uses
+the existing source closure recipe and field operation. The final registry
+check found a remaining local-alias carrier mismatch, recorded below; the
+other tested callable forms passed.
+
+`StringViewRecipes.fs` requires the admitted snapshot allocation/copy and its
+complete byte/text evidence. Local comparison retains that lineage, including
+constructed local immutable strings. Static origins are not fabricated for
+them. The stricter system-write static-storage contract remains separate.
+
+`String.toBytes` reuses source `Array.sub` rather than acquiring another copy
+algorithm. Tests mutate an original byte array after fromBytes and compare
+the resulting text's contents. Tests also create two toBytes results, write
+512 into one and require the other to remain 65 at that position. These are
+independence and native-element-domain oracles, not merely length checks.
+The final fromBytes content/mutation control passes. The final toBytes control
+currently stops at exact numeric-Meet correspondence before execution. Its
+strong content oracle remains in place; independent toBytes execution is not
+claimed from source construction alone.
+
+### Callable, demand and dispatch correspondence
+
+Readonly aliases and formal references retain their complete source identity
+paths. Mutable/program-slot reads retain occurrence identity across writes.
+Curried calls preserve saved/current argument correspondence; already-complete
+factory calls retain their distinct source boundary.
+
+Array extents and static string origins now share
+`CallableIngress.closedFormalInputs`. ParameterInputs is an observed census,
+not proof that every possible caller has been accounted for. The existing
+closed implementation proof and exact formal/actual positions must agree.
+The retained FormalInputs correspondence includes the formal, every actual
+and call, and all participants of the unchanged closure proof.
+
+The focused tests caught omission of the formal identity in that new retained
+correspondence. That was corrected at the source helper, not waived in its
+users.
+
+Scalar, lazy and sequence dispatch share a NumericIndexTransport. It contains
+an actual source coverage obligation for the selected index domain, not only
+a width. A 33-bit value is refused for a 32-bit index. The three Patterns use
+the same passive selector composition.
+
+The retained index contract names the dispatch site and operand, scalar carrier,
+selected Pointer declaration and bits, signedness, capacity, obligation and
+complete participants. Its proof is an `IntegerRepresentationCoverage` citizen
+in the PSG. Publication checks the actual formula, selected dimension,
+source occurrence and rewrite correspondence. The common Pattern
+`pPublishedDispatchSelector` follows that contract. Editing sign or width in
+matching rows, changing the operand, removing the proof, or altering the source
+dispatch cannot preserve admission merely because the resulting MLIR would
+still parse.
+
+### Spatial declarations and backend commitments
+
+Hardware and Kernel witnesses now share `SpatialPatterns.fs` and
+`SpatialElements.fs`. Baker publishes exact declaration scope and identity,
+state/reset/clock/pins, computation and partition. Hardware reset/register
+ranges and kernel partitions have proof citizens; partition formulas agree
+between source discharge and MLIR SMT.
+
+`BackEnd/CIRCT/HardwareRealization.fs` realizes the published Mealy contract,
+including explicit reset behavior and exact Step signature. The old
+HardwareModule Pattern's declaration-analysis/module-construction code is gone.
+
+`BackEnd/AIE/KernelRealization.fs` preserves the full ordered scalar computation,
+not the first recognizable arithmetic operation. Declared input and result
+transports remain distinct. External kernel formals use their explicitly
+declared ingress domain; result capacity never supplies a fabricated result
+range. Ingress paths, uses, selected declaration files and field ranges are
+retained for retraction. The npu2 target now selects aie2p in its backend.
+
+## Proof discharge and native artifact publication
+
+The required order is:
+
+1. Discharge source obligations in the PSG before Alex.
+2. Discharge the corresponding MLIR SMT obligations before target realization.
+3. Discharge Rocq against the generated artifact .v before publishing the
+   executable.
+
+The LLVM backend links to a fresh provisional file, checks its actual ELF and
+fresh .v/.vo, and publishes atomically only after success. Failure preserves
+the previous executable. Source and MLIR receipts retain executable identity,
+hash/version/arguments and ordered source/anchor/solver outcomes, not hashes
+alone. Artifact validation checks the current source/catalog/operation/receipt
+identities.
+
+Exact source pool symbols remain local via LLVM internal linkage and llvm.used.
+ELF checks cover symbol identity, bytes, sentinels, alignment and readonly
+placement. A typed memory census refuses unsupported residual operations.
+
+F01 completed all three stages and executed with stdout `Hello, World!\n`,
+empty stderr and exit 0. The recorded executable is
+`/tmp/composer-artifact-fresh-5af8155dfd6c43b2b422e68102140023/hello`.
+Its proof directory is
+`hello.proof-e0bb34d83db74eee9cff62778b623a8e` beside it.
+
+Its full 8192-byte .rodata is accounted for as a 4096-byte trusted foreign
+prefix and the exact 4096-byte source pool. Twelve source-linked Rocq claims
+produce 25 closed theorems; 25 numeric/dimensional anchors remain solver-only.
+This does not prove machine-instruction or syscall equivalence. ELF extraction,
+LLVM/LLD and runtime remain explicit trusted components.
+
+Arrays, actual-address/writable storage, lazy/sequence frames and spatial
+artifacts still need their artifact contracts. The snapshot tests use stock
+MLIR execution as a witness-behavior oracle; that does not establish native
+artifact/Rocq admission. HelloProof/ship-of-theseus is the reference for the
+three-stage design; its retired Alex implementation is not authority.
+
+## Verification at the notch
+
+These are focused scopes, not complete suite or manifest acceptance.
+Temporary logs are in /tmp; source test names and asserted contracts are the
+reproducible evidence. No new evidence directory is required.
+
+| Scope | Result | Temporary log |
+|---|---|---|
+| Source controls before Array integration | 101/101 passed | `/tmp/clef-string-callable-focused-9.log` |
+| First integrated source Array/index/ingress run | 138/139 passed; formal-participant omission corrected | `/tmp/clef-array-source-focused-3.log` |
+| First final source run after demand-inventory reuse | 124/142 passed; 18 failures exposed stale/throwing demand reads, owning sequencing correction made | `/tmp/clef-array-source-final-1.log` |
+| Focused source rerun after demand lifecycle correction | 70/74 passed; two empty cases subsequently corrected, guard oracle corrected, unused-let defect remains | `/tmp/clef-array-source-final-2.log` |
+| Final Array source controls on the frozen production DLL | 11/12 passed; unused-let demand failure retained | `/tmp/clef-array-source-final-4.log` |
+| Composer ArrayAllocation/StringView/index integration | Production build passed, zero errors | `/tmp/composer-array-snapshot-build-final-2.log` |
+| Linked snapshot/string/artifact/MLIR component controls | 48/54 passed; exact six failures below | `/tmp/composer-array-snapshot-focused-final-2.log` |
+| Native artifact controls within that 54-case run | 17/17 passed, including fresh Hello World stdout/stderr/exit | Same log |
+| Snapshot and StringView controls within that run | 8/9 passed; toBytes exact-Meet correspondence fails | Same log |
+| String comparison and callable extent controls within that run | 19/20 passed; local-alias carrier mismatch | Same log |
+| MLIR component controls within that run | 4/8 passed; both dynamic allocations and both opaque copies pass; four older array-read fixtures fail preparation | Same log |
+| Final kernel/hardware controls | 18/18 passed: Kernel 12, Hardware 6 | `/tmp/composer-spatial-final-1.log` |
+| Prior actual kernel source/registry/stock MLIR/native AIE verifier controls | 10/10 passed | `/tmp/composer-kernel-ingress-focused-2.log` |
+| Prior hardware source/registry/CIRCT and retraction controls | 6/6 passed | `/tmp/composer-kernel-ingress-hardware-1.log` |
+| Prior string comparison/extent and native artifact controls | 20/20 and 17/17 passed | `/tmp/composer-kernel-ingress-focused-1.log` |
+| Actual source/MLIR SMT transfer, including false claims and spatial partitions | 163/163 passed | `/tmp/composer-smt-transfer-spatial.log` |
+| Actual memory registry and nonzero descriptor offset/stride address controls | 5/5 and 1/1 passed | `/tmp/composer-memory-registry-verification.log`, `/tmp/composer-memory-address-component-2.log` |
+
+The demand-lifecycle failure was useful: re-reading settled demand after each
+Array rewrite asks a stale domain to justify the changed graph. The correction
+takes the complete eligible candidate census before the batch rewrite, then
+refreshes the owning source phases. Passive publication reads a validated
+demand Result and refuses damaged authority; it must not throw, repair it or
+invent a new runtime classification.
+
+The guard-retraction oracle now checks the actual earlier owning refusal:
+`PSG settlement (OrdinaryDemand)` reports that the retained unused-formal/actual
+rows no longer match the complete use proof, with an occurrence and nonempty
+participants. It still requires refusal of the corrupted predicate. The other
+five construction/receipt/proof/access retractions retain their existing
+specific refusal checks. No damaged graph was admitted to make a test pass.
+
+### Exact failures to resume from
+
+| Failing positive control | Observed failure | Required architectural correction |
+|---|---|---|
+| `ArrayConstructionCases`: unforced unused construction | `CCS8403`: dynamic array requires exactly one declared writable stack space, despite unused lazy binding | Repair the ordinary-demand/executable inventory at its source owner; do not add storage authority to this test or eagerly execute an unused binding |
+| `StringBoundaryTests`: independent toBytes snapshots | `Published adaptation disagrees with its exact source numeric meet`, twice, before the runner | Reconcile the retained source copy read/store adaptations with the exact Meet used by shared composition; do not equate logical element identity with equal physical width |
+| `StringComparisonWitnessTests`: callable extent `alias` | `AX4001` at node 106: witnessed `TInt (IntWidth 64)` versus published `TInt (IntWidth 8)` | Trace the alias/extent occurrence and held result correspondence; Alex must not select a replacement width |
+| `MlirComponentTests`: four signed/unsigned array-read cases at Pointer 32/64 | Source preparation lacks complete callable carriers, a finite required range, MemorySettlement and SpatialSettlement | Restore valid source-owned fixture preparation and retain the signed/unsigned stock-lowering assertions; do not seed replacement publication facts in Alex |
+
+The last row is four failures, so the table accounts for all six Composer
+failures. These failures have not been excluded, weakened or reclassified as
+passing. The new dynamic-allocation controls preserve the Count, element and
+alignment through stock lowering at Pointer 32/i8/alignment 1 and Pointer
+64/i32/alignment 4. They do not establish the older array-read cases.
+
+A bounded read-only diagnosis narrowed the two registry failures further
+(`/tmp/composer-snapshot-notch-diagnosis.log`):
+
+- For toBytes, store 325 retains `Operand=314`, `From=8`, `To=32`,
+  `ExtendUnsigned`. The Pattern instead passes value 230, whose source form is
+  `Sequential [Require 313; read 314]`. Store 347 has the same disagreement
+  between retained operand 336 and the enclosing sequence 277.
+  `MemoryAccessRecipes.valueSite`/adaptation establishes the continuation as
+  the numeric operand; `MemoryPatterns` passes the surrounding access frontier
+  into `pPublishedAdapt`. The source memory fact must preserve both the actual
+  value occurrence and exact numeric operand/result transport, and the Pattern
+  must use those identities. Adding recursive alias/last-value discovery to
+  the Pattern would restore the removed defect.
+- For aliased length, node 106 is `Sequential [102;105]` and publishes i8;
+  terminal call 105 publishes and witnesses i64. The generated length field
+  operation 139 also publishes i64. This is a source composition/result
+  correspondence gap. Settle the equality or adaptation relation at the
+  sequence frontier and retain it. Choosing a width in StructuralWitness would
+  hide the disagreement and violate the architecture.
+
+These diagnoses made no production edits. They identify concrete source
+correspondence work for the next slice and explain why the passive checks are
+correct to stop.
+
+The final 142-case source scope was not rerun after the last two empty-case
+corrections. The final 11/12 Array result is a subset, not an inferred 141/142
+result. Production builds passed; the initial final Composer test attempt also
+encountered a test-only F# offside syntax error before execution. That syntax
+was corrected without changing the negative oracle, and the recorded 54-case
+run executed afterward.
+
+### Reproduce the final bounded checks
+
+Build the current source/compiler projects in dependency order before using
+`--no-build`. The recorded final Array command rebuilt only the test project
+against the frozen source DLL; the Composer and spatial commands used the
+corresponding coherent compiled assemblies. In the repository named on each
+line, these are the exact test scopes:
 
 ```sh
 # clef
-dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-restore --filter 'FullyQualifiedName~BoundaryEmissionCases|FullyQualifiedName~OrdinaryDemandCases' --verbosity minimal
+dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-restore -p:BuildProjectReferences=false --filter 'FullyQualifiedName~ArrayConstructionCases'
+
 # Composer
-dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-restore --filter 'FullyQualifiedName~ForeignDeclarationTests|FullyQualifiedName~TraversalOccurrenceTests' --logger 'console;verbosity=minimal'
+dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-build --no-restore --filter 'FullyQualifiedName~StringBoundaryTests|FullyQualifiedName~StringComparisonWitnessTests|FullyQualifiedName~ArtifactProofTests|FullyQualifiedName~MlirComponentTests'
+dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-build --no-restore --filter 'FullyQualifiedName~KernelModuleTests|FullyQualifiedName~HardwareModuleTests'
 ```
 
-These original commands built the affected projects. Their transcripts lack
-revision stamps, assembly hashes and complete named outcomes; the full-suite
-measurement below supplies those for the committed pair. No 51-sample manifest,
-linked C-library execution or standalone/hosted native acceptance cohort has
-been run for this boundary change. **0/51** remains the owner's earlier sample
-observation, not a result reproduced here.
-
-Implementation and acceptance remain distinct: this is the scalar boundary
-contract, not completion of the compiler rearchitecture, all FFI adapters,
-backend ABI realization, or native F/C behavior. Further boundary work must
-extend the same source-owned contract for required storage/handle/aggregate
-adapters and verify the corresponding backend realization. The full gate chain
-and sample manifest are not invoked merely because a focused build succeeds.
-
-### Full suites on the committed pair, before corrections
-
-The full CCS and Alex suites ran sequentially before any corrective
-implementation edit. Before both runs, Clef and Fidelity.Platform were clean;
-Composer had **only `docs/C_F_Independent_Assessment_2026-09-26.md` modified**.
-The saved after-run revisions and status are identical. The UTC interval was
-September 27 01:57:06–01:59:04, still September 26 in America/New_York.
-
-| Suite | Passed | Failed | Executed | Skipped | Build errors |
-|---|---:|---:|---:|---:|---:|
-| CCS `Clef.Compiler.Service.Tests` | 1,337 | 291 | 1,628 | 0 | 0 |
-| Composer `Alex.Tests` | 263 | 49 | 312 | 0 | 0 |
-
-Temporary evidence and exact commands remain at
-`/tmp/clef-boundary-audit-baseline/README.md`: complete console logs, original
-TRX, every named test outcome/failure, test and source assembly SHA-256 values,
-SDK information, timing, exit codes, before/after status, derivation scripts
-and an evidence hash inventory. The owner removed `docs/evidence`; no repository
-archive is retained or to be recreated. The shared CCS assembly hash matches
-in both suites. Both test commands returned exit 1 because tests failed;
-neither was a compilation blocker.
-
-Compared only with the owner's aggregate baseline, CCS has **nine fewer
-failures and 23 more cases**, and Alex has **two fewer failures and five more
-cases**. No earlier named result inventory was supplied for this measurement,
-so these totals do not identify recovered or regressed tests. The current CCS
-TRX has 240 failing test messages containing CCS8011, counted once per test;
-that text count is not a causal diagnosis or an identity comparison to the
-owner's earlier 235. Samples and native behavior were not measured.
-
-### Other checker changes already present in the handoff
-
-Clef `d372adb` also includes the following six preexisting handoff edits,
-separate from the boundary implementation. This inventory follows the
-independent assessment; no new implementation/history inspection was used to
-attribute them. Their behavior was **not separately verified**, and no focused
-regressions for these changes were recorded. Full-suite execution above does
-not supply missing per-change coverage.
-
-| Checker file | Included change | Verification gap |
-|---|---|---|
-| `NativeTypedTree/Expressions/Bindings.fs` | Replaces tuple marker/metadata strings with BindingHead, Declared and CheckedBinding; wildcard components create no binding | No focused check recorded; hidden tuple binding still uses node-number naming in the assessment |
-| `NativeTypedTree/Expressions/Patterns.fs` | Refused `as` and cons patterns recover without bindings | No focused recovery regression; unresolved arm names beside CCS8401 need coverage |
-| `NativeTypedTree/NativeTypes.fs` | Removes resolveSize; resolveAlign refuses composite kinds | No focused check recorded |
-| `NativeTypedTree/NativeService.fs` | Removes checkExpression/checkLetBinding and unifies module declaration entry | No focused check recorded |
-| `Project/ProjectChecker.fs` | Reports each unreadable source file's own reason | No focused check recorded |
-| `Nanopass/ProgramInitialization.fs` | Restates startup settlement, assessed as behavior-neutral | No independent behavioral verification recorded |
-
-### Correction of ownership and backend handoff — current uncommitted work
-
-The committed baseline above is the before-state. The owner confirmed that
-target admission and realization belong in the backend and authorized keeping
-and completing that work. The architectural correction is the ownership of
-source facts and their faithful transport across the middle-end boundary.
-
-Baker now establishes external declaration identity before ordinary demand.
-After source ranges and numeric meets are available, its boundary recipe settles
-imports, ordered calls, adaptations, participant membership and range coverage.
-Typed joint graph rows retain ordinals, obligations, checked outcomes and rewrite
-provenance. Publication validates and projects those rows. The old call/runtime
-resolver in PlatformBindings is removed; its unrelated pin reader remains.
-Ordinary demand and callable publication read the same boundary owner rows.
-The source description supplies runtime authority, and backend link requirements
-come from published imports. The typed descriptor reader is shared.
-
-Alex uses the canonical Values/meet derivation and pAdapt. BoundaryFuncDecl
-retains the complete published declaration, including signedness, through the
-Element, portable operation and artifact catalog. The catalog rejects changed
-facts and their replacement by an identically printed ordinary declaration.
-Patterns remain reusable; Witnesses select published contracts.
-
-Backend admission checks the selected target's realization of those contracts.
-The current LLVM profile covers signed/unsigned 32- and 64-bit scalar C carriers;
-other widths and Boolean remain explicit realization failures. Startup selection
-does not supply or remove runtime availability. This profile does not establish
-general foreign-boundary acceptance. The unused middle-end instruction-set
-field and its implicit x86-64 default are removed.
-
-Production middle-end and backend entry require source publication before
-source readers or output. Publication retains all prepared graph roots and
-rejects changed raw copies; unchanged-root copies remain valid. This establishes
-transport integrity only. Deep freezing of mutable checker cells and accepted
-source-revision authorization remain open.
-
-Verification is still being completed. Both compiler assemblies build. The
-first Composer focused run executed 85 cases: 83 passed, including backend
-native C interoperability; two failed. One fixture lacked source publication.
-The other exposed generated callback code with no owning module occurrence;
-its repair belongs to Baker's closure declaration placement. Final results
-will supersede these intermediate counts below.
-
-The complete corpus drift gate ran and returned exit 1 with 25 vocabulary hits
-and 3,987 scheduled lines. The reported hits include negative assertions,
-historical assessment text, diagnostic naming and a stale sample comment; the
-new SSA construction rule reported no production constructor outside Values.
-Its 12 bounded positive/negative controls and shell syntax check also pass.
-The gate is not reported as clean. Output is in
-`/tmp/clef-boundary-drift-gate.log`; no repository archive was created.
-
-The first current F-01 compile returned exit 1 with two CCS8403 errors at
-Console.clef lines 28 and 34: intrinsic Sys.write lacks CCS/Baker boundary
-settlement. No native executable was run. Its required native oracle remains
-exit 0, stdout exactly `Hello, World!\n`, and empty stderr. Artifacts are under
-`/tmp/composer-f01-native`. This is the next bounded-array source contract;
-changing backend target policy cannot supply it.
-
-The normative binding-form decision remains **pending with the owner**:
-ffi-boundary §5.3 specifies FnPtr.fromSymbol/invoke, while platform-bindings
-Layer 2 specifies a descriptor beside a placeholder and neither chapter
-specifies FidelityExtern. This checkpoint does not choose between them. The
-next executable boundary remains source settlement of intrinsic Sys.write over
-a bounded array; Layer 1 does not require a user-authored foreign declaration
-for that intrinsic. Helper imports, callback arguments, library descriptors,
-reference/handle adapters and target/native acceptance remain open.
-
-## Historical documentation and implementation checkpoints
-
-The sections below retain their original cohorts and observations. Statements
-of implementation status there describe those checkpoints, not the present tree.
-C and F have equal delivery standing. Source proof, physical composition and
-native behavior remain separate acceptance observations.
-
-Documentation correction: assistant-created dependency numbering has been
-removed. Work is owned by the existing C/F PRDs and their specification clauses,
-linked from the [master PRD index](PRDs/README.md) and the
-[shared evaluation traceability](PRDs/C-Series-Acceptance.md#12-shared-evaluation-requirements-within-existing-prds).
-The ledger is an implementation inventory, not an additional source of language
-requirements or a separately authorized prerequisite project. The correction
-changes no compiler behavior, acceptance result or feature status.
-
-## Documentation ownership cleanup — September 26
-
-**Completed: removal of vestigial architectural instructions from 102
-documentation files across four repositories.** These were obsolete notes to
-remove, not competing architectures or decisions to reopen.
-
-| Repository | Documentation files changed |
-|---|---:|
-| Composer | 47 |
-| Clef (`docs`) | 10 |
-| clef-lang-spec | 17 |
-| clef-lang-site | 28 |
-
-The cleanup removed prescriptions, examples, checklists and diagrams assigning
-analysis, inference or semantic construction to Alex, including its Patterns.
-This covers numeric/width selection, purity and execution-strategy selection,
-escape/lifetime analysis, layout, declaration/ABI settlement, continuation and
-actor construction, cleanup insertion, platform decisions and emitter queries
-of joint constraints. Obsolete custom-plugin retention and delayed-retirement
-instructions were also removed.
-
-The surviving contract is explicit: **CCS/Baker owns source semantics,
-elaboration, saturation and settlement**, preserving ingredients/recipes,
-scope, ordered joint incidence, complete premises and the intermediate rewrite
-record. **Alex passively witnesses immutable settled facts through Huet
-Element/Pattern/Witness composition.** Target-specific realization belongs to
-**Composer's backend**.
-Clef's native dimensional types and lazy-default semantics remain authoritative.
-
-Representative corrected references:
-[coeffect ownership](Coeffect_Analysis_Architecture.md),
-[native type settlement](NTU_Architecture.md),
-[partial application](Partial_Application_Closure_Reification.md),
-[PSG publication](../../clef-lang-spec/spec/program-semantic-graph.md),
-[plugin retirement](../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md), and
-[site nanopass guidance](../../clef-lang-site/hugo/content/docs/internals/concepts/nanopass-navigation.md).
-
-**Verification:** documentation diffs were reviewed and documentation-scoped
-`git diff --check` passed in all four repositories. A second documentation review
-caught and removed remaining Pattern-owned load inference and simplified
-escape-proof prescriptions. Recorded failures, exact observations and historical
-cohort results were preserved.
-
-**Acceptance remains open.** This cleanup inspected and changed documentation
-only: no implementation inspection, Python automation, builds or tests. It does
-not establish compiler repair, plugin removal from implementation, or new F/C
-acceptance. Revision hashes and results below identify their original tested
-cohorts; no new implementation cohort was run.
-
-That documentation-only checkpoint ended before implementation authorization.
-The owner has since authorized the in-place rearchitecture recorded above.
-The corrected PRDs and specification govern that work: retain failing cases and
-repair their owning source contracts rather than restoring a vestige or
-weakening an oracle.
-
-## Reassessment after the completed independent sweeps
-
-The [independent assessment](C_F_Independent_Assessment_2026-09-26.md), reread
-after expansion to 519 lines on September 26, materially broadens the repair
-inventory. Its [HEAD extraction](evidence/2026-09-26-head-manifest-audit.json)
-records **1,583/1,583 CCS tests, 211/302 Alex tests, 27/51 compilations and
-26 matching executions**. The runtime oracle is zero exit and normalized stdout;
-stderr is retained but not asserted. These are the auditor's runs, not new runs
-during reassessment. Source-suite success does not establish native conformance.
-
-Resume pairing: **Clef fd4ee1b, Composer b4f6396, spec d3f1d88** (including
-645c15a and 0e1f866), **BAREWire 61b0bf7, Fidelity.Platform b1aaf62**.
-BAREWire supplies the storage-commitment API this Composer cohort requires.
-The assessment remains an independent record; the dispositions here do not
-silently rewrite it.
-
-**Architectural correction, September 26:** remove all MLIR plugin dependencies
-now, including conditional loading when an old plugin file happens to exist.
-Retirement is not conditional on migrating a consumer first. CCS/Baker settles
-language semantics and physical-form authority in the PSG; Alex passively
-expresses that settled computation through its Huet Element/Pattern/Witness
-composition. No middle-end MLIR semantic transform repairs missing settlement.
-Target-specific lowering remains in the selected backend. Plugin removal and
-subsequent regression results must be recorded separately; this directive does
-not claim that compiler removal or the affected feature gates have passed.
-
-| Existing owners | Corrections that change the execution plan |
-|---|---|
-| C-01/C-02, F-04; M-01 | Retire both graph-identity publication tables in favor of immutable source-owned codata and source invalidation. Preserve Huet Element/Pattern/Witness composition. Restore 04/11a/12 returned closures; publish physical components by enclosing implementation and formal. About 81 Alex failures are attributed to publication by the audit, not all to harmless fixtures. Remove all MLIR plugin dependencies and packed closure construction now. Repair affected consumers through PSG settlement and passive witnessing; no consumer migration delays removal. |
-| C-01/C-02/C-05/C-06/C-07, F-03/F-04/F-08/F-09 | Implement default deferral and sharing rather than omission over strict evaluation. Cover mutable reads/stores, inline/partial application, aggregates, primitive/foreign demand, dominance, captures and recursion. Migrate Platform console and BAREWire effectful discarded bindings with the demand change. Record explicit-eager oracle migrations and pass original04c. |
-| C-06/C-07, F-11 | Restore 16a publication and 16c/16e operand transport; locate original16's timeout using bounded phase evidence. 16a fails at its mutable scalar accumulator, not by itself at a sequence allocation. |
-| F-11/C-08; C-03/F-02/F-07 and M-01 consumers | Remove unobservable-range register-width fallback at representation commitment. Carry established/refuted/unresolved obligation outcomes into artifact acceptance. Repair ESP32-S3 signed finite bounds; test zero, negatives and subnormals. Complete lifetime propagation and remove missing-escape-to-stack fallback. |
-| C-04/C-07, F-05/F-08/F-09 | Admit List/Map/Set schemes; correct Set removal, AVL rotation, Map removal, unresolved recursion, recipe saturation and guarded selectors. Complete Array/range and Seq successor routes through native cases. Retain unsupported pattern forms as discriminating regressions. |
-| F-01/F-06/F-07 and actual library/FFI owners | Complete the D10 corpus migration before attributing samples17–23 to C/F lowering. Test unpaced multiline input; the paced06 pass does not close readln. Restore the specified char-to-int kind function and enforce shift preconditions. |
-| Affected F/C verification owners | Complete reusable .NET drivers, separate exact stream oracles, compiler inventories, effective timeouts and durable evidence. Port remaining Python-only gates. Run platform-bearing editor/analyzer/LSP cases. Shared callable/publication checkpoints require the full manifest plus focused exact-stream and full/pruned controls. |
-| F-11(d)/C-08(d), Baker/Alex contract | Establish complete ordered incidence, membership/absence dependencies, revisions, rewrite footprints, obligation status and schedule-independent settlement before reuse or concurrent publication. Assign program-wide resource owners; compare serial/parallel full and incremental builds with reconciliation. Independent process test jobs already exist; this row concerns work inside compilation. |
-
-Read-only verification also qualifies several claims in the assessment:
-
-- Normal compilation emits optional SMT/ledger artifacts without invoking a
-  solver. It does enforce source checks for storage, exact numeric coverage and
-  Lazy placement. The gap is complete obligation status and actual artifact
-  correspondence, not absence of all proofs. F-11 already owns numeric commitment
-  and discharge; the fallback requires a concrete migration/closure gate there.
-- Re-entrant force and recursive value initialization are already tracked in
-  C-03 §5 and C-05 §7. Their native outcomes still require settlement. Tail-call
-  control stack, deferred accumulator space and numeric recurrence representation
-  are distinct obligations, even when one case needs all three.
-- Startup already has the spec's eager contract for observable initializers in
-  activated units. Mutable shared-cell capture, deferred immutable reads and
-  aggregate payloads are also specified; contradictory older prose needs repair,
-  not renewed owner authorization. The `let rec`/`and` contradiction requires one
-  canonical admission contract; self/mutual function recursion remains in scope.
-- Coarse legacy escape classifications coexist with stronger closure/sequence/
-  Lazy residence proofs. The arena-lifetime measure persists in `memory-regions.md`;
-  the cited current `units-of-measure.md` passage does not support that allegation.
-
-The PHG .NET checker independently passes **6,607,900 exhaustive families and
-20,000 seeded cases**, including 14,633 nonchordal raw-overlap cases
-(`/tmp/phg-hull-independent-check.log`). The conditional subtree construction is
-useful; it does not establish complete compiler conflict footprints or arbitrary
-PSG chordality. Its omission argument needs correction: on path `0–1–2`, both
-`{0,1,2}` and `{0,2}` have the same hull. Reconciliation must independently check
-participant roles, order/multiplicity, premise completeness and revisions.
-Hull crossing is exact for the chosen tree partition, but its conflict coverage
-is conservative relative to semantics. Optimal hull coloring is not optimal
-compiler scheduling or a joint resource-capacity proof.
-
-The [acceptance order](#next-coordinated-acceptance-order) below now incorporates
-these dependencies. [Owner decisions](PRDs/README.md#september-26-owner-decisions)
-record existing authorization. This reassessment changes documentation, not
-compiler behavior, completion status or percentage estimates.
-
-### Work resumed after reassessment
-
-The .NET regression runner now honors `compile_timeout` independently of the
-native `timeout_seconds`; absent compile settings inherit the sample deadline,
-and explicit CLI `--timeout` overrides both. Invalid or overflowing manifest
-deadlines are rejected. `selection.txt` and `run.json` record both effective
-deadlines. The existing16d `compile_timeout = 180` therefore takes effect without
-giving its executable a 180-second deadline. `RunnerTests.fsx` and
-`ParallelRunnerTests.fsx` pass, including an actual child compilation longer than
-the runtime allowance and an independent native timeout. The
-[durable driver evidence](evidence/2026-09-26-runner-deadlines.json) retains both
-transcripts, observed exits and input/host hashes. This repairs the driver; it is
-not evidence that original16's compiler timeout is fixed.
-
-Publication review confirms that removing the tables requires immutable content,
-not a boolean or token beside a raw `SemanticGraph`. Node types, kind payloads,
-metadata, signatures and layouts currently retain mutable checker cells. The
-prepared input must own frozen nodes and codata; Alex's entry, zipper, parser
-state, witness context and retained occurrence records must retain that input
-without a raw-graph escape hatch. Exact prepared copies retain their facts;
-edited source drafts require new source publication. This preserves the Huet
-mechanics and prevents source edits from carrying old authority into witnessing.
-The current global tables remain a reported defect until that migration is real.
-
-The bounded specification correction aligns mutable capture with the original
-shared cell, CCS8012 with hard failed-coverage diagnostics, and arena lifetime
-relations with the coeffect domain. Arena operation notation is schematic, not
-new lifetime-parameter syntax. CCS's `arenaTyCon` still declares a Measure
-parameter; the source representation requires its corresponding owning-domain
-repair. The specification edits do not count as that implementation.
-
-## Source publication and nominal identity checkpoint
-
-This intermediate checkpoint preserves the source-boundary repair requested on
-September 26. It is a checkpoint of work with explicitly open acceptance results,
-not closure of the F/C campaign. The following source changes extend the earlier
-cohorts below:
-
-The paired Clef `main` commit is **`fd4ee1b`**, “Checkpoint source witness
-publication and exact nominal identities”. The paired Composer commit is
-**`b4f6396`**, “Checkpoint passive witness consumers and compilation timing”. Resume
-with both repositories at these matching checkpoints before updating either.
-
-- **C-01/C-02 and F-03/F-04:** ordinary unused-argument proofs retain complete use
-  incidence, logical argument types and explicit eager demand. Mixed dimensional
-  specialization retains exact checker instances and measure binders; member
-  premises survive deferred inference. Callable publication supplies admitted
-  declaration, transport, instance and value-role facts for passive witnessing.
-- **C-05/C-06/C-07:** source storage publication validates Lazy/sequence layouts,
-  program storage, startup and requirements. Demand settlement now precedes Lazy
-  layout proof construction, so retained-string backing uses the final premises.
-  Alex's corresponding consumers no longer rerun those source validators.
-- **F-10/F-11 and C-08:** aggregate/range identity uses structured nominal and
-  instantiated type keys. Distinct modules declaring `Cell` retain distinct
-  definitions, fields and layouts. This also corrects declaration reachability
-  and descriptor/callback lookups affected by the same identity defect.
-- **Witness and tooling integrity:** source publication materializes domain
-  projections and semantic indices before handoff. The checkpoint's requirement
-  to re-admit exact graph copies is a graph-identity defect identified above,
-  not the intended authority contract. Witness registration is transfer-owned; .NET timing
-  uses independent spans and measured wall time. The
-  [comparative evaluation contract](Nanopass_Incremental_Contract_Direction.md#26-parallel-full-builds-and-comparative-timing)
-  covers full and incremental parallel compilation and final reconciliation.
-
-The native evidence preceding this checkpoint uses the immutable snapshot
-`/tmp/composer-ordinary-demand-v19/compiler`, with its complete
-`../compiler.sha256` inventory. Original **04a passes** with exact stdout and
-empty stderr. **MixedDimensionSchemes passes** with exit zero, empty output and
-stock MLIR verification. **04c compiles but fails its runtime demand oracle**:
-unused bindings, first-demand timing, shared/captured initialization and mutable
-snapshots still expose broader ordinary call-by-need defects. These are separate
-outcomes; the two passing controls do not establish the third.
-
-That snapshot's full Alex cohort passed **300/300** after explicit source-fixture
-setup corrections. The subsequent Lazy proof-order correction passed its focused
-**55/55** source checks. Those numbers describe their own inputs, not the new
-aggregate-publication or nominal-identity changes. The first combined publication
-run passed **142/183** source checks; its 41 failures exposed an incorrect attempt
-to demand physical witness readiness from target-free source queries. Publication
-is now guarded by the existing source-admitted, declared-platform boundary,
-without weakening projection equality. The checkpoint verification below records
-the rerun against the integrated source.
-
-The following acceptance work stays visible at this checkpoint:
-
-| Area | Required closure |
-|---|---|
-| Ordinary call-by-need | Original 04c demand/effect trace, sharing and dynamic-instance controls |
-| Whole Alex boundary | Complete numeric/type, field placement and descriptor projections; remove reconstruction/fallback branches; isolate Alex behind an immutable contracts assembly with no source-analysis dependency |
-| Environment proof admission | Validate the general held environment-layout map against its owning source proof, beyond existing program-instance validation |
-| Physical argument correspondence | Discriminate a used formal following an omitted formal; source ordinals must match the actual physical calling convention |
-| Component source setup | Construct the prepared graph before its Huet zipper; preserve negative mutations and actual SSA/type oracles |
-| F-05 binding patterns | `let true = value` currently throws an unhandled `Unsupported pattern in let binding: Const`; repair source admission/elaboration and retain its own regression |
-| Nominal identity | Source and native multi-file controls covering both accessors and direct field reads, with exact declaration retention |
-| Parallel/incremental compiler | Source-authorized regions, worker-owned state, segmented realization, reconciliation and measured equivalence against full compilation |
-
-The source projection seal at this revision is current-process graph admission,
-an architectural divergence scheduled for removal. Source-owned codata and
-invalidation must carry authority; the seal cannot substitute for the final
-assembly/type capability boundary. Work above retains its existing owners.
-
-### Integrated checkpoint verification
-
-| Check | Actual result | Evidence |
-|---|---|---|
-| Clef source build | Pass, 17.96 s | `/tmp/clef-nominal-witness-source-v22.log` |
-| Final full Clef source suite | **1,583 passed, 0 failed, 0 skipped**, 32 s | `/tmp/clef-source-checkpoint-full-v22.log` |
-| Composer build against that CCS assembly | Pass, 7.26 s | `/tmp/composer-witness-source-build-v22b.log` |
-| Current native controls | **2/2 pass:** `NominalIdentity`, `MixedDimensionSchemes`; verified MLIR, exit zero, empty output | `/tmp/composer-nominal-native-v22.log` |
-| Alex component suite | **211 passed, 91 failed, 0 skipped; 302 total** | `/tmp/composer-witness-alex-v22.log` |
-| Host timing regression | Pass: overlapping/concurrent spans, separate sessions, failed phases, completion and JSON report | `dotnet fsi tests/Infrastructure/TimingTests.fsx` |
-| Registry isolation | Pass: 96 concurrent target-registry constructions; also included in Alex's passing set | `tests/Alex.Tests/WitnessRegistryTests.fs` |
-
-Of the 91 Alex failures, 65 first report absent aggregate/source-value/storage
-publication or the earlier ordinary-only seal. The other 26 first report
-assertion, declaration-identity or witness-result differences and require
-individual resolution; they are not presumed harmless fixture issues. New lawful
-forwarding and unrelated-instance rejection controls pass. This run does not
-inherit the earlier snapshot's 300/300 result.
-
-The current native snapshot is `/tmp/composer-nominal-v22/compiler`, with a
-36-file inventory at `/tmp/composer-nominal-v22/compiler.sha256`. The harness
-retains its complete logs and observations at
-`/tmp/composer-callbacks-fsharp-c641266ba648492090ccb5e5af3c00b7/evidence.json`.
-All 515 source/declaration input hashes were unchanged across those runs. The
-older compiler's new nominal control failed with three source diagnostics;
-the current native pass exercises both module accessors and direct field reads.
-
-The new requirement-publication test initially used the failing constant-binding
-form recorded above. It now uses an admitted one-arm match to exercise the same
-requirement/frontier and invalidated-condition oracle. This fixture correction
-does not close general binding-pattern acceptance. The new descriptor test was
-also corrected to declare the reader's `PeripheralLayout` vocabulary. Neither
-correction changes compiler behavior or suppresses a failure result.
-
-The full source census initially passed **1,582/1,583**. Its one failing
-requirement assertion expected a specialized `PatternRequirements` entry for
-a general ordered requirement with `PatternTest=None`. Read-only comparison
-confirmed equal source/published site, condition, frontier, continuation and
-participants. The corrected test asserts that complete correspondence and the
-absence of fabricated specialized evidence, while retaining rejection after a
-changed condition type. Post-correction verification passed all **9/9** storage
-publication tests, followed by the complete **1,583/1,583** source suite with
-zero skips. Evidence: `/tmp/clef-storage-witness-checkpoint-v22.log` and
-`/tmp/clef-source-checkpoint-full-v22.log`. The source compiler binary was unchanged
-during these test-only fixture corrections.
-
-Timing with an explicit artifact directory writes `timing.json` alongside the
-run's outputs. Its monotonic spans and measured wall time are raw observations;
-the comparative table requires paired full/incremental runs, work counts and
-equivalence checks before any speedup claim.
-
-A real timing-enabled compile of `NominalIdentity` using the current snapshot
-passed and its executable returned zero with empty stdout/stderr. The single
-observation was **2,441.912 ms wall**, with **2,377.854 ms summed phase spans**:
-front end 2,004.282 ms; middle end 230.726 ms; MLIR lowering 79.824 ms; link
-63.022 ms. Raw data is `/tmp/composer-timing-checkpoint-v22/timing.json`.
-This checks instrumentation through the actual compiler; it is one serial run,
-not a comparative benchmark or evidence of intra-compilation parallelism.
-
-### Resume from this checkpoint
-
-Run from the Composer repository with its sibling Clef checkout. Source and
-consumer builds below are deliberately ordered; independent test processes may
-run after the coordinated assemblies are fixed. Capture compiler contents before
-native jobs and use private output directories. A `--no-build` invocation uses
-the already built test runner and must not be mistaken for building changed tests.
-
-```sh
-dotnet build ../clef/src/Compiler/Clef.Compiler.Service.fsproj --no-restore
-dotnet build src/Composer.fsproj --no-restore -p:BuildProjectReferences=false
-dotnet test ../clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-restore -p:BuildProjectReferences=false
-dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-restore -p:BuildProjectReferences=false
-dotnet fsi tests/Infrastructure/TimingTests.fsx
-dotnet run --project tests/NativeCallbacks/NativeCallbacks.Tests.fsproj --no-build -- /tmp/composer-nominal-v22/compiler/Composer NominalIdentity MixedDimensionSchemes
-```
-
-Follow the revised acceptance order below. First repair source-owned publication
-and its real callable/storage regressions; do not make fixtures register graphs
-in a global table to obtain passing counts. Preserve invalid-input and actual
-operand rejection oracles. Recheck native closure, Lazy and sequence controls
-alongside the full manifest at shared-boundary checkpoints. Original04c remains
-the ordinary-demand acceptance target. Correctness precedes speedup claims.
-
-## Witness correspondence working cohort
-
-The subsequent whole-graph correspondence slice records each emitted definition
-at its actual Alex focus, traversal root and Huet path, including queued globals
-and directly emitted function definitions. The existing declaration relocation
-transports that correspondence; each backend validates one current unit's exact
-definitions, typed function imports, global views, writable-storage ownership and
-planned startup before target realization. `10_witness_units.json` retains the
-validated account. Its `witnessRun` token identifies emission bookkeeping, **not
-an accepted source revision or permission to publish a stale result**. Opaque
-target content retains source/content correspondence without acquiring a typed
-internal symbol inventory. This slice is not scoped reevaluation, segmented
-object replacement or reuse; those remain the
-[source-owned worklist requirements](Nanopass_Incremental_Contract_Direction.md#25-edit-transactions-proof-reuse-and-segmented-publication).
-
-The working snapshot is `/tmp/composer-witness-catalog-v4/compiler`, with complete
-inventory `../compiler.sha256`. It includes the then-current CCS v15 working
-source and ordinary unused-parameter physical consumers; it must not be relabeled
-as the earlier committed v13 cohort. Composer SHA-256 is
-`921A2F76F827E46FA61D8FFD5E0ED1E10559CB7CB0CB40B40FB5D8399F423CEB`; CCS is
-`7B31F481FD77EF9913DA54B7C35F407313E090EE89838D54959AC12425184D3E`.
-
-- Catalog component checks: **15/15**, including missing/duplicate ownership,
-  stale snapshot/run, truncated path, copied focus, missing startup, duplicate
-  imports, function-versus-data/mistyped global views and changed backend input;
-  `/tmp/composer-witness-catalog-tests-v4c.log`.
-- Full Alex assembly: **289/289**, zero skips;
-  `/tmp/composer-witness-catalog-full-v4c.log`.
-- Unchanged `01_HelloWorldDirect` and `16h_SequenceApplications`, each in full
-  and pruned modes: **4/4 compilations and 4/4 executions**, expected stdout and
-  empty native stderr; `/tmp/composer-witness-catalog-native-v4b.log`.
-- Required portable/target MLIR, LLVM IR, stdout and stderr are byte-identical
-  across modes. Catalog definitions, source paths, imports, startup and content
-  hashes also agree after excluding distinct `witnessRun` tokens;
-  `/tmp/composer-witness-catalog-validate-v4.log`. Artifacts are retained under
-  `full-native` and `pruned-native` in the snapshot's parent directory.
-
-No C/F feature status changes follow from this bounded gate. No new full CCS
-census, full native manifest or selective-recompilation result is claimed here.
-
-## Subsequent dimensional, trace and bounded-storage checkpoint
-
-September 26, source commit Clef `d5ae0d9` on `main`; corresponding Composer
-source is committed with this entry. This cohort extends the earlier evidence
-below. It advances no whole-feature completion status and is not a rerun of the
-complete native manifest.
-
-Delivered source changes preserve quantified dimensional schemes through aliases,
-specialization and recursive instances; infer actual tuple formals and contextual
-record owners; retain immutable specialization history through successive
-fold-ins; and settle finite recurrence and actual Lazy-formation effects without
-invented widths. Historical specialization parents remain inspectable without
-owning current lexical children. Full/pruned serialization retains the derivation.
-Program storage is tied to declared authority, exact backing and actual native
-placement. Alex consumes those facts through its existing Patterns/Witnesses;
-LLVM checks the actual ABI extents and writable, non-executable ELF coverage.
-
-| Observed gate | Result and evidence |
-|---|---|
-| Full CCS test assembly, including registered inference, specialization tape and finite-effect cases | **1,499/1,499**, zero skips; `/tmp/clef-full-lazy-effect-v13.log` |
-| Full Alex tests | **274/274**, zero skips; `/tmp/composer-lazy-effect-alex-v13.log` |
-| Source/native SMT transfer parity | **128 cases**, including signed all-prefix contributions, refusals and arbitrary-precision finite-effect counts; `/tmp/composer-smt-effect-parity-v13.log` |
-| Unchanged native14,14a,14b | **3/3**, exact stdout and empty stderr; `/tmp/composer-lazy-effect-native-v13.log`; source/dependency hash comparison empty |
-| Prior v11 native cohort | 04,04b,13,14,15,16b passed exact output; `/tmp/composer-writable-native-v11.log`. These retain their v11 identity. |
-
-The new native cohort uses `/tmp/composer-lazy-effect-v13/compiler`, with inventory
-`/tmp/composer-lazy-effect-v13/compiler.sha256`. SHA-256 identities are:
-
-- Composer.dll: `0F2FA9EC9463C8D3CD88A203721E91DE5815F14933031AADFCCB7FD18B3C3687`
-- CCS: `2FE2AE680266F5754784C7D2340571FCAF22776955FC5BF14D174479777CB571`
-- BAREWire: `FCC595BC8B38127E0930209CCF6B91CB73E1EDD81F55FD5696CC991D26E3FBB1`
-
-Per-job streams, expected results, `inputs.json`, `results.json` and the empty
-`changed-inputs.json` are in
-`/tmp/composer-lazy-effect-v13/native/20260926T193409-eff2a75484744c918bafd40bfa50d5ec`.
-Observed compilation times were 47.16s, 48.69s and 33.60s respectively; execution
-was 31ms, 31ms and 30ms. These are end-to-end sample compilation observations,
-not Composer's own build time or a proven latency budget.
-
-Reproduction uses the ordinary projects and .NET harness:
-
-```sh
-dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-build --no-restore
-dotnet build src/Composer.fsproj -p:BuildProjectReferences=false --no-restore
-dotnet test tests/Alex.Tests/Alex.Tests.fsproj -p:BuildProjectReferences=false --no-restore
-dotnet fsi /tmp/SMTTransferRegression-v13.fsx
-dotnet fsi /tmp/run-lazy-effect-native-v13.fsx 14_Lazy 14a_LazyScalarResults 14b_LazyStringViews
-```
-
-The first command runs in Clef against the freshly built test assembly; the next
-two run in Composer. The private FSI drivers pin the recorded snapshot; the
-source parity cases live in `tests/SMTTransferRegression.fsx`. Before independent
-jobs start, build the coordinated outputs once and freeze their dependency set.
-
-Explicit next defects retain their owning implementation tasks: native04a still
-evaluates an unused ordinary argument, and native04c exposes unused-binding
-demand. The newly isolated unresolved-record-member scheme case must retain its
-constraint rather than generalizing an unconstrained function. These are
-C-01/C-02/F-04 and source-inference obligations, respectively. Passing explicit
-Lazy memoization does not establish ordinary call-by-need. The accepted F-11/C-08
-numeric expansion has its own registered validation inventory.
-
-## Earlier checkpoint and audit evidence
-
-Clef: `14fb7c7`; Composer: `f6d391d` on `main`.
-Companion revisions: specification `586010e`, site `8b6bd57`, BAREWire `f7d4693`,
-analyzer projection `b987570`; unchanged Platform baseline `d42c9988f7fd`.
-Both compiler integrations are in their main worktrees.
-
-The final v20 private compiler is `/tmp/composer-checkpoint-v20/compiler`.
-Its source compiler SHA-256 is
-`b95b41bf5f23e7ac7ed31309276b94811f252579f51452136e5b8975df637874`;
-Composer SHA-256 is
-`1390e2dfb2c0483de6c80bcbf5c02e677407679235f0878c6da262bd01eb6c84`.
-The full snapshot manifest is `/tmp/composer-checkpoint-v20/compiler.sha256`.
-These assemblies were built before committing the verified source, so their
-embedded version labels retain the earlier Git base.
-
-The broader native v19 cohort predates only the final Lazy source-provenance
-projection correction. Its separate snapshot is
-`/tmp/composer-checkpoint-v19/compiler`, source SHA-256
-`fd0d1f18c43a54a83eab92daa171d645d9ecddf604bb4892e5271cc1aadbeac0`.
-The final v20 native confirmation repeats Lazy memoization and 16h transport;
-earlier executions below retain their actual cohort labels.
-
-## Subsequent full-manifest audit — 2026-09-26
-
-An independent agent ran the complete 48-entry native manifest after the
-checkpoint. Inspection of its saved `results.json` confirms **21 compiled and
-ran successfully, 27 failed compilation, zero skipped**. The 27 failures did
-not proceed to native execution. The runner checked normalized stdout and zero
-exit status for the 21 successes; this is not a byte-exact stderr assertion.
-The [repository outcome summary](evidence/2026-09-26-manifest-audit.json) retains
-all 48 sample names/results, compiler hashes and a hash of the original result
-file. It is an extraction of that run, not a second execution.
-
-The evidence root is
-`/tmp/claude-1000/-home-hhh-repos-clef/402241eb-a4c4-43b3-9a24-eeb5e3905ddb/scratchpad/baseline/20260926T170046-6106d4f275d44281b1e7ce131b4a130a`.
-It retains the manifest, selected expectations, run settings, compiler hashes,
-all job logs and results. It used six independent jobs, full intermediates and
-a 300-second per-job timeout. Its compiler snapshot hashes are:
-
-- CCS: `24d09cca20f19dd9caddae088fb7359e32d68f65fdf4cca05c2a276979ce126e`.
-- Composer: `6dce64dc8019a4d5929d27611fb9b41f140d25af9ac1f87c313b80f15af43da4`.
-
-These are a separate build cohort from the v19/v20 binaries below. The saved
-compiler banner identifies Composer `6d54764`; the aggregate failure count
-does not by itself identify which earlier change introduced each defect.
-
-| Failed samples | Existing acceptance owners |
-|---|---|
-| 04 | F-04, C-01/C-02 callable application and results |
-| 06 | F-06 interactive parsing; the legacy platform conversion rejection was already recorded |
-| 08a–e | F-08 and C-04 Option operations, with C-01/C-02 callback and environment dependencies |
-| 09a–c | F-09 Result operations, with C-01/C-02 callback and selected-branch dependencies |
-| 11, 11a, 11b | C-01 closures, direct captures and loop captures |
-| 13 | C-03 recursion |
-| 15 | C-06 sequence recurrence and frame settlement |
-| 16b, 16c, 16e, 16g, original16 | C-06/C-07 sequence composition, callbacks, demand and startup; C-01/C-02 callable dependencies |
-| 18 Generalization, 19 ModuleValues | F-04/C-02 generalization and F-01/C-01 program initialization and captured storage |
-| 20 ArraySurface | C-04 Array and supporting operations |
-| 21 RecordsAndTags, 22 UnionPayloads, 23 RecordSurface | F-05/F-08/F-09/F-10 aggregate and selected payload behavior, with C-04 supporting operations |
-| 17 ExternCall | Foreign binding/ABI fixture reconciliation, with C-01 foreign-boundary and F-08 optional-result overlap; retired integer-as-pointer types must not be re-admitted to make this sample pass |
-
-The independent reassessment corrects this attribution: **19 failures reached
-C/F contracts** in this earlier cohort. Samples18–23 stop at D10 source admission;
-their intended features do not identify the failing compiler stage. Sample17
-belongs to Fidelity.Libc/Farscape source regeneration and its foreign boundary.
-Rerun after corpus migration before attributing residual errors to C/F. These
-programs are not the planned A-series examples that reuse their numbers.
-
-The earlier native successes recorded below did not include any of these 27
-failed samples. Several have older passing evidence, so their present failures
-reopen the affected regression gates; others were already recorded acceptance
-gaps. Neither category can be called a newly introduced defect solely from this
-one run. F-04, F-08 and F-09 must not retain an unqualified current passing claim.
-
-One concrete cause is confirmed by code inspection: direct-capture elaboration
-prepends physical capture formals and preserves the source signature, while
-`CallableCarriers.settle` excludes only environment/result formals when comparing
-that signature. It omits proved direct-capture formals. The same omission exists
-in Clef `14fb7c7` and its parent `f898c97`; attributing its introduction to the
-last commit alone is unsupported. The correction belongs in CCS settlement,
-with typed provenance and invalidation checks, followed by unchanged native
-direct-capture and neighboring controls. No Alex semantic workaround is licensed.
-
-The handoff wording overstated the evidence. A successful compiler build, clean
-worktree and selected passing tests establish those observations only. Shared
-callable/closure changes require the affected F/C native baseline to be run and
-reported before describing the handoff as regression-clean.
-
-### Direct-capture correction and neighboring checks
-
-Clef `f65907e` corrects the direct-capture public/physical signature distinction.
-The reader validates the actual capture origin, immutable source, typed formal,
-parameter incidence and leading position. The callable retains every physical
-parameter. Removed, duplicated or altered premises retract admission; Alex does
-not infer the missing source contract.
-
-The new source regression failed before the repair, including both declared
-32-bit and 64-bit platform cases. After the repair, **85 focused tests and all
-1,371 CCS tests pass**, with zero skips. The rebuilt Alex suite passes **223/223**.
-Logs: `/tmp/clef-direct-capture-carrier-red.log`,
-`/tmp/clef-direct-capture-platform-red.log`,
-`/tmp/clef-direct-capture-carrier-green.log`,
-`/tmp/clef-direct-capture-full.log`, `/tmp/composer-direct-capture-alex.log`.
-
-The fresh [seven-sample native result](evidence/2026-09-26-direct-capture-repair.json)
-is **3 compiled and ran successfully, 4 failed compilation, zero skipped**.
-Original 11a now passes unchanged, alongside 12 and 16h. Their stdout additionally
-matches the manifest byte-for-byte, with empty stderr. 08e, 11b, 13 and 16b still
-fail; this run is not reported as a clean cohort. It used three jobs, pruned
-intermediates and a 180-second per-job limit. The JSON records exact compiler
-hashes and every selected outcome; full logs remain at its evidence root.
-
-The remaining 13/16b signature failures concern generic and measure instantiation,
-not missing direct-capture formals. Correct their owning source contracts rather
-than widening the hidden-formal exception. 11b retains a storage residence failure;
-08e retains returned-environment and callable-instantiation failures. These remain
-within their existing C/F acceptance obligations.
-
-## Planning estimates and their limits
-
-The owner has requested completion and architectural verification of all F/C
-acceptance areas, rather than revised percentages. The conversational estimates
-below are withdrawn as a planning basis: they did not systematically account
-for the failed regressions now observed. They are retained solely as the record
-of what was previously claimed, not replaced with new guesses.
-
-The following numbers preserve the assistant's conversational estimates of
-remaining effort, made without a new code review. They were not calculated from
-a weighted acceptance inventory, and they are not measured coverage, PRD status,
-token forecasts or spending commitments. Individual uncertainty was estimated at
-±10 percentage points, ±15 for C-03/C-04.
-
-| PRD | Previously stated effort estimate remaining |
-|---|---:|
-| C-01 | 45% |
-| C-02 | 40% |
-| C-03 | 55% |
-| C-04 | 65% |
-| C-05 | 35% |
-| C-06 | 35% |
-| C-07 | 45% |
-| F-01 | 10% |
-| F-02 | 30% |
-| F-03 | 15% |
-| F-04 | 30% |
-| F-05 | 40% |
-| F-06 | 20% |
-| F-07 | 20% |
-| F-08 | 25% |
-| F-09 | 25% |
-| F-10 | 30% |
-
-The earlier wording overstated what these numbers establish. In particular,
-the F estimates mixed anticipated C-driven extensions and regression work with
-the historical F scope. They do **not** reopen the completed F baselines in the
-master index or transfer A-04's arena extension into F-02. The rough group figures
-of 50% C and 25% F were not weighted calculations and must not be treated as firm
-remaining-budget percentages. Shared work must be budgeted once under its named
-C/F owner, with dependent regressions identified; there is no extra numbered
-workstream to add to the bill. The PRD and evidence tables below remain the
-auditable scope record.
-
-## Recorded evidence and current integration
-
-| Observation | Established result | Boundary of that evidence |
-|---|---|---|
-| Final integrated source v20 | **1,355/1,355 CCS tests passed**, zero failures/skips. `/tmp/clef-checkpoint-full-v20.log`. | Includes eager factory/staged-call corrections and exact closure/Lazy source-provenance retraction. Source tests do not substitute for runtime demand traces. |
-| Final physical composition v20 | **223/223 Alex tests passed**, zero failures/skips, including raw constant CPU/FPGA and backend requirement controls. `/tmp/composer-checkpoint-alex-v20.log`. | Component/stock-MLIR evidence is not a native FPGA device result or full C-series acceptance. |
-| Final editor/analyzer/live LSP v20 | Default editor **21 groups** and analyzer integration **141 reported checks** pass. Live LSP capture hover, exact definition, located unsaved error, obsolete-version rejection, repair and clean shutdown pass. `/tmp/composer-checkpoint-editor-v20.log`, `/tmp/composer-checkpoint-analyzer-v20.log`, `/tmp/composer-checkpoint-live-v20/evidence.json`. | Public source types/identity remain distinct from internal environment/cache reads. This proves the listed batch/editing boundaries, not general incremental recompilation. |
-| Final native confirmation v20 | **14_Lazy and 16h_SequenceApplications: 2/2 compilation and 2/2 execution**, unchanged exact oracles, zero failures/skips. `/tmp/composer-checkpoint-native-v20.log`. | Confirms memoization and callable/sequence transport after the last source-provenance change. |
-| Native v19 selected-match suite | **5/5 passed**: `GuardedMatch`, `LiteralMatch`, `TerminalMatchSuccess`, `TerminalMatchPatternFailure`, `TerminalMatchGuardFailure`. Three success exits were 0 with exact empty streams; the two intended failures exited 1 with their exact source-located diagnostics. `/tmp/composer-checkpoint-matches-v19.log`. | Includes stock MLIR verification, lowering, linking and execution. It proves the listed match cases, not the whole source pattern chapter or ordinary call-by-need runtime. |
-| C-05 native v19 cohort | **14/14a/14b all compiled and ran: 3/3**. Sample 14 proves successful memoization shared through aliases, independent returned instances and original mutable cells; 14a adds demanded unit/bool/integer/real/measured results; 14b proves retained descriptors backed by the actual declared immutable string pool. `/tmp/composer-lazy-main-final.log`. | It does not establish arbitrary retained views, all aggregate/callable caches or the ordinary shared-demand runtime. |
-| Native/artifact differential v19 | **01/16a/16h all compiled and ran in both full and pruned modes: 6/6 compilation and 6/6 execution**, byte-identical MLIR, LLVM IR and runtime streams. All six outputs match byte-exact manifest oracles; all nine PSG view pairs preserve exact included nodes and complete joint evidence. `/tmp/composer-pruned-differential-main-v19b.log`, `/tmp/composer-pruned-differential-main-v19b-validate.log`. | This gate succeeds after the earlier frame-provenance regression and source access/all-writer correction. It does not establish full C-01/C-06/C-07 acceptance or ordinary call-by-need semantics. |
-| Proof and runner controls v16 | All eight runner gate groups plus parallel-runner checks, 10 StaticStorage checks and 85 SMT checks passed (11 native, 6 real, 11 integer, 20 loop, 10 dimensional, 12 layout, 15 continuation). | These retain their recorded v16 cohort; they are not relabeled as v19 or source20 executions. SMT/component outcomes do not substitute for native observations. |
-| BAREWire .NET gate driver | **12/12 driver checks pass**, including byte-exact output, missing/stale artifacts, error exits, timeouts and orphan cleanup. `/tmp/barewire-native-gate-checkpoint.log`. | This validates the replacement of Python gate drivers; it does not claim a fresh native RoundTrip run. |
-| Explicit-demand foundation and main integration | The foundation from `d8effc6e6e10` is integrated: eager syntax/frontiers, real callable arity, staged actual ownership, remapping and retraction coexist with current Lazy/callable/sequence protocols. The unnecessary eager-callee eta wrapper is corrected in the passing source v19 cohort. | These results do not establish ordinary shared-demand storage or native acceptance of ordinary call-by-need semantics. |
-
-The new native literal control distinguishes Unicode characters, fractional
-floating values, separately formed equal strings, same-length unequal strings,
-empty strings, signed zero, unit guard order and runtime NaN. GuardedMatch checks
-wrong-tag suppression, selected payload scope, same-tag false-guard fallthrough,
-stopping after success and tuple/constant guard ordering. Failure controls reject
-timeouts and missing/mismatched diagnostics; a nonzero exit alone is insufficient.
-
-Reserving `eager` required renaming three sample-local identifiers in 09b, 16a
-and 16e. All three parse with the new grammar; the 16a differential preserves its
-unchanged oracle. Existing eager-oriented trace fixtures still require the owning
-PRDs' reconciliation with specified call-by-need semantics below; their current
-passes do not establish lazy-default behavior. No full sample-manifest or whole
-C-feature completion is claimed here.
-
-## C-01 through C-07: acceptance and next delivery work
-
-The authoritative criteria are the individual PRDs and
-[C-Series-Acceptance.md](PRDs/C-Series-Acceptance.md).
-Each row below retains positive source/native behavior, exact negative admission,
-proof retraction, physical artifact correspondence and actual tooling projection.
-A responsible refusal protects the compiler; it does not complete a promised
-positive language form.
-
-| PRD | Required surface and contracts | Concrete delivery/evidence now | Next acceptance work |
-|---|---|---|---|
-| [C-01 Closures](PRDs/C-01-Closures.md) | No/one/multiple captures; deferred immutable binding identity and shared mutable cells; direct, materialized, nested, returned, stored and recursive callables; correct flat environment layout/residence; public source identity; distinct foreign entry/registration/descriptor boundaries. | Actual code/environment operands replace packed or invented callable representations. Capture-free code keeps no dummy environment. Actual environment formals and caller-owned destinations preserve independent formations. Complete ingress/consumption and exact continuation-slot access include source identity, all writers and edit retraction. Recorded native16h and existing direct/loop capture gates exercise bounded slices. | Run original11, 11a/b, 12 and callback corpus on the integrated cohort. Complete direct mutable-cell signature authority and recursive forwarding; general record/tuple/DU/collection callable storage, mixed callable alternatives and retained/nested recapture. Add independent factory/cell overwrite/return-lifetime native traces and navigation repair. Keep C-01 §6.7 registration invocation/release and §14 descriptor relocation/code-identity obligations explicit with their FFI owners. |
-| [C-02 Higher-order functions](PRDs/C-02-HigherOrderFunctions.md) | Callback arguments/results with independent dimensions; direct/pipe/bare/stored/partial forms; actual declared application boundaries and function-valued results; aliases, joins and aggregate storage. | Eleven Seq operation values now have staged/bare reification; generic immutable operation aliases retain source provenance. Carrier projection and passive transport preserve the real function/environment pair, not one convenient known origin. Factory preparation inserts destinations while retaining original ordinary actuals. The source foundation corrects all-arrow arity and all-actuals staging. | Reconcile all Option/Result/Seq callback frontiers with the specified ordinary call-by-need rules, then execute unused/eager actual and returned-callable traces. Restore all original12/16/16h controls together; cover mixed captured/plain callbacks and general stored results. Run source, component, native and editor/analyzer/LSP gates for each newly admitted form. |
-| [C-03 Recursion](PRDs/C-03-Recursion.md) | Self/nested/mutual groups, captures, type generalization, effects and mutable/partial/returned uses; numeric recurrence; specified tail-call/stack behavior and recursive initialization. | Existing recursive/direct capture and range/effect mechanisms are retained; newer callable/formal/cell contracts strengthen their premises. This campaign's match/callable passes do not constitute a new original13 or deep-tail result. | Resolve original13's integer-width boundary from real arithmetic/guards; run factorial120 and sum55 unchanged. Implement the complete recursive-group matrix and actual recurrence/effect convergence. Prove each claimed tail form structurally and with deep bounded-stack execution. Reconcile recursive value initialization with native failure semantics and add its positive/negative cases. |
-| [C-04 Core collections](PRDs/C-04-CoreCollections.md) | Full List/Map/Set/Option inventory, Array/support/range/tuple promises, listed normative extensions; sentinel/arena-floor authority, relative links, guarded access, persistence, exact bounds/alignment/capacity/lifetime. | Existing recipes and operation/source tests are implementation, not absent work. Generic DU payload alignment now uses real maximum alignment/extent rather than offset1 assumptions. Selected-match payload/type identity and ordinary typed equality provide stronger shared prerequisites. BAREWire has a .NET exact-byte gate driver and its harness tests. | Establish shared collection representation and negative storage gates; then verify every operation below. Replace the simplified Set two-child removal with persistent rebalance and gate all AVL rotations/deletions/old-root preservation. Audit/register both13a fixtures with independent exact oracles. Run Array bounds/overlap/HOF and all stepped range forms. Execute fresh BAREWire RoundTrip and admitted Platform consumers; build success alone does not discharge them. |
-| [C-05 Lazy](PRDs/C-05-Lazy.md) | Explicit Lazy first-force memoization, aliases and independent instances, canonical thunk/environment, computed/cache publication, exact typed results/captures/residence; owned single-forcer publication and specified failure/reentry behavior. | Canonical Baker memoization and joint all-access proofs replace placeholder result carriers and Alex-owned force logic. Exact ranges come from validated thunk/result/effect premises. Source residence and passive pair transport preserve actual instances;14/14a/14b have the bounded native results above. | Retain the passing v19 14/14a/14b controls while extending the capture/result families, and keep their closure/sequence controls green. Deliver shared deferred immutable capture behavior, nested/forwarded retained views and aggregate/callable results with actual backing authority. Settle and test reentry/nonreturning force behavior. Implement concurrent admission only with its single-forcer ownership and target publication evidence; it is not implied by a CAS or single-thread result. |
-| [C-06 SimpleSeq](PRDs/C-06-SimpleSeq.md) | Delimited owner/control, suspend/resume, definite initialization and successful Current; real generator/frame/slot families; independent enumerators and shared external cells; returned/parent/program residence; arbitrary admitted element representations. | Multiple-origin sequence families retain complete member slots and representation facts. Separate generator/environment operands preserve the actual pair. Fresh enumeration has explicit source-owned copy/reset authority. Continuation callable accesses now prove source slot, real storage/formal/generator, initializer and all writer premises; retired logical participants are allowed only through this exact relation. Recorded15a–d/16h gates retain their bounded evidence. | Run original15 plus15a–d and exact NativeSequences gates. Resolve coupled/multiplicative updates from intermediate/store bounds. Gate interleaved enumerators, parent/child return residence, capacity and retained aggregate/callable Current across later pulls/exhaustion. Add retraction after changed guards, storage, writers or origins and actual client repair. |
-| [C-07 Seq operations](PRDs/C-07-SeqOperations.md) | All eleven core operations in every admitted direct/pipe/bare/stored/partial form, repeated enumeration, independent callback/state types, demand/short circuit and factory residence; every listed successor operation. | Core recipes,17 staged/bare source controls and canonical sequence/callable transport are implemented. Native16h passes its unchanged seven-group oracle again on main v19 in both artifact modes. This does not establish current ordinary lazy-default demand, original16's full factory/recurrence cases or successor support. | Run original16,16a–h and exact source/negative/tooling gates on one cohort after reconciliation with the specified ordinary call-by-need rules. Count actual pulls/callbacks, including nonpositive take, empty effects and no post-decision work. Implement and gate `empty`, `length`, `isEmpty`, `head`, `min`, `max`, `minBy`, `maxBy`, `toList`, `toArray`, including source registration, selection semantics and materialized output residence/capacity. |
-
-### Preserve the entire collection/operation scope
-
-This is a coverage inventory, not a claim each listed operation has passed.
-For each operation record its admitted source scheme, owning Baker contract,
-direct/pipe/bare/partial forms where meaningful, positive/negative source cases
-and native values/effects/storage oracle. The full tables remain in C-04 §3 and
-[C_F_Completion_Ledger.md §2](C_F_Completion_Ledger.md#2-operation-inventory-that-must-survive-the-campaign).
-
-| Family | Operations retained in the acceptance campaign |
-|---|---|
-| List | `empty`, literals, `cons`/`::` and cons patterns, `isEmpty`, `head`, `tail`, `length`, `rev`, `append`/`@`, `map`, `filter`, `fold`, `foldBack`, `tryHead`, `tryFind`, `forall`, `exists`; then `collect`, `reduce`, `contains`, `tryPick`, `minBy`, `maxBy`, `min`, `max`, `last`, `forall2`, `sum`, `sumBy`, `average`, iteration, `toSeq`, `ofSeq`. |
-| Map | `empty`, `isEmpty`, `add`, `remove`, `tryFind`, `find`, `containsKey`, `count`, `keys`, `values`, `toList`, `ofList`, `map`, `filter`, `fold`; then `toSeq`, `iter`, `forall`, `exists`, `ofSeq`, `ofArray`. |
-| Set | `empty`, `isEmpty`, `add`, `remove`, `contains`, `count`, `union`, `intersect`, `difference`, `isSubset`, `toList`, `ofList`, `map`, `filter`, `fold`; then `isSuperset`, `forall`, `exists`, `iter`, `toSeq`, `toArray`, `ofSeq`, `ofArray`, `singleton`. |
-| Option / F-08 | Constructors/matching; `map`, `bind`, `defaultValue`, `defaultWith`, `orElse`, `orElseWith`, `iter`, `fold`, `foldBack`, `filter`, `exists`, `forall`, `isSome`, `isNone`, `get`, `toList`; then `map2`, `map3`, `flatten`, `toArray`. Nullable conversions require an explicit boundary/profile and cannot introduce interior null. |
-| Result / F-09 | `Ok`, `Error`, matching, `map`, `mapError`, `bind`, `defaultValue`, `defaultWith`, `iter`, `isOk`, `isError`; independent success/error types, inactive callbacks/payloads and actual function-valued results. |
-| Array/support | `blit`, `map`, `fold`, `init`, `sum`, `sumBy`; preserve literals, `zeroCreate`, get/set/indexing/length and20_ArraySurface. Include overlapping blits, both bounds, empty/count/extent, accumulator dimensions and retained element storage. |
-| Ranges/tuples/helpers | Inclusive List/Array/Seq ranges with implicit/explicit step; nested tuple binding, wildcards, `fst`, `snd`, `min`, `max`, list-based `String.concat`. Preserve one shared input, deferred unused payloads, endpoint/step contracts and exact capacity. |
-| Seq core | `map`, `filter`, `collect`, `append`, `take`, `fold`, `iter`, `exists`, `forall`, `tryHead`, `tryPick`; successors as listed in C-07 above. |
-
-## F-01 through F-10: reciprocal acceptance
-
-The historical F statuses describe earlier delivery; they are not fresh
-verification of shared owners changed by this campaign. Reengineering these
-owners obliges the affected F gates as well as the C gates.
-
-| PRD and actual owning contract | Impact and evidence now | Fresh gate to close the impact |
-|---|---|---|
-| [F-01](PRDs/F-01-HelloWorldDirect.md): entry/startup, static strings, console and platform calls | Full/pruned01 passes the fresh main-v19 differential. New failure realization preserves actual source diagnostic text through native lowering. | Retain01 in the final integrated cohort; run19_ModuleValues and full-profile startup16g, verifying exact streams, entry order and no accepted artifact after effective source errors. |
-| [F-02](PRDs/F-02-ArenaAllocation.md): string/memref representation, concat/length, allocation and backing lifetime | Environment/sequence/Lazy placement and DU alignment change shared storage premises. Existing02 has earlier control evidence. F-02 itself distinguishes its historical heap bridge from A-04 true arena work. | Re-run02 and retained buffer/string/foreign-array cases; inspect actual writable authority, extent/alignment/capacity, covering lifetime and release. Do not report general arena conformance from02 output. |
-| [F-03](PRDs/F-03-PipeOperators.md): both pipe rewrites and application boundaries | Real declared arity and staged Seq values replace assumptions that all type arrows or supplied arguments share one call frontier. Recorded16h includes pipelines. | Run03 plus direct/forward/back-pipe equivalents under the specified ordinary call-by-need rules; distinguish unused ordinary actuals, explicit eager actuals and later returned-callable invocation. |
-| [F-04](PRDs/F-04-CurryingLambdas.md): lambda types, curry/partial formation, thunks | Canonical code/environment operands, typed residual signatures and explicit-demand source tests materially strengthen this owner. Old packed closure/SSA sketches are not normative. | Re-run04/12/18_Generalization and FunctionSnapshots/UnitExpressions/OptionPartials; add captured partials and distinct dynamic factories with exact demand/identity traces. |
-| [F-05](PRDs/F-05-DiscriminatedUnions.md): typed tags/payloads, pattern selection and expression-valued results | New selected-scope Baker decisions preserve guard fallthrough and source payload bindings; Require preserves terminal failure. Generic DU alignment and v19 all-five native match controls pass their stated scope. Original05's PRD pass is dated2026-09-20. | Run original05/21_RecordsAndTags/22_UnionPayloads and heterogeneous/measured/nested-tag cases on this cohort. Implement the specified Or/As/And/list/array pattern owners below. Gate retained aggregate/callable/view payloads and raw-decision source/physical refusal, including actual FPGA discriminator values. |
-| [F-06](PRDs/F-06-InteractiveParsing.md): parse, numeric promotion, ordered console input and tuple patterns | Selected tuple payload/guard scope is now tested; no fresh full interactive06 result follows from those controls. | Run06 with exact manifest stdin plus invalid-input/branch cases, preserving demanded reads and native Result behavior. Check nested tuple binding identity and inactive branch input suppression. |
-| [F-07](PRDs/F-07-BitwiseOperators.md): integer bit contracts, shifts/casts and physical widths | Common range/layout and typed discriminator code affects the same carrier infrastructure. This campaign makes no new blanket bitwise support claim. | Run07 and bit/cast component/source gates at admitted widths, boundaries and signedness; retain operation-defined bit patterns instead of choosing a convenient callback carrier. |
-| [F-08](PRDs/F-08-OptionType.md): Option cases, typed payload and callback recipes | v19 verifies actual Some/None selection, guarded payload access and fallthrough. Canonical callable transport and matched-case type identity strengthen Option paths. | Run08/08a–e and all Option native callback/elimination controls. Reconcile old eager default/fallback traces with the specified ordinary call-by-need rules; prove tag observation leaves unused payloads deferred, `Some None` stays nested and retained function payloads preserve actual environments. |
-| [F-09](PRDs/F-09-ResultType.md): independent success/error types, heterogeneous storage and native recovery | Canonical source fixtures and aligned payload layouts are covered in recorded source/component cohorts. Require termination is explicitly separate from recoverable Result and no exception engine is manufactured. | Run09/09a–c, ResultCallbacks/ResultElimination/ResultCases under the specified ordinary call-by-need rules; preserve inactive callbacks, independent dimensions, nested tags, retained error/value payload lifetime and real function-valued results. |
-| [F-10](PRDs/F-10-RecordTypes.md): construction/access/copy-update, nested records and record patterns | Source selected-match cases cover record binding/guard order; callable/Lazy/sequence storage changes affect record fields. No fresh original10 native result is claimed here. | Run10/20/21/23_RecordSurface and GenericRecords/CapturedRecords/FunctionFields. Verify old record versions, nested selected payloads, copies and retained callable/view fields across subsequent calls/allocations. |
-
-### Pattern work belongs to the source owner
-
-The following are concrete implementation tasks found by comparing
-[specified pattern laws](../../clef-lang-spec/spec/patterns.md#as-patterns)
-with [the current checker](../../clef/src/Compiler/NativeTypedTree/Expressions/Patterns.fs).
-They belong to F-05's shared pattern foundation, C-04 list/array storage and F-10
-record consumers; Alex must not acquire new pattern-decision algorithms.
-
-| Specified form | Current source defect | Owning change and decisive oracle |
-|---|---|---|
-| Or | Checker examines both operands but retains only the left pattern/bindings. | Retain ordered alternatives and equal name/type binding obligations; Baker selects either branch and joins the same source variables. Native second-alternative-only success, both failures, incompatible binding diagnostics and guard-on-selected-result cases. |
-| As | Checker appends alias bindings while discarding the alias pattern structure. | Retain exact whole-input alias alongside inner projections; preserve one shared input identity. Native whole/part simultaneous use and source navigation/retraction; no duplicated evaluation. |
-| List/cons versus Array | List and array literals both become `Pattern.Array`; cons becomes a tuple despite requiring guarded list structure. | Distinguish typed list sentinel/cons links from array length/index storage; perform length/tag guards before payload reads. Native empty/exact/short/long inputs, nested/cons patterns and wrong-shape guard suppression under actual capacity/lifetime contracts. |
-| And | Multiple same-input conjuncts are represented using a tuple of remaining patterns. | Retain a same-input conjunction with correct binding compatibility and source order; Baker composes selected tests/projections. Native first-only/second-only/both matches and dimensional/binding negatives. |
-
-The new selected-scope recipe does not repair information already lost by these
-inherited checker paths; Or in particular can still arrive as only its left
-alternative. Fix the owning representation and conforming positive implementation
-together with the gate; a refusal alone is not completion. Broader active/type-test
-pattern promises need the same specification and owning-admission audit, without importing a managed exception/null model.
-
-## Architecture and correctness changes
-
-These are measurable changes to ownership and correctness, beyond additional
-sample totals:
-
-1. **Source algorithms moved to their proper owner.** Baker now settles pattern
-   selection, selected payload/guard scope, memoization and staged application
-   boundaries. Alex consumes admitted structure through Huet occurrences and
-   Element/Pattern/Witness composition; it does not reconstruct the algorithm.
-2. **Identity is carried through the full physical boundary.** Code and real
-   environment operands, sequence family membership, actual factory destinations,
-   original source aliases and dynamic storage remain distinct. Equal layouts,
-   one observed caller or a known symbol cannot stand in for a complete proof.
-3. **Proof premises now cover the work actually consumed.** Complete ingress,
-   continuation accesses/all writers, Lazy all-access/cache ordering and terminal
-   match requirements include their joint participants and retract after edits.
-   Scoped fact reuse cannot retain authority after changed storage, type, path or
-   initialization facts.
-4. **Actual occurrence and emitted artifact defects were repaired.** Shared code
-   declaration coverage avoids duplicate MLIR functions without global symbol
-   deduplication of values. Selected match results use their actual body SSA.
-   Backend failure realization now preserves the diagnostic that stock assertion
-   lowering lost; native failure oracles caught this.
-5. **Portable physical operations retain language distinctions.** DU payload
-   alignment derives from actual members. Typed literal equality handles strings,
-   floating values, characters and unit through their existing operation owners.
-   FPGA discrimination must preserve actual constants, not positional arm numbers;
-   target scheduling/encoding remains backend work.
-6. **Performance evidence is separated from semantics.** Diagnostic formatting
-   dominated the recorded full-dump slowdown; bounded .NET process jobs and
-   artifact projection address measured work without inventing compiler thread
-   parallelism. Pruned views preserve the original graph and complete joint
-   evidence, verified against emitted/lowered artifacts and exact native outputs.
-
-This supports continued scope-aware design-time incrementality: local ownership,
-actual zipper occurrence and complete invalidation premises are useful progress.
-It is not a claim that the entire compiler already performs incremental
-recompilation, nor that runtime Incremental/Observable computation shares one
-activation, scheduling or cache policy.
-
-### Source storage and whole-image resource accounting
-
-Baker's static-pool proof covers the source-declared pool, its literal backing,
-authority, layout and capacity participants. It does not automatically account
-for diagnostic globals or helper code introduced by backend realization. A
-whole-image resource claim must include those target additions and their actual
-placement, extent, lifetime and image/code cost in the Platform/backend accounting
-contract. This is a cross-cutting resource and artifact obligation; F-07 owns
-bitwise semantics, not this accounting. The passing static-storage and native
-failure controls establish their respective boundaries without filling this gap
-by inference.
-
-## Next coordinated acceptance order
-
-1. **C-01/C-02/C-07, F-04 and M-01 — repair the shared publication boundary.**
-   Replace global graph-identity tables with source-owned immutable witness input
-   and invalidation. Publish exact callable transport and occurrence-owned physical
-   argument components. Restore04/11a/12 and16a; diagnose original16's timeout.
-   Preserve discriminating negative tests. Run native closures/Lazy/Seq and the
-   full manifest at the next shared-boundary checkpoint.
-2. **C-01/C-02/C-05 and F-03/F-04 — implement ordinary demand end to end.**
-   Baker owns deferred initialization, sharing, demand placement and strictness
-   evidence; Alex witnesses the resulting graph. Cover04c, inline/partial/foreign
-   applications, primitives, mutable reads/stores, captures, aggregates, dominance
-   and recursive initialization. Reconcile the remaining source-contract seams.
-   Migrate library effects and eager probes in the same integration. Preserve the
-   specified startup contract. Develop incidence and premise tracking here so
-   later incremental reuse does not require a second semantic model.
-3. **F-11/C-08 with C-03/F-02/F-07 and M-01 — close numeric and proof commitment.**
-   Eliminate missing-range defaults; retain generic dimensional inference.
-   Establish complete obligation outcomes and realized-artifact correspondence,
-   lifetime authority and target representation bounds. Finish passive numeric,
-   layout and ABI projection. Repair mapped-view callbacks and legitimate FFI
-   function-address conversions under the immediate plugin-retirement rule
-   above. Their required source and backend contracts do not authorize retaining
-   packed closures, loading a plugin, or adding a middle-end MLIR semantic
-   transform. Gate the affected cases through stock backend lowering.
-4. **F-05/C-03/C-04/C-06/C-07 — complete patterns, recursion and collections.**
-   Admit promised forms and schemes; use saturating Baker recipes with structural
-   recursion identity and guarded selectors. Complete balanced/persistent storage,
-   capacity, deferred payload residence, every promised operation and registered
-   native case. Prove control-stack, demand-space and numeric recurrence properties
-   separately. D10 library/corpus migration proceeds alongside these source tasks.
-5. **F-11(d)/C-08(d) — deliver scoped and parallel compilation.**
-   Complete incidence and absence invalidation, accepted revisions, rewrite
-   footprints and certificate checks. Isolate worker state and program resources;
-   witness admitted scopes through Alex, replace/reconcile segments and link.
-   Compare serial/parallel full and incremental results and timings. Require exact
-   participant evidence in addition to any structural hull certificate.
-6. **Close every affected F/C and Framework gate on a coordinated cohort.**
-   Complete .NET drivers, independent stream oracles and durable artifacts during
-   the preceding steps. Run the expanded manifest, full/pruned differentials,
-   unpaced IO, proof/native/lifetime controls, BAREWire RoundTrip, Ariel mapped
-   consumers and platform-bearing editor/analyzer/live-LSP gates. Record each
-   advertised case and actual result before completion. WrenHello, HelloDISCO and
-   Elmish/CE showcases retain their additional UI/reactive/target owners.
-
-Existing executable entry points are listed in the
-[completion ledger §5](C_F_Completion_Ledger.md#5-executable-checks-and-evidence-record).
-The new match suite is directly reproducible with an existing private snapshot:
-
-```sh
-dotnet fsi tests/NativeCallbacks/TerminalMatchChecks.fsx -- /tmp/composer-checkpoint-v19/compiler/Composer /tmp/composer-matches-fresh --all
-```
-
-Use a fresh output root, preserve each harness's stream/timeout contract and
-retain full artifacts and snapshot hashes. Report a gate as passed only after
-its actual command and independent oracle have run against the stated cohort.
+These commands document the scoped oracles. They are not an instruction to run
+the manifest or full gate chain before correcting the named source contracts.
+
+The owner's post-cleanup baseline was 0/51 samples compiling, 300/1605 CCS
+failures and 51/307 Alex failures. Those are historical observations. No current
+full manifest or complete suite run establishes restored parity. Eighteen
+older lazy/sequence witness fixtures need current source declaration,
+representation and residence prerequisites; they have not been waived.
+
+## Remaining boundaries and next work
+
+The accomplished cleanup should be preserved and extended. It is not a claim
+that every Alex path is already passive or every language capability recovered.
+
+1. Correct the exact Array/snapshot/alias failures recorded at this notch at their
+   owning source contract. Preserve content-sensitive mutation/independence,
+   empty/deferred behavior, complete ingress and guard/proof retraction oracles.
+2. Rewrite BorrowedView using the already settled header/element/access facts.
+   Its Pattern still constructs access guards, check widths, narrowing and a
+   fixed unit carrier. Its mapped-span theorem assumes checked native
+   extent/index; it supplies no executable acquisition/guard/callback/release
+   correspondence. Establish the source scope/requirement contract and reuse
+   it before claiming positive get/set capability. Seeded headers cannot prove
+   lifetime. This work is queued, not implemented at this notch.
+3. Reconcile remaining FPGA function, record and conditional Patterns with
+   the portable/backend boundary. The new spatial declaration witnesses are
+   passive; those common Patterns still contain target-specific forms.
+   Preserve actual hardware/kernel positive controls through this correction.
+4. Complete source constructions for missing String operations and positive
+   lazy/sequence fixtures. A refusal alone does not implement a capability.
+5. Extend artifact contracts and restore sample parity under all three required
+   discharge stages. Do not substitute stock-MLIR execution for native artifact
+   acceptance, or run a full gate chain merely because the compiler builds.
+
+HelloNappy/device execution is not restored. Actual StrixHalo still has
+Core=None; HelloNappy's host buffers and descriptorless XRT boundary need proper
+declarations and encoding. A Peano probe for full int32-by-int32 multiplication
+with int64 result produced an elf32-aie/aie2p relocatable object with undefined
+__muldi3. The current pathway lacks executable core linking/runtime composition.
+Do not change widths or restrict the source math to hide that requirement.
+No xclbin, device, FPGA bitstream or sample restoration is claimed from verifier
+success.
+
+The independent assessment remains separate and unchanged. No owner decision
+is pending on the ownership direction. Continue the reimplementation by relying
+on Baker's established PSG decisions, publishing missing correspondence and
+simplifying the shared Elements/Patterns/Witnesses around that authority.

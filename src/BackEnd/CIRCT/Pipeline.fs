@@ -1,9 +1,7 @@
 /// CIRCT Pipeline - hw/comb/seq MLIR → SystemVerilog
 ///
-/// The CIRCT backend for FPGA targets. Alex elides directly to hw/comb/seq
-/// dialects, so the backend only needs:
-///   1. circt-opt: canonicalize + CSE (optimization)
-///   2. circt-opt: lower-seq-to-sv + lower-hw-to-sv + export-verilog
+/// Realize the source hardware contract, then optimize hw/comb/seq and
+/// lower through CIRCT to SystemVerilog.
 ///
 /// LLVM is never involved in this path.
 module BackEnd.CIRCT.Pipeline
@@ -16,7 +14,8 @@ open Core.Timing
 let private implementation : BackEnd = {
     Name = "CIRCT"
     Compile = fun witnessed ctx ->
-        let mlirText = witnessed.Text
+        HardwareRealization.realize witnessed |> Result.bind (fun realized ->
+        let mlirText = realized.Text
         let intermediateFile name =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, name)
@@ -45,9 +44,9 @@ let private implementation : BackEnd = {
 
                 timePhase ctx.Timing "BackEnd.VerilogExport" "Exporting SystemVerilog" (fun () ->
                     Lowering.exportToVerilog optimizedPath svPath)
-                |> Result.map (fun () -> Verilog svPath))
+                |> Result.map (fun () -> Verilog svPath)))
 }
 
 /// Current source/witness ownership is validated before target realization.
 let backend: BackEnd =
-    { implementation with Compile = WitnessedInput.compile implementation.Compile }
+    { implementation with Compile = WitnessedInput.compileWithBoundary HardwareRealization.validate implementation.Compile }

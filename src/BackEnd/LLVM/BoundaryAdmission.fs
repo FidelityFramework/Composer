@@ -18,15 +18,18 @@ let validate (input: BackEndInput) (context: BackEndContext) =
     let unsupportedScalar = function
         | BoundaryScalar.Integer((32 | 64), _) -> false
         | _ -> true
-    imports |> List.tryPick (fun declaration ->
-        if runtime.IsNone then
-            Some $"Boundary '{declaration.Symbol}' has no admitted C ABI realization for the selected target/runtime"
-        elif input.PointerBits <> Ok 64 then
-            Some $"Boundary '{declaration.Symbol}' witnessed pointer dimension disagrees with the selected 64-bit ABI"
-        elif declaration.CallingConvention <> "CDecl" then
-            Some $"Boundary '{declaration.Symbol}' requires an unimplemented calling convention: {declaration.CallingConvention}"
-        else
-            let scalars = List.map snd declaration.Parameters @ Option.toList declaration.Result
-            scalars |> List.tryFind unsupportedScalar |> Option.map (fun scalar ->
-                $"Boundary '{declaration.Symbol}' requires ABI realization for {scalar}; the LLVM SysV AMD64 profile currently realizes only signed/unsigned 32- and 64-bit scalar carriers"))
-    |> function Some reason -> Error reason | None -> Ok ()
+    let spatial = input.Operations |> List.exists (function MLIROp.SpatialModule _ -> true | _ -> false)
+    if spatial then Error "LLVM has no realization of source spatial declarations; select their declared hardware or kernel backend."
+    else
+        imports |> List.tryPick (fun declaration ->
+            if runtime.IsNone then
+                Some $"Boundary '{declaration.Symbol}' has no admitted C ABI realization for the selected target/runtime"
+            elif input.PointerBits <> Ok 64 then
+                Some $"Boundary '{declaration.Symbol}' witnessed pointer dimension disagrees with the selected 64-bit ABI"
+            elif declaration.CallingConvention <> "CDecl" then
+                Some $"Boundary '{declaration.Symbol}' requires an unimplemented calling convention: {declaration.CallingConvention}"
+            else
+                let scalars = List.map snd declaration.Parameters @ Option.toList declaration.Result
+                scalars |> List.tryFind unsupportedScalar |> Option.map (fun scalar ->
+                    $"Boundary '{declaration.Symbol}' requires ABI realization for {scalar}; the LLVM SysV AMD64 profile currently realizes only signed/unsigned 32- and 64-bit scalar carriers"))
+        |> function Some reason -> Error reason | None -> IntrinsicWriteRealization.validate input context

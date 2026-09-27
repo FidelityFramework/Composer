@@ -79,7 +79,7 @@ let ``ordinary and saturated calls preserve resolved identity across equal local
             | other -> failwithf "Call was not witnessed: %A" other
             let targets = output.InlineOps |> List.choose (function MLIROp.FuncOp(FuncOp.FuncCall(_, target, _)) -> Some target | _ -> None)
             Assert.Equal(definitionSymbol, Assert.Single targets)
-            Assert.Equal(Some definitionSymbol, Alex.Patterns.HardwareModulePatterns.resolveStepFunctionName graph fn.Reference)
+            Assert.Equal(Some definitionSymbol, tryBinding graph fn.Binding)
             Assert.Same(graph, ctx.Graph)
             Assert.Empty(ctx.TraversalVisited.Value)
             Assert.Empty(operands.Errors)
@@ -96,7 +96,7 @@ let ``module and external spellings and anonymous closure identities are preserv
     let moduleGraph = { graph with Nodes = graph.Nodes.Add(moduleNode.Id, moduleNode).Add(fn.Binding, { binding with Parent = Some moduleNode.Id }) } |> prepareSource
     Assert.Equal(Some "Library.read", tryBinding moduleGraph fn.Binding)
     Assert.Equal("Library.read", lambda moduleGraph moduleGraph.Nodes[fn.Lambda] false)
-    Assert.Equal(Some "Library.read", Alex.Patterns.HardwareModulePatterns.resolveStepFunctionName moduleGraph fn.Reference)
+    Assert.Equal(Some "Library.read", tryBinding moduleGraph fn.Binding)
     let externalGraph = { graph with Nodes = graph.Nodes.Add(fn.Binding, { binding with Parent = None }) } |> prepareSource
     Assert.Equal(Some "read", tryBinding externalGraph fn.Binding)
     Assert.Equal("read", lambda externalGraph externalGraph.Nodes[fn.Lambda] false)

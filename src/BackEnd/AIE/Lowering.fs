@@ -233,14 +233,6 @@ let private coreLoweringPipeline (aieTarget: string) =
     sprintf "builtin.module(aie.device(aie-localize-locks,aie-normalize-address-spaces,aie-transform-bfp-types),aie-standard-lowering,aiex-standard-lowering,convert-aievec-to-llvm{aie-target=%s},canonicalize,cse,expand-strided-metadata,lower-affine,arith-expand,finalize-memref-to-llvm,convert-func-to-llvm{use-bare-ptr-memref-call-conv=true},convert-to-llvm{dynamic=true},canonicalize,cse)"
         (aieTarget.ToLowerInvariant())
 
-/// Extract core tile coordinates from physical MLIR text.
-/// Parses aie.core ops in pretty-print format: %core_C_R = aie.core(%tile_C_R)
-/// Returns list of (col, row) pairs.
-let private extractCoreTiles (mlirText: string) : (int * int) list =
-    let regex = System.Text.RegularExpressions.Regex(@"%core_(\d+)_(\d+)\s*=\s*aie\.core")
-    [ for m in regex.Matches(mlirText) do
-        yield (int m.Groups.[1].Value, int m.Groups.[2].Value) ]
-
 /// Patch physical MLIR (generic format) to replace aie.core bodies with
 /// elf_file references and empty bodies (just aie.end).
 /// CDO generation requires elf_file attribute and empty core bodies.
@@ -318,18 +310,20 @@ let private patchPhysicalMlirWithElfs
 /// All steps use native binaries. No Python, no scripting.
 /// The pipeline mirrors aiecc.py's --no-xchesscc --no-xbridge flow
 /// but implemented as direct tool invocations.
-let lowerToXclbin (mlirPath: string) (xclbinPath: string) (instsPath: string) : Result<unit, string> =
+let lowerToXclbin (device: string) (coreTiles: (int * int) list) (columnCount: int) (mlirPath: string) (xclbinPath: string) (instsPath: string) : Result<unit, string> =
     let toolchainRoot = resolveToolchainRoot ()
     let tools =
-        resolveTool toolchainRoot "AIE_OPT_PATH" "aie-opt"
-        |> Result.bind (fun aieOpt ->
-            resolveTool toolchainRoot "AIE_TRANSLATE_PATH" "aie-translate"
-            |> Result.bind (fun aieTranslate ->
-                resolveTool toolchainRoot "BOOTGEN_PATH" "bootgen"
-                |> Result.map (fun bootgen -> aieOpt, aieTranslate, bootgen)))
+        (match device with "npu2" -> Ok "aie2p" | _ -> Error $"AIE native compilation has no admitted architecture mapping for source device '{device}'.")
+        |> Result.bind (fun architecture ->
+            resolveTool toolchainRoot "AIE_OPT_PATH" "aie-opt"
+            |> Result.bind (fun aieOpt ->
+                resolveTool toolchainRoot "AIE_TRANSLATE_PATH" "aie-translate"
+                |> Result.bind (fun aieTranslate ->
+                    resolveTool toolchainRoot "BOOTGEN_PATH" "bootgen"
+                    |> Result.map (fun bootgen -> architecture, aieOpt, aieTranslate, bootgen))))
     match tools with
     | Error e -> Error e
-    | Ok (aieOpt, aieTranslate, bootgen) ->
+    | Ok (aieTarget, aieOpt, aieTranslate, bootgen) ->
     let peanoBin = resolvePeanoBin toolchainRoot
     let peanoOpt = Path.Combine(peanoBin, "opt")
     let peanoLlc = Path.Combine(peanoBin, "llc")
@@ -342,7 +336,6 @@ let lowerToXclbin (mlirPath: string) (xclbinPath: string) (instsPath: string) : 
     // Device sym_name from the aie.device op (must match CDO output filenames).
     // The generated MLIR-AIE uses sym_name = "main" for the aie.device block.
     let deviceName = "main"
-    let aieTarget = "aie2"
     let kernelName = "MLIR_AIE"
     let kernelId = "0x901"
 
@@ -391,9 +384,8 @@ let lowerToXclbin (mlirPath: string) (xclbinPath: string) (instsPath: string) : 
     | Error e -> Error (sprintf "aie-opt core lowering failed:\n%s" e)
     | Ok () ->
 
-    // Discover core tiles from the physical MLIR
-    let physicalText = File.ReadAllText(physical)
-    let coreTiles = extractCoreTiles physicalText
+    // Source-authorized core inventory survives target printing and SSA renaming.
+    // No absent textual match may silently omit compilation of a declared core.
 
     // 3b + 3c: Per-core LLVM IR extraction and Peano compilation
     let compileCore (col: int) (row: int) : Result<string, string> =
@@ -480,13 +472,9 @@ let lowerToXclbin (mlirPath: string) (xclbinPath: string) (instsPath: string) : 
     let kernelsFile = Path.Combine(tmpDir, "kernels.json")
     let partitionFile = Path.Combine(tmpDir, "aie_partition.json")
 
-    // Estimate column count from tile count (hello world: 4 tiles = 4 columns)
-    // TODO: Extract from MLIR module metadata for general case
-    let numCols = 4
-
     File.WriteAllText(memTopoFile, emitMemTopologyJson ())
     File.WriteAllText(kernelsFile, emitKernelsJson kernelName kernelId)
-    File.WriteAllText(partitionFile, emitPartitionJson pdiFile kernelId numCols)
+    File.WriteAllText(partitionFile, emitPartitionJson pdiFile kernelId columnCount)
 
     let xclbinutilArgs =
         sprintf "--add-replace-section MEM_TOPOLOGY:JSON:%s --add-kernel %s --add-replace-section AIE_PARTITION:JSON:%s --force --quiet --output %s"

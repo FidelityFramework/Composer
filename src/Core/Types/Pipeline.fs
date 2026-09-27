@@ -161,11 +161,24 @@ module WitnessedInput =
                     | Some name -> Alex.Dialects.Core.Serialize.moduleToString input.PointerBits name input.Operations
                     | None -> sprintf "module {\n%s\n}" (Alex.Dialects.Core.Serialize.opsToString input.PointerBits input.Operations "  ")
                 if serialized <> input.Text then Error "Backend portable text differs from its actual witnessed operations"
-                else Core.WitnessArtifacts.validate catalog.Scope input.Operations input.Text input.WritableStorage catalog
+                else
+                    Core.WitnessArtifacts.validate catalog.Scope input.Operations input.Text input.WritableStorage catalog
+                    |> Result.bind (fun () -> Core.WitnessArtifacts.validateRequiredProof catalog)
 
     let compileWithBoundary admission implementation input context =
-        validate input |> Result.bind (fun () ->
-            admission input context) |> Result.bind (fun () ->
+        validate input
+        |> Result.bind (fun () ->
+            match input.Catalog with
+            | Some catalog ->
+                match catalog.Proof with
+                | Some proof when proof.Source.IsSome ->
+                    Core.ProofDispatch.dischargeMlir proof context.IntermediatesDir
+                    |> Result.map (fun receipt ->
+                        { input with Catalog = Some { catalog with Proof = Some { proof with Mlir = Some receipt } } })
+                | _ -> Ok input // No required obligations; validate admitted this case.
+            | None -> Error "Backend compilation requires a current source witness artifact catalog")
+        |> Result.bind (fun input -> admission input context |> Result.map (fun () -> input))
+        |> Result.bind (fun input ->
             match context.IntermediatesDir, input.Catalog with
             | Some directory, Some catalog -> Core.WitnessArtifacts.write (System.IO.Path.Combine(directory, "10_witness_units.json")) catalog
             | _ -> ()
@@ -176,9 +189,15 @@ module WitnessedInput =
         let noRealization (input: BackEndInput) _ =
             input.Operations |> List.tryPick (function
                 | Alex.Dialects.Core.Types.MLIROp.FuncOp(Alex.Dialects.Core.Types.BoundaryFuncDecl declaration) ->
-                    Some declaration.Symbol
+                    Some $"Selected backend has no boundary ABI realization for '{declaration.Symbol}'"
+                | Alex.Dialects.Core.Types.MLIROp.FuncOp(Alex.Dialects.Core.Types.IntrinsicWriteDecl declaration) ->
+                    Some $"Selected backend has no boundary ABI realization for '{declaration.Symbol}'"
+                | Alex.Dialects.Core.Types.MLIROp.SpatialModule(Clef.Compiler.PSGSaturation.SemanticGraph.Types.SpatialModuleWitness.Hardware declaration) ->
+                    Some $"Selected backend has no hardware realization for '{declaration.Name}'"
+                | Alex.Dialects.Core.Types.MLIROp.SpatialModule(Clef.Compiler.PSGSaturation.SemanticGraph.Types.SpatialModuleWitness.Kernel declaration) ->
+                    Some $"Selected backend has no kernel realization for '{declaration.Name}'"
                 | _ -> None)
             |> function
-               | Some symbol -> Error $"Selected backend has no boundary ABI realization for '{symbol}'"
+               | Some reason -> Error reason
                | None -> Ok ()
         compileWithBoundary noRealization implementation input context

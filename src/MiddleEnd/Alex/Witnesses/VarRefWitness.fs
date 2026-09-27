@@ -57,7 +57,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
         | Some bindingId ->
             let valueShape = Alex.Traversal.CallableOperands.valueShape ctx node.Id
             let shapeError = match valueShape with Result.Error reason -> Some reason | Result.Ok _ -> None
-            // Check if the binding references a function (Lambda node)
+            // Observe the reference's published value shape.
             match SemanticGraph.tryGetNode bindingId ctx.Graph with
             | Some bindingNode when isLazyValue ctx node ->
                 match bindingNode.Kind with
@@ -86,16 +86,9 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     $"PSG settlement (WitnessEmission callable) did not settle the value shape for VarRef '{name}' at node {NodeId.value node.Id}: {shapeError.Value}"
             | Some bindingNode when valueShape = Result.Ok(CallableValueShape.Callable node.Id) ->
                 let declaration =
-                    match bindingNode.Kind, bindingNode.Children with
-                    | SemanticKind.Binding(_, false, _, _), [implementation] ->
-                        match ctx.Graph.Nodes.TryFind implementation with
-                        | Some { Kind = SemanticKind.Lambda(_, _, [], _, _); Metadata = metadata } ->
-                            [ClosureMetadata.LambdaExpression; ClosureMetadata.RequiresClosurePair]
-                            |> List.forall (fun key -> metadata.TryFind key <> Some(MetadataValue.Bool true))
-                        | _ -> false
-                    | SemanticKind.Lambda(_, _, [], _, LambdaContext.LazyThunk), _ ->
-                        (Alex.Traversal.CallableOperands.tryThunkDeclaration ctx bindingId).IsSome
-                    | _ -> false
+                    let facts = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+                                |> Result.defaultWith invalidOp
+                    facts.DefinitionOnlyBindings.Contains bindingId || facts.DefinitionOnlyLambdas.Contains bindingId
                 match bindingNode.Kind with
                 | SemanticKind.Binding(_, true, _, _) when assignmentTarget ctx.Zipper ->
                     // Naming the destination is not a value demand. The write
@@ -134,17 +127,11 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         let (ops, readSSA, readTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id node.Id ssa ty
                         { InlineOps = ops; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                     | None ->
-                        // Function parameter binding — SSA is in coeffects
-                        // Uses platform-aware mapping + per-node width narrowing from coeffects
+                        // A formal's value and carrier are source-published.
                         let patternBindingPattern =
                             parser {
                                 let! ssa = getNodeSSA bindingId
-                                let! state = getUserState
-                                let platform = state.Coeffects.TargetPlatform
-                                let arch = state.Coeffects.Platform.TargetArch
-                                let rawTy = mapTypeAt bindingId bindingNode.Type ctx
-                                let ty = Alex.XParsec.PSGCombinators.narrowType state.Coeffects state.Graph bindingId rawTy
-                                // the parameter's width, then this read's own (ruling 3)
+                                let ty = mapTypeAt bindingId ctx
                                 let! (meetOps, readSSA, readTy) = pAdapt node.Id node.Id ssa ty
                                 return (meetOps, TRValue { SSA = readSSA; Type = readTy })
                             }
@@ -172,7 +159,7 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode then
                         // Module-level value: reload from its slot (valid in any function)
                         // the slot's element type at the binding's range width on fabric
-                        let valueTy = mapTypeAt bindingId bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
+                        let valueTy = mapTypeAt bindingId ctx
                         let globalName = ModuleValues.globalName bindingName bindingId
                         match tryMatchWithDiagnostics (pGlobalSlotLoad bindingId node.Id globalName valueTy)
                                       ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with

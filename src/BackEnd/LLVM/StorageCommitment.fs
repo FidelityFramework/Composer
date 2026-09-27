@@ -91,6 +91,18 @@ module private LLVM =
     [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
     extern void LLVMSetUnnamedAddress(nativeint globalValue, int unnamedAddress)
     [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
+    extern int LLVMGetLinkage(nativeint globalValue)
+    [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
+    extern nativeint LLVMTypeOf(nativeint value)
+    [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
+    extern nativeint LLVMArrayType2(nativeint elementType, uint64 count)
+    [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
+    extern nativeint LLVMConstArray2(nativeint elementType, [<In>] nativeint[] values, uint64 count)
+    [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
+    extern nativeint LLVMAddGlobal(nativeint llvmModule, nativeint valueType, [<MarshalAs(UnmanagedType.LPUTF8Str)>] string name)
+    [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
+    extern void LLVMSetInitializer(nativeint globalValue, nativeint initializer)
+    [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
     extern int LLVMWriteBitcodeToFile(nativeint llvmModule, [<MarshalAs(UnmanagedType.LPUTF8Str)>] string path)
     [<DllImport(Library, CallingConvention = CallingConvention.Cdecl)>]
     extern void LLVMGetVersion(uint32& major, uint32& minor, uint32& patch)
@@ -99,8 +111,8 @@ module private LLVM =
 
 /// Work on the actual target-filled bitcode, using the installed LLVM C API.
 /// No LLVM/MLIR text substitution supplies layout or symbol correspondence.
-let realizeBitcode (path: string) (plans: RegionPlan list) =
-    if plans.IsEmpty then Ok () else
+let realizeBitcodeWithPool (path: string) (plans: RegionPlan list) (pool: StaticStringPool option) =
+    if plans.IsEmpty && pool.IsNone then Ok () else
     try
         let mutable major, minor, patch = 0u, 0u, 0u
         LLVM.LLVMGetVersion(&major, &minor, &patch)
@@ -139,6 +151,30 @@ let realizeBitcode (path: string) (plans: RegionPlan list) =
                     LLVM.LLVMSetLinkage(globalValue, 0)
                     LLVM.LLVMSetVisibility(globalValue, 1)
                     LLVM.LLVMSetUnnamedAddress(globalValue, 0)
+            match pool with
+            | None -> ()
+            | Some pool ->
+                let globalValue=LLVM.LLVMGetNamedGlobal(llvmModule,pool.Symbol)
+                if globalValue=0n || LLVM.LLVMIsDeclaration globalValue<>0 then
+                    failwithf "Admitted immutable pool '%s' is absent from target bitcode" pool.Symbol
+                if LLVM.LLVMIsGlobalConstant globalValue=0 then failwith "Admitted immutable pool became writable"
+                if LLVM.LLVMABISizeOfType(targetData,LLVM.LLVMGlobalGetValueType globalValue)<>uint64 pool.Size then
+                    failwith "Target pool extent differs from its admitted source inventory"
+                if not(List.contains (LLVM.LLVMGetLinkage globalValue) [8;9]) then
+                    failwith "Immutable pool has unexpected nonlocal linkage"
+                if LLVM.LLVMGetNamedGlobal(llvmModule,"llvm.used")<>0n then
+                    failwith "Immutable pool retention requires a joint inventory for an existing llvm.used list"
+                // LLVM private linkage suppresses the symbol table entry.
+                // Internal + llvm.used keeps exact local artifact identity;
+                // it neither exports the pool nor changes its readonly data.
+                LLVM.LLVMSetLinkage(globalValue,8)
+                LLVM.LLVMSetVisibility(globalValue,0)
+                LLVM.LLVMSetUnnamedAddress(globalValue,0)
+                let pointerType=LLVM.LLVMTypeOf globalValue
+                let used=LLVM.LLVMAddGlobal(llvmModule,LLVM.LLVMArrayType2(pointerType,1UL),"llvm.used")
+                LLVM.LLVMSetInitializer(used,LLVM.LLVMConstArray2(pointerType,[|globalValue|],1UL))
+                LLVM.LLVMSetLinkage(used,7)
+                LLVM.LLVMSetSection(used,"llvm.metadata")
             if error <> 0n then LLVM.LLVMDisposeMessage error; error <- 0n
             if LLVM.LLVMVerifyModule(llvmModule, 2, &error) <> 0 then failwith (Marshal.PtrToStringUTF8 error)
             if LLVM.LLVMWriteBitcodeToFile(llvmModule, path) <> 0 then failwith "LLVM cannot save committed target bitcode"
@@ -149,7 +185,9 @@ let realizeBitcode (path: string) (plans: RegionPlan list) =
             if llvmModule <> 0n then LLVM.LLVMDisposeModule llvmModule
             if buffer <> 0n then LLVM.LLVMDisposeMemoryBuffer buffer
             LLVM.LLVMContextDispose context
-    with error -> Error("Writable LLVM realization failed: " + error.Message)
+    with error -> Error("LLVM storage realization failed: " + error.Message)
+
+let realizeBitcode path plans = realizeBitcodeWithPool path plans None
 
 /// Align the complete standard output sections, retaining all runtime/linker
 /// contributions. A supplied linker script remains the owner's placement;

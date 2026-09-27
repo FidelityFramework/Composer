@@ -35,7 +35,7 @@ let project (ctx: WitnessContext) occurrence : Result<Shape, string> =
             try
                 let layout = contract.Layout
                 let environment = TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
-                let result = mapTypeAt contract.ThunkBody contract.ElementType ctx |> narrowType ctx.Coeffects ctx.Graph contract.ThunkBody
+                let result = mapTypeAt contract.ThunkBody ctx
                 let results = if result = TVoid then [] else [result]
                 Result.Ok { Occurrence = occurrence; Layout = layout; EnvironmentType = environment
                             FunctionType = TFunc([environment], results) }

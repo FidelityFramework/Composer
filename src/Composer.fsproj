@@ -33,8 +33,11 @@
       <!-- Alex MLIR Type System (used by TypeMapping and Elements) -->
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Types.fs" />
       <Compile Include="MiddleEnd/Alex/Dialects/Core/Serialize.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/Values.fs" />
+      <Compile Include="MiddleEnd/Alex/Traversal/SMTTransfer.fs" />
       <Compile Include="Core/Types/WitnessArtifacts.fs" />
       <Compile Include="Core/WitnessArtifacts.fs" />
+      <Compile Include="Core/ProofDispatch.fs" />
       <Compile Include="Core/Types/Pipeline.fs" />
 
       <!-- CCS Integration (thin layer receiving SemanticGraph) -->
@@ -48,9 +51,6 @@
       <!-- Alex CodeGeneration - TypeMapping first (no deps) -->
       <Compile Include="MiddleEnd/Alex/CodeGeneration/TypeMapping.fs" />
       <Compile Include="MiddleEnd/Alex/CodeGeneration/CallableSymbols.fs" />
-
-      <!-- Values - the names emission derives for what it emits (no pass, no counter) -->
-      <Compile Include="MiddleEnd/Alex/Traversal/Values.fs" />
 
 
       <!-- Alex Traversal - PSGZipper: Pure Huet zipper for navigation -->
@@ -83,6 +83,7 @@
       <Compile Include="MiddleEnd/Alex/Elements/SCFElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/CFElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/FuncElements.fs" />
+      <Compile Include="MiddleEnd/Alex/Elements/SpatialElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/IndexElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/CombElements.fs" />
       <Compile Include="MiddleEnd/Alex/Elements/HWElements.fs" />
@@ -92,7 +93,6 @@
       <Compile Include="MiddleEnd/Alex/Patterns/MemoryPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/DUPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/RecordPatterns.fs" />
-      <Compile Include="MiddleEnd/Alex/Patterns/HardwareModulePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MemRefPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/CollectionPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ClosurePatterns.fs" />
@@ -102,7 +102,6 @@
       <Compile Include="MiddleEnd/Alex/Patterns/ContinuationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/EnvironmentPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/LazyPatterns.fs" />
-      <Compile Include="MiddleEnd/Alex/Patterns/StringPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/ApplicationPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/FunctionPointerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/CallablePatterns.fs" />
@@ -110,6 +109,7 @@
       <Compile Include="MiddleEnd/Alex/Patterns/EagerPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MutableCallablePatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/PlatformPatterns.fs" />
+      <Compile Include="MiddleEnd/Alex/Patterns/SpatialPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MmioPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/BorrowedViewPatterns.fs" />
       <Compile Include="MiddleEnd/Alex/Patterns/MappedViewPatterns.fs" />
@@ -157,7 +157,6 @@
       <Compile Include="MiddleEnd/Alex/Traversal/StaticStorageValidation.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/MLIRTransfer.fs" />
       <Compile Include="MiddleEnd/Alex/Traversal/XDCTransfer.fs" />
-      <Compile Include="MiddleEnd/Alex/Traversal/SMTTransfer.fs" />
 
       <!-- Alex Pipeline Types -->
 
@@ -167,10 +166,12 @@
       <!-- BackEnd - LLVM -->
       <Compile Include="BackEnd/LLVM/TargetProfiles.fs" />
       <Compile Include="BackEnd/LLVM/RequirementRealization.fs" />
+      <Compile Include="BackEnd/LLVM/IntrinsicWriteRealization.fs" />
       <Compile Include="BackEnd/LLVM/BoundaryAdmission.fs" />
       <Compile Include="BackEnd/LLVM/Lowering.fs" />
       <Compile Include="BackEnd/LLVM/StorageCommitment.fs" />
       <Compile Include="BackEnd/LLVM/Codegen.fs" />
+      <Compile Include="BackEnd/LLVM/ArtifactProof.fs" />
       <Compile Include="BackEnd/LLVM/Pipeline.fs" />
       <!-- MCU: in-process BAREWire layout, owned assembly, vendor tools and probe SDK -->
       <Compile Include="BackEnd/MCU/EspImage.fs" />
@@ -187,10 +188,12 @@
       <!-- BackEnd - CIRCT -->
       <Compile Include="BackEnd/CIRCT/Lowering.fs" />
 
+      <Compile Include="BackEnd/CIRCT/HardwareRealization.fs" />
       <Compile Include="BackEnd/CIRCT/Pipeline.fs" />
 
       <!-- BackEnd - AIE -->
       <Compile Include="BackEnd/AIE/Lowering.fs" />
+      <Compile Include="BackEnd/AIE/KernelRealization.fs" />
       <Compile Include="BackEnd/AIE/Pipeline.fs" />
 
       <!-- BackEnd - GPU -->

@@ -37,18 +37,15 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
                 | _ -> None
             | _ -> None
         let callableTarget =
-            let rec declaration id =
-                match ctx.Graph.Nodes.TryFind id with
-                | Some { Kind = SemanticKind.VarRef(_, Some binding) } ->
-                    match ctx.Graph.Nodes.TryFind binding with
-                    | Some { Kind = SemanticKind.Binding(_, true, _, _); Type = ty } ->
-                        match Clef.Compiler.NativeTypedTree.UnionFind.applySubst ty with
-                        | NativeType.TFun _ -> Some binding
-                        | _ -> None
-                    | _ -> None
-                | Some { Kind = SemanticKind.TypeAnnotation(inner, _) } -> declaration inner
-                | _ -> None
-            declaration targetId
+            let projection =
+                Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
+                |> Result.defaultWith failwith
+            let owners = projection.MutableStorage |> Map.toList |> List.choose (fun (binding, storage) ->
+                if storage.Writes |> List.exists (fun write -> write.Site = node.Id) then Some binding else None)
+            match owners with
+            | [] -> None
+            | [binding] -> Some binding
+            | _ -> failwith "Source publication assigned a mutable callable write to more than one cell."
         match slotTarget, callableTarget with
         | _, Some binding ->
             match tryMatchWithDiagnostics (pAssignMutableCallable ctx binding node.Id)
@@ -59,7 +56,7 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
             match bindingNode.Kind, MLIRAccumulator.recallNode valueId ctx.Accumulator with
             | SemanticKind.Binding (bindingName, _, _, _), Some (rawSSA, rawTy) ->
                 // the slot at the binding's width; the value adapted to it by its derived meet
-                let valueTy = mapType bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
+                let valueTy = mapTypeAt bindingId ctx
                 let (meetOps, valueSSA, _) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawSSA rawTy
                 let globalName = ModuleValues.globalName bindingName bindingId
                 match tryMatchWithDiagnostics (pGlobalSlotStore bindingId node.Id globalName valueSSA valueTy)

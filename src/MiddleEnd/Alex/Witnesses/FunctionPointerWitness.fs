@@ -12,7 +12,7 @@ open Alex.XParsec.PSGCombinators
 open Alex.Patterns.FunctionPointerPatterns
 
 let private witness (ctx: WitnessContext) (node: SemanticNode) =
-    let emit pattern prefix =
+    let observe pattern prefix =
         match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Ok ((ops, result), _) -> { InlineOps = prefix @ ops; TopLevelOps = []; Result = result }
         | Result.Error message -> WitnessOutput.error message
@@ -20,24 +20,18 @@ let private witness (ctx: WitnessContext) (node: SemanticNode) =
         WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "FunctionPointer") (Some phase) message
     match Map.tryFind node.Id ctx.Graph.Codata.Value.FunctionPointers with
     | Some (FunctionPointerPlan.Address (symbol, lambdaId)) ->
-        match SemanticGraph.tryGetNode lambdaId ctx.Graph with
-        | Some { Kind = SemanticKind.Lambda (parameters, body, _, _, _) } ->
-            match SemanticGraph.tryGetNode body ctx.Graph,
-                  Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
-            | None, _ ->
-                unsettled "callback result"
-                    $"PSG settlement did not keep the body {NodeId.value body} of native callback lambda {NodeId.value lambdaId} resident in the graph"
-            | _, Result.Error reason ->
-                unsettled "callback result"
-                    $"Baker callable projection did not settle void-callback membership for native callback {NodeId.value lambdaId}: {reason}"
-            | Some result, Result.Ok projection ->
-                let types = parameters |> List.map (fun (_, ty, id) -> mapType ty ctx |> narrowType ctx.Coeffects ctx.Graph id)
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+        | Result.Error reason -> unsettled "callback declaration" reason
+        | Result.Ok projection ->
+            match projection.Declarations.TryFind lambdaId with
+            | Some declaration ->
+                let types = declaration.Parameters |> List.map (fun (_, _, id) -> mapTypeAt id ctx)
                 let resultType =
                     if projection.VoidCallbacks.Contains lambdaId then TVoid
-                    else mapType result.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
-                emit (pFunctionAddress node.Id symbol types resultType) []
-        | _ -> WitnessOutput.error "Settled native callback entry is missing its lambda."
-    | Some (FunctionPointerPlan.Invoke (pointer, arguments, _, resultType)) ->
+                    else mapTypeAt declaration.Result ctx
+                observe (pFunctionAddress node.Id symbol types resultType) []
+            | None -> unsettled "callback declaration" "The callback entry has no source-published declaration."
+    | Some (FunctionPointerPlan.Invoke (pointer, arguments, _, _)) ->
         match MLIRAccumulator.recallNode pointer ctx.Accumulator with
         | Some (pointerSSA, TIndex) ->
             let recalled = arguments |> List.map (fun id -> MLIRAccumulator.recallNode id ctx.Accumulator)
@@ -53,8 +47,8 @@ let private witness (ctx: WitnessContext) (node: SemanticNode) =
                     let values = adapted |> List.map (fun (_, ssa, ty) -> { SSA = ssa; Type = ty })
                     let physicalResult =
                         if projection.VoidPointers.Contains pointer then TVoid
-                        else mapType resultType ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-                    emit (pFunctionPointerCall node.Id pointerSSA values physicalResult) prefix
+                        else mapTypeAt node.Id ctx
+                    observe (pFunctionPointerCall node.Id pointerSSA values physicalResult) prefix
         | _ -> WitnessOutput.error "Native callback pointer was not witnessed as a pointer-sized value."
     | None -> WitnessOutput.skip
 

@@ -1,9 +1,7 @@
 /// MemoryIntrinsicWitness - Witness Arena and Array intrinsic operations
 ///
-/// An Arena.* or Array.* intrinsic application belongs to this witness. The
-/// operation selects its own per-operation parser, which either witnesses the
-/// settled application or reports the premise it lacks; the refusal is never
-/// discarded as a skip.
+/// Array intrinsics use the same published operation as the Memory witness.
+/// No alternate array allocator, bounds construction or copying loop lives here.
 ///
 /// NANOPASS: Handles Arena.* and Array.* intrinsic applications.
 module Alex.Witnesses.MemoryIntrinsicWitness
@@ -20,17 +18,18 @@ let private witnessMemoryIntrinsic (ctx: WitnessContext) (node: SemanticNode) : 
     let owned = pIntrinsicApplication IntrinsicModule.Arena <|> pIntrinsicApplication IntrinsicModule.Array
     match tryMatch owned ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | None -> WitnessOutput.skip
+    | Some ((({ Module = IntrinsicModule.Array } as info), _), _) ->
+        match tryMatchWithDiagnostics pPublishedMemoryOperation ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok ((operations, declarations, result), _) ->
+            { InlineOps = operations; TopLevelOps = declarations; Result = result }
+        | Result.Error message ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "MemoryIntrinsic") (Some info.FullName)
+                $"{info.FullName} at node {NodeId.value node.Id}: {message}"
     | Some ((info, _), _) ->
         let pattern =
             match info.Module, info.Operation with
             | IntrinsicModule.Arena, "create" -> Some pArenaCreateIntrinsic
             | IntrinsicModule.Arena, "alloc" -> Some pArenaAllocIntrinsic
-            | IntrinsicModule.Array, "zeroCreate" -> Some pArrayZeroCreateIntrinsic
-            | IntrinsicModule.Array, "get" -> Some pArrayGetIntrinsic
-            | IntrinsicModule.Array, "set" -> Some pArraySetIntrinsic
-            | IntrinsicModule.Array, "sub" -> Some pArraySubIntrinsic
-            | IntrinsicModule.Array, "length" -> Some pArrayLengthIntrinsic
-            | IntrinsicModule.Array, "blit" -> Some pArrayBlitIntrinsic
             | _ -> None
         match pattern with
         | Some pattern ->

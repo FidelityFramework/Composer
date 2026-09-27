@@ -15,6 +15,64 @@ open Alex.Dialects.Core.Types
 type SemanticScope =
     | WholeCheckedGraph of witnessRun: Guid * graph: SemanticGraph
 
+/// Actual external-tool evidence for one stage of this compile invocation.
+/// These records describe solver-dependent checks, not Rocq certificates.
+type ProofTool = {
+    Executable: string
+    Sha256: string
+    Version: string
+    Arguments: string list
+}
+
+type ProofOutcome = {
+    Anchor: string
+    Source: string
+    Verdict: string
+}
+
+type ProofStageEvidence = {
+    Invocation: Guid
+    Stage: string
+    InputSha256: string
+    QuerySha256: string
+    Tools: ProofTool list
+    Outcomes: ProofOutcome list
+    StandardOutput: string
+    StandardError: string
+}
+
+/// Created only by the current-invocation source solver dispatch. Keeping the
+/// actual graph object prevents a receipt authorizing a different PSG snapshot.
+type SourceProofReceipt internal
+    (graph: SemanticGraph, obligations: ObligationInfo list, query: string, evidence: ProofStageEvidence) =
+    member _.Graph = graph
+    member _.Obligations = obligations
+    member _.Query = query
+    member _.Evidence = evidence
+
+/// Created only after the witnessed MLIR has been exported and checked by cvc5.
+type MlirProofReceipt internal
+    (scope: SemanticScope, source: SourceProofReceipt, operations: MLIROp list,
+     text: string, query: string, evidence: ProofStageEvidence) =
+    member _.Scope = scope
+    member _.Source = source
+    member _.Operations = operations
+    member _.Text = text
+    member _.Query = query
+    member _.Evidence = evidence
+
+/// The complete source obligation inventory and its passive typed transcription.
+/// No target realization may change or omit a required obligation.
+[<NoEquality; NoComparison>]
+type ProofEnvelope = {
+    Scope: SemanticScope
+    Source: SourceProofReceipt option
+    Obligations: ObligationInfo list
+    Operations: MLIROp list
+    Text: string
+    Mlir: MlirProofReceipt option
+}
+
 [<NoEquality; NoComparison>]
 type Occurrence = {
     Scope: SemanticScope
@@ -42,6 +100,7 @@ type FunctionImport = {
     Byval: ByvalParam list
     /// Retained verbatim from Baker; physical signless types cannot encode this ABI.
     Boundary: BoundaryImport option
+    IntrinsicWrite: IntrinsicWriteImport option
 }
 
 type ActivationOwnership =
@@ -54,6 +113,7 @@ type Unit = {
     Scope: SemanticScope
     Definitions: EmittedDefinition list
     Imports: FunctionImport list
+    SpatialModules: SpatialModuleWitness list
     WritableStorage: (string * ProgramStorageEntry) list
     Startup: (NodeId * string) option
     /// Existing target-owned opaque modules have source/content correspondence,
@@ -68,4 +128,7 @@ type Catalog = {
     Activation: ActivationOwnership
     /// Initially exactly one unit: no cache, partial-check or reuse promise.
     Units: Unit list
+    /// Isolated physical correspondence fixtures may omit this. Production
+    /// requires it whenever the current graph carries proof obligations.
+    Proof: ProofEnvelope option
 }

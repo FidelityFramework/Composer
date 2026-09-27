@@ -126,20 +126,8 @@ let pSequenceConditional (ctx: WitnessContext) (condition: Val)
 
 let pSequenceDispatch (ctx: WitnessContext) selectorId cases otherwise : PSGParser<MLIROp list * TransferResult> = parser {
     let! occurrence = atOccurrence ctx
-    let! state = getUserState
-    let! selectorSSA, selectorType = pRecallNode selectorId
     let! prefix, selector =
-        match selectorType with
-        | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
-        | TInt(IntWidth width) when width > 0 ->
-            let result = { SSA = Values.value occurrence 2; Type = TIndex }
-            match nodeRange state.Graph selectorId with
-            | Some range ->
-                let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range result.SSA selectorSSA selectorType
-                preturn ([operation], result)
-            | None ->
-                fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the sequence dispatch selector at node {NodeId.value selectorId} (dispatch node {NodeId.value occurrence})")
-        | _ -> fail (Message "Sequence dispatch selector lacks an admitted index carrier.")
+        pPublishedDispatchSelector occurrence selectorId (Values.value occurrence 2)
     let branches = cases |> List.map (fun (label, source, operations) -> int64 label, source, operations)
     let! operations, result = pSequenceSwitch ctx selector branches otherwise
     return prefix @ operations, result

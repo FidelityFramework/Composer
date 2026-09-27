@@ -19,10 +19,12 @@ open Alex.Traversal.TransferTypes
 let private sourceOccurrences (graph: SemanticGraph) =
     Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead graph
     |> Result.map (fun projection ->
-        let proofOnly = Set.union projection.Ordinary.DeferredOnly projection.Boundary.DeclarationOnly
+        let proofOnly = Set.unionMany [projection.Ordinary.DeferredOnly; projection.Boundary.DeclarationOnly; projection.Spatial.MetadataOnly]
+        let intrinsicScopes = projection.Boundary.IntrinsicWriteImports.Values |> Seq.map _.Scope |> Set.ofSeq
         graph.Nodes.Values
         |> Seq.filter (fun node ->
-            (node.IsReachable || projection.Boundary.ByScope.ContainsKey node.Id)
+            (node.IsReachable || projection.Boundary.ByScope.ContainsKey node.Id || intrinsicScopes.Contains node.Id ||
+             projection.Spatial.Required.Contains node.Id || projection.Spatial.ByScope.ContainsKey node.Id || projection.Spatial.CodeRoots.Contains node.Id)
             && not (proofOnly.Contains node.Id))
         |> Seq.map _.Id
         |> Set.ofSeq)

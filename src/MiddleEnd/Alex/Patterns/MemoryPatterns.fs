@@ -73,22 +73,21 @@ let pExtractDUTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<M
 /// The payload offset of a union, read from the settled layout of the union's type
 /// (`SemanticGraph.Layouts`, ruling 2: the tag, then the payload slot of the widest case).
 /// An absent or non-union layout is a settlement gap, reported at the reading occurrence.
-let pUnionPayloadOffset (unionTy: NativeType) : PSGParser<int> =
+let pUnionPayloadOffset (unionTy: TypeIdentity) : PSGParser<int> =
     parser {
         let! state = getUserState
-        match settledLayout state.Graph unionTy with
+        match settledLayoutFor state.Graph unionTy with
         | Some (SettledLayout.Union (_, Some offset, _, _)) -> return offset
         | Some other ->
-            return! fail (Message (sprintf "PSG settlement (Layouts) did not settle a union payload offset for '%s' at node %d: its settled layout is %A"
-                                       (formatType unionTy) (NodeId.value state.Current.Id) other))
+            return! fail (Message (sprintf "PSG settlement did not publish a union payload offset at node %d: %A"
+                                       (NodeId.value state.Current.Id) other))
         | None ->
-            return! fail (Message (sprintf "PSG settlement (Layouts) did not settle a layout for union type '%s' at node %d"
-                                       (formatType unionTy) (NodeId.value state.Current.Id)))
+            return! fail (Message (sprintf "PSG settlement did not publish a union layout at node %d" (NodeId.value state.Current.Id)))
     }
 
 /// Extract DU payload via memref.view (different element type: byte buffer → typed payload)
 /// SSAs extracted from coeffects via nodeId: [0] = offsetSSA, [1] = viewSSA, [2] = zeroSSA, [3] = extractSSA
-let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionNativeType: NativeType) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionIdentity: TypeIdentity) (payloadType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! ssas = getNodeSSAs nodeId
         do! ensure (ssas.Length >= 4) $"pExtractDUPayload: Expected 4 SSAs, got {ssas.Length}"
@@ -98,7 +97,7 @@ let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionNat
         let zeroSSA = ssas.[2]
         let extractSSA = ssas.[3]
 
-        let! payloadByteOffset = pUnionPayloadOffset unionNativeType
+        let! payloadByteOffset = pUnionPayloadOffset unionIdentity
 
         // Typed extract via memref.view — payload has different element type than byte buffer
         let! extractOps = pTypedExtractView extractSSA duSSA payloadByteOffset offsetSSA viewSSA zeroSSA payloadType duType
@@ -143,66 +142,6 @@ let pArenaAlloc (nodeId: NodeId) (_arenaSSA: SSA) (_sizeSSA: SSA) (_arenaType: M
 // STRUCT FIELD ACCESS PATTERNS
 // ═══════════════════════════════════════════════════════════
 
-/// Extract field from struct (e.g., string.Pointer, string.Length)
-/// SSA layout (max 3): [0] = intermediate (index or dim const), [1] = intermediate2 (dim result), [2] = result
-let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (structTy: MLIRType) (fieldTy: MLIRType) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 3) $"pStructFieldGet: Expected 3 SSAs, got {ssas.Length}"
-        let resultSSA = List.last ssas
-
-        // Check if structTy is a memref (strings are now memref<?xi8>)
-        match structTy with
-        | TMemRef _ | TMemRefScalar _ ->
-            // String as memref - use memref operations
-            match fieldName with
-            | "Pointer" | "ptr" ->  // Accept both capitalized (old) and lowercase (CCS)
-                // Extract base pointer from memref descriptor as index.
-                // Returns TIndex (MLIR index) which is the canonical type for pointer values.
-                // Foreign-boundary adaptations require a source-published ABI contract.
-                match fieldTy with
-                | TIndex ->
-                    // An index field: the base pointer as index, no cast needed
-                    let! extractOp = pExtractBasePtr resultSSA structSSA structTy
-                    return ([extractOp], TRValue { SSA = resultSSA; Type = TIndex })
-                | _ ->
-                    // Non-index target type: cast index → targetTy
-                    let indexSSA = ssas.[0]  // Intermediate index from coeffects
-                    let! extractOp = pExtractBasePtr indexSSA structSSA structTy
-                    let! castOp = pIndexCastS resultSSA indexSSA TIndex fieldTy
-                    return ([extractOp; castOp], TRValue { SSA = resultSSA; Type = fieldTy })
-            | "Length" | "len" ->  // Accept both capitalized (old) and lowercase (CCS)
-                // Extract length using memref.dim (returns index type)
-                let dimIndexSSA = ssas.[0]  // Dim constant (0) from coeffects
-                let! constOp = pConstI dimIndexSSA 0L TIndex
-
-                // Check if we need to cast index → fieldTy (for FFI boundaries)
-                match fieldTy with
-                | TIndex ->
-                    // No cast needed - result is index
-                    let! dimOp = pMemRefDim resultSSA structSSA dimIndexSSA structTy
-                    return ([constOp; dimOp], TRValue { SSA = resultSSA; Type = fieldTy })
-                | _ ->
-                    // Cast index → fieldTy (e.g., index → i64 for x86-64 syscall, index → i32 for ARM32)
-                    let dimResultSSA = ssas.[1]  // Dim result from coeffects
-                    let! dimOp = pMemRefDim dimResultSSA structSSA dimIndexSSA structTy
-                    let! castOp = pIndexCastS resultSSA dimResultSSA TIndex fieldTy
-                    return ([constOp; dimOp; castOp], TRValue { SSA = resultSSA; Type = fieldTy })
-            | _ ->
-                return! fail (Message $"CCS source checking did not settle field '{fieldName}' for the memref field read at node {NodeId.value nodeId}: a {structTy} view has only Pointer/ptr and Length/len")
-        | _ ->
-            // LLVM struct - use extractvalue (for closures, option, etc.)
-            let! fieldIndex =
-                match fieldName with
-                | "Pointer" | "ptr" -> preturn 0  // Accept both capitalized (old) and lowercase (CCS)
-                | "Length" | "len" -> preturn 1  // Accept both capitalized (old) and lowercase (CCS)
-                | _ -> fail (Message $"CCS source checking did not settle field '{fieldName}' for the struct field read at node {NodeId.value nodeId}: a {structTy} view has only Pointer/ptr and Length/len")
-
-            // Extract field value - pExtractField needs [offsetSSA, resultSSA]
-            let extractFieldSSAs = [ssas.[0]; resultSSA]
-            let! ops = pExtractField extractFieldSSAs structSSA fieldIndex structTy
-            return (ops, TRValue { SSA = resultSSA; Type = fieldTy })
-    }
 
 // ═══════════════════════════════════════════════════════════
 // ESCAPE-AWARE ALLOCATION
@@ -230,8 +169,9 @@ let programStorageType arch graph (entry: ProgramStorageEntry) =
             | SettledSlot.Pointer 1 -> Some TIndex
             | _ -> settledScalarType slot
         scalar |> Option.map (fun scalar -> TMemRefStatic(1, scalar))
-    | ProgramStorageShape.ValueView ty ->
-        mapNativeTypeWithGraphForArch arch graph ty
+    | ProgramStorageShape.ValueView _ ->
+        let site = match entry.Identity with ProgramStorageIdentity.Allocation id | ProgramStorageIdentity.BindingSlot id -> id
+        valueTypeAt graph site
         |> physicalStorageType arch
         |> fun value -> Some(TMemRefStatic(1, value))
 
@@ -299,7 +239,7 @@ let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
 /// CRITICAL: This is the foundation for all collection patterns (Option, List, Map, Set, Result)
 /// SSA layout: [0] = undefSSA, [1] = tagSSA, [2] = tagOffsetSSA, [3] = tagResultSSA,
 ///             then for each payload: [4+3*i] = offsetSSA, [5+3*i] = viewSSA, [6+3*i] = zeroSSA
-let pDUCaseAt (nodeId: NodeId) (destination: Val) (nativeType: NativeType) (tag: int64) (payload: Val list) : PSGParser<MLIROp list * TransferResult> =
+let pDUCaseAt (nodeId: NodeId) (destination: Val) (identity: TypeIdentity) (tag: int64) (payload: Val list) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let s = Alex.Traversal.Values.value nodeId
         let ty = destination.Type
@@ -311,7 +251,7 @@ let pDUCaseAt (nodeId: NodeId) (destination: Val) (nativeType: NativeType) (tag:
 
         // Insert payload fields at the settled payload offset (after the tag) via memref.view
         // (different element type: byte buffer → typed payload)
-        let! payloadByteOffset = pUnionPayloadOffset nativeType
+        let! payloadByteOffset = pUnionPayloadOffset identity
         let! payloadOpLists =
             payload
             |> List.mapi (fun i field ->
@@ -334,7 +274,7 @@ let pDUCase (nodeId: NodeId) (tag: int64) (payload: Val list) (ty: MLIRType) : P
         let! state = getUserState
         let! result = getNodeSSA nodeId
         let! allocation = pAllocValue nodeId result ty
-        let! writes, _ = pDUCaseAt nodeId { SSA = result; Type = ty } state.Current.Type tag payload
+        let! writes, _ = pDUCaseAt nodeId { SSA = result; Type = ty } (sourceTypeAt state.Graph nodeId) tag payload
         return allocation :: writes, TRValue { SSA = result; Type = ty }
     }
 
@@ -417,376 +357,248 @@ let indexCastForRange (range: ValueRange) (result: SSA) (operand: SSA) (operandT
     else
         MLIROp.IndexOp (IndexOp.IndexCastS (result, operand, operandType, TIndex))
 
-let private pArrayIndex (nodeId: NodeId) (result: SSA) (operand: SSA) (operandType: MLIRType) : PSGParser<MLIROp> =
-    parser {
-        let! state = getUserState
-        match nodeRange state.Graph nodeId with
-        | Some range -> return indexCastForRange range result operand operandType
+// ═══════════════════════════════════════════════════════════
+// PUBLISHED MEMORY OPERATIONS
+// ═══════════════════════════════════════════════════════════
+
+let private pMemorySlot slot : PSGParser<MLIRType> =
+    match SettledScalar.tryType slot with
+    | Some ty -> preturn ty
+    | None -> fail (Message (sprintf "Published memory slot has no admitted scalar form: %A" slot))
+
+let private pMemoryBuffer source element : PSGParser<Val> = parser {
+    let! state = getUserState
+    let! ssa, ty = pRecallNode source
+    let matchesElement = function
+        | TMemRef actual | TMemRefStatic(_, actual) -> actual = element
+        | _ -> false
+    do! ensure (matchesElement ty) "Memory operand disagrees with its published buffer carrier."
+    match MLIRAccumulator.recallSSAType ssa state.Accumulator with
+    | Some physical when matchesElement physical -> return { SSA = ssa; Type = physical }
+    | _ -> return! fail (Message "Memory operand disagrees with its published buffer carrier at the physical SSA.")
+}
+
+let private pMemoryExtent site source element resultCarrier unsigned : PSGParser<MLIROp list * TransferResult> = parser {
+    let! buffer = pMemoryBuffer source element
+    let! ssas = getNodeSSAs site
+    do! ensure (ssas.Length >= 3) "Memory extent lacks its physical operand names."
+    let result = { SSA = List.last ssas; Type = scalarCarrierType resultCarrier }
+    let! dimension = pIndexConst ssas.[0] 0L
+    let! length = pMemRefDim ssas.[1] buffer.SSA ssas.[0] buffer.Type
+    let! adaptation =
+        if unsigned then pIndexCastU result.SSA ssas.[1] TIndex result.Type
+        else pIndexCastS result.SSA ssas.[1] TIndex result.Type
+    return [dimension; length; adaptation], TRValue result
+}
+
+let private pMemoryIndex result (bounds: MemoryBoundsWitness) : PSGParser<MLIROp * SSA> = parser {
+    let! index, ty = pRecallNode bounds.Index
+    do! ensure (ty = scalarCarrierType bounds.IndexCarrier)
+            "Array index disagrees with its source-published carrier."
+    let! adaptation =
+        if bounds.IndexUnsigned then pIndexCastU result index ty TIndex
+        else pIndexCastS result index ty TIndex
+    return adaptation, result
+}
+
+/// Descriptor offset and stride remain part of the actual location. The source
+/// contract supplies element bytes; this Pattern does not compute a layout.
+let private pMemoryAddressOfView site result (buffer: Val) element bytes index : PSGParser<MLIROp list> = parser {
+    do! ensure (bytes > 0) "Memory address lacks its source-settled element extent."
+    let v = Alex.Traversal.Values.value site
+    let! metadata = pExtractStridedMetadata (v 0) (v 1) (v 2) (v 3) buffer.SSA buffer.Type element
+    let! baseAddress = pExtractBasePtr (v 4) (v 0) (TMemRefScalar element)
+    let! offsetOps, elementOffset =
+        match index with
+        | None -> preturn ([], v 1)
+        | Some index -> parser {
+            let! stride = pIndexMul (v 5) index (v 3)
+            let! offset = pIndexAdd (v 6) (v 1) (v 5)
+            return [stride; offset], v 6 }
+    let! elementBytes = pIndexConst (v 7) (int64 bytes)
+    let! byteOffset = pIndexMul (v 8) elementOffset (v 7)
+    let! address = pIndexAdd result (v 4) (v 8)
+    return [metadata; baseAddress] @ offsetOps @ [elementBytes; byteOffset; address]
+}
+
+let private pMemoryPointee (address: MemoryAddressWitness) : PSGParser<MLIRType * int> = parser {
+    match address.Element, address.ElementBytes with
+    | Some slot, Some bytes when bytes > 0 ->
+        let! element = pMemorySlot slot
+        return element, bytes
+    | _ -> return! fail (Message "Memory address lacks its source-published pointee slot and extent.")
+}
+
+/// Compose one exact source operation. Top-level definitions retain this same
+/// occurrence; the witness passes them directly to ordinary scope bookkeeping.
+let pPublishedMemoryOperation : PSGParser<MLIROp list * MLIROp list * TransferResult> = parser {
+    let! state = getUserState
+    let! memory =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryMemory state.Graph with
+        | Result.Ok memory -> preturn memory
+        | Result.Error reason -> fail (Message reason)
+    match memory.Operations.TryFind state.Current.Id with
+    | None -> return! fail (Message "Memory operation lacks its source-published contract.")
+    | Some (MemoryWitnessOperation.BufferExtent extent) ->
+        do! ensure (extent.Site = state.Current.Id && extent.Result.Site = state.Current.Id)
+                "Memory extent and result carrier name different source occurrences."
+        let! operations, result =
+            pMemoryExtent extent.Site extent.Source (TInt(IntWidth extent.Element.Bits)) extent.Result extent.IndexUnsigned
+        return operations, [], result
+    | Some (MemoryWitnessOperation.ArrayExtent extent) ->
+        let! element = pMemorySlot extent.Element
+        let! operations, result = pMemoryExtent extent.Site extent.Source element extent.Result true
+        return operations, [], result
+    | Some (MemoryWitnessOperation.StringView view) ->
+        do! ensure (view.Site=state.Current.Id) "String view names a different source occurrence."
+        let! element=pMemorySlot view.Element
+        let! source=pMemoryBuffer view.Source element
+        let sourceType,resultType=representationType view.SourceCarrier,representationType view.ResultCarrier
+        do! ensure (source.Type=sourceType) "String view source differs from its exact published physical carrier."
+        if sourceType=resultType then return [],[],TRValue source
+        else
+            match view.SourceCarrier,view.ResultCarrier with
+            | ValueRepresentation.Buffer(Some _,sourceElement),ValueRepresentation.Buffer(None,resultElement)
+                when representationType sourceElement=representationType resultElement ->
+                let! result=getNodeSSA view.Site
+                let! cast=pMemRefCast result source.SSA sourceType resultType
+                return [cast],[],TRValue {SSA=result;Type=resultType}
+            | _ -> return! fail (Message "String view has no published matching buffer-carrier transport.")
+    | Some (MemoryWitnessOperation.ArrayAllocation allocation) ->
+        do! ensure (allocation.Site = state.Current.Id)
+                "Array allocation names a different source occurrence."
+        let! element = pMemorySlot allocation.Element
+        let! count, countType = pRecallNode allocation.Count
+        do! ensure (countType = scalarCarrierType allocation.CountCarrier)
+                "Array count differs from its source-published carrier."
+        let! ssas = getNodeSSAs allocation.Site
+        let result = { SSA = List.last ssas; Type = TMemRef element }
+        do! ensure (result.Type = valueTypeAt state.Graph allocation.Site)
+                "Array allocation differs from its source-published result carrier."
+        let! countCast =
+            if allocation.IndexUnsigned then pIndexCastU ssas.[0] count countType TIndex
+            else pIndexCastS ssas.[0] count countType TIndex
+        match allocation.Residence with
+        | MemoryResidence.Stack _ ->
+            let! storage = pAllocaDynamic result.SSA ssas.[0] element allocation.Alignment
+            return [countCast; storage], [], TRValue result
+        | _ -> return! fail (Message "Dynamic array allocation lacks an admitted source storage residence.")
+    | Some (MemoryWitnessOperation.ArrayAccess access) ->
+        let! element = pMemorySlot access.Element
+        let! buffer = pMemoryBuffer access.Buffer element
+        let! ssas = getNodeSSAs access.Site
+        let! cast, index = pMemoryIndex ssas.[0] access.Bounds
+        match access.Value with
+        | Some value ->
+            let! valueSSA, valueType = pRecallNode value
+            let! adaptations, adapted = pPublishedAdapt access.Site value access.Adaptation { SSA = valueSSA; Type = valueType }
+            do! ensure (adapted.Type = element) "Array store value disagrees with its published element carrier."
+            let! write = pStore adapted.SSA buffer.SSA [index] element buffer.Type
+            return cast :: adaptations @ [write], [], TRVoid
         | None ->
-            return! fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the array index operand at node {NodeId.value nodeId} (consumer node {NodeId.value state.Current.Id})")
-    }
+            let! read = pLoadTyped ssas.[1] buffer.SSA [index] element buffer.Type
+            let! adaptations, result = pPublishedAdapt access.Site access.Site access.Adaptation { SSA = ssas.[1]; Type = element }
+            return [cast; read] @ adaptations, [], TRValue result
+    | Some (MemoryWitnessOperation.ArrayLiteral literal) ->
+        let! element = pMemorySlot literal.Element
+        let! ssas = getNodeSSAs literal.Site
+        let staticType = TMemRefStatic(literal.Length, element)
+        let resultType = TMemRef element
+        let result = { SSA = List.last ssas; Type = resultType }
+        do! ensure (literal.Length = literal.Elements.Length && literal.Alignment > 0)
+                "Array literal lacks its source-settled extent and alignment."
+        let! allocation, declarations, buffer =
+            match literal.Residence with
+            | MemoryResidence.ImmutableProgram _ -> parser {
+                do! ensure (literal.Initializers |> Option.exists (fun values -> values.Length = literal.Length))
+                        "Immutable array lacks its complete source-published initializer."
+                let symbol = staticValueName literal.Site
+                let! reference = pMemRefGetGlobal ssas.[0] symbol staticType
+                return [reference], [MLIROp.GlobalArray(symbol, staticType, literal)], ssas.[0] }
+            | MemoryResidence.Stack _ -> parser {
+                let! allocation = pAlloca ssas.[0] literal.Length element (Some literal.Alignment)
+                return [allocation], [], ssas.[0] }
+            | MemoryResidence.Program identity -> parser {
+                let! storage =
+                    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph with
+                    | Result.Error reason -> fail (Message reason)
+                    | Result.Ok storage ->
+                        match storage.ProgramStorage.Entries.TryFind identity with
+                        | Some entry -> preturn entry
+                        | None -> fail (Message "Array allocation lacks its published program-storage identity.")
+                do! ensure (storage.Shape = ProgramStorageShape.Bytes)
+                        "Program array requires its source-settled byte allocation."
+                let storageType = TMemRefStatic(storage.Bytes, TInt(IntWidth 8))
+                let! authority = pProgramStorageDeclaration identity storageType
+                let symbol = staticValueName literal.Site
+                let! reference = pMemRefGetGlobal ssas.[1] symbol storageType
+                let! offset = pIndexConst ssas.[2] 0L
+                let! view = pMemRefView ssas.[0] ssas.[1] ssas.[2] storageType staticType
+                return [reference; offset; view], [MLIROp.GlobalMemref(symbol, storageType, Some authority)], ssas.[0] }
+        let! stores =
+            match literal.Residence with
+            | MemoryResidence.ImmutableProgram _ -> preturn []
+            | _ ->
+                literal.Elements |> List.mapi (fun ordinal (source, adaptation) -> parser {
+                    let! value, ty = pRecallNode source
+                    let! adaptations, adapted = pPublishedAdapt literal.Site source adaptation { SSA = value; Type = ty }
+                    do! ensure (adapted.Type = element) "Array initializer disagrees with its published element carrier."
+                    let indexSSA = Alex.Traversal.Values.arrayElementIndex literal.Site ordinal
+                    let! index = pIndexConst indexSSA (int64 ordinal)
+                    let! store = pStore adapted.SSA buffer [indexSSA] element staticType
+                    return adaptations @ [index; store] }) |> sequence |>> List.concat
+        let! descriptor = pMemRefCast result.SSA buffer staticType resultType
+        return allocation @ stores @ [descriptor], declarations, TRValue result
+    | Some (MemoryWitnessOperation.Address address) ->
+        do! ensure (state.Platform.TargetArch.Pointer = Ok address.PointerBits)
+                "Address disagrees with the source-published pointer carrier."
+        let! ssas = getNodeSSAs address.Site
+        let result = { SSA = List.last ssas; Type = TIndex }
+        match address.Place with
+        | MemoryPlace.ExistingReference source ->
+            let! reference, ty = pRecallNode source
+            do! ensure (ty = TIndex) "Existing reference disagrees with its source-published address carrier."
+            return [], [], TRValue { SSA = reference; Type = TIndex }
+        | MemoryPlace.MutableCell binding ->
+            let! element, bytes = pMemoryPointee address
+            let! buffer = pMemoryBuffer binding element
+            let! operations = pMemoryAddressOfView address.Site result.SSA buffer element bytes None
+            return operations, [], TRValue result
+        | MemoryPlace.ArrayElement(buffer, _, bounds) ->
+            let! element, bytes = pMemoryPointee address
+            let! buffer = pMemoryBuffer buffer element
+            let! cast, index = pMemoryIndex ssas.[10] bounds
+            let! operations = pMemoryAddressOfView address.Site result.SSA buffer element bytes (Some index)
+            return cast :: operations, [], TRValue result
+        | MemoryPlace.RecordField(receiver, receiverBytes, field) ->
+            let! receiverSSA, _ = pRecallNode receiver
+            let bufferType = TMemRefStatic(receiverBytes, TInt(IntWidth 8))
+            do! ensure (MLIRAccumulator.recallSSAType receiverSSA state.Accumulator = Some bufferType)
+                    "Record-field address disagrees with its source-published receiver storage."
+            let! fieldOffset =
+                match field.Offset with
+                | Some offset when offset >= 0 -> preturn offset
+                | _ -> fail (Message "Record-field address lacks its source-settled byte offset.")
+            let! baseOps = pMemoryAddressOfView address.Site ssas.[9] { SSA = receiverSSA; Type = bufferType } (TInt(IntWidth 8)) 1 None
+            let! offset = pIndexConst ssas.[10] (int64 fieldOffset)
+            let! address = pIndexAdd result.SSA ssas.[9] ssas.[10]
+            return baseOps @ [offset; address], [], TRValue result
+}
 
-/// Array.zeroCreate<'T> intrinsic — allocate zeroed array
-/// int -> 'T[]  (size -> memref<?xelemType>)
-///
-/// Node-owned SSAs: array, length, zero index, one index, element zero, counter,
-/// condition index, condition, body index, incremented index.
-let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
-        do! ensure (info.Operation = "zeroCreate") "Not Array.zeroCreate"
-        do! ensure (argIds.Length >= 1) "Array.zeroCreate: Expected 1 arg"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 10) $"pArrayZeroCreate: Expected 10 SSAs, got {ssas.Length}"
-        let resultSSA = ssas.[0]
-        let sizeIndexSSA = ssas.[1]
+/// Component entry points share the same published access contract as the
+/// Memory witness. They cannot recreate a missing array operation.
+let private pPublishedArrayAccess expected : PSGParser<MLIROp list * TransferResult> = parser {
+    let! state = getUserState
+    let! memory =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryMemory state.Graph with
+        | Result.Ok memory -> preturn memory
+        | Result.Error reason -> fail (Message reason)
+    do! ensure (memory.Operations.TryFind state.Current.Id |> Option.exists expected)
+            "Array operation lacks its matching source-published access contract."
+    let! operations, declarations, result = pPublishedMemoryOperation
+    do! ensure declarations.IsEmpty "Array access unexpectedly required a storage declaration."
+    return operations, result
+}
 
-        // Recall the size argument (may be i64, need index for memref.alloc)
-        let! (_, sizeSSA, sizeType) = pRecallArgWithLoad argIds.[0]
-
-        // Cast size to index type (memref.alloc requires index)
-        let! castOp = pArrayIndex argIds.[0] sizeIndexSSA sizeSSA sizeType
-
-        // The element type of the array node's type: an element of the bare kind at the element
-        // range's settled width, a record at its physical storage
-        let! state = getUserState
-        let elemType = arrayElementTypeAt state.Platform.TargetArch state.Graph node.Id node.Type
-
-        let! allocOp = pAlloc resultSSA sizeIndexSSA elemType
-        let resultType = TMemRef elemType
-        let! zeroOps =
-            match elemType with
-            | TInt _ -> parser { let! op = pConstI ssas.[4] 0L elemType in return [op] }
-            | TFloat _ -> parser { let! op = pConstF ssas.[4] 0.0 elemType in return [op] }
-            | TMemRefStatic (bytes, TInt (IntWidth 8)) when
-                (match state.Current.Type with NativeType.TApp (_, [elem]) -> isNullableHandle elem | _ -> false) ->
-                parser {
-                    // Immutable None value shared by initially empty cells. C pointer
-                    // words are produced only by the foreign reference adapter.
-                    do! ensure (ssas.Length >= 17) $"PSG settlement (SSA derivation) did not derive the nullable-cell SSA family for Array.zeroCreate at node {NodeId.value node.Id}: expected 17, got {ssas.Length}"
-                    let! alloc = pAllocStatic ssas.[4] bytes (TInt (IntWidth 8)) None
-                    let! tag = pConstI ssas.[10] 0L (TInt (IntWidth 8))
-                    let! tagOps = pTypedInsert ssas.[4] ssas.[10] 0 ssas.[11] ssas.[12] (TInt (IntWidth 8)) elemType
-                    let! word = pConstI ssas.[13] 0L TIndex
-                    let! inner =
-                        match state.Current.Type with
-                        | NativeType.TApp (_, [elem]) -> preturn elem
-                        | other -> fail (Message $"CCS source checking did not settle an array element type for Array.zeroCreate at node {NodeId.value node.Id}: the node type is {formatType other}")
-                    let! offset = pUnionPayloadOffset inner
-                    let! payload = pTypedInsertView ssas.[4] ssas.[13] offset ssas.[14] ssas.[15] ssas.[16] TIndex elemType
-                    return [alloc; tag; word] @ tagOps @ payload
-                }
-            | other -> fail (Message $"Array.zeroCreate: no valid scalar zero initialization for {other}")
-        let! zeroIndex = pConstI ssas.[2] 0L TIndex
-        let! oneIndex = pConstI ssas.[3] 1L TIndex
-        let! counter = pAlloca ssas.[5] 1 TIndex None
-        let counterType = TMemRefStatic (1, TIndex)
-        let! initialize = pStore ssas.[2] ssas.[5] [ssas.[2]] TIndex counterType
-        let! conditionIndex = pLoad ssas.[6] ssas.[5] [ssas.[2]]
-        let! condition = pIndexCmp ssas.[7] IndexCmpPred.Slt ssas.[6] sizeIndexSSA
-        let! continuation = pSCFCondition ssas.[7] []
-        let! bodyIndex = pLoad ssas.[8] ssas.[5] [ssas.[2]]
-        let! storeZero = pStore ssas.[4] resultSSA [ssas.[8]] elemType resultType
-        let! increment = pIndexAdd ssas.[9] ssas.[8] ssas.[3]
-        let! storeIndex = pStore ssas.[9] ssas.[5] [ssas.[2]] TIndex counterType
-        let! yieldOp = pSCFYield []
-        let! fill = pSCFWhile [conditionIndex; condition; continuation]
-                             [bodyIndex; storeZero; increment; storeIndex; yieldOp]
-        return ([castOp; allocOp] @ zeroOps @ [zeroIndex; oneIndex; counter; initialize; fill],
-                TRValue { SSA = resultSSA; Type = resultType })
-    }
-
-/// Array.set intrinsic — store element at index
-/// 'T[] -> int -> 'T -> unit  (array -> index -> value -> unit)
-///
-/// SSA layout (1 SSA):
-///   [0] = indexCastSSA (index.casts for memref index)
-let pArraySetIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
-        do! ensure (info.Operation = "set") "Not Array.set"
-        do! ensure (argIds.Length >= 3) "Array.set: Expected 3 args"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 1) $"pArraySet: Expected 1 SSA, got {ssas.Length}"
-        let indexCastSSA = ssas.[0]
-
-        let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
-        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
-        let! (_, rawValueSSA, rawValueTy) = pRecallArgWithLoad argIds.[2]
-        // the value at the element's settled width (its derived meet)
-        let! (meetOps, valueSSA, _) = pAdapt node.Id argIds.[2] rawValueSSA rawValueTy
-
-        // Cast index to index type (memref.store requires index-typed indices)
-        let! castOp = pArrayIndex argIds.[1] indexCastSSA indexSSA indexType
-
-        // Element type from the array type (NOT current node type which is unit)
-        let! elemType =
-            match arrayType with
-            | TMemRef t -> preturn t
-            | TMemRefStatic (_, t) -> preturn t
-            | other -> fail (Message $"Array.set: expected an array (memref), got {other}")
-
-        let! storeOp = pStore valueSSA arraySSA [indexCastSSA] elemType arrayType
-        return (meetOps @ [castOp; storeOp], TRVoid)
-    }
-
-/// An element read at its own width: a scalar element through the read's derived meet; a
-/// record or tuple element keeps the logical struct type of the read's node over the byte
-/// memref the element holds (the settled layout the struct carries).
-let pReadElement (nodeId: NodeId) (elemType: MLIRType) (loaded: SSA) (nodeType: NativeType) : PSGParser<MLIROp list * SSA * MLIRType> =
-    parser {
-        let! state = getUserState
-        match elemType with
-        | TInt _ -> return! pAdapt nodeId nodeId loaded elemType
-        | _ ->
-            let logical = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph nodeType
-            match logical with
-            | TStruct _ -> return ([], loaded, logical)
-            | _ -> return ([], loaded, elemType)
-    }
-
-/// Array.get intrinsic — load element at index
-/// 'T[] -> int -> 'T  (array -> index -> element)
-///
-/// SSA layout (2 SSAs):
-///   [0] = indexCastSSA (index.casts for memref index)
-///   [1] = resultSSA (memref.load result)
-let pArrayGetIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
-        do! ensure (info.Operation = "get") "Not Array.get"
-        do! ensure (argIds.Length >= 2) "Array.get: Expected 2 args"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 2) $"pArrayGet: Expected 2 SSAs, got {ssas.Length}"
-        let indexCastSSA = ssas.[0]
-        let resultSSA = ssas.[1]
-
-        let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
-        let! (_, indexSSA, indexType) = pRecallArgWithLoad argIds.[1]
-
-        // Cast index to index type (memref.load requires index-typed indices)
-        let! castOp = pArrayIndex argIds.[1] indexCastSSA indexSSA indexType
-
-        // Direct memref.load at cast index: the element's slot, then the read's own width
-        // (a scalar through its derived meet; a record or tuple keeps its logical struct type
-        // over the byte memref the element holds)
-        let! loadOp = pLoad resultSSA arraySSA [indexCastSSA]
-        let! elemType =
-            match arrayType with
-            | TMemRef t | TMemRefStatic (_, t) -> preturn t
-            | other -> fail (Message $"Array.get: expected an array (memref), got {other}")
-        let! state = getUserState
-        let! (meetOps, readSSA, readTy) = pReadElement node.Id elemType resultSSA state.Current.Type
-
-        return ([castOp; loadOp] @ meetOps, TRValue { SSA = readSSA; Type = readTy })
-    }
-
-/// Array.sub intrinsic — extract subarray (offset + length)
-/// 'T[] -> int -> int -> 'T[]  (source -> startIndex -> count -> result)
-///
-/// Creates a contiguous copy of source[offset..offset+count].
-/// SubViewCopy: subview → alloc → copy (fresh buffer for correct FFI pointer extraction).
-///
-/// SSA layout (3 SSAs):
-///   [0] = resultSSA (fresh contiguous alloc)
-///   [1] = offsetIndexSSA (index.casts for offset)
-///   [2] = countIndexSSA (index.casts for count)
-let pArraySubIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
-        do! ensure (info.Operation = "sub") "Not Array.sub"
-        do! ensure (argIds.Length >= 3) "Array.sub: Expected 3 args"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 3) $"pArraySub: Expected 3 SSAs, got {ssas.Length}"
-        let resultSSA = ssas.[0]
-        let offsetIndexSSA = ssas.[1]
-        let countIndexSSA = ssas.[2]
-
-        let! (_, sourceSSA, sourceType) = pRecallArgWithLoad argIds.[0]
-        let! (_, offsetSSA, offsetType) = pRecallArgWithLoad argIds.[1]
-        let! (_, countSSA, countType) = pRecallArgWithLoad argIds.[2]
-
-        // Cast offset and count to index type (memref.subview requires index)
-        let! offsetCastOp = pArrayIndex argIds.[1] offsetIndexSSA offsetSSA offsetType
-        let! countCastOp = pArrayIndex argIds.[2] countIndexSSA countSSA countType
-
-        // SubViewCopy: subview + alloc + copy → fresh contiguous buffer
-        let subviewCopyOp = MLIROp.MemRefOp (MemRefOp.SubViewCopy (resultSSA, sourceSSA, [offsetIndexSSA], [SubViewParam.Dynamic countIndexSSA], [SubViewParam.Static 1L], countIndexSSA, sourceType))
-        return ([offsetCastOp; countCastOp; subviewCopyOp], TRValue { SSA = resultSSA; Type = sourceType })
-    }
-
-
-/// Array.length intrinsic — memref.dim on dimension 0, cast to the platform int
-/// 'T[] -> int
-///
-/// SSA layout (3 SSAs):
-///   [0] = dimConstSSA (index 0)
-///   [1] = lenIndexSSA (memref.dim result, index)
-///   [2] = resultSSA (index.casts to int)
-let pArrayLengthIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
-        do! ensure (info.Operation = "length") "Not Array.length"
-        do! ensure (argIds.Length >= 1) "Array.length: Expected 1 arg"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 3) $"pArrayLength: Expected 3 SSAs, got {ssas.Length}"
-        let! (_, arraySSA, arrayType) = pRecallArgWithLoad argIds.[0]
-        let! state = getUserState
-        let intTy = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type |> narrowForCurrent state
-        let! dimConstOp = pConstI ssas.[0] 0L TIndex
-        let! dimOp = pMemRefDim ssas.[1] arraySSA ssas.[0] arrayType
-        let! castOp = pIndexCastS ssas.[2] ssas.[1] TIndex intTy
-        return ([dimConstOp; dimOp; castOp], TRValue { SSA = ssas.[2]; Type = intTy })
-    }
-
-/// Physical storage type of an element (TypeMapping.physicalStorageType).
-let private physicalElementType (arch: Architecture) (elemTy: MLIRType) : MLIRType =
-    physicalStorageType arch elemTy
-
-/// Array.blit intrinsic — byte copy between two arrays via memcpy
-/// 'T[] -> int -> 'T[] -> int -> int -> unit  (source, sourceIndex, target, targetIndex, count)
-///
-/// SSA layout (10 SSAs):
-///   [0] = srcBaseIdx (extract_aligned_pointer_as_index source)
-///   [1] = dstBaseIdx (extract_aligned_pointer_as_index target)
-///   [2] = srcBase (index.casts to platform word)
-///   [3] = dstBase (index.casts to platform word)
-///   [4] = elemSizeSSA (constant element size in bytes)
-///   [5] = srcOffset (sourceIndex * elemSize)
-///   [6] = dstOffset (targetIndex * elemSize)
-///   [7] = byteCount (count * elemSize)
-///   [8] = srcPtr (srcBase + srcOffset)
-///   [9] = dstPtr (dstBase + dstOffset)
-///   [10] = memcpy's required pointer result (unused by Array.blit)
-let pArrayBlitIntrinsic : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Array
-        do! ensure (info.Operation = "blit") "Not Array.blit"
-        do! ensure (argIds.Length >= 5) "Array.blit: Expected 5 args"
-        let! node = getCurrentNode
-        let! ssas = getNodeSSAs node.Id
-        do! ensure (ssas.Length >= 11) $"pArrayBlit: Expected 11 SSAs, got {ssas.Length}"
-        let! (_, srcSSA, srcType) = pRecallArgWithLoad argIds.[0]
-        let! (_, rawSrcIdx, rawSrcIdxTy) = pRecallArgWithLoad argIds.[1]
-        let! (_, dstSSA, dstType) = pRecallArgWithLoad argIds.[2]
-        let! (_, rawDstIdx, rawDstIdxTy) = pRecallArgWithLoad argIds.[3]
-        let! (_, rawCount, rawCountTy) = pRecallArgWithLoad argIds.[4]
-        // pointer arithmetic at the declared word: each index and the count at its derived meet
-        let! (srcIdxMeet, srcIdxSSA, idxType) = pAdapt node.Id argIds.[1] rawSrcIdx rawSrcIdxTy
-        let! (dstIdxMeet, dstIdxSSA, _) = pAdapt node.Id argIds.[3] rawDstIdx rawDstIdxTy
-        let! (countMeet, countSSA, _) = pAdapt node.Id argIds.[4] rawCount rawCountTy
-        let! state = getUserState
-        let arch = state.Platform.TargetArch
-        let wordTy = state.Platform.PlatformWordType
-        let! elemTy =
-            match srcType with
-            | TMemRef t | TMemRefStatic (_, t) -> preturn t
-            | other -> fail (Message $"Array.blit: expected an array (memref), got {other}")
-        let elemSize = int64 (mlirTypeSize arch (physicalElementType arch elemTy))
-        let! srcBaseIdxOp = pExtractBasePtr ssas.[0] srcSSA srcType
-        let! dstBaseIdxOp = pExtractBasePtr ssas.[1] dstSSA dstType
-        let! srcBaseOp = pIndexCastS ssas.[2] ssas.[0] TIndex wordTy
-        let! dstBaseOp = pIndexCastS ssas.[3] ssas.[1] TIndex wordTy
-        let! elemSizeOp = pConstI ssas.[4] elemSize idxType
-        let srcOffsetOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[5], srcIdxSSA, ssas.[4], idxType))
-        let dstOffsetOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[6], dstIdxSSA, ssas.[4], idxType))
-        let byteCountOp = MLIROp.ArithOp (ArithOp.MulI (ssas.[7], countSSA, ssas.[4], idxType))
-        let srcPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[8], ssas.[2], ssas.[5], wordTy))
-        let dstPtrOp = MLIROp.ArithOp (ArithOp.AddI (ssas.[9], ssas.[3], ssas.[6], wordTy))
-        let! (copyOps, _) = pMemCopy ssas.[10] ssas.[9] ssas.[8] ssas.[7]
-        let ops =
-            srcIdxMeet @ dstIdxMeet @ countMeet @
-            [srcBaseIdxOp; dstBaseIdxOp; srcBaseOp; dstBaseOp; elemSizeOp;
-             srcOffsetOp; dstOffsetOp; byteCountOp; srcPtrOp; dstPtrOp] @ copyOps
-        return (ops, TRVoid)
-    }
-
-// ═══════════════════════════════════════════════════════════
-// ARRAY INDEXER AND LITERAL PATTERNS (non-intrinsic node kinds)
-// ═══════════════════════════════════════════════════════════
-
-/// Indexer read `arr.[i]` on an array-typed expression (SemanticKind.IndexGet).
-/// Same elision as Array.get: index cast + memref.load.
-///
-/// SSA layout (2 SSAs): [0] = indexCastSSA, [1] = resultSSA
-let pIndexGetArray : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! node = getCurrentNode
-        match node.Kind with
-        | SemanticKind.IndexGet (arrId, idxId) ->
-            let! (_, arraySSA, arrayType) = pRecallArgWithLoad arrId
-            match arrayType with
-            | TMemRef elemTy | TMemRefStatic (_, elemTy) ->
-                let! (_, indexSSA, indexType) = pRecallArgWithLoad idxId
-                let! ssas = getNodeSSAs node.Id
-                do! ensure (ssas.Length >= 2) $"pIndexGetArray: Expected 2 SSAs, got {ssas.Length}"
-                let! castOp = pIndexCastS ssas.[0] indexSSA indexType TIndex
-                let! loadOp = pLoad ssas.[1] arraySSA [ssas.[0]]
-                // the element's slot, then the read's own width (its derived meet)
-                let! (meetOps, readSSA, readTy) = pReadElement node.Id elemTy ssas.[1] node.Type
-                return ([castOp; loadOp] @ meetOps, TRValue { SSA = readSSA; Type = readTy })
-            | _ -> return! fail (Message $"IndexGet: expected an array (memref), got {arrayType}")
-        | _ -> return! fail (Message "Expected IndexGet")
-    }
-
-/// Indexer write `arr.[i] <- v` on an array-typed expression (SemanticKind.IndexSet).
-/// Same elision as Array.set: index cast + memref.store.
-///
-/// SSA layout (1 SSA): [0] = indexCastSSA
-let pIndexSetArray : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! node = getCurrentNode
-        match node.Kind with
-        | SemanticKind.IndexSet (arrId, idxId, valId) ->
-            let! (_, arraySSA, arrayType) = pRecallArgWithLoad arrId
-            match arrayType with
-            | TMemRef elemTy | TMemRefStatic (_, elemTy) ->
-                let! (_, indexSSA, indexType) = pRecallArgWithLoad idxId
-                let! (_, rawValueSSA, rawValueTy) = pRecallArgWithLoad valId
-                let! (meetOps, valueSSA, _) = pAdapt node.Id valId rawValueSSA rawValueTy
-                let! ssas = getNodeSSAs node.Id
-                do! ensure (ssas.Length >= 1) $"pIndexSetArray: Expected 1 SSA, got {ssas.Length}"
-                let! castOp = pIndexCastS ssas.[0] indexSSA indexType TIndex
-                let! storeOp = pStore valueSSA arraySSA [ssas.[0]] elemTy arrayType
-                return (meetOps @ [castOp; storeOp], TRVoid)
-            | _ -> return! fail (Message $"IndexSet: expected an array (memref), got {arrayType}")
-        | _ -> return! fail (Message "Expected IndexSet")
-    }
-
-/// Array literal `[| a; b; c |]` (SemanticKind.ArrayExpr): heap allocation plus one store per element.
-/// The allocation mirrors Array.zeroCreate so literals and created arrays share one representation.
-///
-/// SSA layout (2 + N SSAs): [0] = sizeSSA (index constant N), [1] = arraySSA (memref.alloc), [2+i] = index constant i
-let pBuildArrayLiteral : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! node = getCurrentNode
-        match node.Kind with
-        | SemanticKind.ArrayExpr elemIds ->
-            let n = List.length elemIds
-            let! ssas = getNodeSSAs node.Id
-            do! ensure (ssas.Length >= 2 + n) $"pBuildArrayLiteral: Expected {2 + n} SSAs, got {ssas.Length}"
-            let! state = getUserState
-            let arch = state.Platform.TargetArch
-            let elemType = arrayElementTypeAt arch state.Graph node.Id node.Type
-            let arrayType = TMemRef elemType
-            let! sizeOp = pConstI ssas.[0] (int64 n) TIndex
-            let! allocOp = pAlloc ssas.[1] ssas.[0] elemType
-            let! storeOpLists =
-                elemIds
-                |> List.mapi (fun i elemId ->
-                    parser {
-                        let! (_, rawValueSSA, rawValueTy) = pRecallArgWithLoad elemId
-                        let! (meetOps, valueSSA, _) = pAdapt node.Id elemId rawValueSSA rawValueTy
-                        let! idxOp = pConstI ssas.[2 + i] (int64 i) TIndex
-                        let! storeOp = pStore valueSSA ssas.[1] [ssas.[2 + i]] elemType arrayType
-                        return meetOps @ [idxOp; storeOp]
-                    })
-                |> sequence
-            return (sizeOp :: allocOp :: List.concat storeOpLists, TRValue { SSA = ssas.[1]; Type = arrayType })
-        | _ -> return! fail (Message "Expected ArrayExpr")
-    }
+let pIndexGetArray = pPublishedArrayAccess (function MemoryWitnessOperation.ArrayAccess access -> access.Value.IsNone | _ -> false)
+let pIndexSetArray = pPublishedArrayAccess (function MemoryWitnessOperation.ArrayAccess access -> access.Value.IsSome | _ -> false)

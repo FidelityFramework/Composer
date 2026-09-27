@@ -37,7 +37,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     // settled size (the graph's layout of the option type)
                     let (meetOps, valSSA, valType) = adaptOperand ctx.Coeffects ctx.Graph node.Id childId rawSSA rawType
                     let value = { SSA = valSSA; Type = valType }
-                    let optionTy = mapType node.Type ctx
+                    let optionTy = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pOptionSome node.Id value optionTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
@@ -46,7 +46,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | _ -> WitnessOutput.error $"Option.Some: Expected 1 child, got {node.Children.Length}"
 
         | "None" ->
-            let optionType = mapType node.Type ctx
+            let optionType = mapTypeAt node.Id ctx
 
             match tryMatchWithDiagnostics (pOptionNone node.Id optionType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -79,7 +79,7 @@ let private witnessOption (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (optSSA, _) ->
-                    let valueType = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                    let valueType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pOptionGet node.Id optSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

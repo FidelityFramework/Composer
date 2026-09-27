@@ -92,13 +92,15 @@ let realize (runtime: LinuxX64Process option) (input: BackEndInput) : Result<Bac
                 names.Add name |> ignore
                 List.iter inspect body
             | MLIROp.FuncOp(BoundaryFuncDecl declaration) -> names.Add declaration.Symbol |> ignore
+            | MLIROp.FuncOp(IntrinsicWriteDecl declaration) -> names.Add declaration.Symbol |> ignore
             | MLIROp.FuncOp(FuncDecl(name, _, _, _, _))
             | MLIROp.FuncOp(FuncCall(_, name, _))
             | MLIROp.FuncOp(FuncConstant(_, name, _))
             | MLIROp.MemRefOp(GetGlobal(_, name, _))
             | MLIROp.GlobalString(name, _, _, _)
             | MLIROp.GlobalBytePool(name, _, _, _)
-            | MLIROp.GlobalMemref(name, _, _) -> names.Add name |> ignore
+            | MLIROp.GlobalMemref(name, _, _)
+            | MLIROp.GlobalArray(name, _, _) -> names.Add name |> ignore
             | MLIROp.HWOp(HWModule(name, _, _, body)) ->
                 names.Add name |> ignore
                 List.iter inspect body

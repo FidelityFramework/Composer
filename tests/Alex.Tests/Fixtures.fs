@@ -10,6 +10,15 @@ module Zipper = Alex.Traversal.PSGZipper
 
 let require label = Option.defaultWith (fun () -> failwith label)
 
+/// A backend component with no target realization authority.
+let unrealizedBackendContext : Core.Types.Pipeline.BackEndContext =
+    { Timing = Core.Timing.silent(); OutputPath = "unused"; IntermediatesDir = None
+      TargetTripleOverride = None; TargetPointerBits = None; TargetCpu = None
+      PlatformOS = None; RuntimeModel = None
+      DeploymentMode = Core.Types.Dialects.Console; EmitIntermediateOnly = false
+      ExternLibraries = Set.empty; NativeLink = Core.Types.Pipeline.NativeLinkOptions.Empty
+      EmbeddedTarget = None; XtensaTarget = None; Deploy = false }
+
 /// Source edits invalidate the publication before any new zipper is created.
 /// All semantic premises remain present for source revalidation or refusal.
 let unpublished (graph: SemanticGraph) =
@@ -18,7 +27,13 @@ let unpublished (graph: SemanticGraph) =
 /// A component fixture publishes through the same source owner as compilation.
 /// Callers must use the returned graph when constructing their zipper/context.
 let prepareSource (graph: SemanticGraph) =
-    let settled = graph |> unpublished |> Clef.Compiler.Nanopass.BoundarySettlement.normalize
+    let settled =
+        graph
+        |> unpublished
+        |> Clef.Compiler.Nanopass.NumericSettlement.normalize
+        |> Clef.Compiler.Nanopass.MemorySettlement.normalize
+        |> Clef.Compiler.Nanopass.SpatialSettlement.normalize
+        |> Clef.Compiler.Nanopass.BoundarySettlement.normalize
     match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare settled with
     | Result.Ok prepared -> prepared
     | Result.Error failures ->
@@ -164,7 +179,7 @@ let matchAt parser (position: Zipper.PSGZipper) pointerBits operands =
         (coeffects position.Graph pointerBits) operands
 
 let readArray fixture pointerBits operands =
-    match matchAt Alex.Patterns.MemoryPatterns.pArrayGetIntrinsic fixture.Position pointerBits operands with
+    match matchAt Alex.Patterns.MemoryPatterns.pIndexGetArray fixture.Position pointerBits operands with
     | Result.Ok ((operations, result), position) -> operations, result, position
     | Result.Error message -> failwith message
 

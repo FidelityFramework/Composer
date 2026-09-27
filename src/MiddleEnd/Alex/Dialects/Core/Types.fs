@@ -51,6 +51,21 @@ type MLIRType =
     | TSeqClock                             // CIRCT !seq.clock type (clock signal for registers)
     | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
 
+/// Shared physical vocabulary for a scalar slot already settled in the PSG.
+/// Absence means this vocabulary has no admitted form; it supplies no default.
+module SettledScalar =
+    let tryType (slot: Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot) =
+        let inline integer bits = Some(TInt(IntWidth bits))
+        match slot with
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Integer(bits, _) when bits > 0 -> integer bits
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Bool -> integer 1
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Char -> integer 32
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Real 32 -> Some(TFloat F32)
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Real 64 -> Some(TFloat F64)
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Pointer 1 -> Some TIndex
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.SettledSlot.Unit -> integer 32
+        | _ -> None
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM TYPES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -147,6 +162,7 @@ let mlirTypeSize (arch: Architecture) (ty: MLIRType) : int =
 type SSA =
     | V of node: int * ordinal: int   // %v<node>_<k>
     | CallableAlternative of node: int * alternative: int // Source-settled mutable read dispatch arm
+    | ArrayElementIndex of node: int * element: int // Unbounded literal element ordinal, disjoint from local temporaries
     | Arg of int                      // %arg0, %arg1, ...
 
 /// Block label reference
@@ -219,13 +235,15 @@ type MemRefOp =
     /// initialization or current-read evidence on the destination.
     | Copy of source: SSA * destination: SSA * sourceType: MLIRType * destinationType: MLIRType
     | Alloca of SSA * MLIRType * int option                            // result, memrefType, alignment (stack, compile-time size)
+    | AllocaDynamic of result: SSA * count: SSA * elementType: MLIRType * alignment: int
     | Alloc of SSA * SSA * MLIRType                                    // result, sizeSSA, elementType (heap, runtime size)
     | Dealloc of SSA * MLIRType                                        // owned heap memref, released after its last use
     | AllocStatic of SSA * MLIRType * int option                        // result, memrefType, alignment (heap, compile-time size)
     | SubView of SSA * SSA * SSA list * MLIRType                       // result, source, offsets, resultType (legacy element access)
     | SubViewSlice of SSA * SSA * SSA list * SubViewParam list * SubViewParam list * MLIRType  // result, source, offsets, sizes, strides, sourceType (proper MLIR 3-group, strided result)
-    | SubViewCopy of SSA * SSA * SSA list * SubViewParam list * SubViewParam list * SSA * MLIRType  // result, source, offsets, sizes, strides, sizeIndexSSA, sourceType (subview → alloc → copy: fresh contiguous buffer)
     | ExtractBasePtr of SSA * SSA * MLIRType                           // result, memref, memrefType → !llvm.ptr (for FFI)
+    /// One rank-one descriptor's base buffer, element offset, extent and stride.
+    | ExtractStridedMetadata of baseBuffer: SSA * offset: SSA * size: SSA * stride: SSA * source: SSA * sourceType: MLIRType * elementType: MLIRType
     | GetGlobal of SSA * string * MLIRType                             // result, globalName, memrefType
     | Dim of SSA * SSA * SSA * MLIRType                                // result, memref, dimIndex, memrefType (returns index)
     | Cast of SSA * SSA * MLIRType * MLIRType                          // result, source, srcType, destType (memref type cast)
@@ -359,6 +377,9 @@ type MLIROp =
     | IndexOp of IndexOp
     | Block of string * MLIROp list                                 // label, ops
     | Region of MLIROp list                                         // blocks
+    /// Inert portable declaration; complete source plan remains correlated in
+    /// the catalog until the selected backend realizes its target module.
+    | SpatialModule of Clef.Compiler.PSGSaturation.SemanticGraph.Types.SpatialModuleWitness
     // Module-level declarations (backend-agnostic)
     | GlobalString of name: string * content: string * byteLength: int * obligations: string list  // obligations: anchor names of the obligations constraining this storage (PHG 2.4b), reified as {clef.obligations = [...]}
     /// One immutable allocation whose bytes and alignment were settled in the PSG.
@@ -366,6 +387,8 @@ type MLIROp =
     /// Exact source inventory accompanies writable storage. None identifies a
     /// legacy unowned declaration; it cannot pass storage correspondence.
     | GlobalMemref of string * MLIRType * Clef.Compiler.PSGSaturation.SemanticGraph.Types.ProgramStorageEntry option
+    /// Exact immutable initializer and residence authority settled by Baker.
+    | GlobalArray of string * MLIRType * Clef.Compiler.PSGSaturation.SemanticGraph.Types.MemoryArrayLiteralWitness
     // CIRCT hardware dialects (FPGA targets)
     | CombOp of CombOp
     | HWOp of HWOp
@@ -396,6 +419,8 @@ and FuncOp =
     /// Exact source boundary contract accompanies its portable physical spelling.
     /// Signedness and calling convention remain available to target realization.
     | BoundaryFuncDecl of Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryImport
+    /// Source-settled intrinsic authority, distinct from a foreign C declaration.
+    | IntrinsicWriteDecl of Clef.Compiler.PSGSaturation.SemanticGraph.Types.IntrinsicWriteImport
     // Function calls
     | FuncCall of Val list * string * Val list                                             // results, func, args
     | FuncCallIndirect of Val list * SSA * Val list                                        // results, callee, args
@@ -457,3 +482,13 @@ module BoundaryAbi =
 
     let results (declaration: Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryImport) =
         declaration.Result |> Option.map scalarType |> Option.toList
+
+module IntrinsicWriteAbi =
+    let bufferType (declaration: Clef.Compiler.PSGSaturation.SemanticGraph.Types.IntrinsicWriteImport) =
+        TMemRef(TInt(IntWidth declaration.ByteRepresentation.Bits))
+
+    let parameters (declaration: Clef.Compiler.PSGSaturation.SemanticGraph.Types.IntrinsicWriteImport) =
+        [BoundaryAbi.scalarType declaration.Fd; bufferType declaration; BoundaryAbi.scalarType declaration.Count]
+
+    let results (declaration: Clef.Compiler.PSGSaturation.SemanticGraph.Types.IntrinsicWriteImport) =
+        [BoundaryAbi.scalarType declaration.Result]

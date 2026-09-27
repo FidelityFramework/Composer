@@ -15,6 +15,7 @@ open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
 open Alex.Patterns.DUPatterns
 open Alex.Patterns.LiteralPatterns
+open Alex.CodeGeneration.TypeMapping
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -51,28 +52,16 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
 
     // DUEliminate — extract payload from DU value
     match tryMatch pDUEliminate ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-    | Some ((duValueId, caseIndex, _caseName, psgPayloadType), _) ->
+    | Some ((duValueId, caseIndex, _caseName, _), _) ->
         match MLIRAccumulator.recallNode duValueId ctx.Accumulator with
         | Some (duSSA, duType) ->
-            // The union and payload types are CCS-resolved facts on the graph; an
-            // absent scrutinee or an unresolved payload type is a settlement defect.
-            match SemanticGraph.tryGetNode duValueId ctx.Graph, psgPayloadType with
-            | None, _ ->
+            let unionIdentity = sourceTypeAt ctx.Graph duValueId
+            let payloadType = mapTypeAt node.Id ctx
+            match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType unionIdentity payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error diagnostic ->
                 WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "DUEliminate")
-                    (sprintf "PSG settlement did not settle the union type for DUEliminate %d case %d: scrutinee node %d is absent from the graph"
-                        (NodeId.value node.Id) caseIndex (NodeId.value duValueId))
-            | Some _, NativeType.TVar _ ->
-                WitnessOutput.errorCoded AX1001 (Some node.Id) (Some "DU") (Some "DUEliminate")
-                    (sprintf "CCS source checking did not settle the payload type for DUEliminate %d case %d: payload type is an unresolved type variable"
-                        (NodeId.value node.Id) caseIndex)
-            | Some scrutinee, _ ->
-                let unionNativeType = scrutinee.Type
-                let payloadType = mapType psgPayloadType ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-                match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType unionNativeType payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                | Result.Error diagnostic ->
-                    WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "DUEliminate")
-                        (sprintf "DUEliminate case %d: %s" caseIndex diagnostic)
+                    (sprintf "DUEliminate case %d: %s" caseIndex diagnostic)
         | None ->
             WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "DU") (Some "DUEliminate")
                 (sprintf "DU scrutinee node %d not yet witnessed" (NodeId.value duValueId))
@@ -102,7 +91,7 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
                     (NodeId.value node.Id) caseIndex (NodeId.value payloadId))
         | Result.Ok (meetOps, payload) ->
 
-        let duTy = mapType node.Type ctx
+        let duTy = mapTypeAt node.Id ctx
 
         match tryMatchWithDiagnostics (pBuildDUConstruct node.Id tag payload duTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
         | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }

@@ -111,104 +111,13 @@ let platformWordBits (state: PSGParserState) : int =
 let nodeRange (graph: SemanticGraph) (nodeId: NodeId) : ValueRange option =
     SemanticGraph.tryGetNode nodeId graph |> Option.bind (fun n -> n.ValueRange)
 
-/// The width of a range for a value that must have one. Defence in depth only: CCS reports
-/// CCS8011 for every reachable integer whose range has no width, and compilation does not reach
-/// Composer with an error present, so this stop names a defect of the pipeline, not of the program.
-let private widthOf (describe: string) (range: ValueRange option) : int =
-    match range with
-    | Some r ->
-        match ValueRange.width r with
-        | Some bits -> bits
-        | None ->
-            failwithf "narrowType: %s has the unobservable range %s; CCS reports that as CCS8011 before Composer runs"
-                describe (ValueRange.render r)
-    | None ->
-        failwithf "narrowType: %s has no analysed range; RangeAnalysis ranges every reachable integer, so this value is not one"
-            describe
-
-/// The extension of a value to a wider type, by the sign of the value's range (§3.1: `extui` for a
-/// non-negative range, `extsi` otherwise; never by a type name).
-let extensionOp (graph: SemanticGraph) (valueNodeId: NodeId) (ssa: SSA) (value: SSA) (fromTy: MLIRType) (toTy: MLIRType) : MLIROp =
-    match nodeRange graph valueNodeId with
-    | Some r when ValueRange.isNonNegative r -> MLIROp.ArithOp (ArithOp.ExtUI (ssa, value, fromTy, toTy))
-    | Some _ -> MLIROp.ArithOp (ArithOp.ExtSI (ssa, value, fromTy, toTy))
-    | None -> failwithf "extensionOp: node %d has no analysed range to read the extension from" (NodeId.value valueNodeId)
-
-/// A type variable the type mapping has bound, followed to what it is bound to.
-let rec private followBound (ty: NativeType) : NativeType =
-    match ty with
-    | NativeType.TVar tp ->
-        match find tp with
-        | (_, Some bound) -> followBound bound
-        | _ -> ty
-    | _ -> ty
-
-/// The range of element `index` of a tuple-valued node, read through references to the tuple
-/// expression that builds it (a reference, a binding, a block's last value, an annotation).
-let rec private tupleElementRange (graph: SemanticGraph) (nodeId: NodeId) (index: int) : ValueRange option =
-    match SemanticGraph.tryGetNode nodeId graph with
-    | Some { Kind = SemanticKind.TupleExpr ids } -> List.tryItem index ids |> Option.bind (nodeRange graph)
-    | Some { Kind = SemanticKind.VarRef (_, Some defId) } -> tupleElementRange graph defId index
-    | Some ({ Kind = SemanticKind.Binding _ } as b) -> List.tryLast b.Children |> Option.bind (fun v -> tupleElementRange graph v index)
-    | Some ({ Kind = SemanticKind.PatternBinding _ } as b) -> List.tryLast b.Children |> Option.bind (fun v -> tupleElementRange graph v index)
-    | Some { Kind = SemanticKind.Sequential ids } -> List.tryLast ids |> Option.bind (fun v -> tupleElementRange graph v index)
-    | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } -> tupleElementRange graph inner index
-    | _ -> None
-
-/// Narrow one MLIR type by the native type it was mapped from. `TInt (IntWidth 0)` is
-/// TypeMapping's sentinel for "the width is the range's" (a platform-word integer on fabric): it
-/// becomes the width of `range`. A struct's sentinel fields become the widths of the record type's
-/// `FieldRanges` (nested records by the field's declared type), a tuple's the ranges of its
-/// elements by position, an option's payload the widths of the inner type.
-let rec private narrowBy (graph: SemanticGraph) (fieldRanges: Map<NominalTypeIdentity, Map<string, ValueRange>>)
-                         (describe: string) (range: ValueRange option) (elements: (int -> ValueRange option) option)
-                         (nativeTy: NativeType option) (ty: MLIRType) : MLIRType =
-    match ty with
-    | TInt (IntWidth 0) -> TInt (IntWidth (widthOf describe range))
-    | TStruct (fields, bytes) ->
-        match nativeTy |> Option.map followBound with
-        | Some (NativeType.TApp (tycon, [ inner ])) when tycon.Name = "option" || tycon.Name = "voption" ->
-            TStruct (fields |> List.map (fun (name, fty) ->
-                if name = "value" then name, narrowBy graph fieldRanges (sprintf "the payload of %s" describe) None None (Some inner) fty
-                else name, fty), bytes)
-        | Some (NativeType.TApp (tycon, _) as instance) when (Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields instance graph).IsSome ->
-            let declared = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields instance graph |> Option.defaultValue []
-            let ranges = Map.tryFind (NominalTypeIdentity.ofConstructor tycon) fieldRanges |> Option.defaultValue Map.empty
-            TStruct (fields |> List.map (fun (name, fty) ->
-                let declaredTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd
-                name, narrowBy graph fieldRanges (sprintf "field '%s' of '%s'" name tycon.Name) (Map.tryFind name ranges) None declaredTy fty), bytes)
-        | Some (NativeType.TTuple (elementTypes, _)) ->
-            TStruct (fields |> List.mapi (fun i (name, fty) ->
-                name, narrowBy graph fieldRanges (sprintf "element %d of %s" (i + 1) describe)
-                          (elements |> Option.bind (fun f -> f i)) None (List.tryItem i elementTypes) fty), bytes)
-        | _ ->
-            TStruct (fields |> List.map (fun (name, fty) ->
-                name, narrowBy graph fieldRanges (sprintf "%s.%s" describe name) None None None fty), bytes)
-    | _ -> ty
-
-/// The width of a node's value, read from the range CCS wrote on the node
-/// (Dimensional_Range_Design.md §3.1, §8.3: every leg reads the node; plan L-7, L-7b, L-10 retired).
-/// Nothing is computed here. On fabric a width is `ValueRange.width` of a range CCS settled, and
-/// a struct's field widths are the record type's `FieldRanges`. On a core the sentinel
-/// `TInt (IntWidth 0)` of the bare integer kind becomes the node's held width
-/// (`TypeMapping.nodeWidth`: the selected representation of the node's range, the Register width
-/// at the value-call boundary, a carrier's own bits, or the one interim word); an aggregate's
-/// interior widths, offsets and size were read from the settled layouts when it was mapped, so a
-/// struct passes through. The one entry point for narrowing.
-let narrowType (coeffects: Alex.Traversal.TransferTypes.TransferCoeffects) (graph: SemanticGraph) (nodeId: NodeId) (ty: MLIRType) : MLIRType =
-    match coeffects.TargetPlatform with
-    | Core.Types.Dialects.TargetPlatform.FPGA ->
-        match SemanticGraph.tryGetNode nodeId graph with
-        | None -> failwithf "narrowType: node %d is not in the graph" (NodeId.value nodeId)
-        | Some node ->
-            let describe = sprintf "node %d (%s)" (NodeId.value nodeId) (let k = sprintf "%A" node.Kind in k.Substring(0, min 40 k.Length))
-            narrowBy graph graph.FieldRanges.Value describe node.ValueRange (Some (tupleElementRange graph nodeId)) (Some node.Type) ty
-    | _ ->
-        match ty with
-        | TInt (IntWidth 0) -> TInt (requireNodeWidth graph nodeId)
-        | TMemRef (TInt (IntWidth 0)) ->
-            failwithf "narrowType: node %d is an array whose element width the mapping did not read; arrays are mapped through the graph (TypeMapping.mapNativeTypeForTarget)" (NodeId.value nodeId)
-        | _ -> ty
+/// Exact correspondence with a published form, including every nested field.
+/// A missing width is a mismatch; this operation never completes a type.
+let requireValueType (graph: SemanticGraph) (nodeId: NodeId) (ty: MLIRType) : MLIRType =
+    let expected = valueTypeAt graph nodeId
+    if ty <> expected then
+        failwithf "Value occurrence %d has carrier %A instead of its source-published carrier %A" (NodeId.value nodeId) ty expected
+    ty
 
 /// The value a derived meet produces: the extension by the operand's sign or the truncation of a
 /// refined read that SSAAssignment derived for this consumer and operand (Coeffects.Meet). The
@@ -264,9 +173,9 @@ let pAdapt (consumer: NodeId) (operand: NodeId) (value: SSA) (ty: MLIRType) : PS
         return adaptOperand state.Coeffects state.Graph consumer operand value ty
     }
 
-/// Narrow an MLIRType by the current node's range.
-let narrowForCurrent (state: PSGParserState) (ty: MLIRType) : MLIRType =
-    narrowType state.Coeffects state.Graph state.Current.Id ty
+/// Read the current occurrence's exact published scalar or aggregate carrier.
+let requireCurrentType (state: PSGParserState) (ty: MLIRType) : MLIRType =
+    requireValueType state.Graph state.Current.Id ty
 
 /// Get the target architecture
 let targetArch (state: PSGParserState) : Architecture =
@@ -280,11 +189,6 @@ let mainReturnType (state: PSGParserState) : MLIRType =
 /// Get the appropriate type for nativeint/unativeint
 let nativeIntType (state: PSGParserState) : MLIRType =
     state.Platform.PlatformWordType
-
-/// Map NTUKind to MLIRType: the bare integer kind is the sentinel on every substrate, narrowed
-/// at its node by `narrowForCurrent`.
-let mapNTUKindForPlatform (_state: PSGParserState) (kind: NTUKind) : MLIRType =
-    Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType kind
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSA COEFFECT EXTRACTION (monadic access to pre-computed SSAs)
@@ -329,11 +233,9 @@ let getPlatform : PSGParser<Alex.Traversal.TransferTypes.PlatformReads> =
 let getTargetPlatform : PSGParser<Core.Types.Dialects.TargetPlatform> =
     getUserState |>> (fun state -> state.Coeffects.TargetPlatform)
 
-/// Combinator-layer type mapping — delegates to mapNativeTypeForTarget.
-/// Extracts platform, architecture, and graph from PSGParserState.
-let pMapType (ty: NativeType) : PSGParser<MLIRType> =
-    getUserState |>> fun state ->
-        mapNativeTypeForTarget state.Coeffects.TargetPlatform state.Coeffects.Platform.TargetArch state.Graph ty
+/// Read the exact representation of the named source value occurrence.
+let pValueType (nodeId: NodeId) : PSGParser<MLIRType> =
+    getUserState |>> fun state -> valueTypeAt state.Graph nodeId
 
 /// Set current node in state
 let setCurrentNode (node: SemanticNode) : PSGParser<unit> =
@@ -944,6 +846,40 @@ let ensure (condition: bool) (errorMsg: string) : PSGParser<unit> =
         preturn ()
     else
         fail (Message errorMsg)
+
+/// Compose an exact source-published numeric adaptation. None is the source's
+/// equality judgment; it cannot authorize discovery of a different alias meet.
+let pPublishedAdapt (consumer: NodeId) (operand: NodeId) (adaptation: Meet option) (value: Val) : PSGParser<MLIROp list * Val> =
+    parser {
+        let! state = getUserState
+        let settled = Alex.Traversal.TransferTypes.meetFor state.Graph consumer operand |> Option.map fst
+        do! ensure (settled = adaptation) "Published adaptation disagrees with its exact source numeric meet."
+        match adaptation with
+        | None -> return [], value
+        | Some meet ->
+            do! ensure (meet.Consumer = consumer && meet.Operand = operand) "Published adaptation names different source participants."
+            let fromType =
+                match meet.Adapt with
+                | MeetKind.ExtendFloat | MeetKind.TruncateFloat -> floatType meet.From
+                | _ -> TInt(IntWidth meet.From)
+            do! ensure (value.Type = fromType) "Published adaptation disagrees with the witnessed operand type."
+            let! operations, result, resultType = pAdapt consumer operand value.SSA value.Type
+            return operations, { SSA = result; Type = resultType }
+    }
+
+/// Read a source-settled meet and require its result to match the separately
+/// published destination carrier. Missing adaptation cannot become a cast
+/// chosen by comparing physical widths or inspecting the operand's range.
+let pSettledAdaptTo (consumer: NodeId) (operand: NodeId) (expected: MLIRType) (value: Val) : PSGParser<MLIROp list * Val> =
+    parser {
+        let! state = getUserState
+        let adaptation = Alex.Traversal.TransferTypes.meetFor state.Graph consumer operand |> Option.map fst
+        let! operations, adapted = pPublishedAdapt consumer operand adaptation value
+        do! ensure (adapted.Type = expected)
+                (sprintf "Source numeric meet for consumer %d operand %d does not establish destination carrier %A (got %A)"
+                    (NodeId.value consumer) (NodeId.value operand) expected adapted.Type)
+        return operations, adapted
+    }
 
 /// Run a parser using zipper
 /// Coeffects and Accumulator must be passed explicitly (not part of zipper)

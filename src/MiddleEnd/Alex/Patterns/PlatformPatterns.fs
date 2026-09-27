@@ -51,24 +51,70 @@ let pBoundaryImports : PSGParser<MLIROp list> =
                     let! following = witness rest
                     return operation :: following
         }
-        return! witness imports
+        let! foreign = witness imports
+        let declarations = boundary.IntrinsicWriteImports.Values |> Seq.filter (fun declaration -> declaration.Scope = node.Id) |> Seq.toList
+        let rec intrinsicImports declarations : PSGParser<MLIROp list> = parser {
+            match declarations with
+            | [] -> return []
+            | declaration :: rest ->
+                let! operation = pPublishedIntrinsicWriteDecl declaration
+                let! following = intrinsicImports rest
+                return operation :: following
+        }
+        let! intrinsic = intrinsicImports declarations
+        return foreign @ intrinsic
     }
 
 /// The source owns whether an adaptation exists and its exact operation.
 /// SSA naming and checking physical correspondence are witness bookkeeping.
 let private pBoundaryAdapt (consumer: NodeId) (operand: NodeId) (adaptation: Meet option) (value: Val) : PSGParser<MLIROp list * Val> =
-    parser {
-        let! state = getUserState
-        let settled = meetFor state.Graph consumer operand |> Option.map fst
-        do! ensure (settled = adaptation) "Published boundary adaptation disagrees with its exact source numeric meet."
-        match adaptation with
-        | None -> return [], value
-        | Some meet ->
-            do! ensure (meet.Consumer = consumer && meet.Operand = operand) "Published boundary adaptation names different source participants."
-            do! ensure (value.Type = TInt(IntWidth meet.From)) "Published boundary adaptation disagrees with the witnessed operand type."
-            let! operations, result, resultType = pAdapt consumer operand value.SSA value.Type
-            return operations, { SSA = result; Type = resultType }
-    }
+    pPublishedAdapt consumer operand adaptation value
+
+/// Immutable byte borrowing is already established by Baker. Physical witnessing
+/// shares the source descriptor; it neither allocates nor reconstructs its extent.
+let pPublishedByteView : PSGParser<MLIROp list * TransferResult> = parser {
+    let! node = getCurrentNode
+    let! boundary = pBoundary
+    match boundary.ByteViews.TryFind node.Id with
+    | None -> return! fail (Message "Byte view lacks its source-published borrowing contract.")
+    | Some view ->
+        let! source, ty = pRecallNode view.Source
+        let expected = TMemRef(TInt(IntWidth view.Representation.Bits))
+        do! ensure (ty = expected) "Byte view source carrier disagrees with its published encoding representation."
+        return [], TRValue { SSA = source; Type = expected }
+}
+
+/// The intrinsic has an explicit fd, bounded view and count. Every scalar
+/// adaptation is the exact source meet; buffer bounds are not inferred here.
+let pIntrinsicWrite : PSGParser<MLIROp list * TransferResult> = parser {
+    let! node = getCurrentNode
+    let! boundary = pBoundary
+    match boundary.IntrinsicWrites.TryFind node.Id with
+    | None -> return! fail (Message "Intrinsic write lacks its source-published contract.")
+    | Some call ->
+        match boundary.IntrinsicWriteImports.TryFind call.Import with
+        | None -> return! fail (Message "Intrinsic write names an absent source-published declaration.")
+        | Some declaration ->
+            let! fdSSA, fdType = pRecallNode call.Fd
+            let! fdOps, fd = pBoundaryAdapt node.Id call.Fd call.FdAdaptation { SSA = fdSSA; Type = fdType }
+            let! bufferSSA, bufferType = pRecallNode call.Buffer
+            let! countSSA, countType = pRecallNode call.Count
+            let! countOps, count =
+                if call.Count = call.Fd then parser {
+                    do! ensure (call.CountAdaptation = call.FdAdaptation && countSSA = fdSSA && countType = fdType)
+                            "Repeated intrinsic actual disagrees with its published meet or witnessed value."
+                    return [], fd
+                }
+                else pBoundaryAdapt node.Id call.Count call.CountAdaptation { SSA = countSSA; Type = countType }
+            let values = [fd; { SSA = bufferSSA; Type = bufferType }; count]
+            do! ensure (List.map _.Type values = IntrinsicWriteAbi.parameters declaration)
+                    "Intrinsic write operands disagree with the source-published ABI."
+            let! resultSSA = getNodeSSA node.Id
+            let raw = { SSA = resultSSA; Type = BoundaryAbi.scalarType declaration.Result }
+            let! operation = pFuncCallResults [raw] declaration.Symbol values
+            let! resultOps, result = pBoundaryAdapt node.Id node.Id call.ResultAdaptation raw
+            return fdOps @ countOps @ [operation] @ resultOps, TRValue result
+}
 
 /// Witness a settled call. Missing publication is a refusal, never permission to
 /// inspect a descriptor, infer marshalling from an MLIR type or create an import.

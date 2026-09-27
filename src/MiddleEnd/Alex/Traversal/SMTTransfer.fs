@@ -312,6 +312,82 @@ let private scope (ob: ObligationInfo) : MLIROp list =
             integerComparisons [ lower, value; value, upper ]
         | ObligationBody.IntegerRepresentationCoverage (lower, upper, minimum, maximum) ->
             integerComparisons [ minimum, lower; lower, upper; upper, maximum ]
+        | ObligationBody.IntegerDivisorNonzero (lower, upper) ->
+            let lo, hi, zero = v (), v (), v ()
+            let ordered, negative, positive, excludesZero, conclusion = v (), v (), v (), v (), v ()
+            anchor conclusion
+                [ smt (SMTBigIntConstant(lo, lower)); smt (SMTBigIntConstant(hi, upper)); smt (SMTBigIntConstant(zero, 0I))
+                  smt (SMTIntCmp(ordered, SmtLe, lo, hi))
+                  smt (SMTIntCmp(negative, SmtLt, hi, zero)); smt (SMTIntCmp(positive, SmtGt, lo, zero))
+                  smt (SMTOr(excludesZero, [negative; positive]))
+                  smt (SMTAnd(conclusion, [ordered; excludesZero])) ]
+        | ObligationBody.IntegerShiftCount (lower, upper, bits) ->
+            let lo, hi, zero, width = v (), v (), v (), v ()
+            let positive, nonnegative, ordered, belowWidth, conclusion = v (), v (), v (), v (), v ()
+            anchor conclusion
+                [ smt (SMTBigIntConstant(lo, lower)); smt (SMTBigIntConstant(hi, upper))
+                  smt (SMTBigIntConstant(zero, 0I)); smt (SMTBigIntConstant(width, bigint bits))
+                  smt (SMTIntCmp(positive, SmtGt, width, zero)); smt (SMTIntCmp(nonnegative, SmtLe, zero, lo))
+                  smt (SMTIntCmp(ordered, SmtLe, lo, hi)); smt (SMTIntCmp(belowWidth, SmtLt, hi, width))
+                  smt (SMTAnd(conclusion, [positive; nonnegative; ordered; belowWidth])) ]
+        | ObligationBody.SpatialKernelPartition(elements, grain, columns, slices, depth, iterations) ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let result = v ()
+                statements.Add(smt (SMTBigIntConstant(result, value)))
+                result
+            let cmp predicate left right =
+                let result = v ()
+                statements.Add(smt (SMTIntCmp(result, predicate, left, right)))
+                result
+            let binary operation left right =
+                let result = v ()
+                statements.Add(smt (operation(result, left, right)))
+                result
+            let equal = binary (fun (result, left, right) -> SMTEq(result, left, right, SMTInt))
+            let zero, extent, grain = constant 0I, constant elements, constant grain
+            let columns, depth, iterations = constant(bigint columns), constant(bigint depth), constant iterations
+            let count = constant(bigint slices.Length)
+            let terms = slices |> List.map (fun (column, offset, count) -> constant(bigint column), constant offset, constant count)
+            let ends = terms |> List.map (fun (_, offset, count) -> binary SMTIntAdd offset count)
+            let clauses =
+                [ yield cmp SmtGt extent zero; yield cmp SmtGt grain zero; yield cmp SmtGt columns zero
+                  yield cmp SmtGt depth zero; yield cmp SmtGt iterations zero; yield cmp SmtGt count zero
+                  yield equal extent (binary SMTIntMul count grain)
+                  for ordinal, (column, offset, size) in List.indexed terms do
+                      yield cmp SmtLe zero column; yield cmp SmtLt column columns; yield cmp SmtLe zero offset
+                      yield equal size grain
+                      yield equal offset (if ordinal = 0 then zero else ends[ordinal - 1])
+                      yield cmp SmtLe ends[ordinal] extent
+                      for other, _, _ in terms |> List.take ordinal do
+                          let same, different = equal column other, v ()
+                          statements.Add(smt (SMTNot(different, same)))
+                          yield different
+                  yield equal (List.tryLast ends |> Option.defaultValue zero) extent ]
+            let conclusion = v ()
+            statements.Add(smt (SMTAnd(conclusion, clauses)))
+            anchor conclusion (List.ofSeq statements)
+        | ObligationBody.StringBorrowBound origins ->
+            let statements = ResizeArray<MLIROp>()
+            let constant value =
+                let output = v ()
+                statements.Add(smt (SMTBigIntConstant(output, value)))
+                output
+            let comparison predicate left right =
+                let output = v ()
+                statements.Add(smt (SMTIntCmp(output, predicate, left, right)))
+                output
+            let zero = constant 0I
+            // A missing origin domain is a false claim, not a vacuous proof.
+            let nonempty = comparison SmtGt (constant (bigint origins.Length)) zero
+            let clauses = origins |> List.collect (fun (count, extent, storage) ->
+                let count, extent, storage = constant count, constant extent, constant storage
+                let sameExtent = v ()
+                statements.Add(smt (SMTEq(sameExtent, count, extent, SMTInt)))
+                [comparison SmtLe zero count; sameExtent; comparison SmtLt extent storage])
+            let conclusion = v ()
+            statements.Add(smt (SMTAnd(conclusion, nonempty :: clauses)))
+            anchor conclusion (List.ofSeq statements)
         | ObligationBody.RealLiteralRange (value, lower, upper) ->
             rationalComparisons [ lower, value; value, upper ]
         | ObligationBody.RealRepresentationCoverage (lower, upper, minimum, maximum) ->
@@ -732,7 +808,9 @@ let private scope (ob: ObligationInfo) : MLIROp list =
 /// The verification module from the graph's obligations.
 /// Pure function: ObligationInfo list -> MLIR text. The list is
 /// ObligationDischarge.ofGraph, the same list the design-time dispatch rendered.
+let operations (obs: ObligationInfo list) : MLIROp list =
+    obs |> List.collect scope
+
 let transfer (obs: ObligationInfo list) : string =
-    obs
-    |> List.collect scope
+    operations obs
     |> moduleToString (Error "the obligations module carries no pointer-sized type") "obligations"

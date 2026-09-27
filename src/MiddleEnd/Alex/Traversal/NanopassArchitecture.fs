@@ -69,6 +69,27 @@ let private definitionOnlyLambda (node: SemanticNode) (graph: SemanticGraph) : R
     | Result.Ok callable, Result.Ok storage ->
         Result.Ok (callable.DefinitionOnlyLambdas.Contains node.Id || storage.DefinitionOnlyThunks.Contains node.Id)
 
+/// The source owner identifies scalar result occurrences independently of
+/// numeric declaration/slot carriers. This check cannot classify an exception
+/// from a node's syntax or invent a missing representation.
+let private validateNumericResult graph nodeId result =
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryNumeric graph with
+    | Result.Error reason -> Result.Error ("Source Numeric publication is unavailable: " + reason)
+    | Result.Ok publication when publication.ResultSites.Contains nodeId ->
+        match result with
+        | TRError _ | TRSkip -> Result.Ok ()
+        | TRValue value ->
+            match publication.Values.TryFind nodeId with
+            | None -> Result.Error (sprintf "Source Numeric publication omitted the required result carrier for node %d" (NodeId.value nodeId))
+            | Some carrier ->
+                try
+                    let expected = Alex.CodeGeneration.TypeMapping.scalarCarrierType carrier
+                    if value.Type = expected then Result.Ok ()
+                    else Result.Error (sprintf "Witness result at node %d has carrier %A; source Numeric publication requires %A" (NodeId.value nodeId) value.Type expected)
+                with error -> Result.Error error.Message
+        | _ -> Result.Error (sprintf "Witness result at node %d omitted its source-published scalar value" (NodeId.value nodeId))
+    | Result.Ok _ -> Result.Ok ()
+
 /// Visit all nodes in post-order (children before parents)
 /// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
 /// Post-order ensures children's SSA bindings are available when parent witnesses
@@ -86,6 +107,7 @@ let rec visitAllNodes
     // it performs no source incidence analysis or hyperedge query.
     let demand = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary visitedCtx.Graph
     let boundary = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryBoundary visitedCtx.Graph
+    let spatial = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.trySpatial visitedCtx.Graph
     let definitionReuse =
         if Set.contains currentNode.Id !(visitedCtx.GlobalVisited) then definitionOnlyLambda currentNode visitedCtx.Graph
         else Result.Ok false
@@ -105,6 +127,12 @@ let rec visitAllNodes
         Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "source boundary projection") reason
         |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
     elif boundary |> Result.exists (fun projection -> projection.DeclarationOnly.Contains currentNode.Id) then
+        ()
+    elif Result.isError spatial then
+        let reason = match spatial with Result.Error reason -> reason | _ -> invalidOp "Expected absent spatial publication"
+        Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "source spatial projection") reason
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+    elif spatial |> Result.exists (fun projection -> projection.MetadataOnly.Contains currentNode.Id) then
         ()
     elif Set.contains currentNode.Id !visited then
         ()
@@ -129,7 +157,8 @@ let rec visitAllNodes
 
         // POST-ORDER Phase 1: Visit children FIRST (tree edges)
         // Navigate down to each child via PSGZipper.down — preserves breadcrumbs.
-        let declarationLeaf = boundary |> Result.exists (fun projection -> projection.DeclarationLeaves.Contains currentNode.Id)
+        let declarationLeaf = (boundary |> Result.exists (fun projection -> projection.DeclarationLeaves.Contains currentNode.Id)) ||
+                              (spatial |> Result.exists (fun projection -> projection.Required.Contains currentNode.Id))
         if not (isScopeBoundary currentNode) && not declarationLeaf then
             if traceTraversal then printfn "[visitAllNodes] Node %A: visiting %d children" currentNode.Id currentNode.Children.Length
             let omittedActuals =
@@ -167,7 +196,15 @@ let rec visitAllNodes
         // settlement gap reported by the reference witness, never repaired here.
 
         // THEN witness current node (after its structural children)
-        let output = witness visitedCtx currentNode
+        let witnessed = witness visitedCtx currentNode
+        // The combined registry has already tried skipped witnesses. Validate
+        // the chosen result before committing its operations or recalled value.
+        let numericAdmission = validateNumericResult visitedCtx.Graph currentNode.Id witnessed.Result
+        let output =
+            match numericAdmission with
+            | Result.Ok () -> witnessed
+            | Result.Error reason ->
+                WitnessOutput.errorCoded AX4001 (Some currentNode.Id) (Some "Traversal") (Some "published numeric result") reason
         if traceTraversal then printfn "[visitAllNodes] Node %A: witness returned %A" currentNode.Id output.Result
 
         // InlineOps belong to the current scope, exactly where the settled graph places the node.
@@ -188,7 +225,9 @@ let rec visitAllNodes
         // DU/record) cannot place a module-scope decl itself, so it queues on the accumulator;
         // draining centrally here routes them to RootScopeContext for every construction path
         // (DU, Option, List, Map, Set, Result) without each witness having to remember.
-        let pendingStaticGlobals = MLIRAccumulator.drainPendingStaticGlobals visitedCtx.Accumulator
+        let pendingStaticGlobals =
+            if Result.isOk numericAdmission then MLIRAccumulator.drainPendingStaticGlobals visitedCtx.Accumulator
+            else []
         if not (List.isEmpty pendingStaticGlobals) then
             EmissionCorrespondence.record visitedCtx pendingStaticGlobals
             let updatedRootScope = ScopeContext.addOps pendingStaticGlobals !visitedCtx.RootScopeContext
@@ -318,14 +357,21 @@ let runAllNanopasses
     // reachability. A declaration-only module still owns its physical imports.
     let boundaryScopes =
         match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryBoundary graph with
-        | Result.Ok boundary -> boundary.ByScope
+        | Result.Ok boundary ->
+            Set.union (boundary.ByScope.Keys |> Set.ofSeq)
+                      (boundary.IntrinsicWriteImports.Values |> Seq.map _.Scope |> Set.ofSeq)
         | Result.Error reason -> invalidOp reason
+    let spatial =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.trySpatial graph with
+        | Result.Ok projection -> projection
+        | Result.Error reason -> invalidOp reason
+    let sourceRoots = Set.unionMany [boundaryScopes; spatial.ByScope.Keys |> Set.ofSeq; spatial.Required; spatial.CodeRoots]
 
     // Process a single structural root node
     let processRoot (nodeId: NodeId) =
         if not (Set.contains nodeId !globalVisited) then
             match SemanticGraph.tryGetNode nodeId graph with
-            | Some node when node.IsReachable || boundaryScopes.ContainsKey nodeId ->
+            | Some node when node.IsReachable || sourceRoots.Contains nodeId ->
                 if traceTraversal then printfn "[DEBUG] Processing root node %d (%A)" (NodeId.value nodeId) node.Kind
                 match PSGZipper.create graph nodeId with
                 | None ->
@@ -356,13 +402,15 @@ let runAllNanopasses
     // The graph's declaration roots own execution. In particular, Baker's
     // startup root contains its ordered initializer spine; a witness never
     // discovers or schedules initialization from lexical module membership.
+    for codeRoot in spatial.CodeRoots do
+        processRoot codeRoot
     for nodeId, _ in graph.DeclarationRoots do
         processRoot nodeId
     for KeyValue(moduleId, classification) in graph.ModuleClassifications.Value do
         for definition in classification.Definitions do
             processRoot definition
         processRoot moduleId
-    for KeyValue(scope, _) in boundaryScopes do
+    for scope in sourceRoots do
         processRoot scope
 
 /// Main entry point: Execute all nanopasses and return accumulator

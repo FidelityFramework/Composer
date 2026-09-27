@@ -57,6 +57,9 @@ let pPublishedFuncDecl (declaration: BoundaryImport) : PSGParser<MLIROp> =
         return MLIROp.FuncOp (FuncOp.BoundaryFuncDecl declaration)
     }
 
+let pPublishedIntrinsicWriteDecl (declaration: IntrinsicWriteImport) : PSGParser<MLIROp> =
+    preturn (MLIROp.FuncOp (FuncOp.IntrinsicWriteDecl declaration))
+
 let pFuncDeclResults (name: string) (argTypes: MLIRType list) (resultTypes: MLIRType list)
                   (visibility: FuncVisibility) : PSGParser<MLIROp> =
     parser {

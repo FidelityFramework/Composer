@@ -116,20 +116,21 @@ let private requireCompatibleTarget (options: CompilationOptions) (project: Proj
             | _ -> Ok project
     | _ -> Ok project)
 
-let private runMiddleEnd timing (project: ProjectCheckResult) (ctx: CompilationContext) : Result<BackEndInput * Set<string>, string> =
+let private runMiddleEnd timing (project: ProjectCheckResult) (ctx: CompilationContext) sourceProof : Result<BackEndInput * Set<string>, string> =
     timePhase timing "MiddleEnd" "MLIR Generation" (fun () ->
         // Get platform context from CCS
         match Core.CCS.Integration.platformContext project.CheckResult with
         | None -> Error "No platform context available from CCS"
         | Some platformCtx ->
-            // Delegate to MiddleEnd - it orchestrates PSGElaboration + Alex
-            MiddleEnd.MLIRGeneration.generateWithLinkedLibraries
+            // Witness the settled program and its retained proof obligations.
+            MiddleEnd.MLIRGeneration.generateWithLinkedLibrariesAndProof
                 project.CheckResult.Graph
                 platformCtx
                 ctx.DeploymentMode
                 ctx.TargetPlatform
                 ctx.IntermediatesDir
-                (Set.ofList project.Options.LinkedLibraries))
+                (Set.ofList project.Options.LinkedLibraries)
+                (Some sourceProof))
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Context Setup
@@ -238,8 +239,12 @@ let compileProject (options: CompilationOptions) : int =
             printfn "Output:   %s" ctx.OutputPath
             printfn ""
 
-            // Phase 2: MiddleEnd - Generate MLIR from PSG (target-agnostic)
-            runMiddleEnd timing project ctx
+            // Source obligations discharge against this exact PSG before Alex
+            // witnesses them. The MLIR and linked-artifact stages discharge
+            // independently and retain their own evidence.
+            timePhase timing "FrontEnd.ProofDischarge" "PSG proof discharge" (fun () ->
+                Core.ProofDispatch.dischargeSource project.CheckResult.Graph ctx.IntermediatesDir)
+            |> Result.bind (runMiddleEnd timing project ctx)
             |> Result.bind (fun (witnessed, externLibraries) ->
                 // Write MLIR to intermediates (if enabled)
                 if ctx.IntermediatesDir.IsSome then

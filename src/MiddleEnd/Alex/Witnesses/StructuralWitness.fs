@@ -49,7 +49,7 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
             | Result.Error reason -> WitnessOutput.error $"Sequence-valued block: {reason}"
 
-    | SemanticKind.Sequential childIds when (match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with NativeType.TFun _ -> true | _ -> false) ->
+    | SemanticKind.Sequential childIds when isCallableValue ctx node ->
         match List.tryLast childIds with
         | None -> WitnessOutput.error "Callable sequence has no final value occurrence."
         | Some source ->
@@ -68,9 +68,9 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
             let lastChildId = List.last childIds
             match MLIRAccumulator.recallNode lastChildId ctx.Accumulator with
             | Some (ssa, ty) ->
-                // Forward last child's result as this Sequential's result
-                MLIRAccumulator.bindNode node.Id ssa ty ctx.Accumulator
-                { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+                // Return the forwarded value through the common correspondence
+                // check and binding point; this witness does not mutate it.
+                { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = ssa; Type = ty } }
             | None when Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id ->
                 // A unit-typed block's last child produces no value
                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }

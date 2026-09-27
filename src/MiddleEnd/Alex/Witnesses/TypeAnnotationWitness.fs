@@ -10,13 +10,12 @@
 /// - Proper debug tooling for transparency
 module Alex.Witnesses.TypeAnnotationWitness
 
+open Clef.Compiler.NativeTypedTree.NativeTypes // NodeId identities
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Clef.Compiler.PSGSaturation.SemanticGraph.Core
-open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
+open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
-open Alex.XParsec.PSGCombinators  // For findLastValueNode
 open Alex.Patterns.CallablePatterns
 open Alex.Patterns.SequencePatterns
 open Alex.Patterns.LazyPatterns
@@ -58,34 +57,19 @@ let private witnessTypeAnnotation (ctx: WitnessContext) (node: SemanticNode) : W
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
             | Result.Error reason ->
                 WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Callable") (Some "annotation") reason
+        | Some (CallableValueShape.Data owner) when owner = node.Id ->
+            // The wrapped occurrence already witnessed its own result. Forward it
+            // through the common result check; do not search inside its structure.
+            match MLIRAccumulator.recallNode wrappedId ctx.Accumulator with
+            | Some (wrappedSSA, wrappedType) ->
+                { InlineOps = []; TopLevelOps = []; Result = TRValue { SSA = wrappedSSA; Type = wrappedType } }
+            | None when Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id -> WitnessOutput.empty
+            | None ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "TypeAnnotation") (Some "transparent forward")
+                    $"Wrapped occurrence {NodeId.value wrappedId} produced no witnessed value for annotation {NodeId.value node.Id}."
         | Some _ ->
-        // Traverse Sequential structure to find actual value-producing node
-        // Sequential nodes are structural scaffolding - not witnesses
-        let actualValueNode = findLastValueNode wrappedId ctx.Graph
-
-        // Recall the actual value node's result from accumulator
-        // TypeAnnotation is transparent - it forwards whatever the wrapped node produced
-        match MLIRAccumulator.recallNode actualValueNode ctx.Accumulator with
-        | Some (wrappedSSA, wrappedType) ->
-            // Bind this node to the wrapped result (transparent pass-through)
-            MLIRAccumulator.bindNode node.Id wrappedSSA wrappedType ctx.Accumulator
-            // Return empty - TypeAnnotation doesn't generate operations, just forwards results
-            WitnessOutput.empty
-
-        | None when Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id ->
-            // A unit-typed annotation forwards no value
-            WitnessOutput.empty
-
-        | None ->
-            match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with
-            | NativeType.TFun _ | NativeType.TForall _ ->
-                // A function-typed annotation outside a callable value role
-                // (a settled direct callee) carries no value operand
-                WitnessOutput.empty
-            | _ ->
-                WitnessOutput.errorDiag (
-                    Diagnostic.error (Some node.Id) (Some "TypeAnnotation") (Some "transparent forward")
-                        $"TypeAnnotation node {NodeId.value node.Id} of non-unit type {node.Type}: wrapped value node {NodeId.value actualValueNode} produced no witnessed value to forward")
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "TypeAnnotation") (Some "value shape")
+                "The published annotation shape does not identify this occurrence's supported value form."
 
     | None -> WitnessOutput.skip
 

@@ -11,9 +11,16 @@
     <Compile Include="ZipperTests.fs" />
     <Compile Include="WitnessRegistryTests.fs" />
     <Compile Include="IndexPatternTests.fs" />
+    <Compile Include="NumericPublicationTests.fs" />
     <Compile Include="MlirComponentTests.fs" />
+    <Compile Include="NumericOperationTests.fs" />
+    <Compile Include="KernelModuleTests.fs" />
+    <Compile Include="HardwareModuleTests.fs" />
     <Compile Include="FunctionResultTests.fs" />
     <Compile Include="ForeignDeclarationTests.fs" />
+    <Compile Include="IntrinsicWriteWitnessTests.fs" />
+    <Compile Include="MemoryWitnessTests.fs" />
+    <Compile Include="StringComparisonWitnessTests.fs" />
     <Compile Include="StringBoundaryTests.fs" />
     <Compile Include="UnitResultTests.fs" />
     <Compile Include="IndexSwitchTests.fs" />
@@ -34,7 +41,9 @@
     <Compile Include="EagerWitnessTests.fs" />
     <Compile Include="RawConstantMatchTests.fs" />
     <Compile Include="LLVMRequirementTests.fs" />
+    <Compile Include="ArtifactProofTests.fs" />
     <Compile Include="BoundaryAbiTests.fs" />
+    <Compile Include="LLVMIntrinsicWriteTests.fs" />
     <Compile Include="WritableStorageTests.fs" />
     <Compile Include="AggregatePatternTests.fs" />
     <Compile Include="UnionLayoutPatternTests.fs" />

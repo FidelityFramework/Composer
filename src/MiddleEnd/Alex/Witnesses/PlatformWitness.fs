@@ -17,6 +17,8 @@ let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : Witness
     | Result.Ok boundary ->
         let pattern =
             if boundary.Calls.ContainsKey node.Id then Some pBoundaryCall
+            elif boundary.ByteViews.ContainsKey node.Id then Some pPublishedByteView
+            elif boundary.IntrinsicWrites.ContainsKey node.Id then Some pIntrinsicWrite
             elif boundary.DeclarationLeaves.Contains node.Id then Some pBoundaryDeclaration
             else None
         match pattern with

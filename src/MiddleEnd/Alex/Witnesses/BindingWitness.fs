@@ -22,6 +22,7 @@ open Alex.Patterns.MutableCallablePatterns
 open Alex.Patterns.SequencePatterns
 open Alex.Patterns.LazyPatterns
 open Alex.Dialects.Core.Types
+open XParsec.Combinators
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
@@ -106,7 +107,7 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         | Some (initialSSA, initialTy) ->
                             let meetOps, valueSSA, _ = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId initialSSA initialTy
                             // the slot's element type at the binding's range width on fabric
-                            let valueTy = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                            let valueTy = mapTypeAt node.Id ctx
                             let globalName = ModuleValues.globalName name node.Id
                             match tryMatchWithDiagnostics (pGlobalSlotInit node.Id globalName valueSSA valueTy)
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -125,11 +126,12 @@ let private witnessBinding (ctx: WitnessContext) (node: SemanticNode) : WitnessO
                         | Some (rawInitSSA, rawInitTy) ->
                             let (NodeId nodeIdInt) = node.Id
                             let (meetOps, initSSA, initTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawInitSSA rawInitTy
-                            let elemType =
-                                match mapTypeAt node.Id node.Type ctx with
-                                | TInt (IntWidth 0) -> narrowType ctx.Coeffects ctx.Graph node.Id (TInt (IntWidth 0))
-                                | _ -> initTy
-                            match tryMatchWithDiagnostics (pBuildMutableBinding nodeIdInt elemType initSSA)
+                            let elemType = mapTypeAt node.Id ctx
+                            let pattern = parser {
+                                do! ensure (initTy = elemType) "Mutable initializer lacks the source-settled cell representation."
+                                return! pBuildMutableBinding nodeIdInt elemType initSSA
+                              }
+                            match tryMatchWithDiagnostics pattern
                                           ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                             | Result.Ok ((ops, result), _) ->
                                 { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }

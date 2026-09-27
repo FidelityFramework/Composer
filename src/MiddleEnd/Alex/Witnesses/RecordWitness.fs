@@ -29,7 +29,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
     | Some ((fields, copyFrom), _) ->
         // RecordExpr: field value nodes are already walked in post-order.
         // Recall each field value SSA from accumulator.
-        let structTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+        let structTy = mapTypeAt node.Id ctx
 
         let fieldValues =
             fields |> List.choose (fun (fieldName, fieldNodeId) ->
@@ -63,8 +63,7 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
         match node.Kind with
         | SemanticKind.TupleExpr elements ->
             // Map tuple type to TStruct with Item1, Item2, ... fields
-            // the tuple's struct at its settled layout (mapType reads it from the graph)
-            let structTy = mapType node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+            let structTy = mapTypeAt node.Id ctx
 
             // Recall each element's SSA from the accumulator (children already walked in post-order)
             let fieldValues =

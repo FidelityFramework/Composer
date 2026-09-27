@@ -29,7 +29,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
     | Some (info, _) ->
         match info.Operation with
         | "empty" ->
-            let mapTy = mapType node.Type ctx
+            let mapTy = mapTypeAt node.Id ctx
 
             match tryMatchWithDiagnostics (pMapEmpty node.Id mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -43,7 +43,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let keyType = mapType node.Type ctx
+                    let keyType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pMapKey node.Id mapSSA keyType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -56,7 +56,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let valueType = mapType node.Type ctx
+                    let valueType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pMapValue node.Id mapSSA valueType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -69,7 +69,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let subtreeType = mapType node.Type ctx
+                    let subtreeType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pMapLeft node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -82,7 +82,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let subtreeType = mapType node.Type ctx
+                    let subtreeType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pMapRight node.Id mapSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -95,7 +95,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (mapSSA, _) ->
-                    let heightType = mapType node.Type ctx
+                    let heightType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pMapHeight node.Id mapSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -116,7 +116,7 @@ let private witnessMap (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     let value = { SSA = valueSSA; Type = valueType }
                     let left = { SSA = leftSSA; Type = leftType }
                     let right = { SSA = rightSSA; Type = rightType }
-                    let mapTy = mapType node.Type ctx
+                    let mapTy = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pMapAdd node.Id key value left right mapTy) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

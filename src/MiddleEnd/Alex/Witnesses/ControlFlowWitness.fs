@@ -118,7 +118,7 @@ let private witnessContinuationDispatch getCombinator (ctx: WitnessContext) (nod
                 let isUnit = Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id
                 let result =
                     if isUnit then None
-                    else Some (Alex.Traversal.Values.value node.Id 0, mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id)
+                    else Some (Alex.Traversal.Values.value node.Id 0, mapTypeAt node.Id ctx)
                 let dispatch = pBuildContinuationDispatch node.Id selector branches fallback result
                 if isUnit then Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id dispatch else dispatch
         match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
@@ -194,7 +194,7 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                     let build result = pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result node.Id
                     if isUnit then Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id (build None)
                     else
-                        let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                        let resultType = mapTypeAt node.Id ctx
                         // A valued conditional carries its derived result value; an absent one is
                         // a settlement defect, never a unit conditional.
                         XParsec.Combinators.parser {

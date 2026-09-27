@@ -1,160 +1,146 @@
 module Alex.Tests.StringBoundaryTests
 
 open Xunit
-open Clef.Compiler.NativeTypedTree.NativeTypes
+open System.Diagnostics
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
-open Clef.Compiler.PSGSaturation.SemanticGraph.NodeBuilder
 open Alex.Dialects.Core.Types
-open Alex.Traversal.TransferTypes
-open Alex.Patterns.StringPatterns
-open Alex.Patterns.MemoryPatterns
-open Alex.CodeGeneration.TypeMapping
-open Alex.Tests.Fixtures
-module Zipper = Alex.Traversal.PSGZipper
+module Publication = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission
 
-/// The source byte-array signature is fixed; tests supply the actual recalled
-/// physical operand to exercise Alex's settled-representation boundary.
-let private fixture () =
-    let builder = NodeBuilder()
-    let arrayType = Types.mkArrayType Types.uint8Type
-    let input = builder.Create(SemanticKind.PatternBinding "bytes", arrayType, dummyRange)
-    let intrinsic = builder.Create(
-        SemanticKind.Intrinsic
-            { Module = IntrinsicModule.String; Operation = "fromBytes"
-              Category = IntrinsicCategory.StringOp; FullName = "String.fromBytes" },
-        NativeType.TFun(arrayType, Types.stringType), dummyRange)
-    let call = builder.Create(SemanticKind.Application(intrinsic.Id, [input.Id]), Types.stringType, dummyRange,
-                              children = [intrinsic.Id; input.Id])
-    let graph = builder.Build [] |> prepareSource
-    let position = Zipper.create graph call.Id |> require "Missing string boundary fixture"
-    position, input.Id
+// Byte conversion preserves independent snapshots. Carrier equality alone is
+// insufficient: these fixtures enter through the actual source compiler.
+let private program direction =
+    let body =
+        if direction="fromBytes" then
+            "    let bytes = [| 65; 0; 66 |]\n    let text = eager (String.fromBytes bytes)\n    bytes.[0] <- 67\n    if text = \"A\\000B\" then 0 else 1\n"
+        else
+            "    let text = \"A\\000B\"\n    let first = eager (String.toBytes text)\n    let second = eager (String.toBytes text)\n    first.[0] <- 512\n    if second.[0] = 65 && first.[0] = 512 then 0 else 1\n"
+    "module StringSnapshots\n[<EntryPoint>]\nlet main _ =\n" + body
 
-let private observe carrier =
-    let position, input = fixture ()
-    let operands = MLIRAccumulator.empty ()
-    MLIRAccumulator.bindNode input (Arg 0) carrier operands
-    let associations, types = operands.NodeAssoc, operands.SSATypes
-    let nodes, edges, codata = position.Graph.Nodes, position.Graph.Edges, position.Graph.Codata
-    let result = matchAt pStringFromBytesIntrinsic position 64 operands
-    Assert.Same(nodes, position.Graph.Nodes)
-    Assert.Same(edges, position.Graph.Edges)
-    Assert.Same(codata, position.Graph.Codata)
-    Assert.Same(associations, operands.NodeAssoc)
-    Assert.Same(types, operands.SSATypes)
-    Assert.Empty operands.AllOps
-    Assert.Empty operands.Errors
-    position, input, result
+let private checkedGraph direction =
+    let result = MemoryWitnessTests.checkMemoryProgram (program direction) ("string-snapshot-"+direction+".clef")
+    let errors = result.Diagnostics |> List.filter (fun diagnostic ->
+        Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.Diagnostic.effectiveSeverity diagnostic =
+            Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.NativeDiagnosticSeverity.Error)
+    Assert.True(errors.IsEmpty,sprintf "Source snapshot contract failed: %A" errors)
+    result.Graph
 
-[<Fact>]
-let ``settled bytes retain their exact SSA and string carrier without allocation or conversion`` () =
-    let stringType = TMemRef(TInt(IntWidth 8))
-    let position, _, result = observe stringType
-    match result with
-    | Result.Ok ((operations, TRValue value), next) ->
-        Assert.Empty operations
-        Assert.Equal(Arg 0, value.SSA)
-        Assert.Equal(stringType, value.Type)
-        Assert.Same(position.Graph, next.Graph)
-        Assert.Equal(position.Focus.Id, next.Focus.Id)
-        let body = [MLIROp.FuncOp(FuncOp.Return([{ SSA = value.SSA; Type = value.Type }]))]
-        let definition = MLIROp.FuncOp(FuncOp.FuncDef("from_settled_bytes", [Arg 0, stringType], [stringType], body, FuncVisibility.Public))
-        let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "string_boundary" [definition]
-        let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
-        Assert.Contains("func.func @from_settled_bytes", verified)
-    | other -> failwithf "Settled byte identity was rejected: %A" other
+let private isSnapshot direction role =
+    if direction="fromBytes" then role=EdgeRole.StringByteSnapshot else role=EdgeRole.StringToBytesSnapshot
+
+// This executes witnessed behavior using stock MLIR. The typed no-argument
+// harness is test-only; it grants no native artifact or Rocq admission.
+let private executeSnapshot (witnessed:Core.Types.Pipeline.BackEndInput) =
+    let entry=witnessed.Operations |> List.choose (function
+        | MLIROp.FuncOp(FuncOp.FuncDef("StringSnapshots.main",[],[result],_,_)) -> Some result
+        | _ -> None) |> Assert.Single
+    let raw,result=V(0,0),V(0,1)
+    let i64=TInt(IntWidth 64)
+    let body=
+        match entry with
+        | TInt(IntWidth width) when width>0 && width<64 ->
+            [MLIROp.FuncOp(FuncOp.FuncCall([{SSA=raw;Type=entry}],"StringSnapshots.main",[]))
+             MLIROp.ArithOp(ArithOp.ExtUI(result,raw,entry,i64))
+             MLIROp.FuncOp(FuncOp.Return [{SSA=result;Type=i64}])]
+        | TInt(IntWidth 64) ->
+            [MLIROp.FuncOp(FuncOp.FuncCall([{SSA=raw;Type=i64}],"StringSnapshots.main",[]))
+             MLIROp.FuncOp(FuncOp.Return [{SSA=raw;Type=i64}])]
+        | _ -> failwithf "Snapshot behavior fixture has no admitted integer result: %A" entry
+    let harness=MLIROp.FuncOp(FuncOp.FuncDef("__snapshot_test_entry",[],[i64],body,FuncVisibility.Public))
+    let text=Alex.Dialects.Core.Serialize.moduleToString witnessed.PointerBits "snapshot_behavior" (witnessed.Operations@[harness])
+    let width=witnessed.PointerBits |> Result.defaultWith failwith
+    let atWidth pass=sprintf "%s{index-bitwidth=%d}" pass width
+    let passes=["expand-strided-metadata";atWidth "finalize-memref-to-llvm";"convert-scf-to-cf";"convert-cf-to-llvm"
+                atWidth "convert-index-to-llvm";atWidth "convert-func-to-llvm";atWidth "convert-arith-to-llvm";"reconcile-unrealized-casts"]
+    let lowered=MlirComponentTests.mlirOpt ["--verify-each";"--pass-pipeline=builtin.module("+String.concat "," passes+")"] text
+    let start=ProcessStartInfo("mlir-runner",UseShellExecute=false,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true)
+    for argument in ["-e";"__snapshot_test_entry";"--entry-point-result=i64";"-"] do start.ArgumentList.Add argument
+    use child=new Process(StartInfo=start)
+    Assert.True(child.Start(),"Cannot start the required stock MLIR behavior runner")
+    let output,errors=child.StandardOutput.ReadToEndAsync(),child.StandardError.ReadToEndAsync()
+    child.StandardInput.Write lowered
+    child.StandardInput.Close()
+    let exited=child.WaitForExit 20000
+    if not exited then
+        child.Kill true
+        child.WaitForExit 5000 |> ignore
+    Assert.True(exited,"Snapshot behavior did not terminate")
+    Assert.True(System.Threading.Tasks.Task.WhenAll([|output :> System.Threading.Tasks.Task;errors :> System.Threading.Tasks.Task|]).Wait 5000,
+                "Snapshot behavior runner did not close its output")
+    Assert.True(child.ExitCode=0,sprintf "Snapshot runner failed: %s" errors.Result)
+    Assert.Equal("0",output.Result.Trim())
 
 [<Theory>]
-[<InlineData(32)>]
-[<InlineData(64)>]
-let ``a wider recalled array cannot be relabeled as a string`` width =
-    let carrier = TMemRef(TInt(IntWidth width))
-    let position, input, result = observe carrier
-    match result with
-    | Result.Error message ->
-        Assert.Contains("String.fromBytes: byte-buffer representation is not settled", message)
-        Assert.Contains(sprintf "node %d" (NodeId.value position.Focus.Id), message)
-        Assert.Contains(sprintf "operand %d" (NodeId.value input), message)
-        Assert.Contains(sprintf "carrier %A" carrier, message)
-        Assert.Contains(sprintf "expected %A" (TMemRef(TInt(IntWidth 8))), message)
-    | other -> failwithf "Unsettled array acquired string identity: %A" other
+[<InlineData("fromBytes")>]
+[<InlineData("toBytes")>]
+let ``actual string conversions retain independent snapshot storage before subsequent mutation`` direction =
+    let graph = checkedGraph direction
+    let edges = graph.Edges |> List.filter (fun edge -> isSnapshot direction edge.Role)
+    Assert.Equal((if direction="fromBytes" then 1 else 2),edges.Length)
+    for edge in edges do
+        match edge.Sources with
+        | [input;snapshot] when direction="fromBytes" -> Assert.NotEqual(input,snapshot)
+        | [input;view;snapshot] ->
+            Assert.NotEqual(input,snapshot)
+            Assert.NotEqual(view,snapshot)
+        | _ -> failwith "Snapshot lost its exact input/view/copy source identities."
+    let memory = Publication.tryMemory graph |> Result.defaultWith failwith
+    let writes = memory.Operations.Values |> Seq.choose (function
+        | MemoryWitnessOperation.ArrayAccess { Value=Some value } as operation -> Some(value,operation)
+        | _ -> None) |> Seq.toList
+    Assert.NotEmpty writes
+    let proof = Core.ProofDispatch.dischargeSource graph None |> Result.defaultWith failwith
+    let witnessed,_ = MiddleEnd.MLIRGeneration.generateWithLinkedLibrariesAndProof graph graph.Platform.Value
+                          Core.Types.Dialects.DeploymentMode.Console Core.Types.Dialects.CPU None Set.empty (Some proof) |> Result.defaultWith failwith
+    Core.Types.Pipeline.WitnessedInput.validate witnessed |> Result.defaultWith failwith
+    MlirComponentTests.mlirOpt ["--verify-each"] witnessed.Text |> ignore
+    Assert.DoesNotContain("@memcpy",witnessed.Text)
+    let operations = witnessed.Operations |> List.collect (Core.WitnessArtifacts.flatten >> Seq.toList)
+    Assert.Contains(operations,fun operation -> match operation with MLIROp.MemRefOp(MemRefOp.Store _) -> true | _ -> false)
+    executeSnapshot witnessed
 
-/// This component receives Baker's complete storage relation and scalar meets.
-/// It verifies their physical composition; it does not establish byte admission.
-[<Fact>]
-let ``an exact byte storage origin composes allocation writes reads and string identity`` () =
-    let builder = NodeBuilder()
-    let arrayType = Types.mkArrayType Types.intType
-    let size = builder.Create(SemanticKind.PatternBinding "size", Types.intType, dummyRange)
-    let index = builder.Create(SemanticKind.PatternBinding "index", Types.intType, dummyRange)
-    let value = builder.Create(SemanticKind.PatternBinding "value", Types.intType, dummyRange)
-    let allocator = builder.Create(
-        SemanticKind.Intrinsic
-            { Module = IntrinsicModule.Array; Operation = "zeroCreate"
-              Category = IntrinsicCategory.Memory; FullName = "Array.zeroCreate" },
-        NativeType.TFun(Types.intType, arrayType), dummyRange)
-    let allocation = builder.Create(SemanticKind.Application(allocator.Id, [size.Id]), arrayType, dummyRange)
-    let binding = builder.Create(SemanticKind.Binding("bytes", false, false, None), arrayType,
-                                 dummyRange, children = [allocation.Id])
-    let input = builder.Create(SemanticKind.VarRef("bytes", Some binding.Id), arrayType, dummyRange)
-    let write = builder.Create(SemanticKind.IndexSet(input.Id, index.Id, value.Id), Types.unitType, dummyRange)
-    let read = builder.Create(SemanticKind.IndexGet(input.Id, index.Id), Types.intType, dummyRange)
-    let converter = builder.Create(
-        SemanticKind.Intrinsic
-            { Module = IntrinsicModule.String; Operation = "fromBytes"
-              Category = IntrinsicCategory.StringOp; FullName = "String.fromBytes" },
-        NativeType.TFun(arrayType, Types.stringType), dummyRange)
-    let conversion = builder.Create(SemanticKind.Application(converter.Id, [input.Id]), Types.stringType, dummyRange)
-    let unrelated = builder.Create(SemanticKind.PatternBinding "integers", arrayType, dummyRange)
-    let raw = builder.Build []
-    let storage =
-        [allocation.Id; binding.Id; input.Id]
-        |> List.map (fun target ->
-            { Class = EdgeClass.Range; Role = EdgeRole.StringByteStorage(0I, 255I, "byte")
-              Sources = [conversion.Id; input.Id; allocation.Id; write.Id; value.Id]
-              Target = target; Ordinal = 0 })
-    let writeMeet = { Consumer = write.Id; Operand = value.Id; From = 64; To = 8; Adapt = MeetKind.Truncate }
-    let readMeet = { Consumer = read.Id; Operand = read.Id; From = 8; To = 64; Adapt = MeetKind.ExtendUnsigned }
-    let graph =
-        { raw with Edges = storage @ raw.Edges
-                   Codata = lazy { raw.Codata.Value with Meets = Map.ofList [write.Id, [writeMeet]; read.Id, [readMeet]] } }
-        |> prepareSource
-    let byteType, intType = TInt(IntWidth 8), TInt(IntWidth 64)
-    for occurrence in [allocation.Id; binding.Id; input.Id] do
-        Assert.Equal(Some byteType, tryArrayElementTypeAt graph occurrence)
-        Assert.Equal(arrayType, graph.Nodes[occurrence].Type)
-    Assert.Equal(None, tryArrayElementTypeAt graph unrelated.Id)
-    let operands = MLIRAccumulator.empty ()
-    for id, argument in [size.Id, Arg 0; index.Id, Arg 1; value.Id, Arg 2] do
-        MLIRAccumulator.bindNode id argument intType operands
-    let observeAt parser id =
-        let position = Zipper.create graph id |> require "Missing byte storage component position"
-        match matchAt parser position 64 operands with
-        | Result.Ok ((operations, result), next) ->
-            Assert.Same(graph, next.Graph)
-            operations, result
-        | Result.Error message -> failwith message
-    let allocationOps, allocated = observeAt pArrayZeroCreateIntrinsic allocation.Id
-    let buffer = match allocated with TRValue value -> value | other -> failwithf "No array value: %A" other
-    Assert.Equal(TMemRef byteType, buffer.Type)
-    MLIRAccumulator.bindNode input.Id buffer.SSA buffer.Type operands
-    let writeOps, written = observeAt pIndexSetArray write.Id
-    match written with TRVoid -> () | other -> failwithf "Unexpected indexed write result: %A" other
-    let readOps, loaded = observeAt pIndexGetArray read.Id
-    let loaded = match loaded with TRValue value -> value | other -> failwithf "No indexed value: %A" other
-    Assert.Equal(intType, loaded.Type)
-    let identityOps, converted = observeAt pStringFromBytesIntrinsic conversion.Id
-    Assert.Empty identityOps
-    match converted with
-    | TRValue converted ->
-        Assert.Equal(buffer.SSA, converted.SSA)
-        Assert.Equal(buffer.Type, converted.Type)
-    | other -> failwithf "No string value: %A" other
-    let body = allocationOps @ writeOps @ readOps @ [MLIROp.FuncOp(FuncOp.Return([{ SSA = loaded.SSA; Type = loaded.Type }]))]
-    let definition = MLIROp.FuncOp(FuncOp.FuncDef(
-        "byte_storage", [Arg 0, intType; Arg 1, intType; Arg 2, intType], [intType], body, FuncVisibility.Public))
-    let source = Alex.Dialects.Core.Serialize.moduleToString (Ok 64) "string_storage" [definition]
-    let verified = MlirComponentTests.mlirOpt ["--verify-each"] source
-    Assert.Contains("memref<?xi8>", verified)
-    Assert.Contains("arith.trunci", verified)
-    Assert.Contains("arith.extui", verified)
-    Assert.Same(raw.Nodes, graph.Nodes)
+[<Theory>]
+[<InlineData("fromBytes")>]
+[<InlineData("toBytes")>]
+let ``removing snapshot evidence retracts the source contract`` direction =
+    let graph = checkedGraph direction
+    let changed = {graph with Edges=graph.Edges |> List.filter (fun edge -> not(isSnapshot direction edge.Role))}
+    match Publication.prepare changed with
+    | Error failures -> Assert.NotEmpty failures
+    | Ok _ -> failwith "A byte conversion retained authority after losing its snapshot relation."
+
+[<Theory>]
+[<InlineData("view")>]
+[<InlineData("copy")>]
+let ``constructed string comparison retracts when admitted snapshot authority disappears`` missing =
+    let graph=checkedGraph "fromBytes"
+    let domain=graph.Edges |> List.choose(fun edge ->
+        match edge.Role with EdgeRole.BoundaryDomain domain -> Some domain | _ -> None) |> Assert.Single
+    let snapshot=Assert.Single domain.StringComparisonSnapshots
+    let copy=Assert.Single domain.StringComparisonCopies
+    Assert.Equal(snapshot.Snapshot,copy.Site)
+    let retained edge =
+        match missing,edge.Role with
+        | "view",EdgeRole.MemoryOperation(MemoryWitnessOperation.StringView fact) -> fact.Site<>snapshot.Site
+        | "copy",EdgeRole.MemoryArrayCopy fact -> fact.Site<>copy.Site
+        | _ -> true
+    let changed={graph with Edges=List.filter retained graph.Edges}
+    Assert.Equal(graph.Edges.Length-1,changed.Edges.Length)
+    match Clef.Compiler.PSGSaturation.SemanticGraph.BoundaryEmission.project changed with
+    | Error failures ->
+        Assert.Contains(failures,fun failure -> failure.Reason.Contains("local string comparison"))
+    | Ok _ -> failwith "A constructed comparison survived removal of its admitted snapshot authority."
+    Publication.tryRead graph |> Result.defaultWith failwith |> ignore
+
+[<Theory>]
+[<InlineData("255")>]
+[<InlineData("169")>]
+[<InlineData("512")>]
+let ``byte carrier alone never admits invalid text`` value =
+    let source = "module InvalidText\n[<EntryPoint>]\nlet main _ =\n    let text = eager (String.fromBytes [| "+value+" |])\n    String.length text\n"
+    let result = MemoryWitnessTests.checkMemoryProgram source "invalid-string-snapshot.clef"
+    let reason = if value="512" then "0..255" else "UTF-8"
+    Assert.Contains(result.Diagnostics,fun diagnostic ->
+        diagnostic.Code="CCS8404" && diagnostic.Message.Contains("String.fromBytes") &&
+        diagnostic.Message.Contains(reason) && not diagnostic.RelatedNodes.IsEmpty &&
+        Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.Diagnostic.effectiveSeverity diagnostic =
+            Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.NativeDiagnosticSeverity.Error)

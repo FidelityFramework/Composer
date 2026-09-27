@@ -43,7 +43,7 @@ let ``missing recalled index is a diagnostic rather than a fabricated operand`` 
     let fixture = arrayRead true
     let operands = recalledOperands fixture
     operands.NodeAssoc <- operands.NodeAssoc.Remove fixture.Index
-    match matchAt Alex.Patterns.MemoryPatterns.pArrayGetIntrinsic fixture.Position 64 operands with
+    match matchAt Alex.Patterns.MemoryPatterns.pIndexGetArray fixture.Position 64 operands with
     | Result.Error message ->
         Assert.Contains($"Node {NodeId.value fixture.Index} not yet witnessed", message)
     | Result.Ok _ -> failwith "Pattern accepted an index that has not been witnessed"
@@ -54,7 +54,7 @@ let ``missing memory carrier type is diagnosed by the composed load element`` ()
     let fixture = arrayRead true
     let operands = recalledOperands fixture
     operands.SSATypes <- operands.SSATypes.Remove(Arg 0)
-    match matchAt Alex.Patterns.MemoryPatterns.pArrayGetIntrinsic fixture.Position 64 operands with
+    match matchAt Alex.Patterns.MemoryPatterns.pIndexGetArray fixture.Position 64 operands with
     | Result.Error message ->
         Assert.Contains("pLoad:", message)
         Assert.Contains($"memref SSA {Arg 0}", message)

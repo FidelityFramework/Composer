@@ -36,13 +36,20 @@ let run (tool: string) (args: string) input =
     info.RedirectStandardOutput <- true
     info.RedirectStandardError <- true
     use child = Process.Start info
-    child.StandardInput.Write(input: string)
-    child.StandardInput.Close()
-    let output = child.StandardOutput.ReadToEnd()
-    let errors = child.StandardError.ReadToEnd()
-    child.WaitForExit()
-    if child.ExitCode <> 0 then failwithf "%s failed: %s" tool errors
-    output.Trim()
+    let output = child.StandardOutput.ReadToEndAsync()
+    let errors = child.StandardError.ReadToEndAsync()
+    let writer = task {
+        do! child.StandardInput.WriteAsync(input: string)
+        child.StandardInput.Close()
+    }
+    if not (child.WaitForExit 30000) then
+        child.Kill true
+        child.WaitForExit 5000 |> ignore
+        failwithf "%s exceeded the thirty-second proof-test limit" tool
+    if not (System.Threading.Tasks.Task.WhenAll([| output :> System.Threading.Tasks.Task; errors :> System.Threading.Tasks.Task; writer :> System.Threading.Tasks.Task |]).Wait 5000) then
+        failwithf "%s proof-test redirected I/O did not finish" tool
+    if child.ExitCode <> 0 then failwithf "%s failed: %s" tool errors.Result
+    output.Result.Trim()
 for rule, left, right, result, expected in cases do
     let ob = { Id = "dimension_check"; Kind = "dimension-regression"; Logic = "QF_LIA"; Statement = "transfer regression"
                Source = "test"; Refs = []; Body = ObligationBody.DimensionalRelation(rule,left,right,result) }
@@ -87,6 +94,15 @@ let integerCases = [
     ObligationBody.IntegerRepresentationCoverage(unsigned64Max,unsigned64Max,signed64Min,signed64Max), "sat"
     ObligationBody.IntegerRepresentationCoverage(signed64Min - 1I,signed64Min - 1I,signed64Min,signed64Max), "sat"
     ObligationBody.IntegerRepresentationCoverage(1I,0I,0I,1I), "sat"
+    ObligationBody.IntegerDivisorNonzero(1I,127I), "unsat"
+    ObligationBody.IntegerDivisorNonzero(-128I,-1I), "unsat"
+    ObligationBody.IntegerDivisorNonzero(-1I,1I), "sat"
+    ObligationBody.IntegerDivisorNonzero(1I,-1I), "sat"
+    ObligationBody.IntegerShiftCount(0I,7I,8), "unsat"
+    ObligationBody.IntegerShiftCount(0I,8I,8), "sat"
+    ObligationBody.IntegerShiftCount(-1I,7I,8), "sat"
+    ObligationBody.IntegerShiftCount(1I,0I,8), "sat"
+    ObligationBody.IntegerShiftCount(0I,0I,0), "sat"
 ]
 for index, (body, expected) in List.indexed integerCases do
     let ob = { Id = sprintf "integer_check_%d" index; Kind = "integer-regression"; Logic = "QF_LIA"
@@ -98,6 +114,65 @@ for index, (body, expected) in List.indexed integerCases do
     if source <> expected || native <> expected then
         failwithf "Integer %d: expected %s, source=%s native=%s" index expected source native
 printfn "PASS %d integer source/native parity cases" integerCases.Length
+let spatialCases = [
+    (64I,16I,4,[(0,0I,16I);(1,16I,16I);(2,32I,16I);(3,48I,16I)],2,3I), "unsat"
+    (16I,16I,1,[(0,0I,16I)],1,1I), "unsat"
+    (0I,16I,4,[],2,1I), "sat"
+    (16I,0I,4,[(0,0I,16I)],2,1I), "sat"
+    (16I,16I,-1,[(0,0I,16I)],2,1I), "sat"
+    (16I,16I,1,[(0,0I,16I)],0,1I), "sat"
+    (16I,16I,1,[(0,0I,16I)],2,0I), "sat"
+    (32I,16I,2,[(0,0I,16I);(0,16I,16I)],2,1I), "sat"
+    (32I,16I,2,[(0,0I,16I);(2,16I,16I)],2,1I), "sat"
+    (32I,16I,2,[(-1,0I,16I);(1,16I,16I)],2,1I), "sat"
+    (32I,16I,2,[(0,0I,16I);(1,17I,16I)],2,1I), "sat"
+    (32I,16I,2,[(0,0I,16I);(1,15I,16I)],2,1I), "sat"
+    (32I,16I,2,[(0,0I,16I);(1,16I,15I)],2,1I), "sat"
+    (33I,16I,2,[(0,0I,16I);(1,16I,16I)],2,1I), "sat"
+]
+for (elements,grain,columns,slices,depth,iterations),expected in spatialCases do
+    let ob = { Id="spatial_partition"; Kind="spatial-partition-regression"; Logic="QF_LIA"
+               Statement="exact source tile partition"; Source="test"; Refs=[]
+               Body=ObligationBody.SpatialKernelPartition(elements,grain,columns,slices,depth,iterations) }
+    let source = run "cvc5" "--lang=smt2" (Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob])
+    let exported = run "mlir-translate" "--export-smtlib" (Alex.Traversal.SMTTransfer.transfer [ob])
+    let native = run "cvc5" "--lang=smt2" exported
+    if source<>expected || native<>expected then failwithf "Spatial partition expected %s, source=%s native=%s" expected source native
+printfn "PASS %d spatial partition source/native parity cases" spatialCases.Length
+// A read-only string borrow retains every possible immutable origin. Each
+// origin's count equals its logical extent, and storage also holds a sentinel.
+// False claims remain formulae sent to each solver, not host-computed verdicts.
+let borrowBeyondWord = 1I <<< 160
+let stringBorrowCases = [
+    "true", [13I,13I,14I], "unsat"
+    "count-mismatch", [12I,13I,14I], "sat"
+    "missing-sentinel", [13I,13I,13I], "sat"
+    "empty-origins", [], "sat"
+    "empty-string", [0I,0I,1I], "unsat"
+    "negative-count", [-1I,-1I,0I], "sat"
+    "mixed-valid", [0I,0I,1I; 13I,13I,14I], "unsat"
+    "mixed-last-invalid", [0I,0I,1I; 12I,13I,14I], "sat"
+    "mixed-first-invalid", [13I,13I,13I; 0I,0I,1I], "sat"
+    "bigint-valid", [borrowBeyondWord,borrowBeyondWord,borrowBeyondWord+1I], "unsat"
+    "bigint-mismatch", [borrowBeyondWord+1I,borrowBeyondWord,borrowBeyondWord+1I], "sat"
+    "bigint-negative", [-borrowBeyondWord,-borrowBeyondWord,0I], "sat"
+]
+for name, origins, expected in stringBorrowCases do
+    let ob =
+        { Id = "string_borrow_" + name.Replace('-', '_'); Kind = "string-borrow-bound"; Logic = "QF_LIA"
+          Statement = "same-invocation immutable byte extent and count"; Source = "test"; Refs = []
+          Body = ObligationBody.StringBorrowBound origins }
+    let sourceSmt = Clef.Compiler.Nanopass.ObligationDischarge.smtLib [ob]
+    if not (sourceSmt.Contains ob.Id) then failwithf "Source string-borrow anchor %s is absent" ob.Id
+    let source = run "cvc5" "--lang=smt2" sourceSmt
+    let transferred = Alex.Traversal.SMTTransfer.transfer [ob]
+    if not (transferred.Contains ob.Id) then failwithf "MLIR string-borrow anchor %s is absent" ob.Id
+    let nativeSmt = run "mlir-translate" "--export-smtlib" transferred
+    if not (nativeSmt.Contains ob.Id) then failwithf "String-borrow anchor %s did not survive native export" ob.Id
+    let native = run "cvc5" "--lang=smt2" nativeSmt
+    if source <> expected || native <> expected then
+        failwithf "String borrow %s: expected %s, source=%s native=%s for %A" name expected source native origins
+printfn "PASS %d string-borrow source/native parity and anchor cases" stringBorrowCases.Length
 let trip : FiniteLoopTripModel =
     { InitialLower = 1I; LimitUpper = 6I; MinimumStep = 1I; Inclusive = true; MaximumIterations = 6I }
 let recurrence : AdditiveLoopInvariantModel =

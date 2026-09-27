@@ -29,7 +29,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
     | Some (info, _) ->
         match info.Operation with
         | "empty" ->
-            let setType = mapType node.Type ctx
+            let setType = mapTypeAt node.Id ctx
 
             match tryMatchWithDiagnostics (pSetEmpty node.Id setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -43,7 +43,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let elemType = mapType node.Type ctx
+                    let elemType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pSetValue node.Id setSSA elemType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -56,7 +56,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let subtreeType = mapType node.Type ctx
+                    let subtreeType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pSetLeft node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -69,7 +69,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let subtreeType = mapType node.Type ctx
+                    let subtreeType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pSetRight node.Id setSSA subtreeType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -82,7 +82,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
             | [childId] ->
                 match MLIRAccumulator.recallNode childId ctx.Accumulator with
                 | Some (setSSA, _) ->
-                    let heightType = mapType node.Type ctx
+                    let heightType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pSetHeight node.Id setSSA heightType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
@@ -101,7 +101,7 @@ let private witnessSet (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
                     let element = { SSA = elementSSA; Type = elementType }
                     let left = { SSA = leftSSA; Type = leftType }
                     let right = { SSA = rightSSA; Type = rightType }
-                    let setType = mapType node.Type ctx
+                    let setType = mapTypeAt node.Id ctx
 
                     match tryMatchWithDiagnostics (pSetAdd node.Id element left right setType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }

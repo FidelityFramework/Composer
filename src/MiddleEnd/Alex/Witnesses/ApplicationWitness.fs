@@ -5,7 +5,6 @@ module Alex.Witnesses.ApplicationWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.NativeTypedTree.NativeTypes
-open Clef.Compiler.NativeTypedTree.UnionFind
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
 open Alex.XParsec.PSGCombinators
@@ -100,7 +99,7 @@ let private invoke (ctx: WitnessContext) (node: SemanticNode) invocation sources
                 match invocation, body with
                 | Direct symbol, Some body ->
                     // The call's result is held at its declaration body's settled width.
-                    let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
+                    let resultType = mapTypeAt body ctx
                     observe ctx node prefix (pDirectCall node.Id symbol (actuals |> List.map (fun value -> value.SSA, value.Type)) resultType names)
                 | Direct _, None ->
                     failure node "result boundary"

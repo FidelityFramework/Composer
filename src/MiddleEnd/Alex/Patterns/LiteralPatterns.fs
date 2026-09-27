@@ -1,7 +1,4 @@
-/// LiteralPatterns - Literal value emission and string handling
-///
-/// PUBLIC: Witnesses use these to emit literal constants and string operations.
-/// Literal patterns map NativeLiteral values to MLIR constants.
+/// LiteralPatterns - Literal constants at their published representations.
 /// String patterns handle string literal globals and pointer/length extraction for FFI.
 module Alex.Patterns.LiteralPatterns
 
@@ -21,43 +18,35 @@ open Clef.Compiler.NativeTypedTree.NativeTypes
 // LITERAL PATTERNS
 // ═══════════════════════════════════════════════════════════
 
-/// Build literal: Match literal from PSG and emit constant MLIR.
-/// An integer literal of the bare kind is held at the width its point range selects (the
-/// sentinel narrowed at the literal's node, on every substrate); a width-named literal at its
-/// carrier's width (interim, CS-12). A literal needs no meet.
+/// Witness a literal at its exact source occurrence. A literal needs no Meet.
 let pBuildLiteral (lit: NativeLiteral) (ssa: SSA) (_arch: Architecture) : PSGParser<MLIROp list * TransferResult> =
     parser {
         let! state = getUserState
+        let ty = valueTypeAt state.Graph state.Current.Id
 
         match lit with
         | NativeLiteral.Unit ->
-            let ty = mapNTUKindToMLIRType NTUKind.NTUunit
             let! op = pConstI ssa 0L ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Bool b ->
             let value = if b then 1L else 0L
-            let ty = mapNTUKindToMLIRType NTUKind.NTUbool
             let! op = pConstI ssa value ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Int (n, kind) ->
-            let ty = mapNTUKindToMLIRType kind |> narrowForCurrent state
             let! op = pConstI ssa n ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.UInt (n, kind) ->
-            let ty = mapNTUKindToMLIRType kind |> narrowForCurrent state
             let! op = pConstI ssa (int64 n) ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Char c ->
-            let ty = mapNTUKindToMLIRType NTUKind.NTUchar
             let! op = pConstI ssa (int64 c) ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 
         | NativeLiteral.Float (f, kind) ->
-            let ty = mapNTUKindToMLIRType kind
             let! op = pConstF ssa f ty
             return ([op], TRValue { SSA = ssa; Type = ty })
 

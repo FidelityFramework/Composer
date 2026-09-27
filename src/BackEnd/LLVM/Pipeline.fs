@@ -32,7 +32,8 @@ let private implementation : BackEnd = {
             | Some dir -> Path.Combine(dir, artifactFilename ArtifactId.Llvm)
             | None -> Core.Utilities.IntermediateWriter.scratchPath "output.ll"
 
-        RequirementRealization.realize (RequirementRealization.selectRuntime ctx targetTriple) witnessed
+        IntrinsicWriteRealization.realize ctx witnessed
+        |> Result.bind (RequirementRealization.realize (RequirementRealization.selectRuntime ctx targetTriple))
         |> Result.bind (fun realized ->
             // Keep the portable artifact intact. Runtime realization is a
             // separate backend input, selected by the declared process ABI.
@@ -43,16 +44,18 @@ let private implementation : BackEnd = {
                     File.WriteAllText(path, realized.Text)
                     path
             timePhase ctx.Timing "BackEnd.MLIRLower" "Lowering MLIR to LLVM IR" (fun () ->
-                Lowering.lowerToLLVM inputPath llPath targetTriple ctx.TargetPointerBits))
-        |> Result.bind (fun () ->
+                Lowering.lowerToLLVM inputPath llPath targetTriple ctx.TargetPointerBits)
+            |> Result.map (fun () -> realized.Text))
+        |> Result.bind (fun runtimeText ->
             if ctx.EmitIntermediateOnly then
                 printfn "Stopped after LLVM IR generation (--emit-llvm)"
                 Ok (IntermediateOnly "LLVM IR")
             else
                 // Phase 2: LLVM IR → native binary (target bitcode + LLD)
-                timePhase ctx.Timing "BackEnd.Link" "Linking to native binary" (fun () ->
-                    Codegen.compileToNativeWithStorage llPath ctx.OutputPath targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink ctx.TargetCpu witnessed.WritableStorage)
-                |> Result.map (fun () -> NativeBinary ctx.OutputPath))
+                ArtifactProof.publish witnessed runtimeText ctx (fun provisional ->
+                    let pool=(Core.WitnessArtifacts.graph witnessed.Catalog.Value.Scope).StaticStringPool
+                    timePhase ctx.Timing "BackEnd.Link" "Linking provisional native binary" (fun () ->
+                        Codegen.compileToNativeWithArtifacts llPath provisional targetTriple ctx.DeploymentMode ctx.ExternLibraries ctx.NativeLink ctx.TargetCpu witnessed.WritableStorage pool)))
 }
 
 /// Current source/witness ownership is validated before target realization.
