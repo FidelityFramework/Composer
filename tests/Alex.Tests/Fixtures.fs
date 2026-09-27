@@ -24,6 +24,51 @@ let prepareSource (graph: SemanticGraph) =
         failures |> List.map (fun failure -> sprintf "%A: %s" failure.Occurrence failure.Reason)
         |> String.concat "\n" |> failwith
 
+/// Check a complete program with explicit source-declared scalar platform
+/// authority, then ask CCS to publish every witness domain. No host defaults
+/// or fixture-created empty projection stand in for source settlement.
+let checkScalarProgram source path =
+    let representation: NumericRepresentation =
+        { Name="int32"; Capability="native"; Family="int"; Bits=32
+          MinMagnitude="-2147483648"; MaxMagnitude="2147483647"; Boundary="wrap" }
+    let unsignedRepresentation: NumericRepresentation =
+        { Name="uint32"; Capability="native"; Family="uint"; Bits=32
+          MinMagnitude="0"; MaxMagnitude="4294967295"; Boundary="wrap" }
+    let narrowRepresentation: NumericRepresentation =
+        { Name="int8"; Capability="native"; Family="int"; Bits=8
+          MinMagnitude="-128"; MaxMagnitude="127"; Boundary="wrap" }
+    let authority = """module PublishedAuthority
+type WidthDeclaration = { Name: string; Bits: int }
+type Representation = { Name: string; Capability: string; Family: string; Bits: int; MinMagnitude: string; MaxMagnitude: string; Boundary: string }
+type TargetCore = { Runtime: string; Widths: WidthDeclaration array; Representations: Representation array }
+type PlatformDescription = { Id: string; Core: TargetCore option }
+let description = {
+    Id = "published-boundary-witness"
+    Core = Some {
+        Runtime = "libc"
+        Widths = [| { Name="Pointer"; Bits=64 }; { Name="Register"; Bits=32 } |]
+        Representations = [|
+            { Name="int8"; Capability="native"; Family="int"; Bits=8; MinMagnitude="-128"; MaxMagnitude="127"; Boundary="wrap" }
+            { Name="int32"; Capability="native"; Family="int"; Bits=32; MinMagnitude="-2147483648"; MaxMagnitude="2147483647"; Boundary="wrap" }
+            { Name="uint32"; Capability="native"; Family="uint"; Bits=32; MinMagnitude="0"; MaxMagnitude="4294967295"; Boundary="wrap" } |] } }
+"""
+    let platform: PlatformContext =
+        { PlatformId="published-boundary-witness"; Dimensions=Map.ofList ["Pointer",64; "Register",32]
+          Representations=Map.ofList [representation.Name, representation; unsignedRepresentation.Name, unsignedRepresentation; narrowRepresentation.Name, narrowRepresentation]; EndpointReturns=Map.empty
+          PlatformLibraryPath=None; PlatformDescription=Some "PublishedAuthority.description"; PlatformArchitecture=None; PlatformOS=None
+          PlatformSourcePaths=Set.singleton (System.IO.Path.GetFullPath "published-authority.clef"); Predicates=Map.empty; FreestandingStartup=None; SubstrateKind=None
+          RuntimeModel=Some RuntimeModel.Libc; AvailableMemorySpaces=[]; DefaultMemorySpace=None
+          ClockFrequencyMhz=None; NsPerWeightUnit=None }
+    let parse source path =
+        match Clef.Compiler.NativeService.parseStringWithDefaults source path with
+        | Clef.Compiler.NativeService.ParseSuccess input -> input
+        | Clef.Compiler.NativeService.ParseError errors -> failwithf "Scalar program did not parse: %A" errors
+    let result = Clef.Compiler.NativeService.checkParsedInputsWithPlatform [parse authority "published-authority.clef"; parse source path] (Some platform)
+    let errors = result.Diagnostics |> List.filter (fun diagnostic ->
+        diagnostic.Severity = Clef.Compiler.PSGSaturation.SemanticGraph.Diagnostics.NativeDiagnosticSeverity.Error)
+    if not errors.IsEmpty then failwithf "Source did not admit scalar program: %A" errors
+    prepareSource result.Graph
+
 /// Complete the demand owner's source step after a deliberate fixture edit,
 /// then publish every domain. This never repairs other owners' proof relations.
 let settleDemand (graph: SemanticGraph) =

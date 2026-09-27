@@ -1,16 +1,121 @@
 # Clef / Composer checkpoint: C-series coverage and affected F-series gates
 
-**Scoped integration checkpoint, 2026-09-26.** This
-records delivered changes and their actual source, tooling and native cohorts.
-**It does not mark any C PRD Complete.**
-The latest recorded implementation audit reports 27/51 compilations, 23 compilation errors, one
-300-second timeout, and a runtime mismatch in 04c. The earlier 21/48 cohort below
-had 27 compilation failures. This checkpoint is not evidence of a clean F/C
-regression handoff.
-C and F have equal delivery standing; the order below expresses dependencies.
-The current implementation is substantially beyond the initial PRD review, but
-specification agreement, source proof, physical composition and native behavior
-remain separate acceptance observations.
+**Current working-tree checkpoint, 2026-09-26, after the owner's removal of
+fallbacks and vestiges. No C/F acceptance is claimed.** The owner authorized
+rearchitecture directly in the existing trees. No Python, worktrees, recovery of
+deleted implementation, or middle-end semantic repair is authorized.
+
+The owner-supplied handoff reports **0/51 samples compiling, 300/1,605 CCS tests
+failing (235 with CCS8011 only), and 51/307 Alex tests failing**. These are the
+post-cleanup baseline observations, not runs performed during the boundary work
+below. The 27/51 and 21/48 cohorts later in this document are historical and do
+not describe the current tree. Failures exposed by removing fallbacks identify
+missing source contracts; they are not a reason to restore those fallbacks.
+
+## Boundary publication rearchitecture — current work
+
+The governing references are the
+[shared C/F ownership requirements](PRDs/C-Series-Acceptance.md#11-baker-construction-alex-witnessing-and-backend-realization),
+[M-01 dialect admission](PRDs/M-01-DialectAdmission.md),
+[FFI boundary specification](../../clef-lang-spec/spec/ffi-boundary.md), and
+[site nanopass guidance](../../clef-lang-site/hugo/content/docs/internals/concepts/nanopass-navigation.md).
+**CCS/Baker publishes settled facts; Alex witnesses them through Huet
+Element/Pattern/Witness composition; Composer's backend owns target realization.**
+
+[BoundaryEmission.fs](../../clef/src/Compiler/PSGSaturation/SemanticGraph/BoundaryEmission.fs)
+adds a source-owned executable boundary projection to witness publication.
+It retains exact descriptor and binding identities, declaration paths, module
+ownership, ordered actual/formal correspondence, immutable declaration facts
+and type identities (including numeric carrier and dimension), and the existing
+source-proved numeric adaptations.
+Missing or inconsistent premises refuse publication. Source re-admission
+checks the projection against the current graph.
+
+Source publication also identifies external declaration leaves and their
+exclusive placeholder/formal/body nodes. These remain available as proof
+participants and produce no ordinary function definition. CCS rejects outside
+structural or reference uses of those placeholder nodes. The source incidence
+check includes attached children such as a Binding's value, not only references
+encoded in its Kind.
+
+The first admitted boundary is an explicitly declared libc scalar C call:
+integer or boolean parameters, integer/boolean/void result, and `CDecl`.
+The source platform must explicitly declare libc availability. Freestanding
+startup does not imply absence of libc, and hosted startup does not supply a
+missing library declaration. Other libraries, system intrinsics, reference,
+pointer and aggregate adapters require their own complete source contracts;
+this change does not invent them.
+
+Alex's former platform signature discovery, marshalling construction, system
+call selection and inline declaration construction have been removed.
+`PlatformPatterns` now witnesses published imports at their exact source module
+scope and published calls using recalled operands and settled adaptations.
+Elements provide the shared physical scalar spelling and atomic operations;
+Patterns compose them and are reusable by multiple Witnesses. Witnesses select
+those compositions for the current occurrence and published facts.
+Traversal recognizes source-authorized declaration scopes independently of
+runtime reachability. No emitted-operation pass hoists or reconciles imports.
+The existing declaration Elements that lack source authority remain refusals.
+
+The real traversal check exposed two missing source distinctions during this
+work. Ordinary demand had treated the extern placeholder's unused formals as
+proof that C arguments could be omitted. CCS now excludes external declaration
+implementations from that body-use proof, so ordinary settlement retains the
+actuals. The next check exposed an ordinary `FuncDef` for the placeholder;
+the published declaration-leaf contract removes that executable interpretation.
+Alex follows those facts through reusable Patterns and shared traversal.
+Coverage still requires every runtime occurrence and published import scope,
+including import scopes without runtime reachability.
+
+The OrdinaryDemand regression checks also contained obsolete expectations of
+silent empty results or allocation after proof rows were removed. Those tests
+now require the owning refusal and retain their valid re-settlement controls.
+The eager arithmetic case checks its required CCS8011 diagnostic without first
+passing through a fixture that forbids every diagnostic. No fallback or relaxed
+proof premise was introduced to satisfy those checks.
+
+**Focused evidence on this working tree:**
+
+| Check | Result | Evidence |
+|---|---|---|
+| CCS `BoundaryEmissionCases` and `OrdinaryDemandCases` | **56/56 passed**, zero skips: 23 boundary and 33 ordinary-demand cases | [Source test transcript](evidence/2026-09-26-boundary-source-tests.txt) |
+| Alex `ForeignDeclarationTests` and `TraversalOccurrenceTests` | **16/16 passed**, zero skips | [Alex test transcript](evidence/2026-09-26-boundary-alex-tests.txt) |
+| Initial full traversal, before source demand repair | Required foreign actual was not witnessed; retained as evidence of the missing contract | [Initial failure transcript](evidence/2026-09-26-boundary-initial-traversal-failure.txt) |
+
+The Alex checks include the real witness registry, no placeholder `FuncDef`,
+ordered scalar operands and source-proved signed extension, stock `mlir-opt
+--verify-each`, exact module placement, missing-scope coverage and invalidated
+publication refusals. The existing deferred-helper traversal fixtures now obtain
+complete publication using explicit source platform authority shared with the
+boundary fixtures; target-free checking is not treated as executable authority.
+
+Commands, run in their respective existing repositories:
+
+```sh
+# clef
+dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj --no-restore --filter 'FullyQualifiedName~BoundaryEmissionCases|FullyQualifiedName~OrdinaryDemandCases' --verbosity minimal
+# Composer
+dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-restore --filter 'FullyQualifiedName~ForeignDeclarationTests|FullyQualifiedName~TraversalOccurrenceTests' --logger 'console;verbosity=minimal'
+```
+
+These commands built the affected projects. The compiler and Composer changes
+remain uncommitted in the existing trees. No full test suite, 51-sample manifest,
+linked C-library execution or standalone/hosted native acceptance cohort was
+run for this boundary change.
+
+Implementation and acceptance remain distinct: this is the scalar boundary
+contract, not completion of the compiler rearchitecture, all FFI adapters,
+backend ABI realization, or native F/C behavior. Further boundary work must
+extend the same source-owned contract for required storage/handle/aggregate
+adapters and verify the corresponding backend realization. The full gate chain
+and sample manifest are not invoked merely because a focused build succeeds.
+
+## Historical documentation and implementation checkpoints
+
+The sections below retain their original cohorts and observations. Statements
+of implementation status there describe those checkpoints, not the present tree.
+C and F have equal delivery standing. Source proof, physical composition and
+native behavior remain separate acceptance observations.
 
 Documentation correction: assistant-created dependency numbering has been
 removed. Work is owned by the existing C/F PRDs and their specification clauses,
@@ -44,8 +149,9 @@ instructions were also removed.
 The surviving contract is explicit: **CCS/Baker owns source semantics,
 elaboration, saturation and settlement**, preserving ingredients/recipes,
 scope, ordered joint incidence, complete premises and the intermediate rewrite
-record. **Alex passively composes Huet Elements/Patterns/Witnesses from immutable
-settled facts.** Target-specific realization belongs to **Composer's backend**.
+record. **Alex passively witnesses immutable settled facts through Huet
+Element/Pattern/Witness composition.** Target-specific realization belongs to
+**Composer's backend**.
 Clef's native dimensional types and lazy-default semantics remain authoritative.
 
 Representative corrected references:
@@ -68,11 +174,11 @@ not establish compiler repair, plugin removal from implementation, or new F/C
 acceptance. Revision hashes and results below identify their original tested
 cohorts; no new implementation cohort was run.
 
-Resume from the corrected PRDs and specification. Implementation inspection or
-changes require explicit owner authorization; the repair inventory below is not
-permission to start source scraping. When implementation work is authorized,
-retain the failing cases and repair their owning source contracts rather than
-restoring a vestige or weakening an oracle.
+That documentation-only checkpoint ended before implementation authorization.
+The owner has since authorized the in-place rearchitecture recorded above.
+The corrected PRDs and specification govern that work: retain failing cases and
+repair their owning source contracts rather than restoring a vestige or
+weakening an oracle.
 
 ## Reassessment after the completed independent sweeps
 
@@ -165,7 +271,7 @@ Publication review confirms that removing the tables requires immutable content,
 not a boolean or token beside a raw `SemanticGraph`. Node types, kind payloads,
 metadata, signatures and layouts currently retain mutable checker cells. The
 prepared input must own frozen nodes and codata; Alex's entry, zipper, parser
-state, witness context and retained occurrence records must consume that input
+state, witness context and retained occurrence records must retain that input
 without a raw-graph escape hatch. Exact prepared copies retain their facts;
 edited source drafts require new source publication. This preserves the Huet
 mechanics and prevents source edits from carrying old authority into witnessing.

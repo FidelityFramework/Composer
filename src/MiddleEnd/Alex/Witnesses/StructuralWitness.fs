@@ -18,18 +18,20 @@ open Alex.Patterns.RecordPatterns  // pRecordFieldGet
 open Alex.Patterns.CallablePatterns
 open Alex.Patterns.SequencePatterns
 open Alex.Patterns.LazyPatterns
+open Alex.Patterns.PlatformPatterns
 
 // ═══════════════════════════════════════════════════════════
 // CATEGORY-SELECTIVE WITNESS (Private)
 // ═══════════════════════════════════════════════════════════
 
-/// Witness structural nodes transparently - they organize but don't emit ops
+/// Witness structural occurrences, including imports owned by module scopes.
 let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput =
     match node.Kind with
-    | SemanticKind.ModuleDef (moduleName, _) ->
-        // Module definition - structural container, children already witnessed
-        // Return TRVoid per Domain Responsibility Principle
-        { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+    | SemanticKind.ModuleDef _ ->
+        // CCS names this exact occurrence as the owner of its published imports.
+        match tryMatchWithDiagnostics pBoundaryImports ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+        | Result.Ok (imports, _) -> { InlineOps = []; TopLevelOps = imports; Result = TRVoid }
+        | Result.Error reason -> WitnessOutput.error reason
 
     | SemanticKind.Sequential childIds when isLazyValue ctx node ->
         match List.tryLast childIds with

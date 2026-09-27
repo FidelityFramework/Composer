@@ -159,7 +159,7 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
             | "Pointer" | "ptr" ->  // Accept both capitalized (old) and lowercase (CCS)
                 // Extract base pointer from memref descriptor as index.
                 // Returns TIndex (MLIR index) which is the canonical type for pointer values.
-                // Callers at FFI boundaries (pExternCallResolved) handle index→i64 conversion.
+                // Foreign-boundary adaptations require a source-published ABI contract.
                 match fieldTy with
                 | TIndex ->
                     // An index field: the base pointer as index, no cast needed

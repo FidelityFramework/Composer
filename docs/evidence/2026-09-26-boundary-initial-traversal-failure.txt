@@ -1,0 +1,53 @@
+/home/hhh/repos/Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj : warning NU1902: Package 'Microsoft.Build.Tasks.Git' 8.0.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-23fw-v26w-5fgq
+  BAREWire -> /home/hhh/repos/BAREWire/src/bin/Debug/net10.0/BAREWire.dll
+  Thuja -> /home/hhh/repos/Thuja/src/Thuja/bin/Debug/net10.0/Thuja.dll
+/home/hhh/.nuget/packages/microsoft.sourcelink.common/8.0.0/build/Microsoft.SourceLink.Common.targets(53,5): warning : Source control information is not available - the generated source link is empty. [/home/hhh/repos/Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj]
+  Fidelity.Data -> /home/hhh/repos/Fidelity.Data/src/Fidelity.Data/bin/Debug/net10.0/Fidelity.Data.dll
+  fsyacc -> /home/hhh/repos/clef/artifacts/bin/fsyacc/Debug/net10.0/fsyacc.dll
+  fslex -> /home/hhh/repos/clef/artifacts/bin/fslex/Debug/net10.0/fslex.dll
+  Clef.Compiler.Service -> /home/hhh/repos/clef/artifacts/bin/Clef.Compiler.Service/Debug/net10.0/Clef.Compiler.Service.dll
+/home/hhh/repos/Composer/src/BackEnd/MCU/XtensaImage.fs(201,15): warning FS0025: Incomplete pattern matches on this expression. For example, the value '([_],_)' may indicate a case not covered by the pattern(s). However, a pattern rule with a 'when' clause might successfully match this value. [/home/hhh/repos/Composer/src/Composer.fsproj]
+  Composer -> /home/hhh/repos/Composer/src/bin/Debug/net10.0/Composer.dll
+  Alex.Tests -> /home/hhh/repos/Composer/tests/Alex.Tests/bin/Debug/net10.0/Alex.Tests.dll
+Test run for /home/hhh/repos/Composer/tests/Alex.Tests/bin/Debug/net10.0/Alex.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:01.13]     Alex.Tests.ForeignDeclarationTests.source scalar boundary traverses the complete witness registry [FAIL]
+  Failed Alex.Tests.ForeignDeclarationTests.source scalar boundary traverses the complete witness registry [116 ms]
+  Error Message:
+   Assert.Empty() Failure: Collection was not empty
+Collection: [{ Severity = Error
+  Code = None
+  NodeId = None
+  Source = None
+  Phase = None
+  Message =
+   "Function 'PublishedForeign.main': pFunctionDef: function 'PublishedForeign.main' has no witnessed return value and SSAAssignment derived no unit-return value for its Lambda"
+  Details = None }, { Severity = Error
+  Code = None
+  NodeId = Some (NodeId 91)
+  Source = Some "Lambda"
+  Phase = Some "PublishedForeign.main return"
+  Message =
+   "Body node 90 is Application (NodeId 86, [NodeId 87; NodeId 89]) (type: TNum (Carrier { Name = "int"
+                Module = []
+                ParamKinds = []
+                Layout = PlatformWord
+                NTUKind = Some (NTUint (Resolved Register))
+                FieldCount = 0
+                CaseCount = 0
+                Qualifiers = None
+                FieldPinAttributes = map [] }, { Bases = map []
+                                                 Vars = map [] })) — produced no result."
+  Details = None }, { Severity = Error
+  Code = None
+  NodeId = None
+  Source = None
+  Phase = None
+  Message = "Node 87 not yet witnessed"
+  Details = None }]
+  Stack Trace:
+     at Alex.Tests.ForeignDeclarationTests.source scalar boundary traverses the complete witness registry() in /home/hhh/repos/Composer/tests/Alex.Tests/ForeignDeclarationTests.fs:line 208
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+Failed!  - Failed:     1, Passed:     7, Skipped:     0, Total:     8, Duration: 1 s - Alex.Tests.dll (net10.0)

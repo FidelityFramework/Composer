@@ -13,6 +13,7 @@ open XParsec
 open XParsec.Parsers     // getUserState
 open XParsec.Combinators // parser { }
 open Alex.XParsec.PSGCombinators
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Alex.Dialects.Core.Types
 open Alex.CodeGeneration.TypeMapping
 open Alex.Traversal.TransferTypes
@@ -52,7 +53,7 @@ let pLoad (ssa: SSA) (memref: SSA) (indices: SSA list) : PSGParser<MLIROp> =
             | TMemRef elemType | TMemRefStatic (_, elemType) | TMemRefScalar elemType ->
                 return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
             | other ->
-                return! fail (Message (sprintf "Alex emission did not register a memref type for the loaded value at node %d: SSA %s is registered as %A, not a memref" (Clef.Compiler.NativeTypedTree.NativeTypes.NodeId.value state.Current.Id) (Alex.Dialects.Core.Serialize.ssaToString memref) other))
+                return! fail (Message (sprintf "Alex emission did not register a memref type for the loaded value at node %d: SSA %s is registered as %A, not a memref" (NodeId.value state.Current.Id) (Alex.Dialects.Core.Serialize.ssaToString memref) other))
         | None ->
             return! fail (Message $"pLoad: memref SSA {memref} has no registered type in accumulator")
     }

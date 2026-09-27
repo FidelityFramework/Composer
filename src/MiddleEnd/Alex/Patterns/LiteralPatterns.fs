@@ -119,7 +119,3 @@ let stringPoolView (pool: Clef.Compiler.PSGSaturation.SemanticGraph.Types.Static
       MLIROp.MemRefOp (MemRefOp.View (ssas[1], ssas[0], ssas[3], storageTy, contentTy))
       MLIROp.MemRefOp (MemRefOp.Cast (ssas[2], ssas[1], contentTy, dynamicTy)) ],
     TRValue { SSA = ssas[2]; Type = dynamicTy }
-
-// DEAD CODE DELETED: pStringGetPtr and pStringGetLength were unused
-// Pointer extraction happens inline in PlatformPatterns.pSysWrite
-// Length extraction happens inline in PlatformPatterns.pSysWrite via memref.dim

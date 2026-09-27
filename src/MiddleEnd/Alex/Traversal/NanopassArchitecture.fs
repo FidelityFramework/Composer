@@ -85,6 +85,7 @@ let rec visitAllNodes
     // This lookup reads an eagerly settled CCS projection for this exact graph;
     // it performs no source incidence analysis or hyperedge query.
     let demand = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary visitedCtx.Graph
+    let boundary = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryBoundary visitedCtx.Graph
     let definitionReuse =
         if Set.contains currentNode.Id !(visitedCtx.GlobalVisited) then definitionOnlyLambda currentNode visitedCtx.Graph
         else Result.Ok false
@@ -98,6 +99,12 @@ let rec visitAllNodes
         Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "source demand projection") reason
         |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
     elif demand |> Result.exists (fun projection -> projection.DeferredOnly.Contains currentNode.Id) then
+        ()
+    elif Result.isError boundary then
+        let reason = match boundary with Result.Error reason -> reason | Result.Ok _ -> invalidOp "Expected absent boundary publication"
+        Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "source boundary projection") reason
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+    elif boundary |> Result.exists (fun projection -> projection.DeclarationOnly.Contains currentNode.Id) then
         ()
     elif Set.contains currentNode.Id !visited then
         ()
@@ -122,7 +129,8 @@ let rec visitAllNodes
 
         // POST-ORDER Phase 1: Visit children FIRST (tree edges)
         // Navigate down to each child via PSGZipper.down — preserves breadcrumbs.
-        if not (isScopeBoundary currentNode) then
+        let declarationLeaf = boundary |> Result.exists (fun projection -> projection.DeclarationLeaves.Contains currentNode.Id)
+        if not (isScopeBoundary currentNode) && not declarationLeaf then
             if traceTraversal then printfn "[visitAllNodes] Node %A: visiting %d children" currentNode.Id currentNode.Children.Length
             let omittedActuals =
                 match demand with
@@ -306,11 +314,18 @@ let runAllNanopasses
     // Create combined witness that tries all nanopasses at each node
     let combinedWitness = combineWitnesses nanopasses
 
+    // Publication authorizes import declaration scopes separately from runtime
+    // reachability. A declaration-only module still owns its physical imports.
+    let boundaryScopes =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryBoundary graph with
+        | Result.Ok boundary -> boundary.ByScope
+        | Result.Error reason -> invalidOp reason
+
     // Process a single structural root node
     let processRoot (nodeId: NodeId) =
         if not (Set.contains nodeId !globalVisited) then
             match SemanticGraph.tryGetNode nodeId graph with
-            | Some node when node.IsReachable ->
+            | Some node when node.IsReachable || boundaryScopes.ContainsKey nodeId ->
                 if traceTraversal then printfn "[DEBUG] Processing root node %d (%A)" (NodeId.value nodeId) node.Kind
                 match PSGZipper.create graph nodeId with
                 | None ->
@@ -347,6 +362,8 @@ let runAllNanopasses
         for definition in classification.Definitions do
             processRoot definition
         processRoot moduleId
+    for KeyValue(scope, _) in boundaryScopes do
+        processRoot scope
 
 /// Main entry point: Execute all nanopasses and return accumulator
 let executeNanopasses

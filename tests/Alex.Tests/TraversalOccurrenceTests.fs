@@ -62,10 +62,7 @@ let discard (value: string) = 0
 [<EntryPoint>]
 let main _ = discard (helper ())
 """
-    let graph =
-        match Clef.Compiler.NativeService.parseAndCheck source "deferred-helper.clef" with
-        | Clef.Compiler.NativeService.Success result -> result.Graph
-        | result -> failwithf "Expected checked helper source: %A" result
+    let graph = checkScalarProgram source "deferred-helper.clef"
     let helper =
         graph.Nodes.Values |> Seq.find (fun node ->
             node.IsReachable && (match node.Kind with SemanticKind.Binding("helper", false, _, _) -> true | _ -> false))

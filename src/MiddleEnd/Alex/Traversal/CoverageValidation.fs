@@ -1,7 +1,7 @@
 /// CoverageValidation - Detect unwitnessed reachable PSG nodes
 ///
-/// After two-phase nanopass execution, validates that all reachable nodes were witnessed.
-/// Any reachable node that wasn't visited represents a gap in witness coverage - a compiler bug.
+/// After the shared traversal, validate all source-authorized executable and
+/// declaration-scope occurrences. Source-published proof-only nodes do not execute.
 ///
 /// This validation ensures no PSG nodes "fall through" silently without MLIR generation.
 module Alex.Traversal.CoverageValidation
@@ -15,29 +15,29 @@ open Alex.Traversal.TransferTypes
 // COVERAGE VALIDATION
 // ═══════════════════════════════════════════════════════════
 
-/// Validate that all reachable nodes were witnessed
-/// Returns list of diagnostics for any unwitnessed reachable nodes
+/// Source publication owns both executable demand and declaration placement.
+let private sourceOccurrences (graph: SemanticGraph) =
+    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead graph
+    |> Result.map (fun projection ->
+        let proofOnly = Set.union projection.Ordinary.DeferredOnly projection.Boundary.DeclarationOnly
+        graph.Nodes.Values
+        |> Seq.filter (fun node ->
+            (node.IsReachable || projection.Boundary.ByScope.ContainsKey node.Id)
+            && not (proofOnly.Contains node.Id))
+        |> Seq.map _.Id
+        |> Set.ofSeq)
+
+/// Report any required source occurrence missing from the shared traversal.
 let private validateCoverageWith
-    (deferred: Set<NodeId>)
+    (expected: Set<NodeId>)
     (graph: SemanticGraph)
     (allVisited: Set<NodeId>)  // Merged visited set from all nanopasses
     : Diagnostic list =
 
-    // Get all reachable nodes from the graph
-    let reachableNodes =
-        graph.Nodes
-        |> Map.toSeq
-        |> Seq.map snd  // Extract SemanticNode from (NodeId, SemanticNode) pairs
-        |> Seq.filter (fun node -> node.IsReachable)
-        |> Seq.toList
-
-    // Find unwitnessed nodes (reachable but not visited). No node kind is exempt:
-    // StructuralWitness claims TypeDef, so a reachable TypeDef the traversal never
-    // reached is a placement gap like any other.
     let unwitnessedNodes =
-        reachableNodes
-        |> List.filter (fun node ->
-            not (Set.contains node.Id allVisited) && not (deferred.Contains node.Id))
+        Set.difference expected allVisited
+        |> Set.toList
+        |> List.map (fun id -> graph.Nodes[id])
 
     // Generate error diagnostics for each unwitnessed node
     unwitnessedNodes
@@ -51,14 +51,14 @@ let private validateCoverageWith
         Diagnostic.error
             (Some node.Id)
             (Some "CoverageValidation")
-            (Some "Unwitnessed reachable node")
-            (sprintf "Alex traversal did not witness reachable PSG node '%s' (ID %d): no declaration root or structural parent placed it, or no witness claims its kind." kindSummary (NodeId.value node.Id)))
+            (Some "Unwitnessed source occurrence")
+            (sprintf "Alex traversal did not witness required PSG occurrence '%s' (ID %d): no declaration root or structural parent placed it, or no witness claims its kind." kindSummary (NodeId.value node.Id)))
 
 let validateCoverage (graph: SemanticGraph) (allVisited: Set<NodeId>) : Diagnostic list =
-    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary graph with
-    | Result.Ok projection -> validateCoverageWith projection.DeferredOnly graph allVisited
+    match sourceOccurrences graph with
+    | Result.Ok expected -> validateCoverageWith expected graph allVisited
     | Result.Error reason ->
-        [Diagnostic.error None (Some "CoverageValidation") (Some "source demand projection") reason]
+        [Diagnostic.error None (Some "CoverageValidation") (Some "source witness projection") reason]
 
 // ═══════════════════════════════════════════════════════════
 // COVERAGE STATISTICS
@@ -75,18 +75,13 @@ type CoverageStats = {
 
 /// Calculate coverage statistics from graph and merged visited set
 let calculateStats (graph: SemanticGraph) (allVisited: Set<NodeId>) : CoverageStats =
-    let deferred =
-        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary graph with
-        | Result.Ok projection -> projection.DeferredOnly
+    let expected =
+        match sourceOccurrences graph with
+        | Result.Ok expected -> expected
         | Result.Error reason -> invalidOp ("Coverage requires its source emission seal: " + reason)
     let totalNodes = Map.count graph.Nodes
-    let reachableNodes =
-        graph.Nodes
-        |> Map.toSeq
-        |> Seq.map snd
-        |> Seq.filter (fun n -> n.IsReachable && not (deferred.Contains n.Id))
-        |> Seq.length
-    let witnessedNodes = Set.difference allVisited deferred |> Set.count
+    let reachableNodes = Set.count expected
+    let witnessedNodes = Set.intersect allVisited expected |> Set.count
     let unwitnessedNodes = reachableNodes - witnessedNodes
     let coveragePercentage =
         if reachableNodes > 0 then

@@ -1,0 +1,14 @@
+/home/hhh/repos/Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj : warning NU1902: Package 'Microsoft.Build.Tasks.Git' 8.0.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-23fw-v26w-5fgq
+  BAREWire -> /home/hhh/repos/BAREWire/src/bin/Debug/net10.0/BAREWire.dll
+/home/hhh/.nuget/packages/microsoft.sourcelink.common/8.0.0/build/Microsoft.SourceLink.Common.targets(53,5): warning : Source control information is not available - the generated source link is empty. [/home/hhh/repos/Fidelity.Data/src/Fidelity.Data/Fidelity.Data.fsproj]
+  Fidelity.Data -> /home/hhh/repos/Fidelity.Data/src/Fidelity.Data/bin/Debug/net10.0/Fidelity.Data.dll
+  fslex -> /home/hhh/repos/clef/artifacts/bin/fslex/Debug/net10.0/fslex.dll
+  fsyacc -> /home/hhh/repos/clef/artifacts/bin/fsyacc/Debug/net10.0/fsyacc.dll
+  Clef.Compiler.Service -> /home/hhh/repos/clef/artifacts/bin/Clef.Compiler.Service/Debug/net10.0/Clef.Compiler.Service.dll
+/home/hhh/repos/clef/tests/Clef.Compiler.Service.Tests/CallableFlowCases.fs(149,9): warning FS0020: The result of this expression has type 'SemanticNode' and is implicitly ignored. Consider using 'ignore' to discard this value explicitly, e.g. 'expr |> ignore', or 'let' to bind the result to a name, e.g. 'let result = expr'. [/home/hhh/repos/clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj]
+/home/hhh/repos/clef/tests/Clef.Compiler.Service.Tests/LoopBindingCases.fs(122,16): warning FS3261: Nullness warning: Possible dereference of a null value when accessing member 'StartsWith' on the nullable value 'kind' of type 'string | null'. [/home/hhh/repos/clef/tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj]
+  Clef.Compiler.Service.Tests -> /home/hhh/repos/clef/artifacts/bin/Clef.Compiler.Service.Tests/Debug/net10.0/Clef.Compiler.Service.Tests.dll
+Test run for /home/hhh/repos/clef/artifacts/bin/Clef.Compiler.Service.Tests/Debug/net10.0/Clef.Compiler.Service.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    56, Skipped:     0, Total:    56, Duration: 2 s - Clef.Compiler.Service.Tests.dll (net10.0)
