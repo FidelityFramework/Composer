@@ -11,8 +11,9 @@ open Alex.Traversal.NanopassArchitecture
 
 module Publication = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission
 module Zipper = Alex.Traversal.PSGZipper
+module Catalog = Core.WitnessArtifacts
 
-let private boundaryFixture () =
+let private boundaryFixtureWith tail =
     let source = """module PublishedForeign
 type Signedness = Signed | Unsigned
 type TypeRef = Integer of Signedness * int | Void
@@ -27,14 +28,15 @@ let combineDescriptor: Expr<FunctionDescriptor> = <@ {
     CName = "combine"
     Parameters = [| { Name="left"; Type=Integer(Signed,32); PassBy=Value }; { Name="right"; Type=Integer(Signed,32); PassBy=Value } |]
     ReturnType=Integer(Signed,32); CallingConvention=CDecl; OwnershipTransfer=Borrowed } @>
-[<EntryPoint>]
-let main _ = combine (-11) 7
 """
-    let graph = Fixtures.checkScalarProgram source "published-boundary.clef"
+    let graph = Fixtures.checkScalarProgram (source + tail) "published-boundary.clef"
     let boundary = Publication.tryBoundary graph |> Result.defaultWith failwith
     let declaration = Assert.Single boundary.Imports.Values
     let call = Assert.Single boundary.Calls.Values
     graph, declaration, call
+
+let private boundaryFixture () =
+    boundaryFixtureWith "[<EntryPoint>]\nlet main _ = combine (-11) 7\n"
 
 let private position graph id = Zipper.create graph id |> Option.defaultWith (fun () -> failwith "Missing source occurrence")
 
@@ -63,6 +65,46 @@ let ``foreign declarations retain their published symbols without repair attribu
     Assert.DoesNotContain("ffi.", source)
     Assert.DoesNotContain("attributes", source)
 
+[<Fact>]
+let ``catalog retains published boundary signedness when portable types are identical`` () =
+    let graph, declaration, _ = boundaryFixture ()
+    let operation = MLIROp.FuncOp(FuncOp.BoundaryFuncDecl declaration)
+    let text = serialize [operation]
+    let scope = Catalog.beginWholeGraphWitness graph
+    let catalog =
+        Catalog.create scope Core.Types.WitnessArtifacts.TargetModuleActivation [] [operation] text []
+        |> Result.defaultWith failwith
+    Assert.Equal(Some declaration, (Assert.Single catalog.Units.Head.Imports).Boundary)
+    let changed =
+        { declaration with
+            Parameters = declaration.Parameters |> List.map (fun (formal, scalar) ->
+                formal, match scalar with BoundaryScalar.Integer(bits, sign) -> BoundaryScalar.Integer(bits, not sign) | other -> other) }
+    let changedOperation = MLIROp.FuncOp(FuncOp.BoundaryFuncDecl changed)
+    let erased = MLIROp.FuncOp(FuncDecl(declaration.Symbol, BoundaryAbi.parameters declaration,
+                                       BoundaryAbi.results declaration, FuncVisibility.Private, []))
+    for changedOperation in [changedOperation; erased] do
+        Assert.Equal(text, serialize [changedOperation])
+        match Catalog.create scope Core.Types.WitnessArtifacts.TargetModuleActivation [] [changedOperation] text [] with
+        | Result.Error reason -> Assert.Contains("source-published ABI", reason)
+        | Result.Ok _ -> failwith "Catalog erased boundary signedness because its portable spelling was unchanged"
+
+[<Fact>]
+let ``backend without a boundary realization refuses before its implementation runs`` () =
+    let graph, declaration, _ = boundaryFixture ()
+    let operations = [MLIROp.FuncOp(BoundaryFuncDecl declaration)]
+    let text = serialize operations
+    let catalog = Catalog.create (Catalog.beginWholeGraphWitness graph)
+                      Core.Types.WitnessArtifacts.TargetModuleActivation [] operations text [] |> Result.defaultWith failwith
+    let input: Core.Types.Pipeline.BackEndInput =
+        { Operations = operations; Text = text; PointerBits = Ok 64; ModuleName = Some "foreign_declarations"
+          WritableStorage = []; Catalog = Some catalog }
+    let mutable called = false
+    let implementation _ _ = called <- true; Ok (Core.Types.Pipeline.IntermediateOnly "sentinel")
+    match Core.Types.Pipeline.WitnessedInput.compile implementation input Unchecked.defaultof<_> with
+    | Result.Error message -> Assert.Contains("no boundary ABI realization", message)
+    | Result.Ok _ -> failwith "A backend accepted a source boundary without a realization"
+    Assert.False called
+
 [<Theory>]
 [<InlineData(0, 8, 4)>]
 [<InlineData(1, 24, 8)>]
@@ -82,23 +124,28 @@ let ``published import and ordered scalar call witness separately and verify as 
         | Result.Ok (operations, _) -> operations
         | Result.Error reason -> failwith reason
     match Assert.Single imports with
-    | MLIROp.FuncOp(FuncOp.FuncDecl(symbol, parameters, results, _, byval)) ->
-        Assert.Equal("combine", symbol)
-        Assert.Equal<MLIRType list>([TInt(IntWidth 32); TInt(IntWidth 32)], parameters)
-        Assert.Equal<MLIRType list>([TInt(IntWidth 32)], results)
-        Assert.Empty byval
+    | MLIROp.FuncOp(FuncOp.BoundaryFuncDecl published) ->
+        Assert.Equal<BoundaryImport>(declaration, published)
+        Assert.Equal("combine", published.Symbol)
+        Assert.Equal<BoundaryScalar list>([BoundaryScalar.Integer(32, true); BoundaryScalar.Integer(32, true)], published.Parameters |> List.map snd)
+        Assert.Equal(Some (BoundaryScalar.Integer(32, true)), published.Result)
     | other -> failwithf "Expected published module import, got %A" other
     let operands, parameters = recalledBoundary call false
     let operations, result =
         match Fixtures.matchAt Alex.Patterns.PlatformPatterns.pBoundaryCall (position graph call.Site) 64 operands with
         | Result.Ok (result, _) -> result
         | Result.Error reason -> failwith reason
-    Assert.DoesNotContain(operations, fun operation -> match operation with MLIROp.FuncOp(FuncOp.FuncDecl _) -> true | _ -> false)
+    Assert.DoesNotContain(operations, fun operation -> match operation with MLIROp.FuncOp(FuncOp.FuncDecl _ | FuncOp.BoundaryFuncDecl _) -> true | _ -> false)
     let calls = operations |> List.choose (function MLIROp.FuncOp(FuncOp.FuncCall(results, symbol, values)) -> Some(results, symbol, values) | _ -> None)
     let _, symbol, actuals = Assert.Single calls
     Assert.Equal("combine", symbol)
     let expectedActuals = call.Arguments |> List.mapi (fun ordinal operand ->
-        { SSA = if operand.Adaptation.IsSome then V(NodeId.value call.Site, 2 + ordinal) else Arg ordinal
+        { SSA = match operand.Adaptation with
+                | Some published ->
+                    let settled, value = meetFor graph call.Site operand.Actual |> Option.defaultWith (fun () -> failwith "Missing canonical boundary meet")
+                    Assert.Equal<Meet>(published, settled)
+                    value
+                | None -> Arg ordinal
           Type = TInt(IntWidth 32) })
     Assert.Equal<Val list>(expectedActuals, actuals)
     Assert.Contains(call.Arguments, fun operand -> operand.Adaptation |> Option.exists (fun meet -> meet.Adapt = MeetKind.ExtendSigned && meet.From = 8 && meet.To = 32))
@@ -160,12 +207,12 @@ let ``declaration scope is witnessed once independently of runtime reachability`
     Assert.Same(graph.Nodes[declaration.Scope], occurrence.Focus)
     Assert.Same(graph, occurrence.Graph)
     match Assert.Single (ScopeContext.getOps root.Value) with
-    | MLIROp.FuncOp(FuncOp.FuncDecl(symbol, _, _, _, _)) -> Assert.Equal(declaration.Symbol, symbol)
+    | MLIROp.FuncOp(FuncOp.BoundaryFuncDecl published) -> Assert.Equal<BoundaryImport>(declaration, published)
     | other -> failwithf "Expected one module import at its declared occurrence, got %A" other
 
 [<Fact>]
 let ``source scalar boundary traverses the complete witness registry`` () =
-    let graph, declaration, _ = boundaryFixture ()
+    let graph, declaration, call = boundaryFixture ()
     let coeffects = Fixtures.coeffects graph 64
     let registry = Alex.Traversal.WitnessRegistry.createRegistry coeffects.TargetPlatform
     let accumulator = executeNanopasses registry graph coeffects None
@@ -178,5 +225,61 @@ let ``source scalar boundary traverses the complete witness registry`` () =
         | _ -> None)
     Assert.Empty placeholderDefinitions
     let operations = List.rev accumulator.AllOps
+    let definitions = operations |> List.choose (function MLIROp.FuncOp(FuncOp.FuncDef(_, _, _, body, _)) -> Some body | _ -> None)
+    let body, resultValues, actualValues =
+        definitions |> List.collect (fun body ->
+            body |> List.choose (function
+                | MLIROp.FuncOp(FuncOp.FuncCall(results, "combine", values)) -> Some(body, results, values)
+                | _ -> None))
+        |> Assert.Single
+    Assert.Equal(2, actualValues.Length)
+    let constant value =
+        body |> List.choose (function MLIROp.ArithOp(ArithOp.ConstI(ssa, actual, ty)) when actual = value -> Some(ssa, ty) | _ -> None)
+        |> Assert.Single
+    let negative, negativeType = constant -11L
+    Assert.Equal(TInt(IntWidth 8), negativeType)
+    let extension, source, fromType, toType =
+        body |> List.choose (function MLIROp.ArithOp(ArithOp.ExtSI(result, source, fromType, toType)) when source = negative -> Some(result, source, fromType, toType) | _ -> None)
+        |> Assert.Single
+    Assert.Equal(negative, source)
+    Assert.Equal(TInt(IntWidth 8), fromType)
+    Assert.Equal(TInt(IntWidth 32), toType)
+    let publishedMeet, canonicalExtension = meetFor graph call.Site call.Arguments.Head.Actual |> Option.defaultWith (fun () -> failwith "Missing source boundary meet")
+    Assert.Equal(call.Arguments.Head.Adaptation, Some publishedMeet)
+    Assert.Equal(canonicalExtension, extension)
+    Assert.Equal<Val>({ SSA = extension; Type = TInt(IntWidth 32) }, actualValues[0])
+    let positive, positiveType = constant 7L
+    let positiveAtCall =
+        if positiveType = TInt(IntWidth 32) then positive else
+        let result, fromType, toType =
+            body |> List.choose (function MLIROp.ArithOp(ArithOp.ExtUI(result, source, fromType, toType)) when source = positive -> Some(result, fromType, toType) | _ -> None)
+            |> Assert.Single
+        Assert.Equal(positiveType, fromType)
+        Assert.Equal(TInt(IntWidth 32), toType)
+        result
+    Assert.Equal<Val>({ SSA = positiveAtCall; Type = TInt(IntWidth 32) }, actualValues[1])
+    let callResult = Assert.Single resultValues
+    let canonicalResult = Alex.Traversal.Values.resultOf coeffects.TargetPlatform graph (Zipper.enclosingLambdaIds (position graph call.Site)) call.Site
+    Assert.Equal(canonicalResult, callResult.SSA)
     let text = serialize operations
     MlirComponentTests.mlirOpt ["--verify-each"] text |> ignore
+
+[<Fact>]
+let ``external declaration supplied as a callback crosses the production witness boundary`` () =
+    let graph, declaration, _ = boundaryFixtureWith """
+let invoke callback = callback (-11) 7
+[<EntryPoint>]
+let main _ = invoke combine
+"""
+    let witnessed, libraries =
+        MiddleEnd.MLIRGeneration.generate graph graph.Platform.Value Core.Types.Dialects.Console
+            Core.Types.Dialects.CPU None |> Result.defaultWith failwith
+    Core.Types.Pipeline.WitnessedInput.validate witnessed |> Result.defaultWith failwith
+    Assert.Contains(declaration.Library, libraries)
+    let imports = witnessed.Operations |> List.choose (function MLIROp.FuncOp(BoundaryFuncDecl imported) -> Some imported | _ -> None)
+    Assert.Equal<BoundaryImport>(declaration, Assert.Single imports)
+    let calls = witnessed.Operations |> List.collect (Catalog.flatten >> Seq.toList) |> List.choose (function
+        | MLIROp.FuncOp(FuncCall(_, symbol, arguments)) when symbol = declaration.Symbol -> Some arguments
+        | _ -> None)
+    Assert.Equal(2, (Assert.Single calls).Length)
+    MlirComponentTests.mlirOpt ["--verify-each"] witnessed.Text |> ignore

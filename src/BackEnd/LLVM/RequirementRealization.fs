@@ -21,15 +21,7 @@ let selectRuntime (context: BackEndContext) (triple: string) =
         match context.DeploymentMode with
         | Core.Types.Dialects.DeploymentMode.Console | Core.Types.Dialects.DeploymentMode.Library -> true
         | _ -> false
-    let parts = triple.Split '-'
-    let linuxAbi =
-        match parts with
-        | [| "x86_64"; "linux"; environment |]
-        | [| "x86_64"; _; "linux"; environment |] -> environment = "gnu" || environment = "musl"
-        | _ -> false
-    if context.PlatformOS = Some "linux"
-       && context.RuntimeModel = Some Clef.Compiler.NativeTypedTree.NativeTypes.RuntimeModel.Libc
-       && context.TargetPointerBits = Some 64 && processDeployment && linuxAbi then
+    if processDeployment && (TargetProfiles.libcAmd64 context triple).IsSome then
         Some LinuxX64Process
     else None
 
@@ -99,6 +91,7 @@ let realize (runtime: LinuxX64Process option) (input: BackEndInput) : Result<Bac
             | MLIROp.NoUnwindFunction(FuncDef(name, _, _, body, _)) ->
                 names.Add name |> ignore
                 List.iter inspect body
+            | MLIROp.FuncOp(BoundaryFuncDecl declaration) -> names.Add declaration.Symbol |> ignore
             | MLIROp.FuncOp(FuncDecl(name, _, _, _, _))
             | MLIROp.FuncOp(FuncCall(_, name, _))
             | MLIROp.FuncOp(FuncConstant(_, name, _))

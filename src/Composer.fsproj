@@ -165,7 +165,9 @@
       <Compile Include="MiddleEnd/MLIRGeneration.fs" />
 
       <!-- BackEnd - LLVM -->
+      <Compile Include="BackEnd/LLVM/TargetProfiles.fs" />
       <Compile Include="BackEnd/LLVM/RequirementRealization.fs" />
+      <Compile Include="BackEnd/LLVM/BoundaryAdmission.fs" />
       <Compile Include="BackEnd/LLVM/Lowering.fs" />
       <Compile Include="BackEnd/LLVM/StorageCommitment.fs" />
       <Compile Include="BackEnd/LLVM/Codegen.fs" />

@@ -60,7 +60,7 @@ let validate (graph: SemanticGraph) (ops: MLIROp list) : Result<unit, string> =
                 match entries.TryFind (NodeId id) with
                 | None -> errors.Add "pool view has no corresponding source literal"
                 | Some entry ->
-                    let s k = V(id, k)
+                    let s k = Values.value (NodeId id) k
                     let storage = TMemRefStatic(pool.Size, TInt(IntWidth 8))
                     let content = TMemRefStatic(entry.Length, TInt(IntWidth 8))
                     let dynamic = TMemRef(TInt(IntWidth 8))

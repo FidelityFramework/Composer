@@ -144,8 +144,7 @@ let private witnessApplication (ctx: WitnessContext) (node: SemanticNode) =
     | Result.Error reason -> failure node "source callable projection" reason
     | Result.Ok projection ->
     // Foreign admission and its explicit ABI remain PlatformWitness's concern.
-    if Map.containsKey node.Id ctx.Coeffects.Platform.Bindings.Bindings
-       || projection.ForeignCalls.Contains node.Id then WitnessOutput.skip
+    if projection.ForeignCalls.Contains node.Id then WitnessOutput.skip
     else
     match tryMatch pApplication ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | None -> WitnessOutput.skip

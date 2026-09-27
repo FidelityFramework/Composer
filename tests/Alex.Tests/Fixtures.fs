@@ -18,7 +18,8 @@ let unpublished (graph: SemanticGraph) =
 /// A component fixture publishes through the same source owner as compilation.
 /// Callers must use the returned graph when constructing their zipper/context.
 let prepareSource (graph: SemanticGraph) =
-    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare (unpublished graph) with
+    let settled = graph |> unpublished |> Clef.Compiler.Nanopass.BoundarySettlement.normalize
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.prepare settled with
     | Result.Ok prepared -> prepared
     | Result.Error failures ->
         failures |> List.map (fun failure -> sprintf "%A: %s" failure.Occurrence failure.Reason)
@@ -87,10 +88,8 @@ let refusePublication (reasonFragment: string) (graph: SemanticGraph) =
 
 let coeffects (graph: SemanticGraph) pointerBits : TransferCoeffects =
     { Platform =
-        { TargetArch = { Isa = (if pointerBits = 32 then ARM32_Thumb else X86_64)
-                         Register = Ok pointerBits; Pointer = Ok pointerBits }
-          LinkedLibraries = Set.empty
-          Bindings = graph.Codata.Value.Bindings }
+        { TargetArch = { Register = Ok pointerBits; Pointer = Ok pointerBits }
+          LinkedLibraries = Set.empty }
       TargetPlatform = Core.Types.Dialects.CPU }
 
 let atChild childId (position: Zipper.PSGZipper) =

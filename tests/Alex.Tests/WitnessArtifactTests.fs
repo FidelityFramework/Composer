@@ -22,12 +22,12 @@ let private refused (part: string) (result: Result<'a, string>) =
     | Result.Error message -> Assert.Contains(part, message)
     | Result.Ok _ -> failwith "Expected exact correspondence to be refused"
 
-let private fixture () =
+let private fixtureWith publish =
     let builder = NodeBuilder()
     let first = builder.Create(SemanticKind.Literal(NativeLiteral.Bool true), Types.boolType, dummyRange)
     let sibling = builder.Create(SemanticKind.Literal(NativeLiteral.Bool false), Types.boolType, dummyRange)
     let root = builder.Create(SemanticKind.Sequential [first.Id; sibling.Id], Types.boolType, dummyRange)
-    let graph = builder.Build []
+    let graph = builder.Build [] |> publish
     let position = Zipper.create graph root.Id |> require "Missing fixture root" |> Zipper.down 0 |> require "Missing child"
     let accumulator = MLIRAccumulator.empty ()
     let rootScope = ref (ScopeContext.root ())
@@ -37,6 +37,8 @@ let private fixture () =
           Coeffects = coeffects graph 64; ScopeContext = rootScope; RootScopeContext = rootScope
           GlobalVisited = visited; TraversalVisited = visited }
     context
+
+let private fixture () = fixtureWith id
 
 let private recorded ctx operations =
     EmissionCorrespondence.record ctx operations
@@ -194,7 +196,7 @@ let ``planned startup cannot disappear from the emitted unit`` () =
 
 [<Fact>]
 let ``backend entry rejects missing catalog changed text and changed content`` () =
-    let ctx = fixture ()
+    let ctx = fixtureWith prepareSource
     let operations = [definition "body" []]
     let _, _, catalog = recorded ctx operations
     let input: BackEndInput =
@@ -207,8 +209,73 @@ let ``backend entry rejects missing catalog changed text and changed content`` (
     WitnessedInput.validate { input with Operations = changed; Text = text changed } |> refused "definition correspondence"
 
 [<Fact>]
-let ``queued globals retain the draining witness occurrence`` () =
+let ``unpublished physical catalog cannot enter production or trigger serialization`` () =
     let ctx = fixture ()
+    let operations = [definition "body" []]
+    let _, _, catalog = recorded ctx operations
+    // Serializing this unimplemented aggregate ABI would throw. Source
+    // admission must refuse the unpublished input before serialization starts.
+    let unsupported = MLIROp.FuncOp(FuncDecl("foreign", [], [], FuncVisibility.Private,
+                                           [{ ParamIndex = 0; SizeBytes = 8; AlignBytes = 8 }]))
+    let input: BackEndInput =
+        { Operations = [unsupported]; PointerBits = Ok 64; ModuleName = Some "catalog"
+          Text = text operations; WritableStorage = []; Catalog = Some catalog }
+    let mutable called = false
+    let implementation _ _ = called <- true; Ok (IntermediateOnly "sentinel")
+    WitnessedInput.compile implementation input Unchecked.defaultof<_> |> refused "Source emission admission"
+    Assert.False called
+
+[<Theory>]
+[<InlineData(false)>]
+[<InlineData(true)>]
+let ``erasing boundary tags cannot authorize a stale or unpublished source catalog`` invalidate =
+    let source = """module BackendAdmission
+type Signedness = Signed | Unsigned
+type TypeRef = Integer of Signedness * int | Void
+type PassBy = Value | Reference
+type CallConv = | CDecl
+type Transfer = | Borrowed
+type ParameterInfo = { Name: string; Type: TypeRef; PassBy: PassBy }
+type FunctionDescriptor = { CName: string; Parameters: ParameterInfo array; ReturnType: TypeRef; CallingConvention: CallConv; OwnershipTransfer: Transfer }
+[<FidelityExtern("c", "observe")>]
+let observe (value: int) : int = NativeDefault.zeroed ()
+let observeDescriptor: Expr<FunctionDescriptor> = <@ {
+    CName = "observe"
+    Parameters = [| { Name="value"; Type=Integer(Signed,32); PassBy=Value } |]
+    ReturnType=Integer(Signed,32); CallingConvention=CDecl; OwnershipTransfer=Borrowed } @>
+[<EntryPoint>]
+let main _ = observe (-11)
+"""
+    let original = checkScalarProgram source "backend-admission.clef"
+    let publication = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryBoundary original |> good
+    let declaration = Assert.Single publication.Imports.Values
+    let operation = MLIROp.FuncOp(BoundaryFuncDecl declaration)
+    let originalCatalog = Catalog.create (Catalog.beginWholeGraphWitness original)
+                              TargetModuleActivation [] [operation] (text [operation]) [] |> good
+    let input: BackEndInput =
+        { Operations = [operation]; PointerBits = Ok 64; ModuleName = Some "catalog"
+          Text = text [operation]; WritableStorage = []; Catalog = Some originalCatalog }
+    WitnessedInput.validate input |> good
+    let changed =
+        if invalidate then Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.invalidate original
+        else { original with DeclarationRoots = [] }
+    let erased = MLIROp.FuncOp(FuncDecl(declaration.Symbol, BoundaryAbi.parameters declaration,
+                                       BoundaryAbi.results declaration, FuncVisibility.Private, []))
+    Assert.Equal(input.Text, text [erased])
+    // The isolated physical catalog is deliberately possible. It carries no
+    // permission to enter a production backend after source authority is lost.
+    let catalog = Catalog.create (Catalog.beginWholeGraphWitness changed)
+                      TargetModuleActivation [] [erased] input.Text [] |> good
+    let mutable called = false
+    let implementation _ _ = called <- true; Ok (IntermediateOnly "sentinel")
+    WitnessedInput.compile implementation { input with Operations = [erased]; Catalog = Some catalog } Unchecked.defaultof<_>
+    |> refused "Source emission admission"
+    Assert.False called
+    WitnessedInput.validate input |> good
+
+[<Fact>]
+let ``queued globals retain the draining witness occurrence`` () =
+    let ctx = fixtureWith prepareSource
     let visited = ctx.GlobalVisited
     let globalOp = MLIROp.GlobalMemref("queued", TMemRefStatic(1, TInt(IntWidth 8)), None)
     let witness (current: WitnessContext) (_: SemanticNode) =

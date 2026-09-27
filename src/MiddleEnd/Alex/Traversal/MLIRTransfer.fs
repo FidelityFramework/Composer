@@ -37,7 +37,7 @@ let transferWithCorrespondence
     let registry = createRegistry coeffects.TargetPlatform
 
     // Production admission requires the exact graph's source-settled projection.
-    // An absent or copied seal cannot silently change argument demand.
+    // Absent provenance or changed prepared roots cannot carry old demand authority.
     match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead graph,
           SemanticGraph.tryGetNode entryNodeId graph with
     | Result.Error reason, _ -> Result.Error ("Source emission admission: " + reason)

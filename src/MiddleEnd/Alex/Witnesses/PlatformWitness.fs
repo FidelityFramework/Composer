@@ -25,8 +25,11 @@ let private witnessPlatform (ctx: WitnessContext) (node: SemanticNode) : Witness
             | Result.Ok ((operations, result), _) ->
                 { InlineOps = operations; TopLevelOps = []; Result = result }
             | Result.Error reason -> WitnessOutput.error reason
-        | None when ctx.Coeffects.Platform.Bindings.Bindings.ContainsKey node.Id ->
-            WitnessOutput.error $"Boundary call {NodeId.value node.Id} lacks its source-published declaration and ABI contract."
-        | None -> WitnessOutput.skip
+        | None ->
+            match Publication.tryCallable ctx.Graph with
+            | Result.Error reason -> WitnessOutput.error reason
+            | Result.Ok callable when callable.ForeignCalls.Contains node.Id ->
+                WitnessOutput.error $"Boundary call {NodeId.value node.Id} lacks its source-published declaration and ABI contract."
+            | Result.Ok _ -> WitnessOutput.skip
 
 let nanopass : Nanopass = { Name = "Platform"; Witness = witnessPlatform }

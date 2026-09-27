@@ -62,23 +62,13 @@ type OSFamily =
     | MacOS
     | FreeBSD
 
-/// The instruction set, for the OS and syscall selection.
-type Isa =
-    | X86_64
-    | ARM64
-    | ARM32_Thumb
-    | RISCV64
-    | RISCV32
-    | WASM32
-
 /// The target architecture as Composer reads it (plan D8, L-10; Dimensional_Range_Design.md
-/// §8.3): the instruction set, and the width dimensions the platform description declares,
+/// §8.3): the width dimensions the platform description declares,
 /// `Register` and `Pointer`, read once from the CCS context (MLIRGeneration.architectureOf). There
 /// is no architecture table: a width the description does not declare carries CCS8203's text,
 /// and the site that needs it fails with that text, never with a number of its own. An FPGA
 /// description declares neither, and no site on the fabric leg reads them.
 type Architecture = {
-    Isa: Isa
     Register: Result<int, string>
     Pointer: Result<int, string>
 }
@@ -403,6 +393,9 @@ and FuncOp =
     // Function definition/declaration
     | FuncDef of string * (SSA * MLIRType) list * MLIRType list * MLIROp list * FuncVisibility  // name, args, resultTypes, body, visibility
     | FuncDecl of string * MLIRType list * MLIRType list * FuncVisibility * ByvalParam list     // name, paramTypes, resultTypes, visibility, byvalParams (external decl)
+    /// Exact source boundary contract accompanies its portable physical spelling.
+    /// Signedness and calling convention remain available to target realization.
+    | BoundaryFuncDecl of Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryImport
     // Function calls
     | FuncCall of Val list * string * Val list                                             // results, func, args
     | FuncCallIndirect of Val list * SSA * Val list                                        // results, callee, args
@@ -452,3 +445,15 @@ and SMTOp =
     | SMTNot of SSA * SSA                           // result, operand
     | SMTAssert of SSA                              // assert a !smt.bool value
     | SMTCheck                                      // smt.check sat {} unknown {} unsat {}
+
+module BoundaryAbi =
+    /// Signless MLIR types spell physical carriers; they do not replace source ABI facts.
+    let scalarType = function
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryScalar.Integer(bits, _) -> TInt(IntWidth bits)
+        | Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryScalar.Boolean -> TInt(IntWidth 1)
+
+    let parameters (declaration: Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryImport) =
+        declaration.Parameters |> List.map (snd >> scalarType)
+
+    let results (declaration: Clef.Compiler.PSGSaturation.SemanticGraph.Types.BoundaryImport) =
+        declaration.Result |> Option.map scalarType |> Option.toList

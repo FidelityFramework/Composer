@@ -19,7 +19,7 @@ type TargetPlatform =
 /// Determines linker flags, runtime dependencies, entry point handling.
 /// Does NOT affect pipeline selection.
 type DeploymentMode =
-    | Console       // Linked with libc, can use stdio
-    | Freestanding  // No libc, syscalls only
+    | Console       // Hosted executable startup
+    | Freestanding  // Owned startup; runtime/library availability is declared separately
     | Embedded      // No OS, bare metal
     | Library       // Shared library (.so/.dll)

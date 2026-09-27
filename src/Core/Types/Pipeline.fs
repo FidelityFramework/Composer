@@ -150,16 +150,35 @@ module WitnessedInput =
         match input.Catalog with
         | None -> Error "Backend compilation requires a current source witness artifact catalog"
         | Some catalog ->
-            let serialized =
-                match input.ModuleName with
-                | Some name -> Alex.Dialects.Core.Serialize.moduleToString input.PointerBits name input.Operations
-                | None -> sprintf "module {\n%s\n}" (Alex.Dialects.Core.Serialize.opsToString input.PointerBits input.Operations "  ")
-            if serialized <> input.Text then Error "Backend portable text differs from its actual witnessed operations"
-            else Core.WitnessArtifacts.validate catalog.Scope input.Operations input.Text input.WritableStorage catalog
+            // Physical correspondence fixtures can exist without publication;
+            // production target realization always requires the source input.
+            // This passive check precedes serialization and all catalog readers.
+            match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead (Core.WitnessArtifacts.graph catalog.Scope) with
+            | Error reason -> Error ("Source emission admission: " + reason)
+            | Ok _ ->
+                let serialized =
+                    match input.ModuleName with
+                    | Some name -> Alex.Dialects.Core.Serialize.moduleToString input.PointerBits name input.Operations
+                    | None -> sprintf "module {\n%s\n}" (Alex.Dialects.Core.Serialize.opsToString input.PointerBits input.Operations "  ")
+                if serialized <> input.Text then Error "Backend portable text differs from its actual witnessed operations"
+                else Core.WitnessArtifacts.validate catalog.Scope input.Operations input.Text input.WritableStorage catalog
 
-    let compile implementation input context =
+    let compileWithBoundary admission implementation input context =
         validate input |> Result.bind (fun () ->
+            admission input context) |> Result.bind (fun () ->
             match context.IntermediatesDir, input.Catalog with
             | Some directory, Some catalog -> Core.WitnessArtifacts.write (System.IO.Path.Combine(directory, "10_witness_units.json")) catalog
             | _ -> ()
             implementation input context)
+
+    /// Each target must explicitly admit its realization of source boundary contracts.
+    let compile implementation input context =
+        let noRealization (input: BackEndInput) _ =
+            input.Operations |> List.tryPick (function
+                | Alex.Dialects.Core.Types.MLIROp.FuncOp(Alex.Dialects.Core.Types.BoundaryFuncDecl declaration) ->
+                    Some declaration.Symbol
+                | _ -> None)
+            |> function
+               | Some symbol -> Error $"Selected backend has no boundary ABI realization for '{symbol}'"
+               | None -> Ok ()
+        compileWithBoundary noRealization implementation input context

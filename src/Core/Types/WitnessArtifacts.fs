@@ -40,6 +40,8 @@ type FunctionImport = {
     Results: MLIRType list
     Visibility: FuncVisibility
     Byval: ByvalParam list
+    /// Retained verbatim from Baker; physical signless types cannot encode this ABI.
+    Boundary: BoundaryImport option
 }
 
 type ActivationOwnership =

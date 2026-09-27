@@ -27,24 +27,12 @@ open Core.Types.Pipeline
 // PUBLIC API
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// The instruction set and the declared Register and Pointer widths, read from the CCS context.
+/// The declared Register and Pointer widths, read from the CCS context.
 /// The widths are the description's (plan D8, L-10) and carry as `Result`s: a site that needs one
 /// on a description declaring none fails with CCS8203's text, never with a number of its own.
-let private architectureOf (graph: SemanticGraph) (ctx: PlatformContext) : Architecture =
-    let declaredArch =
-        Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve graph
-        |> Option.bind (fun p -> p.Core) |> Option.map (fun c -> c.Arch)
-        |> Option.filter (fun name -> name <> "") |> Option.defaultValue ctx.PlatformId
-    let isa =
-        match declaredArch with
-        | id when id.Contains("x86_64") || id.Contains("x86-64") -> X86_64
-        | id when id.Contains("arm_cortex_m7") || id.Contains("arm_cortex_m33") || id.Contains("arm32") -> ARM32_Thumb
-        | id when id.Contains("ARM64") || id.Contains("aarch64") -> ARM64
-        | id when id.Contains("riscv64") -> RISCV64
-        | id when id.Contains("riscv32") -> RISCV32
-        | _ -> X86_64
+let private architectureOf (ctx: PlatformContext) : Architecture =
     let width (dimension: WidthDimension) = PlatformContext.tryWidth ctx (WidthDimension.name dimension)
-    { Isa = isa; Register = width WidthDimension.Register; Pointer = width WidthDimension.Pointer }
+    { Register = width WidthDimension.Register; Pointer = width WidthDimension.Pointer }
 
 /// Generate MLIR from PSG
 /// This is the single entry point for the MiddleEnd
@@ -58,7 +46,7 @@ let private generateCore
     (linkedLibraries: Set<string>)
     : Result<BackEndInput * Set<string>, string> =
 
-    let arch = architectureOf graph platformCtx
+    let arch = architectureOf platformCtx
     let codata = graph.Codata.Value
 
     // Representation decisions inside type mapping that depend on the target (enum DU tags)
@@ -70,7 +58,7 @@ let private generateCore
     let proofObligations = Clef.Compiler.Nanopass.ObligationDischarge.ofGraph graph
 
     let coeffects : TransferCoeffects = {
-        Platform = { TargetArch = arch; Bindings = codata.Bindings; LinkedLibraries = linkedLibraries }
+        Platform = { TargetArch = arch; LinkedLibraries = linkedLibraries }
         TargetPlatform = targetPlatform
     }
 
@@ -145,7 +133,7 @@ let private generateCore
                             { Operations = topLevelOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
                               Catalog = Some catalog
                               ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
-                        witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
+                        witnessed, Set.union codata.WitnessEmission.Value.Boundary.Links linkedLibraries)
         | Result.Error msg -> Result.Error msg
 
 /// Generate MLIR for the graph. A core's leg reads the declared Register and Pointer widths at
@@ -153,7 +141,7 @@ let private generateCore
 /// that declares neither cannot start it, and is refused here, before any witness runs, with
 /// the code PlatformDeclaration reports for a missing declaration (CCS8203). The fabric leg reads
 /// neither, so a description declaring none compiles for it. The deployment mode is the
-/// project's; the runtime it selects is read from the graph's platform bindings (CCS).
+/// project's; runtime and library requirements are settled by CCS/Baker.
 let generateWithLinkedLibraries
     (graph: SemanticGraph)
     (platformCtx: PlatformContext)
@@ -162,19 +150,23 @@ let generateWithLinkedLibraries
     (intermediatesDir: string option)
     (linkedLibraries: Set<string>)
     : Result<BackEndInput * Set<string>, string> =
-    let arch = architectureOf graph platformCtx
-    let undeclared =
-        match targetPlatform with
-        | Core.Types.Dialects.TargetPlatform.FPGA -> None
-        | _ ->
-            match arch.Register, arch.Pointer with
-            | Result.Error message, _ | _, Result.Error message -> Some message
-            | Result.Ok _, Result.Ok _ -> None
-    match undeclared with
-    | Some message ->
-        Result.Error (sprintf "CCS8203: %s; a core's leg reads the Register and Pointer width dimensions at its boundaries and layouts and cannot start without them" message)
-    | None -> generateCore graph platformCtx targetPlatform intermediatesDir linkedLibraries
+    // Refuse changed source input before any platform/codata reader or output.
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryRead graph with
+    | Result.Error reason -> Result.Error ("Source emission admission: " + reason)
+    | Result.Ok _ ->
+        let arch = architectureOf platformCtx
+        let undeclared =
+            match targetPlatform with
+            | Core.Types.Dialects.TargetPlatform.FPGA -> None
+            | _ ->
+                match arch.Register, arch.Pointer with
+                | Result.Error message, _ | _, Result.Error message -> Some message
+                | Result.Ok _, Result.Ok _ -> None
+        match undeclared with
+        | Some message ->
+            Result.Error (sprintf "CCS8203: %s; a core's leg reads the Register and Pointer width dimensions at its boundaries and layouts and cannot start without them" message)
+        | None -> generateCore graph platformCtx targetPlatform intermediatesDir linkedLibraries
 
-/// Callers without project link declarations retain the existing binding policy.
+/// Callers without project link declarations retain the source-settled library requirements.
 let generate graph platformCtx deploymentMode targetPlatform intermediatesDir =
     generateWithLinkedLibraries graph platformCtx deploymentMode targetPlatform intermediatesDir Set.empty

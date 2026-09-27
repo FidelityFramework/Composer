@@ -1,5 +1,162 @@
 # Independent assessment of the September 26 C/F checkpoint
 
+## Assessment of the boundary publication checkpoint
+
+This section assesses the "Boundary publication rearchitecture" entry of
+[C_F_Checkpoint_2026-09-26.md](C_F_Checkpoint_2026-09-26.md) against the code
+committed as Clef `d372adb` and Composer `05af77a`, with Fidelity.Platform
+`e69948d`. The classes are those of the table in the earlier assessment below.
+
+**Method and limits.** This is a reading audit. The auditor read the checkpoint,
+the three committed transcripts under `docs/evidence/`, the two commits and the
+design of record. No build, test, sample or gate was run, and no code was
+changed. Every statement about behavior below is derived from the source text
+and is marked where it needs a run to confirm.
+
+### Summary
+
+The Alex half of the change conforms. Signature discovery, marshalling,
+system-call selection and declaration construction are removed from the middle
+end, and the witness reads published facts only. The source half publishes the
+right facts and refuses where a premise is missing. Its defect is placement:
+the boundary is settled inside the publication reader, outside Baker, and it
+was added beside the older resolvers it replaces instead of in their place.
+The admitted boundary matches no declaration in the library corpus and no
+sample in the manifest, so the change restores no F/C case.
+
+### Delivered work that conforms
+
+- **Alex no longer decides the boundary.** `PlatformPatterns.fs` is 110 lines
+  (1,097 changed) and holds three Patterns that read
+  `WitnessEmission.tryBoundary`. `PlatformWitness.fs:14-30` selects a Pattern by
+  membership in the published maps and refuses a resolved call that has no
+  publication.
+- **The recorded counts reconcile with the test sources.**
+  `BoundaryEmissionCases.fs` holds 11 facts and 12 theory rows (23).
+  `OrdinaryDemandCases.fs` holds 9 facts and 24 theory rows (33).
+  `ForeignDeclarationTests.fs` and `TraversalOccurrenceTests.fs` hold 8 each (16).
+- **Missing premises refuse.** An absent descriptor, a calling convention other
+  than `CDecl`, a reference parameter, an actual with no established range, a
+  width disagreement and an undeclared runtime each stop publication
+  (clef `BoundaryEmission.fs:139-162`, `:243`, `:291-293`). No width is
+  substituted.
+- **The placeholder defect was real and is repaired at its owner.** Ordinary
+  demand read the unused formals of an extern placeholder as proof that the C
+  arguments could be omitted. `OrdinaryDemand.fs:36-51` and `:129` exclude the
+  placeholder. The initial failure transcript is retained.
+- **Two rows of the earlier assessment are closed in code.** The process-global
+  witness table is gone and the projection travels in `Codata`
+  (`WitnessEmission.fs:42-75`). `OrdinaryDemand.sealEmission` is removed. A proof
+  mismatch now refuses with located failures (`OrdinaryDemand.fs:212-251`).
+- **A missing `mlir-opt` fails the test** (`MlirComponentTests.fs:10-29`).
+
+### Divergences
+
+| Item | Anchor | Disposition |
+|---|---|---|
+| **The boundary is settled in the publication reader, outside Baker** (high). `BoundaryEmission.project` reads descriptors, decides admission, checks range coverage and builds the facts in one step at `prepare`. No Baker recipe or nanopass exists for it, no hyperedge records the relation, no `EdgeRole` names it, and the coverage premise is an inline check with no obligation. Ordinary demand shows the required form: a recipe writes rows into the graph and the projection validates them. | clef `BoundaryEmission.fs:197-217`, `:273-350`; `WitnessEmission.fs:19`; absent from `Baker/Recipes/` and `Nanopass/` | A Baker recipe settles the import, call, ordered operand and adaptation relations as joint hyperedges with roles, and emits range coverage as an obligation. `BoundaryEmission` then validates and projects those rows. |
+| **Four CCS readers decide foreign-call identity and two decide the runtime** (high). The older resolver still maps a `Sys` call to libc or a system call from a defaulted runtime mode: no context gives Console, and an undeclared runtime follows the startup record. The checkpoint states that neither default may supply an import. The backend link set is read from the older resolver, and no backend code reads the new facts. | clef `PlatformBindings.fs:21-30`, `:46-57`, `:86-97`; `CallableEmission.fs:175-179`; `OrdinaryDemand.fs:39-51`; `BoundaryEmission.fs:31-46`; Composer `MLIRGeneration.fs:148`, `PlatformWitness.fs:27` | One owner. The Baker boundary relation replaces `PlatformBindings` call resolution and the two private walks, and the link set is read from the published imports. |
+| **A Pattern constructs SSA names by ordinal arithmetic** (medium). The call result, its adaptation and each argument adaptation are named `V(site, 0)`, `V(site, 1)` and `V(site, 2 + ordinal)`. The recorded derivation names a value through `Values.value` and a meet through `Values.meetValue`, which every other witness reaches through `adaptOperand`. One published meet now has two names, and a test pins the new one. The gate's pattern is written for the one-component constructor and cannot match this form. | Composer `PlatformPatterns.fs:94`, `:100`, `:106`; `ForeignDeclarationTests.fs:101`; `Values.fs:20-23`; clef `drift-gate.sh:61`; `Dimensional_Range_Design.md` §8.3 | Read the names from the one derivation and correct the gate pattern. This joins the open owner decision on the banded family in the earlier table. |
+| **Published signedness is discarded at the declaration Element** (medium). Source publishes `Integer(bits, signed)`. The Element maps it to a bare integer type, and admission accepts any positive width. C conventions require the caller to extend arguments narrower than the register, which the backend cannot realize from a declaration that carries no sign. | Composer `FuncElements.fs:51-61`; clef `BoundaryEmission.fs:92-93` | Admit only widths the chain realizes correctly, or carry the published fact to the backend that owns the convention. |
+| **Libc availability is read from the project-file claim** (medium). The check reads `PlatformContext.RuntimeModel`, which the loader fills from the project's `[platform]` section. The description's `Core.Runtime` is compared only by a separate finding, and only when the project states a claim. The tests confirm it: they alter the context record while the source declaration stays unchanged. | clef `BoundaryEmission.fs:291`; `ProjectChecker.fs:62-82`; `FidprojLoader.fs:196-226`; `PlatformResolution.fs:694-702` | Read the runtime from the resolved description, as platform-bindings.md "Platform Descriptor" requires for every platform fact. |
+| **The `TypeRef` vocabulary has two readers** (low). They admit different payload shapes and are reconciled by an equality check. | clef `BoundaryEmission.fs:84-97`, `:162`; `PlatformResolution.fs:908-938` | One reader that yields the typed fact, signedness included. |
+| **The new module accumulates imperatively** (low). Three mutable bindings, one `ResizeArray` and seven loops repeat the shape of `CallableEmission` and `StorageWitness`. | clef `BoundaryEmission.fs:275-346` | Folds over the node map. The sibling modules teach the wrong pattern until they are corrected. |
+
+### Items to sharpen
+
+- **The admitted boundary admits nothing in the corpus.** The nine files under
+  Fidelity.Platform `Bindings/Libc/` declare 109 externs and no
+  `FunctionDescriptor`, so each reachable call is refused for a missing
+  descriptor. The descriptors that exist (Pthread, Wayland and others) take
+  references. Sample 17 has no descriptor and uses retired types. Record that
+  the contract is exercised by fixtures only.
+- **Every console write is refused.** Each reachable `Sys` application stops
+  publication (clef `BoundaryEmission.fs:301-303`), and Platform
+  `Console.clef:28-45` is built on `Sys.write`. This is the correct interim
+  result. The refusal text asks for a source declaration, while
+  platform-bindings.md Layer 1 states that an intrinsic needs none in user
+  code. The owed contract is CCS settlement of `Sys.write` over a bounded
+  array. It is the contract that returns F-01, and the checkpoint should name
+  it as the next boundary.
+- **Helper imports need an inventory.** `pFuncDecl` always refuses
+  (Composer `FuncElements.fs:64-69`). Its callers are `MemoryPatterns.fs:356`,
+  `StringPatterns.fs:50` and `:456`, and `RecordPatterns.fs:213`. String
+  concatenation, string comparison and record copy cannot be witnessed until
+  their source contract exists.
+- **Retraction is tested through a function production does not call.**
+  `WitnessEmission.admit` has test callers only. Production admission is
+  `tryRead` (Composer `MLIRTransfer.fs:42-44`), which checks materialization and
+  presence. Invalidation happens only in the `SemanticGraph` helper functions
+  (clef `Core.fs:166-168`), so a record copy keeps the old projection. No
+  Composer production code copies the graph today. The checkpoint's own
+  requirement for a frozen prepared input remains open.
+- **The full-registry test asserts no content.** It checks for no errors, no
+  placeholder definition and verification
+  (`ForeignDeclarationTests.fs:166-182`). The ordered call and the signed
+  extension are asserted only in the component test, whose operands are bound
+  from the facts under test (`:41-52`). Assert both in the traversal output.
+- **An extern passed as a callback argument has no test.** The alias case is
+  covered. The argument case depends on Baker's value-position rewrite and
+  needs a run to confirm.
+- **The evidence cannot be tied to a revision.** The transcripts carry no
+  commit, no assembly hash and no test names. The checkpoint still states that
+  the changes are uncommitted. Record the pairing given at the top of this
+  section.
+- **The shared-path effect is unmeasured.** Publication, ordinary demand,
+  traversal and coverage are shared by every compilation, and every
+  publication now depends on boundary admission. The owner's baseline
+  (300/1,605 CCS, 51/307 Alex, 0/51 samples) predates the change. Run both full
+  suites and record the movement before the next boundary is added.
+
+### Changes in the commit that the checkpoint does not record
+
+Clef `d372adb` changes six checker files outside the boundary work. None has a
+focused test or an entry in the checkpoint.
+
+| File | Change | Assessment |
+|---|---|---|
+| `Expressions/Bindings.fs` | The tuple marker string and the `name:nodeId` metadata text are replaced by `BindingHead`, `Declared` and `CheckedBinding`. A wildcard component creates no binding. | Conforms. The hidden tuple binding is still named from a node number (`:513`). |
+| `Expressions/Patterns.fs:150-155`, `:237-245` | A refused `as` or cons pattern now recovers with no bindings. | Names used in the arm body will report as unresolved beside CCS8401. Needs a regression. |
+| `NativeTypes.fs` | `resolveSize` is removed. `resolveAlign` refuses composite kinds. | Conforms. No caller remains. |
+| `NativeService.fs` | `checkExpression` and `checkLetBinding` are removed. Module bindings declare through one function. | Conforms. |
+| `Project/ProjectChecker.fs:258-275` | Each unreadable source file reports its own reason. | Conforms. |
+| `Nanopass/ProgramInitialization.fs:60-72` | Startup settlement restated with no behavior change. | Neutral. |
+
+### Decision for the owner
+
+Two normative chapters specify different binding forms. ffi-boundary.md §5.3
+requires `FnPtr.fromSymbol` with `FnPtr.invoke`. platform-bindings.md Layer 2
+specifies a descriptor quotation beside a placeholder function. The
+implementation admits the second, identified by a `FidelityExtern` attribute
+that neither chapter specifies. The checkpoint cites the first as governing.
+Recommendation: keep the Layer 2 form, which Farscape generates for all 1,173
+library externs, specify the attribute there, and correct §5.3.
+
+### What this change teaches
+
+1. **Removing a decision from Alex is half of the move.** The decision must
+   arrive in Baker as a recipe with graph rows. A reader that runs at
+   publication is a third location, and it leaves no rewrite record.
+2. **A replacement removes what it replaces in the same changeset.** A
+   resolver left in place keeps its consumers. Here the backend still links
+   from it.
+3. **An admitted contract is measured against the corpus.** A contract that
+   only fixtures can satisfy is a template and should be recorded as one.
+4. **A retraction test must exercise the production admission path.**
+5. **A focused pass on a shared path needs the full suites beside it.**
+
+### Recommended order
+
+1. Run the full CCS and Alex suites on the committed pair and record them.
+2. Move boundary settlement into a Baker recipe with hyperedges and an
+   obligation, and retire the call resolution in `PlatformBindings`.
+3. Settle `Sys.write` over a bounded array and restore F-01 through it.
+4. Publish the helper imports, or replace them with the portable copy form.
+5. Extend to handles and references after the Farscape regeneration supplies
+   descriptors for the libc bindings.
+
+## Earlier assessment at Clef `fd4ee1b`, Composer `b4f6396`
+
 This is an independent assessment, prepared for the owner, of the intermediate
 checkpoint recorded in [C_F_Checkpoint_2026-09-26.md](C_F_Checkpoint_2026-09-26.md)
 at Clef `fd4ee1b`, Composer `b4f6396`, specification `d3f1d88` and BAREWire

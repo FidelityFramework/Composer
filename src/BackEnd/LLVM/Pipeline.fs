@@ -57,4 +57,4 @@ let private implementation : BackEnd = {
 
 /// Current source/witness ownership is validated before target realization.
 let backend: BackEnd =
-    { implementation with Compile = WitnessedInput.compile implementation.Compile }
+    { implementation with Compile = WitnessedInput.compileWithBoundary BoundaryAdmission.validate implementation.Compile }

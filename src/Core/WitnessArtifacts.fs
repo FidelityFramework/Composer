@@ -68,7 +68,11 @@ let private hash text = SHA256.HashData(Encoding.UTF8.GetBytes(text: string)) |>
 let private imports operations =
     operations |> List.choose (function
         | MLIROp.FuncOp(FuncDecl(name, arguments, results, visibility, byval)) ->
-            Some { Symbol = name; Arguments = arguments; Results = results; Visibility = visibility; Byval = byval }
+            Some { Symbol = name; Arguments = arguments; Results = results; Visibility = visibility; Byval = byval; Boundary = None }
+        | MLIROp.FuncOp(BoundaryFuncDecl declaration) ->
+            Some { Symbol = declaration.Symbol; Arguments = BoundaryAbi.parameters declaration
+                   Results = BoundaryAbi.results declaration; Visibility = FuncVisibility.Private
+                   Byval = []; Boundary = Some declaration }
         | _ -> None)
 
 let private startup scope activation =
@@ -96,6 +100,8 @@ let validate scope operations text writable (catalog: Catalog) =
                     | MLIROp.FuncOp(FuncDef(name, args, results, _, _))
                     | MLIROp.NoUnwindFunction(FuncDef(name, args, results, _, _)) -> Some(name, (List.map snd args, results))
                     | MLIROp.FuncOp(FuncDecl(name, args, results, _, _)) -> Some(name, (args, results))
+                    | MLIROp.FuncOp(BoundaryFuncDecl declaration) ->
+                        Some(declaration.Symbol, (BoundaryAbi.parameters declaration, BoundaryAbi.results declaration))
                     | _ -> None)
                 |> List.groupBy fst
             let conflicting = signatures |> List.exists (fun (_, rows) -> rows |> List.map snd |> List.distinct |> List.length <> 1)
@@ -123,17 +129,27 @@ let validate scope operations text writable (catalog: Catalog) =
             let unownedWritable = definitions |> List.exists (function MLIROp.GlobalMemref(_, _, None) -> true | _ -> false)
             let opaque = definitions |> List.exists (function MLIROp.RawMLIR _ -> true | _ -> false)
             let expectedStartup = startup scope catalog.Activation
+            let boundaryFailure =
+                let retained = unit.Imports |> List.choose _.Boundary
+                match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryBoundary (graph scope) with
+                | Error reason when not retained.IsEmpty -> Some reason
+                | Error _ -> None // Unpublished isolated physical correspondence fixtures.
+                | Ok publication ->
+                    let retainedMap = retained |> List.map (fun declaration -> declaration.Identity, declaration) |> Map.ofList
+                    if retainedMap = publication.Imports && retained.Length = retainedMap.Count then None
+                    else Some "boundary declaration differs from its source-published ABI"
             let startupOwners =
                 match expectedStartup with
                 | None -> 0
                 | Some(node, symbol) ->
                     unit.Definitions |> List.filter (fun row -> row.Occurrence.Focus.Id = node && definitionSymbol row.Operation = Some symbol) |> List.length
             if occurrenceFailure.IsSome then fail occurrenceFailure.Value
+            elif boundaryFailure.IsSome then fail boundaryFailure.Value
             elif symbols.Length <> (Set.ofList symbols).Count then fail "duplicate symbol definition ownership"
             elif duplicateRecords || definitions.Length <> recorded.Length || definitions |> List.exists (fun op -> not (List.contains op recorded)) then
                 fail "missing, duplicate or changed emitted definition correspondence"
             elif all |> List.filter isOwnedOperation |> List.length <> definitions.Length then fail "nested definition has no module-unit ownership"
-            elif all |> List.choose (function MLIROp.FuncOp(FuncDecl _) as op -> Some op | _ -> None) |> List.length <> (imports operations).Length then
+            elif all |> List.choose (function MLIROp.FuncOp(FuncDecl _ | BoundaryFuncDecl _) as op -> Some op | _ -> None) |> List.length <> (imports operations).Length then
                 fail "nested external declaration has no module import ownership"
             elif conflicting then fail "conflicting typed import/definition signatures"
             elif unit.Imports <> imports operations || unit.Imports.Length <> (unit.Imports |> List.map _.Symbol |> Set.ofList).Count then
@@ -171,7 +187,12 @@ let write path (catalog: Catalog) =
                       path = row.Occurrence.Path |> List.map (fun (parent, left, right) ->
                           {| parent = NodeId.value parent.Id; left = List.map NodeId.value left; right = List.map NodeId.value right |}) |})
                imports = unit.Imports |> List.map (fun row ->
-                   {| symbol = row.Symbol; arguments = List.map string row.Arguments; results = List.map string row.Results |})
+                   {| symbol = row.Symbol; arguments = List.map string row.Arguments; results = List.map string row.Results
+                      sourceBoundary = row.Boundary |> Option.map (fun declaration ->
+                          {| declaration = NodeId.value declaration.Identity; library = declaration.Library
+                             convention = string declaration.CallingConvention
+                             parameters = declaration.Parameters |> List.map (snd >> string)
+                             result = declaration.Result |> Option.map string |}) |})
                writableSymbols = List.map fst unit.WritableStorage
                startup = unit.Startup |> Option.map (fun (node, symbol) -> {| node = NodeId.value node; symbol = symbol |}) |})
     let manifest = {| schema = 1; witnessRun = witnessRun catalog.Scope; semanticScope = "whole-checked-graph"; activation = string catalog.Activation; units = units |}

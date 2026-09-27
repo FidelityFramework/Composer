@@ -28,11 +28,13 @@
     <Compile Include="LambdaOccurrenceTests.fs" />
     <Compile Include="ControlFlowOccurrenceTests.fs" />
     <Compile Include="TraversalOccurrenceTests.fs" />
+    <Compile Include="PublicationAdmissionTests.fs" />
     <Compile Include="WitnessArtifactTests.fs" />
     <Compile Include="RequirementTests.fs" />
     <Compile Include="EagerWitnessTests.fs" />
     <Compile Include="RawConstantMatchTests.fs" />
     <Compile Include="LLVMRequirementTests.fs" />
+    <Compile Include="BoundaryAbiTests.fs" />
     <Compile Include="WritableStorageTests.fs" />
     <Compile Include="AggregatePatternTests.fs" />
     <Compile Include="UnionLayoutPatternTests.fs" />

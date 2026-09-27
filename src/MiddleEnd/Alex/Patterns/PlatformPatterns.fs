@@ -11,7 +11,6 @@ open Alex.XParsec.PSGCombinators
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Elements.FuncElements
-open Alex.Elements.ArithElements
 
 module Publication = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission
 
@@ -57,20 +56,18 @@ let pBoundaryImports : PSGParser<MLIROp list> =
 
 /// The source owns whether an adaptation exists and its exact operation.
 /// SSA naming and checking physical correspondence are witness bookkeeping.
-let private pBoundaryAdapt (result: SSA) (adaptation: Meet option) (value: Val) : PSGParser<MLIROp list * Val> =
+let private pBoundaryAdapt (consumer: NodeId) (operand: NodeId) (adaptation: Meet option) (value: Val) : PSGParser<MLIROp list * Val> =
     parser {
+        let! state = getUserState
+        let settled = meetFor state.Graph consumer operand |> Option.map fst
+        do! ensure (settled = adaptation) "Published boundary adaptation disagrees with its exact source numeric meet."
         match adaptation with
         | None -> return [], value
         | Some meet ->
-            let fromType, toType = TInt(IntWidth meet.From), TInt(IntWidth meet.To)
-            do! ensure (value.Type = fromType) "Published boundary adaptation disagrees with the witnessed operand type."
-            let! operation =
-                match meet.Adapt with
-                | MeetKind.ExtendSigned -> pExtSI result value.SSA fromType toType
-                | MeetKind.ExtendUnsigned -> pExtUI result value.SSA fromType toType
-                | MeetKind.Truncate -> pTruncI result value.SSA fromType toType
-                | _ -> fail (Message "Published scalar boundary requires an admitted integer adaptation.")
-            return [operation], { SSA = result; Type = toType }
+            do! ensure (meet.Consumer = consumer && meet.Operand = operand) "Published boundary adaptation names different source participants."
+            do! ensure (value.Type = TInt(IntWidth meet.From)) "Published boundary adaptation disagrees with the witnessed operand type."
+            let! operations, result, resultType = pAdapt consumer operand value.SSA value.Type
+            return operations, { SSA = result; Type = resultType }
     }
 
 /// Witness a settled call. Missing publication is a refusal, never permission to
@@ -85,25 +82,38 @@ let pBoundaryCall : PSGParser<MLIROp list * TransferResult> =
             match boundary.Imports.TryFind call.Import with
             | None -> return! fail (Message "Published boundary call names an absent import.")
             | Some declaration ->
-                let rec arguments ordinal (operands: BoundaryOperand list) : PSGParser<MLIROp list * Val list> = parser {
+                let rec arguments (witnessed: Map<NodeId, Meet option * Val * Val>) (operands: BoundaryOperand list) : PSGParser<MLIROp list * Val list> = parser {
                     match operands with
                     | [] -> return [], []
                     | operand :: rest ->
                         let! ssa, ty = pRecallNode operand.Actual
+                        let raw = { SSA = ssa; Type = ty }
                         let! operations, value =
-                            pBoundaryAdapt (V(NodeId.value node.Id, 2 + ordinal)) operand.Adaptation { SSA = ssa; Type = ty }
+                            match witnessed.TryFind operand.Actual with
+                            | Some (adaptation, previous, value) -> parser {
+                                do! ensure (adaptation = operand.Adaptation && previous = raw) "Repeated boundary actual disagrees with its witnessed source meet or value."
+                                return [], value
+                              }
+                            | None -> pBoundaryAdapt node.Id operand.Actual operand.Adaptation raw
                         do! ensure (value.Type = boundaryScalarType operand.Abi) "Witnessed boundary argument disagrees with its published ABI."
-                        let! remainingOps, values = arguments (ordinal + 1) rest
+                        // Repeated positions retain their order and reuse the
+                        // one canonical meet definition for this actual.
+                        let! remainingOps, values = arguments (witnessed.Add(operand.Actual, (operand.Adaptation, raw, value))) rest
                         return operations @ remainingOps, value :: values
                 }
-                let! argumentOps, values = arguments 0 call.Arguments
-                let resultSSA = V(NodeId.value node.Id, 0)
-                let results = call.Result |> Option.map (fun ty -> { SSA = resultSSA; Type = boundaryScalarType ty }) |> Option.toList
+                let! argumentOps, values = arguments Map.empty call.Arguments
+                let! results =
+                    match call.Result with
+                    | None -> preturn []
+                    | Some ty -> parser {
+                        let! resultSSA = getNodeSSA node.Id
+                        return [{ SSA = resultSSA; Type = boundaryScalarType ty }]
+                      }
                 let! operation = pFuncCallResults results declaration.Symbol values
                 match results with
                 | [] -> return argumentOps @ [operation], TRVoid
                 | [value] ->
-                    let! resultOps, result = pBoundaryAdapt (V(NodeId.value node.Id, 1)) call.ResultAdaptation value
+                    let! resultOps, result = pBoundaryAdapt node.Id node.Id call.ResultAdaptation value
                     return argumentOps @ [operation] @ resultOps, TRValue result
                 | _ -> return! fail (Message "Scalar boundary publication has an invalid result list.")
     }

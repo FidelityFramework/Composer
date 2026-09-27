@@ -254,7 +254,6 @@ let compileProject (options: CompilationOptions) : int =
                     let declaredCore =
                         Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.resolve project.CheckResult.Graph
                         |> Option.bind (fun p -> p.Core)
-                    let declaredPlatform = Core.CCS.Integration.platformContext project.CheckResult
                     // Backends need disk inputs even without retained diagnostic
                     // dumps. An explicit artifact root owns that working storage
                     // too; this path does not enable CCS/Alex evidence emission.
@@ -271,8 +270,8 @@ let compileProject (options: CompilationOptions) : int =
                         TargetTripleOverride = options.TargetTriple |> Option.orElseWith (fun () -> declaredCore |> Option.map (fun c -> c.Triple) |> Option.filter (fun t -> t <> ""))
                         TargetPointerBits = declaredCore |> Option.bind (fun c -> c.Widths |> List.tryFind (fun w -> w.Name = "Pointer") |> Option.map (fun w -> w.Bits))
                         TargetCpu = declaredCore |> Option.map (fun c -> c.CpuModel) |> Option.filter (fun t -> t <> "")
-                        PlatformOS = declaredPlatform |> Option.bind _.PlatformOS
-                        RuntimeModel = declaredPlatform |> Option.bind _.RuntimeModel
+                        PlatformOS = declaredCore |> Option.map _.Os |> Option.filter (System.String.IsNullOrWhiteSpace >> not)
+                        RuntimeModel = declaredCore |> Option.bind Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.runtimeModel
                         DeploymentMode = ctx.DeploymentMode
                         EmitIntermediateOnly = options.EmitLLVMOnly
                         ExternLibraries = externLibraries

@@ -1,7 +1,9 @@
 # Clef / Composer checkpoint: C-series coverage and affected F-series gates
 
-**Current working-tree checkpoint, 2026-09-26, after the owner's removal of
-fallbacks and vestiges. No C/F acceptance is claimed.** The owner authorized
+**Checkpoint, 2026-09-26, after the owner's removal of fallbacks and vestiges.
+The original boundary slice is committed and its full suites are measured
+below; subsequent corrections are still in progress. No C/F acceptance is
+claimed.** The owner authorized
 rearchitecture directly in the existing trees. No Python, worktrees, recovery of
 deleted implementation, or middle-end semantic repair is authorized.
 
@@ -12,12 +14,20 @@ below. The 27/51 and 21/48 cohorts later in this document are historical and do
 not describe the current tree. Failures exposed by removing fallbacks identify
 missing source contracts; they are not a reason to restore those fallbacks.
 
-## Boundary publication rearchitecture — current work
+## Boundary publication rearchitecture — committed slice
+
+This slice is **Clef `d372adb8e4eb01ed885943bf67d4324dffa65024`, Composer
+`05af77a34d2ad568e3400742535c4ad8025e0797`, and Fidelity.Platform
+`e69948daec67ccc3bcabf3fa9c6616e9b54c875d`**. This supersedes the earlier statement
+that its compiler and Composer changes were uncommitted. The independent
+[reading assessment](C_F_Independent_Assessment_2026-09-26.md#assessment-of-the-boundary-publication-checkpoint)
+identifies architectural gaps in this committed slice; it remains unchanged.
 
 The governing references are the
 [shared C/F ownership requirements](PRDs/C-Series-Acceptance.md#11-baker-construction-alex-witnessing-and-backend-realization),
 [M-01 dialect admission](PRDs/M-01-DialectAdmission.md),
-[FFI boundary specification](../../clef-lang-spec/spec/ffi-boundary.md), and
+[FFI boundary specification](../../clef-lang-spec/spec/ffi-boundary.md),
+[platform bindings specification](../../clef-lang-spec/spec/platform-bindings.md), and
 [site nanopass guidance](../../clef-lang-site/hugo/content/docs/internals/concepts/nanopass-navigation.md).
 **CCS/Baker publishes settled facts; Alex witnesses them through Huet
 Element/Pattern/Witness composition; Composer's backend owns target realization.**
@@ -28,8 +38,10 @@ It retains exact descriptor and binding identities, declaration paths, module
 ownership, ordered actual/formal correspondence, immutable declaration facts
 and type identities (including numeric carrier and dimension), and the existing
 source-proved numeric adaptations.
-Missing or inconsistent premises refuse publication. Source re-admission
-checks the projection against the current graph.
+Missing or inconsistent premises refuse publication. The test-only source
+re-admission path checks the projection against the current graph. The committed
+production reader does not perform that comparison after an arbitrary graph
+record copy; this remains distinct from helper-driven invalidation.
 
 Source publication also identifies external declaration leaves and their
 exclusive placeholder/formal/body nodes. These remain available as proof
@@ -40,11 +52,17 @@ encoded in its Kind.
 
 The first admitted boundary is an explicitly declared libc scalar C call:
 integer or boolean parameters, integer/boolean/void result, and `CDecl`.
-The source platform must explicitly declare libc availability. Freestanding
+The committed check requires an explicit project runtime claim of libc;
+reading that fact from the resolved source platform description is an assessed
+correction below. Freestanding
 startup does not imply absence of libc, and hosted startup does not supply a
 missing library declaration. Other libraries, system intrinsics, reference,
 pointer and aggregate adapters require their own complete source contracts;
-this change does not invent them.
+this change does not invent them. The admitted scalar contract is exercised by
+fixtures only. The assessment records **109 libc externs across nine
+Fidelity.Platform binding files with no FunctionDescriptor**; those declarations
+cannot satisfy this contract. No library or manifest case was restored by the
+recorded scalar fixtures.
 
 Alex's former platform signature discovery, marshalling construction, system
 call selection and inline declaration construction have been removed.
@@ -74,7 +92,7 @@ The eager arithmetic case checks its required CCS8011 diagnostic without first
 passing through a fixture that forbids every diagnostic. No fallback or relaxed
 proof premise was introduced to satisfy those checks.
 
-**Focused evidence on this working tree:**
+**Original focused evidence, now included in the committed slice:**
 
 | Check | Result | Evidence |
 |---|---|---|
@@ -83,9 +101,11 @@ proof premise was introduced to satisfy those checks.
 | Initial full traversal, before source demand repair | Required foreign actual was not witnessed; retained as evidence of the missing contract | [Initial failure transcript](evidence/2026-09-26-boundary-initial-traversal-failure.txt) |
 
 The Alex checks include the real witness registry, no placeholder `FuncDef`,
-ordered scalar operands and source-proved signed extension, stock `mlir-opt
---verify-each`, exact module placement, missing-scope coverage and invalidated
-publication refusals. The existing deferred-helper traversal fixtures now obtain
+stock `mlir-opt --verify-each`, exact module placement, missing-scope coverage
+and invalidated-publication refusals. Ordered operands and signed extension
+were asserted only in the seeded component test, not the full registry output;
+the strengthened traversal assertion is part of the in-progress correction.
+The existing deferred-helper traversal fixtures now obtain
 complete publication using explicit source platform authority shared with the
 boundary fixtures; target-free checking is not treated as executable authority.
 
@@ -98,10 +118,12 @@ dotnet test tests/Clef.Compiler.Service.Tests/Clef.Compiler.Service.Tests.fsproj
 dotnet test tests/Alex.Tests/Alex.Tests.fsproj --no-restore --filter 'FullyQualifiedName~ForeignDeclarationTests|FullyQualifiedName~TraversalOccurrenceTests' --logger 'console;verbosity=minimal'
 ```
 
-These commands built the affected projects. The compiler and Composer changes
-remain uncommitted in the existing trees. No full test suite, 51-sample manifest,
-linked C-library execution or standalone/hosted native acceptance cohort was
-run for this boundary change.
+These original commands built the affected projects. Their transcripts lack
+revision stamps, assembly hashes and complete named outcomes; the full-suite
+measurement below supplies those for the committed pair. No 51-sample manifest,
+linked C-library execution or standalone/hosted native acceptance cohort has
+been run for this boundary change. **0/51** remains the owner's earlier sample
+observation, not a result reproduced here.
 
 Implementation and acceptance remain distinct: this is the scalar boundary
 contract, not completion of the compiler rearchitecture, all FFI adapters,
@@ -109,6 +131,121 @@ backend ABI realization, or native F/C behavior. Further boundary work must
 extend the same source-owned contract for required storage/handle/aggregate
 adapters and verify the corresponding backend realization. The full gate chain
 and sample manifest are not invoked merely because a focused build succeeds.
+
+### Full suites on the committed pair, before corrections
+
+The full CCS and Alex suites ran sequentially before any corrective
+implementation edit. Before both runs, Clef and Fidelity.Platform were clean;
+Composer had **only `docs/C_F_Independent_Assessment_2026-09-26.md` modified**.
+The saved after-run revisions and status are identical. The UTC interval was
+September 27 01:57:06–01:59:04, still September 26 in America/New_York.
+
+| Suite | Passed | Failed | Executed | Skipped | Build errors |
+|---|---:|---:|---:|---:|---:|
+| CCS `Clef.Compiler.Service.Tests` | 1,337 | 291 | 1,628 | 0 | 0 |
+| Composer `Alex.Tests` | 263 | 49 | 312 | 0 | 0 |
+
+Temporary evidence and exact commands remain at
+`/tmp/clef-boundary-audit-baseline/README.md`: complete console logs, original
+TRX, every named test outcome/failure, test and source assembly SHA-256 values,
+SDK information, timing, exit codes, before/after status, derivation scripts
+and an evidence hash inventory. The owner removed `docs/evidence`; no repository
+archive is retained or to be recreated. The shared CCS assembly hash matches
+in both suites. Both test commands returned exit 1 because tests failed;
+neither was a compilation blocker.
+
+Compared only with the owner's aggregate baseline, CCS has **nine fewer
+failures and 23 more cases**, and Alex has **two fewer failures and five more
+cases**. No earlier named result inventory was supplied for this measurement,
+so these totals do not identify recovered or regressed tests. The current CCS
+TRX has 240 failing test messages containing CCS8011, counted once per test;
+that text count is not a causal diagnosis or an identity comparison to the
+owner's earlier 235. Samples and native behavior were not measured.
+
+### Other checker changes already present in the handoff
+
+Clef `d372adb` also includes the following six preexisting handoff edits,
+separate from the boundary implementation. This inventory follows the
+independent assessment; no new implementation/history inspection was used to
+attribute them. Their behavior was **not separately verified**, and no focused
+regressions for these changes were recorded. Full-suite execution above does
+not supply missing per-change coverage.
+
+| Checker file | Included change | Verification gap |
+|---|---|---|
+| `NativeTypedTree/Expressions/Bindings.fs` | Replaces tuple marker/metadata strings with BindingHead, Declared and CheckedBinding; wildcard components create no binding | No focused check recorded; hidden tuple binding still uses node-number naming in the assessment |
+| `NativeTypedTree/Expressions/Patterns.fs` | Refused `as` and cons patterns recover without bindings | No focused recovery regression; unresolved arm names beside CCS8401 need coverage |
+| `NativeTypedTree/NativeTypes.fs` | Removes resolveSize; resolveAlign refuses composite kinds | No focused check recorded |
+| `NativeTypedTree/NativeService.fs` | Removes checkExpression/checkLetBinding and unifies module declaration entry | No focused check recorded |
+| `Project/ProjectChecker.fs` | Reports each unreadable source file's own reason | No focused check recorded |
+| `Nanopass/ProgramInitialization.fs` | Restates startup settlement, assessed as behavior-neutral | No independent behavioral verification recorded |
+
+### Correction of ownership and backend handoff — current uncommitted work
+
+The committed baseline above is the before-state. The owner confirmed that
+target admission and realization belong in the backend and authorized keeping
+and completing that work. The architectural correction is the ownership of
+source facts and their faithful transport across the middle-end boundary.
+
+Baker now establishes external declaration identity before ordinary demand.
+After source ranges and numeric meets are available, its boundary recipe settles
+imports, ordered calls, adaptations, participant membership and range coverage.
+Typed joint graph rows retain ordinals, obligations, checked outcomes and rewrite
+provenance. Publication validates and projects those rows. The old call/runtime
+resolver in PlatformBindings is removed; its unrelated pin reader remains.
+Ordinary demand and callable publication read the same boundary owner rows.
+The source description supplies runtime authority, and backend link requirements
+come from published imports. The typed descriptor reader is shared.
+
+Alex uses the canonical Values/meet derivation and pAdapt. BoundaryFuncDecl
+retains the complete published declaration, including signedness, through the
+Element, portable operation and artifact catalog. The catalog rejects changed
+facts and their replacement by an identically printed ordinary declaration.
+Patterns remain reusable; Witnesses select published contracts.
+
+Backend admission checks the selected target's realization of those contracts.
+The current LLVM profile covers signed/unsigned 32- and 64-bit scalar C carriers;
+other widths and Boolean remain explicit realization failures. Startup selection
+does not supply or remove runtime availability. This profile does not establish
+general foreign-boundary acceptance. The unused middle-end instruction-set
+field and its implicit x86-64 default are removed.
+
+Production middle-end and backend entry require source publication before
+source readers or output. Publication retains all prepared graph roots and
+rejects changed raw copies; unchanged-root copies remain valid. This establishes
+transport integrity only. Deep freezing of mutable checker cells and accepted
+source-revision authorization remain open.
+
+Verification is still being completed. Both compiler assemblies build. The
+first Composer focused run executed 85 cases: 83 passed, including backend
+native C interoperability; two failed. One fixture lacked source publication.
+The other exposed generated callback code with no owning module occurrence;
+its repair belongs to Baker's closure declaration placement. Final results
+will supersede these intermediate counts below.
+
+The complete corpus drift gate ran and returned exit 1 with 25 vocabulary hits
+and 3,987 scheduled lines. The reported hits include negative assertions,
+historical assessment text, diagnostic naming and a stale sample comment; the
+new SSA construction rule reported no production constructor outside Values.
+Its 12 bounded positive/negative controls and shell syntax check also pass.
+The gate is not reported as clean. Output is in
+`/tmp/clef-boundary-drift-gate.log`; no repository archive was created.
+
+The first current F-01 compile returned exit 1 with two CCS8403 errors at
+Console.clef lines 28 and 34: intrinsic Sys.write lacks CCS/Baker boundary
+settlement. No native executable was run. Its required native oracle remains
+exit 0, stdout exactly `Hello, World!\n`, and empty stderr. Artifacts are under
+`/tmp/composer-f01-native`. This is the next bounded-array source contract;
+changing backend target policy cannot supply it.
+
+The normative binding-form decision remains **pending with the owner**:
+ffi-boundary §5.3 specifies FnPtr.fromSymbol/invoke, while platform-bindings
+Layer 2 specifies a descriptor beside a placeholder and neither chapter
+specifies FidelityExtern. This checkpoint does not choose between them. The
+next executable boundary remains source settlement of intrinsic Sys.write over
+a bounded array; Layer 1 does not require a user-authored foreign declaration
+for that intrinsic. Helper imports, callback arguments, library descriptors,
+reference/handle adapters and target/native acceptance remain open.
 
 ## Historical documentation and implementation checkpoints
 

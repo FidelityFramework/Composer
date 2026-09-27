@@ -48,17 +48,13 @@ let pFuncDef name args retTy body visibility =
 // ═══════════════════════════════════════════════════════════
 
 /// Shared physical spelling for a source-settled scalar boundary carrier.
-let boundaryScalarType = function
-    | BoundaryScalar.Integer(bits, _) -> TInt(IntWidth bits)
-    | BoundaryScalar.Boolean -> TInt(IntWidth 1)
+let boundaryScalarType = BoundaryAbi.scalarType
 
 /// Atomic physical spelling of a declaration already settled by CCS/Baker.
 /// The Pattern witnesses it only at its published owner scope.
 let pPublishedFuncDecl (declaration: BoundaryImport) : PSGParser<MLIROp> =
     parser {
-        let arguments = declaration.Parameters |> List.map (snd >> boundaryScalarType)
-        let results = declaration.Result |> Option.map boundaryScalarType |> Option.toList
-        return MLIROp.FuncOp (FuncOp.FuncDecl(declaration.Symbol, arguments, results, FuncVisibility.Private, []))
+        return MLIROp.FuncOp (FuncOp.BoundaryFuncDecl declaration)
     }
 
 let pFuncDeclResults (name: string) (argTypes: MLIRType list) (resultTypes: MLIRType list)
