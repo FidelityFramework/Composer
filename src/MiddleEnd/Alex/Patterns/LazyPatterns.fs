@@ -20,9 +20,20 @@ open Alex.Patterns.ControlFlowPatterns
 module Operands = Alex.Traversal.LazyOperands
 module Values = Alex.Traversal.Values
 
+/// Whether the node is a source-settled lazy value. An absent storage projection is an
+/// unadmitted graph, never "not lazy"; this predicate has no diagnostic channel, so it stops.
 let isLazyValue (ctx: WitnessContext) (node: SemanticNode) =
-    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
-    |> Result.toOption |> Option.exists (fun projection -> projection.LazyValues.Contains node.Id)
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+    | Result.Ok projection -> projection.LazyValues.Contains node.Id
+    | Result.Error reason ->
+        invalidOp $"PSG settlement (WitnessEmission) did not settle the storage projection read for lazy classification of node {NodeId.value node.Id}: {reason}"
+
+/// The located form of isLazyValue for a pattern: the projection's refusal is the diagnostic.
+let pIsLazyValue (ctx: WitnessContext) (node: SemanticNode) : PSGParser<bool> =
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+    | Result.Ok projection -> preturn (projection.LazyValues.Contains node.Id)
+    | Result.Error reason ->
+        fail (Message $"PSG settlement (WitnessEmission) did not settle the storage projection read for lazy classification of node {NodeId.value node.Id}: {reason}")
 
 let pRecallLazyEnvironment source (layout: LazyLayout) = parser {
     let! state = getUserState
@@ -102,10 +113,13 @@ let pLazyForward (ctx: WitnessContext) source = parser {
 }
 
 let private programInstance (ctx: WitnessContext) binding shape =
-    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
-          |> Result.toOption |> Option.bind (fun projection -> projection.LazyPrograms.TryFind binding) with
-    | Some instance when instance.Owner = (Operands.contract shape).Owner -> preturn instance.Allocation
-    | _ -> fail (Message "Program lazy reference lacks its exact initialized static instance and storage authority.")
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+    | Result.Error reason ->
+        fail (Message $"PSG settlement (WitnessEmission) did not settle the storage projection for program lazy binding {NodeId.value binding}: {reason}")
+    | Result.Ok projection ->
+        match projection.LazyPrograms.TryFind binding with
+        | Some instance when instance.Owner = (Operands.contract shape).Owner -> preturn instance.Allocation
+        | _ -> fail (Message "Program lazy reference lacks its exact initialized static instance and storage authority.")
 
 let pProgramLazyBinding (ctx: WitnessContext) source = parser {
     let! shape =
@@ -131,7 +145,11 @@ let pProgramLazyReference (ctx: WitnessContext) binding = parser {
     let environment = { SSA = Values.value occurrence 0; Type = Operands.environmentType shape }
     let! load = pMemRefGetGlobal environment.SSA (staticValueName allocation) environment.Type
     let layout = Operands.contract shape
-    let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph ctx.Graph.Nodes[layout.Thunk] false
+    let! thunk =
+        match ctx.Graph.Nodes.TryFind layout.Thunk with
+        | Some thunk -> preturn thunk
+        | None -> fail (Message $"Baker lazy recipe did not settle the thunk node {NodeId.value layout.Thunk} for program lazy reference at node {NodeId.value occurrence}")
+    let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph thunk false
     let! code, value = pLazyValue occurrence shape symbol environment
     return load :: code, value
 }
@@ -185,9 +203,12 @@ let pLazyDispatch (ctx: WitnessContext) selectorId cases otherwise = parser {
         | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
         | TInt(IntWidth width) when width > 0 ->
             let result = { SSA = Values.value ctx.Zipper.Focus.Id 2; Type = TIndex }
-            let range = nodeRange state.Graph selectorId |> Option.defaultValue ValueRange.Unbounded
-            let operation = indexCastForRange range result.SSA selectorSSA selectorType
-            preturn ([operation], result)
+            (match nodeRange state.Graph selectorId with
+             | Some range ->
+                 let operation = indexCastForRange range result.SSA selectorSSA selectorType
+                 preturn ([operation], result)
+             | None ->
+                 fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the lazy dispatch selector (node {NodeId.value selectorId}) at node {NodeId.value ctx.Zipper.Focus.Id}"))
         | _ -> fail (Message "Lazy dispatch selector lacks an admitted index carrier.")
     let branches = cases |> List.map (fun (label, source, operations) -> int64 label, source, operations)
     let! operations, result = pLazySwitch ctx selector branches otherwise

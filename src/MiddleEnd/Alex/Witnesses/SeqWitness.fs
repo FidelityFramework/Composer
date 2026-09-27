@@ -54,10 +54,16 @@ let private accessSlot (ctx: WitnessContext) (node: SemanticNode) frameId slotId
                 | None when borrow -> pBorrowContinuationSlot node.Id frameId bytes slot
                 | None -> pReadContinuationSlot node.Id frameId bytes slot
             let sourceShape =
-                Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
-                |> Result.toOption |> Option.bind (fun projection -> projection.ValueShapes.TryFind node.Id)
+                match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+                | Result.Error reason ->
+                    Result.Error $"PSG settlement (WitnessEmission callable) did not publish the value shape projection for frame access node {NodeId.value node.Id}: {reason}"
+                | Result.Ok projection ->
+                    match projection.ValueShapes.TryFind node.Id with
+                    | Some shape -> Result.Ok shape
+                    | None -> Result.Error $"PSG settlement (WitnessEmission callable) did not settle the value shape for frame access node {NodeId.value node.Id}"
             match sourceShape, write, borrow with
-            | Some(CallableValueShape.Sequence _), None, false ->
+            | Result.Error reason, _, _ -> failure node "source value shape" reason
+            | Result.Ok(CallableValueShape.Sequence _), None, false ->
                 match ctx.Graph.Codata.Value.SequenceOrigins.TryFind node.Id, Sequences.project ctx node.Id with
                 | Some owner, Result.Ok shape when (Sequences.flow shape).Owners = Set.singleton owner ->
                     let family = Sequences.family shape
@@ -74,7 +80,7 @@ let private accessSlot (ctx: WitnessContext) (node: SemanticNode) frameId slotId
                     observe ctx node sequence
                 | _, Result.Error reason -> failure node "sequence frame carrier" reason
                 | _ -> failure node "sequence slot identity" "Descriptor-only sequence capture lacks its exact source-proved function half"
-            | Some(CallableValueShape.Callable _), None, false ->
+            | Result.Ok(CallableValueShape.Callable _), None, false ->
                 match slot.Holds, ctx.Graph.Codata.Value.CallableCarriers.TryFind node.Id with
                 | CaptureSlotKind.EnvironmentView owner, Some { Environment = Some expected } when expected.Owner = owner ->
                     match Operands.project ctx node.Id with
@@ -136,7 +142,11 @@ let private witnessSeq (ctx: WitnessContext) (node: SemanticNode) : WitnessOutpu
         | None -> failure node "storage layout" $"Continuation {NodeId.value owner} has no settled activation storage"
     | SemanticKind.SeqExpr _ ->
         let codata = ctx.Graph.Codata.Value
-        let owner = codata.SequenceOrigins |> Map.tryFind node.Id |> Option.defaultValue node.Id
+        match codata.SequenceOrigins |> Map.tryFind node.Id with
+        | None ->
+            failure node "sequence origin"
+                $"Baker sequence settlement did not settle the constructor origin for SeqExpr node {NodeId.value node.Id}"
+        | Some owner ->
         match codata.ContinuationFrames |> Map.tryFind owner with
         | Some frame ->
             match codata.SequenceInitializers |> Map.tryFind node.Id with

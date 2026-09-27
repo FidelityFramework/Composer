@@ -331,16 +331,11 @@ type MLIRAccumulator() =
 
     // Witnessing Coordination State (Dependent Transparency)
     member val EmittedGlobals: Set<string> = Set.empty with get, set              // Track emitted global strings (by symbol name)
+    member val EmittedGlobalContents: Map<string, string * int> = Map.empty with get, set  // Content of each global string emitted through tryEmitGlobal
     member val EmittedStaticGlobals: Map<string, MLIRType * ProgramStorageEntry option> = Map.empty with get, set
     member val PendingStaticGlobals: MLIROp list = [] with get, set                // memref.global decls emitted by a parser, awaiting drain to TopLevelOps by the witness (module-scope placement)
     // External imports require explicit source authority and module-scope emission.
 
-    // Deferred InlineOps: Partial app arguments whose InlineOps are suppressed at their
-    // original scope and re-emitted at the saturated call site (MLIR region isolation)
-    member val DeferredInlineOps: System.Collections.Generic.Dictionary<int, MLIROp list> = System.Collections.Generic.Dictionary<int, MLIROp list>() with get
-    // Emission history is not operand state: restoring a value scope must not
-    // hide an operation withheld anywhere while a subtree was witnessed.
-    member val DeferredEmissionStamp: obj = obj() with get, set
 
 module MLIRAccumulator =
     let empty () : MLIRAccumulator =
@@ -532,9 +527,18 @@ module MLIRAccumulator =
     /// Try to emit a global string (returns Some op if not already emitted, None if duplicate)
     /// This implements dependent transparency coordination: witnesses check before emitting module-level declarations
     let tryEmitGlobal (name: string) (content: string) (byteLength: int) (obligations: string list) (acc: MLIRAccumulator) : MLIROp option =
-        if Set.contains name acc.EmittedGlobals then
-            None  // Already emitted by another witness
-        else
+        match acc.EmittedGlobalContents.TryFind name with
+        | Some existing when existing <> (content, byteLength) ->
+            // A second, different global under one symbol is never dropped as a duplicate.
+            let diagnostic =
+                Diagnostic.error None (Some "GlobalString") (Some "global string declaration")
+                    (sprintf "Alex global string '%s' is emitted with two different contents or extents; one symbol must name one settled value" name)
+            acc.Errors <- diagnostic :: acc.Errors
+            None
+        | _ when Set.contains name acc.EmittedGlobals ->
+            None  // Already emitted by another witness with the same content
+        | _ ->
+            acc.EmittedGlobalContents <- acc.EmittedGlobalContents.Add(name, (content, byteLength))
             acc.EmittedGlobals <- Set.add name acc.EmittedGlobals
             Some (MLIROp.GlobalString (name, content, byteLength, obligations))
 
@@ -548,7 +552,13 @@ module MLIRAccumulator =
     let tryEmitGlobalMemref (name: string) (declType: MLIRType) (authority: ProgramStorageEntry option) (acc: MLIRAccumulator) : unit =
         match acc.EmittedStaticGlobals.TryFind name with
         | Some(oldType, oldAuthority) when oldType = declType && oldAuthority = authority -> ()
-        | Some _ -> failwithf "Writable global '%s' has conflicting type or source storage identity" name
+        | Some _ ->
+            // Report and keep the first declaration; a second, different declaration
+            // under one symbol is never queued.
+            let diagnostic =
+                Diagnostic.error None (Some "StaticStorage") (Some "writable global declaration")
+                    (sprintf "Baker program storage did not settle one identity for writable global '%s': it is declared with conflicting type or source storage identity" name)
+            acc.Errors <- diagnostic :: acc.Errors
         | None ->
             acc.EmittedStaticGlobals <- acc.EmittedStaticGlobals.Add(name, (declType, authority))
             acc.PendingStaticGlobals <- MLIROp.GlobalMemref (name, declType, authority) :: acc.PendingStaticGlobals
@@ -559,19 +569,6 @@ module MLIRAccumulator =
         let pending = acc.PendingStaticGlobals
         acc.PendingStaticGlobals <- []
         pending
-
-    /// Store deferred InlineOps for a node (suppressed at original scope, re-emitted at saturated call site)
-    let deferInlineOps (nodeId: NodeId) (ops: MLIROp list) (acc: MLIRAccumulator) =
-        let key = NodeId.value nodeId
-        acc.DeferredInlineOps.[key] <- ops
-        if not ops.IsEmpty then acc.DeferredEmissionStamp <- obj()
-
-    /// Retrieve deferred InlineOps for a node (returns empty list if none)
-    let getDeferredInlineOps (nodeId: NodeId) (acc: MLIRAccumulator) : MLIROp list =
-        let key = NodeId.value nodeId
-        match acc.DeferredInlineOps.TryGetValue(key) with
-        | true, ops -> ops
-        | false, _ -> []
 
     /// NOTE: Scope markers removed - single-phase execution with nested accumulators
     /// Scope-owning witnesses (Lambda, ControlFlow) create nested accumulators for body operations.
@@ -701,7 +698,8 @@ module EmissionCorrespondence =
                     Result.Error "Witness zipper and context refer to different checked graphs"
                 else Core.WitnessArtifacts.validateOccurrence scope occurrence
             match validation with
-            | Result.Error message -> MLIRAccumulator.addError (Diagnostic.errorSimple message) acc
+            | Result.Error message ->
+                MLIRAccumulator.addError (Diagnostic.error (Some ctx.Zipper.Focus.Id) (Some "EmissionCorrespondence") (Some "witness occurrence") message) acc
             | Result.Ok () ->
                 acc.EmittedDefinitions <-
                     (owned |> List.map (fun operation -> { Core.Types.WitnessArtifacts.EmittedDefinition.Operation = operation; Occurrence = occurrence }))
@@ -739,9 +737,20 @@ let requireSSA (nodeId: NodeId) (ctx: WitnessContext) : SSA =
 let requireSSAs (nodeId: NodeId) (ctx: WitnessContext) : SSA list =
     Alex.Traversal.Values.valuesOf ctx.Coeffects.TargetPlatform ctx.Graph (Alex.Traversal.PSGZipper.enclosingLambdaIds ctx.Zipper) nodeId
 
-/// The escape kind of an allocating site (Codata.Escapes); stack-scoped where the graph records none.
+/// The escape kind of an allocating site (Codata.Escapes). CCS records every
+/// allocating site, StackScoped included; an absent entry is a settlement gap,
+/// never a stack placement.
+let tryEscapeOf (graph: SemanticGraph) (nodeId: NodeId) : Result<EscapeKind, string> =
+    match graph.Codata.Value.Escapes |> Map.tryFind nodeId with
+    | Some escape -> Result.Ok escape
+    | None ->
+        Result.Error (sprintf "Codata (Escapes) did not settle the escape class for allocating site %d" (NodeId.value nodeId))
+
+/// Parser-layer callers should prefer tryEscapeOf and fail with its reason.
 let escapeOf (graph: SemanticGraph) (nodeId: NodeId) : EscapeKind =
-    graph.Codata.Value.Escapes |> Map.tryFind nodeId |> Option.defaultValue EscapeKind.StackScoped
+    match tryEscapeOf graph nodeId with
+    | Result.Ok escape -> escape
+    | Result.Error reason -> invalidOp reason
 
 /// The meet the graph derived for a consumer's operand, with the value emission names for it;
 /// None where the widths agree. A read of a slot names the consumer as its own operand.
@@ -761,11 +770,10 @@ let targetArch (ctx: WitnessContext) : Architecture =
 /// Drains any AX1001 diagnostics collected during mapping into the accumulator.
 let mapType (ty: NativeType) (ctx: WitnessContext) : MLIRType =
     let result = mapNativeTypeForTarget ctx.Coeffects.TargetPlatform ctx.Coeffects.Platform.TargetArch ctx.Graph ty
-    // Drain type mapping diagnostics (AX1001: unbound TVar).
-    // These are non-fatal — CCS may leave type variables unresolved for unused bindings
-    // (e.g. `| Error err -> ...` where err is never referenced). Alex continues with TIndex.
-    // CCS diagnostics surface these at the appropriate level; Alex doesn't re-report.
-    drainTypeMappingErrors () |> ignore
+    // AX1001: a type variable reached witnessing unresolved. That is a settlement gap in
+    // CCS; it is reported as an error, never carried as an invented index type.
+    for message in drainTypeMappingErrors () do
+        MLIRAccumulator.addError (Diagnostic.error None (Some "TypeMapping") (Some "type settlement") message) ctx.Accumulator
     result
 
 /// A value's specialized physical carrier is keyed by its exact graph use.
@@ -778,15 +786,15 @@ let mapTypeAt (nodeId: NodeId) (ty: NativeType) (ctx: WitnessContext) : MLIRType
     | Some owner, _, _ ->
         match codata.LazyLayouts.TryFind owner with
         | Some layout when layout.Bytes > 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
-        | _ -> failwithf "Lazy environment %d has no settled layout %d" (NodeId.value nodeId) (NodeId.value owner)
+        | _ -> failwithf "Codata (LazyLayouts) did not settle a layout for lazy owner %d of environment value %d" (NodeId.value owner) (NodeId.value nodeId)
     | None, Some owner, _ ->
         match codata.EnvironmentLayouts |> Map.tryFind owner with
         | Some layout when layout.Bytes >= 0 && layout.Alignment > 0 -> TMemRefStatic(layout.Bytes, TInt(IntWidth 8))
-        | _ -> failwithf "Environment value %d has no settled layout %d" (NodeId.value nodeId) (NodeId.value owner)
+        | _ -> failwithf "Codata (EnvironmentLayouts) did not settle a layout for environment owner %d of value %d" (NodeId.value owner) (NodeId.value nodeId)
     | None, None, Some owner ->
         match ctx.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
         | Some frame when frame.Bytes > 0 -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8))
-        | _ -> failwithf "Sequence value %d has no settled frame for origin %d" (NodeId.value nodeId) (NodeId.value owner)
+        | _ -> failwithf "Codata (ContinuationFrames) did not settle a frame for sequence origin %d of value %d" (NodeId.value owner) (NodeId.value nodeId)
     | None, None, None ->
         match tryArrayElementTypeAt ctx.Graph nodeId with
         | Some element -> TMemRef element

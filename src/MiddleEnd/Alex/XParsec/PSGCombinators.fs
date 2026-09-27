@@ -235,7 +235,8 @@ let rec private lastValueNode (graph: SemanticGraph) (id: NodeId) : NodeId =
         | Some last -> lastValueNode graph last
         | None -> id
     | Some { Kind = SemanticKind.TypeAnnotation (inner, _) } -> lastValueNode graph inner
-    | _ -> id
+    | Some _ -> id
+    | None -> failwithf "adaptOperand: PSG settlement did not settle the operand node %d: it is not in the graph" (NodeId.value id)
 
 /// Adapt an operand's value to the slot it meets at `consumer`: the meet SSAAssignment derived
 /// for (consumer, operand), or the value unchanged where none was derived (the widths agree).
@@ -441,7 +442,7 @@ let pIntrinsicApplication (targetModule: IntrinsicModule) : PSGParser<IntrinsicI
             | SemanticKind.Intrinsic info when info.Module = targetModule ->
                 return (info, argIds)
             | _ -> return! fail (Message $"Function is not {targetModule} intrinsic")
-        | None -> return! fail (Message "Could not resolve function node")
+        | None -> return! fail (Message (sprintf "PSG settlement did not settle the callee node %d of application %d: it is not in the graph" (NodeId.value funcId) (NodeId.value state.Current.Id)))
     }
 
 /// Match a PlatformBinding node
@@ -517,41 +518,19 @@ let pLambdaWithCaptures : PSGParser<(string * Clef.Compiler.NativeTypedTree.Nati
         | _ -> return! fail (Message "Expected Lambda")
     }
 
-/// Match a Lambda node with parent Binding name
-/// Composes: pLambdaWithCaptures + zipper navigation + pBinding
-/// Returns: (bindingName, params, bodyId, captures)
+/// Match a Lambda node with its parent Binding's name, read from the zipper parent.
+/// Returns: (bindingName, params, bodyId, captures). A lambda with no parent Binding has no
+/// name here: that is a refusal naming the node, never a synthetic symbol.
 let pLambdaWithBinding : PSGParser<string * (string * Clef.Compiler.NativeTypedTree.NativeTypes.NativeType * NodeId) list * NodeId * CaptureInfo list> =
     parser {
-        // Get Lambda data from current node
         let! (params', bodyId, captures) = pLambdaWithCaptures
-        
-        // Navigate to parent using zipper
         let! state = getUserState
-        match up state.Zipper with
-        | Some parentZipper ->
-            // Save current state
-            let savedState = state
-            
-            // Update to parent node
-            let parentNode = parentZipper.Focus
-            do! setUserState { state with Zipper = parentZipper; Current = parentNode }
-            
-            // Try to match parent as Binding
-            let! bindingResult =
-                (parser {
-                    let! (name, _, _, _) = pBinding
-                    return Some name
-                } <|> preturn None)
-            
-            // Restore original state
-            do! setUserState savedState
-            
-            match bindingResult with
-            | Some name -> return (name, params', bodyId, captures)
-            | None -> return (sprintf "lambda_%d" (NodeId.value state.Current.Id), params', bodyId, captures)
+        match up state.Zipper |> Option.map (fun parent -> parent.Focus.Kind) with
+        | Some (SemanticKind.Binding (name, _, _, _)) -> return (name, params', bodyId, captures)
+        | Some other ->
+            return! fail (Message (sprintf "PSG settlement did not settle a binding name for the lambda at node %d: its parent is %A, not a Binding" (NodeId.value state.Current.Id) other))
         | None ->
-            // No parent binding — use node ID as synthetic name
-            return (sprintf "lambda_%d" (NodeId.value state.Current.Id), params', bodyId, captures)
+            return! fail (Message (sprintf "PSG settlement did not settle a binding name for the lambda at node %d: it has no parent in the zipper" (NodeId.value state.Current.Id)))
     }
 
 /// Match an IfThenElse node
@@ -1017,4 +996,4 @@ let rec findLastValueNode nodeId graph =
             // TypeAnnotation is transparent - unwrap to the actual value node
             findLastValueNode wrappedId graph
         | _ -> nodeId  // Non-transparent node is the actual value node
-    | None -> nodeId  // Node not found - return original (error will occur downstream)  // Node not found - return original (error will occur downstream)
+    | None -> failwithf "findLastValueNode: PSG settlement did not settle the value node %d: it is not in the graph" (NodeId.value nodeId)

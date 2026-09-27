@@ -156,45 +156,48 @@ let extractSVModulePorts (svText: string) (moduleName: string) : Result<Set<stri
 // XDC port extraction
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Parse "get_ports {identifier}" and return the port name
-let private pGetPorts (reader: R) =
-    match pstring "get_ports" reader with
+/// Parse the "{identifier}" operand that follows a get_ports keyword
+let private pGetPortsOperand (reader: R) =
+    let _ = spaces reader
+    match pchar '{' reader with
     | Ok _ ->
-        let _ = spaces reader
-        match pchar '{' reader with
-        | Ok _ ->
-            match pIdent reader with
-            | Ok { Parsed = name } ->
-                match pchar '}' reader with
-                | Ok _ -> preturn name reader
-                | Error e -> Error e
+        match pIdent reader with
+        | Ok { Parsed = name } ->
+            match pchar '}' reader with
+            | Ok _ -> preturn name reader
             | Error e -> Error e
         | Error e -> Error e
     | Error e -> Error e
 
-/// Extract all port names from constraint file via [get_ports {name}]
-let extractConstraintPorts (constraintText: string) : Set<string> =
+/// Extract all port names from constraint file via [get_ports {name}].
+/// Text that is not a get_ports clause is skipped; a get_ports clause whose
+/// operand is not {identifier} is an error, never a silently dropped constraint.
+let extractConstraintPorts (constraintText: string) : Result<Set<string>, string> =
     let reader = Reader.ofString constraintText ()
     let ports = ResizeArray<string>()
+    let mutable failure = None
 
-    while not reader.AtEnd do
+    while failure.IsNone && not reader.AtEnd do
         let pos = reader.Position
-        match pGetPorts reader with
-        | Ok { Parsed = name } ->
-            if not (ports.Contains(name)) then
-                ports.Add(name)
+        match pstring "get_ports" reader with
+        | Ok _ ->
+            match pGetPortsOperand reader with
+            | Ok { Parsed = name } ->
+                if not (ports.Contains(name)) then
+                    ports.Add(name)
+            | Error _ ->
+                failure <- Some (sprintf "backend (FPGA artifact verification) cannot read the get_ports clause at character %d of the constraints: expected get_ports {identifier}" pos.Index)
         | Error _ ->
             reader.Position <- pos
             if not reader.AtEnd then reader.Skip()
 
-    Set.ofSeq ports
+    match failure with
+    | Some reason -> Error reason
+    | None -> Ok (Set.ofSeq ports)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Closed-loop verification
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Ports expected in HDL but not in constraints (e.g., compiler-generated reset)
-let private internalPorts = Set.ofList [ "rst" ]
 
 /// Verify that HDL port names and constraint port names are consistent.
 /// Finds the top-level module automatically (last module in CIRCT output).
@@ -207,13 +210,16 @@ let verifyArtifacts (svPath: string) (xdcPath: string) : Result<string, string> 
     |> Result.bind (fun topModule ->
         extractSVModulePorts svText topModule
         |> Result.bind (fun svPorts ->
-            let xdcPorts = extractConstraintPorts xdcText
+          extractConstraintPorts xdcText
+          |> Result.bind (fun xdcPorts ->
 
             // Ports in XDC but not in SV — constraint references a non-existent port
             let xdcOnly = Set.difference xdcPorts svPorts
 
-            // Ports in SV but not in XDC, excluding known internal ports
-            let svOnly = Set.difference (Set.difference svPorts xdcPorts) internalPorts
+            // Ports in SV but not in XDC. No port is exempt by name: a top-level
+            // reset the pin mapping did not constrain is an unconnected input,
+            // which is exactly what this check exists to report.
+            let svOnly = Set.difference svPorts xdcPorts
 
             if Set.isEmpty xdcOnly && Set.isEmpty svOnly then
                 Ok (sprintf "Verified: %d HDL ports match %d constraints (module %s)"
@@ -238,4 +244,4 @@ let verifyArtifacts (svPath: string) (xdcPath: string) : Result<string, string> 
                         sb.AppendLine(sprintf "    - %s" p) |> ignore
                     sb.AppendLine("  (Add [<Pin>] attributes or check PlatformPinResolution)") |> ignore
 
-                Error (sb.ToString().TrimEnd())))
+                Error (sb.ToString().TrimEnd()))))

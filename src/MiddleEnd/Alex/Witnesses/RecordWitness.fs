@@ -12,6 +12,7 @@ module Alex.Witnesses.RecordWitness
 
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Clef.Compiler.PSGSaturation.SemanticGraph.Core
+open Clef.Compiler.NativeTypedTree.NativeTypes  // NodeId
 open Alex.Dialects.Core.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -111,8 +112,11 @@ let private witnessRecord (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     // Not TStruct — skip, let MemoryWitness handle (strings, closures, DUs)
                     WitnessOutput.skip
             | None ->
-                // Struct value not yet in accumulator — skip
-                WitnessOutput.skip
+                // The operand's value decides the owner; without it no witness can
+                // claim this FieldGet, so the missing operand is reported here.
+                WitnessOutput.errorDiag (
+                    Diagnostic.error (Some node.Id) (Some "Record") (Some "FieldGet")
+                        $"FieldGet '{fieldName}' at node {NodeId.value node.Id}: struct operand node {NodeId.value structId} has not been witnessed")
         | None ->
             WitnessOutput.skip
 

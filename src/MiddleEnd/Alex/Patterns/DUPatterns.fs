@@ -85,10 +85,12 @@ let pBuildDUConstruct (nodeId: NodeId) (tag: int64) (payload: Val list) (duTy: M
                     let narrowedTy = narrowType state.Coeffects state.Graph nodeId duTy
                     let! op = pHWAggregateConstant ssa narrowedTy
                     return ([op], TRValue { SSA = ssa; Type = narrowedTy })
-                | _ ->
+                | TTag _ | TInt _ ->
                     // Enum DU on FPGA: just a tag constant. Type is TTag which serializes to correct width.
                     let! op = pConstI ssa tag duTy
                     return ([op], TRValue { SSA = ssa; Type = duTy })
+                | other ->
+                    return! fail (Message $"PSG settlement (type mapping) did not settle an enum tag or struct carrier for the FPGA DU construction at node {NodeId.value nodeId}: got {other}")
             | _ ->
                 return! fail (Message "FPGA DU with payload not yet supported")
         | _ ->
@@ -106,9 +108,12 @@ let pBuildDUGetTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<
         let! targetPlatform = getTargetPlatform
         match targetPlatform with
         | FPGA ->
-            // Enum DU on FPGA: the value IS the tag — pass through
-            let! ssa = getNodeSSA nodeId
-            return ([], TRValue { SSA = ssa; Type = duType })
+            // Enum DU on FPGA: the value IS the tag — pass the DU value itself through.
+            // A struct DU carries its tag in a field this pattern does not realize.
+            match duType with
+            | TTag _ | TInt _ -> return ([], TRValue { SSA = duSSA; Type = duType })
+            | other ->
+                return! fail (Message $"backend (FPGA) has no tag extraction for the DU carrier {other} at node {NodeId.value nodeId}; only an enum DU's value is its tag")
         | _ ->
             // CPU/MCU: memory-based tag extraction
             return! pExtractDUTag nodeId duSSA duType
@@ -133,5 +138,6 @@ let pBuildDUEliminate (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionNat
             | TRValue v ->
                 let! (meetOps, readSSA, readTy) = pAdapt nodeId nodeId v.SSA v.Type
                 return (ops @ meetOps, TRValue { SSA = readSSA; Type = readTy })
-            | other -> return (ops, other)
+            | other ->
+                return! fail (Message $"PSG settlement (Layouts) did not settle a payload value for the DU elimination at node {NodeId.value nodeId}: extraction produced {other}")
     }

@@ -18,9 +18,14 @@ let private implementation: BackEnd = {
             let targetOperations = witnessed.Operations |> List.map (function
                 | MLIROp.FuncOp (FuncDef _ as definition) -> MLIROp.NoUnwindFunction definition
                 | operation -> operation)
+            // The module's name is the witnessed one; an unnamed witnessed
+            // module stays unnamed (the BackEndInput contract), never "main".
             let mlirText =
-                Alex.Dialects.Core.Serialize.moduleToString witnessed.PointerBits
-                    (witnessed.ModuleName |> Option.defaultValue "main") targetOperations
+                match witnessed.ModuleName with
+                | Some name -> Alex.Dialects.Core.Serialize.moduleToString witnessed.PointerBits name targetOperations
+                | None ->
+                    sprintf "module {\n%s\n}"
+                        (Alex.Dialects.Core.Serialize.opsToString witnessed.PointerBits targetOperations "  ")
             let directory = ctx.IntermediatesDir |> Option.defaultWith (fun () ->
                 let path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath ctx.OutputPath), "intermediates")
                 Directory.CreateDirectory path |> ignore

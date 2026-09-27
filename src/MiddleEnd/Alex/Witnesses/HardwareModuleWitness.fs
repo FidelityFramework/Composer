@@ -100,11 +100,14 @@ let private extractInitialStateValues (graph: SemanticGraph) (initNodeId: NodeId
         | _ -> None
     | None -> None
 
-/// Extract Input and Output types from the step function's Lambda.
+/// Extract State, Input and Output types from the step function's Lambda.
 /// Step : 'S -> 'S (1-param, Design<'S>) or Step : 'S -> I -> 'S * 'R (2-param, Design<'S,'R>)
-/// Returns (StateType option, InputType option, OutputType option).
+/// Returns (StateType, InputType option, OutputType option); Input and Output are
+/// absent exactly when the step's signature has no input parameter or no output half.
 /// StateType comes from the step Lambda's first parameter (authoritative widths from Phase 5C feedback).
-let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: WitnessContext) : (MLIRType option * MLIRType option * MLIRType option) =
+/// A Step that does not resolve to a lambda with a state parameter is a settlement defect.
+let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: WitnessContext) : Result<MLIRType * MLIRType option * MLIRType option, string> =
+    let stepId = NodeId.value stepNodeId
     // Resolve Step VarRef → Binding → Lambda
     match SemanticGraph.tryGetNode stepNodeId graph with
     | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
@@ -114,14 +117,6 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
             | [lambdaId] ->
                 match SemanticGraph.tryGetNode lambdaId graph with
                 | Some { Kind = SemanticKind.Lambda (params', bodyId, _, _, _) } ->
-                    // Extract StateType from first parameter, narrowed via coeffect
-                    // This has authoritative widths from interval analysis Phase 5C feedback
-                    let stateType =
-                        match params' with
-                        | (_, stateNativeType, stateParamNodeId) :: _ ->
-                            let raw = mapType stateNativeType ctx
-                            Some (narrowType ctx.Coeffects graph stateParamNodeId raw)
-                        | _ -> None
                     // Extract InputType from second parameter (if present), narrowed via coeffect
                     let inputType =
                         match params' with
@@ -129,89 +124,73 @@ let private extractStepTypes (graph: SemanticGraph) (stepNodeId: NodeId) (ctx: W
                             let raw = mapType inputNativeType ctx
                             Some (narrowType ctx.Coeffects graph inputParamNodeId raw)
                         | _ -> None
-                    // Extract OutputType from body expression's type
-                    // If step returns (State, Output), the body type maps to TStruct [Item1; Item2]
-                    let outputType =
-                        match SemanticGraph.tryGetNode bodyId graph with
-                        | Some bodyNode ->
-                            let retType = mapType bodyNode.Type ctx
-                            // Find last value node for narrowing
-                            let rec findLastValue (nid: NodeId) : NodeId =
-                                match SemanticGraph.tryGetNode nid graph with
-                                | Some n ->
-                                    match n.Kind with
-                                    | SemanticKind.Sequential children ->
-                                        match List.tryLast children with
-                                        | Some lastId -> findLastValue lastId
-                                        | None -> nid
-                                    | _ -> nid
+                    // The step body's value type, narrowed at its last value node
+                    let rec findLastValue (nid: NodeId) : NodeId =
+                        match SemanticGraph.tryGetNode nid graph with
+                        | Some n ->
+                            match n.Kind with
+                            | SemanticKind.Sequential children ->
+                                match List.tryLast children with
+                                | Some lastId -> findLastValue lastId
                                 | None -> nid
-                            let lastValueId = findLastValue bodyId
-                            let narrowedRetType = narrowType ctx.Coeffects graph lastValueId retType
+                            | _ -> nid
+                        | None -> nid
+                    match SemanticGraph.tryGetNode bodyId graph, params' with
+                    | None, _ ->
+                        Result.Error $"PSG settlement did not keep the body {NodeId.value bodyId} of Step lambda {NodeId.value lambdaId} resident in the graph"
+                    | Some _, [] ->
+                        Result.Error $"CCS source checking did not settle a state parameter for Step lambda {NodeId.value lambdaId}"
+                    | Some bodyNode, (_, stateNativeType, stateParamNodeId) :: _ ->
+                        // StateType from the first parameter, narrowed via coeffect
+                        // (authoritative widths from interval analysis Phase 5C feedback)
+                        let stateType = narrowType ctx.Coeffects graph stateParamNodeId (mapType stateNativeType ctx)
+                        let narrowedRetType = narrowType ctx.Coeffects graph (findLastValue bodyId) (mapType bodyNode.Type ctx)
+                        // If step returns (State, Output), the body type maps to TStruct [Item1; Item2]
+                        let outputType =
                             match narrowedRetType with
                             | TStruct (("Item1", _) :: ("Item2", outTy) :: _, _) -> Some outTy
                             | _ -> None  // Single return type — no separate output
-                        | None -> None
-
-                    // ── Port width unification ──
-                    // The step function returns (State, Output). The return State must agree
-                    // with the parameter State on field widths. Take MAX per field to ensure
-                    // hw.module ports and hw.instance operands use identical types.
-                    let unifiedStateType =
-                        match stateType with
-                        | Some (TStruct (paramFields, paramBytes)) ->
-                            // Get the return state type from the body
-                            let returnStateOpt =
-                                match SemanticGraph.tryGetNode bodyId graph with
-                                | Some bodyNode ->
-                                    let retType = mapType bodyNode.Type ctx
-                                    let rec findLast (nid: NodeId) =
-                                        match SemanticGraph.tryGetNode nid graph with
-                                        | Some n ->
-                                            match n.Kind with
-                                            | SemanticKind.Sequential cs ->
-                                                match List.tryLast cs with Some l -> findLast l | None -> nid
-                                            | _ -> nid
-                                        | None -> nid
-                                    let lastId = findLast bodyId
-                                    let narrowed = narrowType ctx.Coeffects graph lastId retType
-                                    match narrowed with
-                                    | TStruct (("Item1", TStruct (retFields, _)) :: _, _) -> Some retFields
-                                    | _ -> None
-                                | None -> None
-                            match returnStateOpt with
-                            | Some retFields when retFields.Length = paramFields.Length ->
-                                let unified =
+                        // ── Port width agreement ──
+                        // The step function returns (State, Output). The return State must agree
+                        // with the parameter State on field widths so hw.module ports and
+                        // hw.instance operands use identical types.
+                        match stateType, narrowedRetType with
+                        | TStruct (paramFields, paramBytes), TStruct (("Item1", TStruct (retFields, _)) :: _, _) ->
+                            if retFields.Length <> paramFields.Length then
+                                Result.Error $"CCS source checking did not settle one state shape for Step lambda {NodeId.value lambdaId}: {paramFields.Length} state fields as a parameter, {retFields.Length} as returned"
+                            else
+                                let disagreement =
                                     List.zip paramFields retFields
-                                    |> List.map (fun ((name, paramFty), (_, retFty)) ->
+                                    |> List.tryPick (fun ((name, paramFty), (_, retFty)) ->
                                         match paramFty, retFty with
                                         | TInt (IntWidth a), TInt (IntWidth b) when a > 0 && b > 0 && a <> b ->
                                             // Both read the state type's FieldRanges CCS settled; a
                                             // disagreement is a defect, never a width chosen here.
-                                            failwithf "HardwareModuleWitness: state field '%s' is %d bits as a parameter and %d bits as returned; the graph's FieldRanges must give one width" name a b
-                                        | _ -> (name, paramFty))
-                                Some (TStruct (unified, paramBytes))
-                            | _ -> stateType
-                        | _ -> stateType
-
-                    (unifiedStateType, inputType, outputType)
-                | _ -> (None, None, None)
-            | _ -> (None, None, None)
-        | None -> (None, None, None)
-    | _ -> (None, None, None)
+                                            Some $"CCS source checking did not settle one width for state field '{name}' of Step lambda {NodeId.value lambdaId}: {a} bits as a parameter, {b} bits as returned; the graph's FieldRanges must give one width"
+                                        | _ -> None)
+                                match disagreement with
+                                | Some reason -> Result.Error reason
+                                | None -> Result.Ok (TStruct (paramFields, paramBytes), inputType, outputType)
+                        | _ -> Result.Ok (stateType, inputType, outputType)
+                | _ -> Result.Error $"PSG settlement did not bind Step {stepId} to a lambda: its declaration's value {NodeId.value lambdaId} is not a Lambda"
+            | children -> Result.Error $"PSG settlement did not bind Step {stepId} to a single-valued declaration: declaration {NodeId.value defId} has {children.Length} children"
+        | None -> Result.Error $"PSG settlement did not keep the Step declaration {NodeId.value defId} resident in the graph"
+    | _ -> Result.Error $"PSG settlement did not resolve Step {stepId} to a reference to its declaration"
 
 /// Determine qualified module name for the HardwareModule Binding
-let private qualifiedBindingName (graph: SemanticGraph) (node: SemanticNode) (bindingName: string) : string =
+/// A top-level or non-module parent leaves the bare name; a dangling parent is a graph defect.
+let private qualifiedBindingName (graph: SemanticGraph) (node: SemanticNode) (bindingName: string) : Result<string, string> =
     match node.Parent with
     | Some parentId ->
         match SemanticGraph.tryGetNode parentId graph with
         | Some parentNode ->
             match parentNode.Kind with
             | SemanticKind.ModuleDef (moduleName, _) ->
-                sprintf "%s.%s" moduleName bindingName
-            | _ -> bindingName
-        | None -> bindingName
-    | None -> bindingName
+                Result.Ok (sprintf "%s.%s" moduleName bindingName)
+            | _ -> Result.Ok bindingName
+        | None ->
+            Result.Error $"PSG settlement did not keep parent {NodeId.value parentId} of HardwareModule binding {NodeId.value node.Id} resident in the graph; its module name has no source"
+    | None -> Result.Ok bindingName
 
 /// Mark all nodes in a subtree as visited (child edges only).
 /// Used on Design children — safe because Step VarRef's target is NOT a child.
@@ -303,17 +282,18 @@ let private witnessHardwareModule
         // and transitively the function declarations called from the step body.
         let combinator = getCombinator()
         match resolveStepBindingTarget ctx.Graph stepNodeId with
+        | None ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "HardwareModule") (Some "Step reference")
+                $"PSG settlement did not resolve Step {NodeId.value stepNodeId} of HardwareModule '{name}' to a resident declaration; its step function cannot be witnessed"
         | Some stepBindingNode ->
-            // Step resolves a reference to a separate declaration. Enter that
-            // reference boundary explicitly; it is not a child of this binding.
-            match Alex.Traversal.PSGZipper.create ctx.Graph stepBindingNode.Id with
-            | Some stepZipper ->
-                visitAllNodes combinator { ctx with Zipper = stepZipper } stepBindingNode ctx.TraversalVisited
-            | None ->
-                Diagnostic.error (Some node.Id) (Some "HardwareModule") (Some "Step reference")
-                    "The resolved Step declaration is absent from the current graph"
-                |> fun diagnostic -> MLIRAccumulator.addError diagnostic ctx.Accumulator
-        | None -> ()
+        // Step resolves a reference to a separate declaration. Enter that
+        // reference boundary explicitly; it is not a child of this binding.
+        match Alex.Traversal.PSGZipper.create ctx.Graph stepBindingNode.Id with
+        | None ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "HardwareModule") (Some "Step reference")
+                $"PSG settlement did not place the resolved Step declaration {NodeId.value stepBindingNode.Id} of HardwareModule '{name}' in the current graph"
+        | Some stepZipper ->
+        visitAllNodes combinator { ctx with Zipper = stepZipper } stepBindingNode ctx.TraversalVisited
 
         // ── 4. Extract InitialState reset values (preserves NativeLiteral width) ──
         match extractInitialStateValues ctx.Graph initNodeId with
@@ -327,27 +307,32 @@ let private witnessHardwareModule
             WitnessOutput.error $"HardwareModule '{name}': 'Step' field must be a VarRef to a function"
         | Some stepFuncName ->
 
-        // ── 6. Extract State type info ──
-        match SemanticGraph.tryGetNode initNodeId ctx.Graph with
-        | None ->
-            WitnessOutput.error $"HardwareModule '{name}': InitialState node not found"
-        | Some initNode ->
+        // ── 6. Extract State/Input/Output types from step Lambda ──
+        // State type comes from step Lambda's first parameter (authoritative widths
+        // from Phase 5C feedback), never from the init node (which has literal-value widths).
+        match extractStepTypes ctx.Graph stepNodeId ctx with
+        | Result.Error reason ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "HardwareModule") (Some "Step signature")
+                $"HardwareModule '{name}': {reason}"
+        | Result.Ok (stateType, inputType, outputType) ->
 
-            // ── 7. Extract State/Input/Output types from step Lambda ──
-            // State type comes from step Lambda's first parameter (authoritative widths
-            // from Phase 5C feedback), not from init node (which has literal-value widths).
-            let (stepStateType, inputType, outputType) = extractStepTypes ctx.Graph stepNodeId ctx
+        // ── 7. Qualified module name ──
+        match qualifiedBindingName ctx.Graph node name with
+        | Result.Error reason ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "HardwareModule") (Some "module name") reason
+        | Result.Ok moduleName ->
 
-            let stateType =
-                match stepStateType with
-                | Some sty -> sty
-                | None ->
-                    // Step didn't provide state type — derive from init node type
-                    let rawStateType = mapType initNode.Type ctx
-                    narrowType ctx.Coeffects ctx.Graph initNodeId rawStateType
+            // Reset values pair with state fields by position; the pairing must name the same fields.
+            let resetAgrees (stateFields: (string * MLIRType) list) =
+                stateFields.Length = resetValues.Length
+                && List.forall2 (fun (fieldName: string, _) (resetName: string, _) -> fieldName = resetName) stateFields resetValues
 
             // Verify state type is TStruct
             match stateType with
+            | TStruct (stateFields, _) when not (resetAgrees stateFields) ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "HardwareModule") (Some "InitialState")
+                    (sprintf "CCS source checking did not settle InitialState of HardwareModule '%s' field-for-field with its state type: state fields [%s], reset values [%s]"
+                        name (stateFields |> List.map fst |> String.concat "; ") (resetValues |> List.map fst |> String.concat "; "))
             | TStruct (stateFields, _) ->
                 // Match state fields with reset values (NativeLiteral preserved)
                 let stateFieldInfo =
@@ -361,7 +346,6 @@ let private witnessHardwareModule
                 let narrowedOutputType = outputType
 
                 // ── 8. Build Mealy machine hw.module ──
-                let moduleName = qualifiedBindingName ctx.Graph node name
                 let info : MealyMachineInfo = {
                     ModuleName = moduleName
                     StepFunctionName = stepFuncName

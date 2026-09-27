@@ -46,12 +46,14 @@ let private pSlotType (slot: ContinuationSlot) : PSGParser<MLIRType> = parser {
         | _ -> return! fail (Message $"Continuation aggregate {NodeId.value slot.Source} has no settled union layout")
     | CaptureSlotKind.ValueView native ->
         do! ensure (slot.Field.Slot = SettledSlot.Pointer 5) $"Continuation value {NodeId.value slot.Source} requires a complete descriptor field"
-        let carrier =
+        let! carrier =
             match state.Graph.Codata.Value.SequenceOrigins |> Map.tryFind slot.Source with
             | Some owner ->
-                state.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner
-                |> Option.map (fun frame -> TMemRefStatic(frame.Bytes, TInt(IntWidth 8)))
-            | None -> None
+                match state.Graph.Codata.Value.ContinuationFrames |> Map.tryFind owner with
+                | Some frame -> preturn (Some (TMemRefStatic(frame.Bytes, TInt(IntWidth 8))))
+                | None ->
+                    fail (Message $"Codata (ContinuationFrames) did not settle the frame of sequence origin {NodeId.value owner} for continuation value {NodeId.value slot.Source}")
+            | None -> preturn None
         let! ty =
             match carrier, native with
             | Some ty, _ -> preturn ty
@@ -135,9 +137,6 @@ let pBorrowContinuationSlot nodeId frameId bytes (slot: ContinuationSlot) : PSGP
 let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot) : PSGParser<MLIROp list * TransferResult> = parser {
     let! frameSSA, frameType, offset, fieldType = pPlacedSlot frameId bytes slot
     let! state = getUserState
-    let sourceShape id =
-        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph
-        |> Result.toOption |> Option.bind (fun projection -> projection.ValueShapes.TryFind id)
     let! rawValue, rawType =
         match slot.Holds with
         | CaptureSlotKind.EnvironmentView owner ->
@@ -160,11 +159,21 @@ let pWriteContinuationSlot nodeId frameId valueId bytes (slot: ContinuationSlot)
             match MLIRAccumulator.recallSequence valueId state.Accumulator with
             | Some sequence when state.Graph.Codata.Value.SequenceOrigins.TryFind valueId |> Option.exists (fun owner -> sequence.Flow.Owners = Set.singleton owner) ->
                 preturn (sequence.Environment.SSA, sequence.Environment.Type)
-            | None when
-                sourceShape valueId = Some(CallableValueShape.Data valueId) &&
-                sourceShape slot.Source = Some(CallableValueShape.Data slot.Source) &&
-                state.Graph.Codata.Value.SequenceOrigins.TryFind valueId = state.Graph.Codata.Value.SequenceOrigins.TryFind slot.Source &&
-                state.Graph.Codata.Value.SequenceOrigins.ContainsKey valueId -> pRecallNode valueId
+            | None -> parser {
+                // The callable projection's own refusal is the diagnostic, never "no shape".
+                let! projection =
+                    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph with
+                    | Result.Ok projection -> preturn projection
+                    | Result.Error reason ->
+                        fail (Message $"PSG settlement (WitnessEmission) did not settle the callable projection for the descriptor-only sequence store {NodeId.value valueId}: {reason}")
+                let sourceShape id = projection.ValueShapes.TryFind id
+                do! ensure (sourceShape valueId = Some(CallableValueShape.Data valueId) &&
+                            sourceShape slot.Source = Some(CallableValueShape.Data slot.Source) &&
+                            state.Graph.Codata.Value.SequenceOrigins.TryFind valueId = state.Graph.Codata.Value.SequenceOrigins.TryFind slot.Source &&
+                            state.Graph.Codata.Value.SequenceOrigins.ContainsKey valueId)
+                        "Descriptor-only sequence store requires the exact source-proved function half and actual environment"
+                return! pRecallNode valueId
+              }
             | _ -> fail (Message "Descriptor-only sequence store requires the exact source-proved function half and actual environment")
         | _ -> pRecallNode valueId
     let! adaptations, value, valueType = pAdapt nodeId valueId rawValue rawType

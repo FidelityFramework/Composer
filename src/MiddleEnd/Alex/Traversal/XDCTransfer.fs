@@ -12,9 +12,19 @@ module Alex.Traversal.XDCTransfer
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 
 /// Generate constraint text from the graph's pin mapping.
-/// Pure function: PinMapping → string
+/// Pure function: PinMapping → XDC text, or the pins whose direction the
+/// coeffect did not settle to Input, Output or InOut (never silently dropped).
 /// Port names are already normalized identifiers (computed in the coeffect).
-let transfer (mapping: PinMapping) : string =
+let transfer (mapping: PinMapping) : Result<string, string> =
+    let unsettled =
+        mapping.Pins |> List.filter (fun p -> p.Direction <> "Input" && p.Direction <> "Output" && p.Direction <> "InOut")
+    if not unsettled.IsEmpty then
+        unsettled
+        |> List.map (fun p -> sprintf "%s (direction '%s')" p.PortName p.Direction)
+        |> String.concat ", "
+        |> sprintf "PSG settlement (PlatformBindings.pins) did not settle an Input, Output or InOut direction for pins: %s"
+        |> Result.Error
+    else
     let sb = System.Text.StringBuilder()
 
     // Header
@@ -69,4 +79,4 @@ let transfer (mapping: PinMapping) : string =
             sb.AppendLine(sprintf "set_property IOSTANDARD %s [get_ports {%s}]" pin.IOStandard pin.PortName) |> ignore
         sb.AppendLine() |> ignore
 
-    sb.ToString().TrimEnd()
+    Result.Ok (sb.ToString().TrimEnd())

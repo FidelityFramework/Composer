@@ -116,30 +116,36 @@ let private generateCore
                             printfn "[Alex] Wrote SMT verification module: 09_obligations.mlir (%d obligations)" proofObligations.Length
                 | None -> ()
 
-                // XDC transfer — parallel residual from the pin facts the graph carries (FPGA only)
-                match targetPlatform, codata.Pins with
-                | Core.Types.Dialects.TargetPlatform.FPGA, Some mapping ->
-                    let xdcText = Alex.Traversal.XDCTransfer.transfer mapping
-                    match intermediatesDir with
-                    | Some dir ->
-                        let xdcPath = Path.Combine(dir, "constraints.xdc")
-                        File.WriteAllText(xdcPath, xdcText)
-                        if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
-                            printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
-                    | None -> ()
-                | _ -> ()
+                // XDC transfer — parallel residual from the pin facts the graph carries (FPGA only).
+                // A design that declares no pins has no constraints; malformed pin facts fail here.
+                let constraints =
+                    match targetPlatform, codata.Pins with
+                    | Core.Types.Dialects.TargetPlatform.FPGA, Some mapping ->
+                        Alex.Traversal.XDCTransfer.transfer mapping
+                        |> Result.map (fun xdcText ->
+                            match intermediatesDir with
+                            | Some dir ->
+                                let xdcPath = Path.Combine(dir, "constraints.xdc")
+                                File.WriteAllText(xdcPath, xdcText)
+                                if Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig.isVerbose() then
+                                    printfn "[Alex] Wrote XDC constraints: constraints.xdc (%d pins)" mapping.Pins.Length
+                            | None -> ())
+                    | _ -> Result.Ok ()
 
-                let activation =
-                    match targetPlatform with
-                    | Core.Types.Dialects.TargetPlatform.FPGA | Core.Types.Dialects.TargetPlatform.NPU -> Core.Types.WitnessArtifacts.TargetModuleActivation
-                    | _ -> Core.Types.WitnessArtifacts.CheckedProgramStartup
-                Core.WitnessArtifacts.create scope activation definitions topLevelOps mlirText writableStorage
-                |> Result.map (fun catalog ->
-                    let witnessed =
-                        { Operations = topLevelOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
-                          Catalog = Some catalog
-                          ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
-                    witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
+                match constraints with
+                | Result.Error message -> Result.Error message
+                | Result.Ok () ->
+                    let activation =
+                        match targetPlatform with
+                        | Core.Types.Dialects.TargetPlatform.FPGA | Core.Types.Dialects.TargetPlatform.NPU -> Core.Types.WitnessArtifacts.TargetModuleActivation
+                        | _ -> Core.Types.WitnessArtifacts.CheckedProgramStartup
+                    Core.WitnessArtifacts.create scope activation definitions topLevelOps mlirText writableStorage
+                    |> Result.map (fun catalog ->
+                        let witnessed =
+                            { Operations = topLevelOps; PointerBits = arch.Pointer; Text = mlirText; WritableStorage = writableStorage
+                              Catalog = Some catalog
+                              ModuleName = if targetPlatform = Core.Types.Dialects.TargetPlatform.NPU then None else Some "main" }
+                        witnessed, Set.union codata.Bindings.ExternLibraries linkedLibraries)
         | Result.Error msg -> Result.Error msg
 
 /// Generate MLIR for the graph. A core's leg reads the declared Register and Pointer widths at

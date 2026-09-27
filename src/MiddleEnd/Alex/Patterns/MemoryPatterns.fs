@@ -72,11 +72,19 @@ let pExtractDUTag (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) : PSGParser<M
 
 /// The payload offset of a union, read from the settled layout of the union's type
 /// (`SemanticGraph.Layouts`, ruling 2: the tag, then the payload slot of the widest case).
-let unionPayloadOffset (graph: SemanticGraph) (unionTy: NativeType) : int =
-    match settledLayout graph unionTy with
-    | Some (SettledLayout.Union (_, Some offset, _, _)) -> offset
-    | Some other -> failwithf "unionPayloadOffset: '%s' has the settled layout %A, not a union's with a payload offset" (formatType unionTy) other
-    | None -> failwithf "unionPayloadOffset: '%s' has no settled layout on the graph" (formatType unionTy)
+/// An absent or non-union layout is a settlement gap, reported at the reading occurrence.
+let pUnionPayloadOffset (unionTy: NativeType) : PSGParser<int> =
+    parser {
+        let! state = getUserState
+        match settledLayout state.Graph unionTy with
+        | Some (SettledLayout.Union (_, Some offset, _, _)) -> return offset
+        | Some other ->
+            return! fail (Message (sprintf "PSG settlement (Layouts) did not settle a union payload offset for '%s' at node %d: its settled layout is %A"
+                                       (formatType unionTy) (NodeId.value state.Current.Id) other))
+        | None ->
+            return! fail (Message (sprintf "PSG settlement (Layouts) did not settle a layout for union type '%s' at node %d"
+                                       (formatType unionTy) (NodeId.value state.Current.Id)))
+    }
 
 /// Extract DU payload via memref.view (different element type: byte buffer → typed payload)
 /// SSAs extracted from coeffects via nodeId: [0] = offsetSSA, [1] = viewSSA, [2] = zeroSSA, [3] = extractSSA
@@ -90,8 +98,7 @@ let pExtractDUPayload (nodeId: NodeId) (duSSA: SSA) (duType: MLIRType) (unionNat
         let zeroSSA = ssas.[2]
         let extractSSA = ssas.[3]
 
-        let! state = getUserState
-        let payloadByteOffset = unionPayloadOffset state.Graph unionNativeType
+        let! payloadByteOffset = pUnionPayloadOffset unionNativeType
 
         // Typed extract via memref.view — payload has different element type than byte buffer
         let! extractOps = pTypedExtractView extractSSA duSSA payloadByteOffset offsetSSA viewSSA zeroSSA payloadType duType
@@ -124,27 +131,13 @@ let pArenaCreate (nodeId: NodeId) (sizeBytes: int) : PSGParser<MLIROp list * Tra
         return ([allocaOp], TRValue { SSA = resultSSA; Type = memrefTy })
     }
 
-/// Build Arena.alloc pattern
-/// Allocates memory from an arena
-///
 /// Arena.alloc(arena: Arena<'lifetime> byref, sizeBytes: int) : nativeint
-/// For now: returns the arena memref itself (simplified - proper bump allocation later)
-/// TODO: Implement proper bump-pointer allocation with memref.subview and offset tracking
-/// SSA extracted from coeffects via nodeId: [0] = result
-let pArenaAlloc (nodeId: NodeId) (arenaSSA: SSA) (sizeSSA: SSA) (arenaType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        let! ssas = getNodeSSAs nodeId
-        do! ensure (ssas.Length >= 1) $"pArenaAlloc: Expected 1 SSA, got {ssas.Length}"
-        let resultSSA = ssas.[0]
-
-        // Simplified implementation: return arena memref as the allocated pointer
-        // The memref IS the allocation - caller can use memref.store directly
-        // Future: Add offset tracking and memref.subview for true bump allocation
-
-        // For now, just return the arena memref unchanged
-        // This works for single allocation per arena (like String.concat2)
-        return ([], TRValue { SSA = resultSSA; Type = arenaType })
-    }
+/// A bump allocation needs its settled offset within the arena. No stage settles one, so
+/// the allocation is refused at its occurrence; the whole arena is never handed out as the
+/// allocation.
+let pArenaAlloc (nodeId: NodeId) (_arenaSSA: SSA) (_sizeSSA: SSA) (_arenaType: MLIRType) : PSGParser<MLIROp list * TransferResult> =
+    fail (Message (sprintf "Baker (arena residence) did not settle a bump-allocation offset for Arena.alloc at node %d: the allocation has no realization inside its arena"
+                       (NodeId.value nodeId)))
 
 // ═══════════════════════════════════════════════════════════
 // STRUCT FIELD ACCESS PATTERNS
@@ -196,14 +189,14 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
                     let! castOp = pIndexCastS resultSSA dimResultSSA TIndex fieldTy
                     return ([constOp; dimOp; castOp], TRValue { SSA = resultSSA; Type = fieldTy })
             | _ ->
-                return failwith $"Unknown memref field name: {fieldName}"
+                return! fail (Message $"CCS source checking did not settle field '{fieldName}' for the memref field read at node {NodeId.value nodeId}: a {structTy} view has only Pointer/ptr and Length/len")
         | _ ->
             // LLVM struct - use extractvalue (for closures, option, etc.)
-            let fieldIndex =
+            let! fieldIndex =
                 match fieldName with
-                | "Pointer" | "ptr" -> 0  // Accept both capitalized (old) and lowercase (CCS)
-                | "Length" | "len" -> 1  // Accept both capitalized (old) and lowercase (CCS)
-                | _ -> failwith $"Unknown field name: {fieldName}"
+                | "Pointer" | "ptr" -> preturn 0  // Accept both capitalized (old) and lowercase (CCS)
+                | "Length" | "len" -> preturn 1  // Accept both capitalized (old) and lowercase (CCS)
+                | _ -> fail (Message $"CCS source checking did not settle field '{fieldName}' for the struct field read at node {NodeId.value nodeId}: a {structTy} view has only Pointer/ptr and Length/len")
 
             // Extract field value - pExtractField needs [offsetSSA, resultSSA]
             let extractFieldSSAs = [ssas.[0]; resultSSA]
@@ -215,12 +208,13 @@ let pStructFieldGet (nodeId: NodeId) (structSSA: SSA) (fieldName: string) (struc
 // ESCAPE-AWARE ALLOCATION
 // ═══════════════════════════════════════════════════════════
 
-/// The static memref shape of a value's storage: a struct is a byte memref of its settled size
-let extractMemRefShape (arch: Architecture) (ty: MLIRType) =
+/// The static memref shape of a value's storage: a struct is a byte memref of its settled size.
+/// Any other carrier has no settled static storage and is reported at the allocating node.
+let pMemRefShape (nodeId: NodeId) (arch: Architecture) (ty: MLIRType) : PSGParser<int * MLIRType> =
     match ty with
-    | TMemRefStatic (count, elemType) -> (count, elemType)
-    | TStruct _ -> (mlirTypeSize arch ty, TInt (IntWidth 8))
-    | _ -> failwith $"pAllocValue: expected TMemRefStatic or TStruct, got {ty}"
+    | TMemRefStatic (count, elemType) -> preturn (count, elemType)
+    | TStruct _ -> preturn (mlirTypeSize arch ty, TInt (IntWidth 8))
+    | _ -> fail (Message $"PSG settlement (Layouts) did not settle static storage for the allocated value at node {NodeId.value nodeId}: its carrier {ty} is neither a static memref nor a settled struct")
 
 /// One symbol convention for a source-admitted static allocation and its reads.
 let staticValueName (nodeId: NodeId) = sprintf "__clef_static_value_%d" (NodeId.value nodeId)
@@ -244,11 +238,11 @@ let programStorageType arch graph (entry: ProgramStorageEntry) =
 let pProgramStorageDeclaration identity storageTy : PSGParser<ProgramStorageEntry> =
     parser {
         let! state = getUserState
-        let reading =
-            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph
-            |> Result.toOption |> Option.map _.ProgramStorage
-        do! ensure reading.IsSome "Writable program inventory is absent or stale"
-        let inventory = reading.Value
+        let! inventory =
+            match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph with
+            | Result.Ok projection -> preturn projection.ProgramStorage
+            | Result.Error reason ->
+                fail (Message (sprintf "PSG settlement (WitnessEmission storage) did not publish the writable program inventory for %A: %s" identity reason))
         do! ensure inventory.Unresolved.IsEmpty
                 ("Writable program inventory is unresolved: " + (inventory.Unresolved.Values |> String.concat "; "))
         let entry = inventory.Entries.TryFind identity
@@ -268,7 +262,7 @@ let pProgramStorageDeclaration identity storageTy : PSGParser<ProgramStorageEntr
 ///
 /// StaticLifetime is a program-lifetime DU/record: constructed once at global scope, held to
 /// program end, never freed. It is placed in a module-level memref.global and referenced inline
-/// via memref.get_global — the same static-storage mechanism the flat-closure path uses. Because
+/// via memref.get_global. Because
 /// a memref.global is only valid at module scope and this runs in the PSGParser layer, the decl
 /// is queued (deduped) on the shared accumulator via tryEmitGlobalMemref; the owning DU/record
 /// witness drains it into WitnessOutput.TopLevelOps for module-scope placement. On a heap-free
@@ -277,19 +271,23 @@ let pProgramStorageDeclaration identity storageTy : PSGParser<ProgramStorageEntr
 let pAllocValue (nodeId: NodeId) (ssa: SSA) (ty: MLIRType) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let escapeKind = Alex.Traversal.TransferTypes.escapeOf state.Graph nodeId
+        // Every allocating site carries its settled class; absence is never read as stack scope.
+        let! escapeKind =
+            match Map.tryFind nodeId state.Graph.Codata.Value.Escapes with
+            | Some kind -> preturn kind
+            | None -> fail (Message $"PSG settlement (Escape) did not settle an escape/lifetime class for the allocation at node {NodeId.value nodeId}")
         match escapeKind with
         | EscapeKind.StackScoped ->
             return! pUndef ssa ty
         | EscapeKind.StaticLifetime ->
-            let count, elemType = extractMemRefShape state.Platform.TargetArch ty
+            let! count, elemType = pMemRefShape nodeId state.Platform.TargetArch ty
             let storageTy = TMemRefStatic (count, elemType)
             let globalName = staticValueName nodeId
             let! authority = pProgramStorageDeclaration (ProgramStorageIdentity.Allocation nodeId) storageTy
             MLIRAccumulator.tryEmitGlobalMemref globalName storageTy (Some authority) state.Accumulator
             return! pMemRefGetGlobal ssa globalName storageTy
         | EscapeKind.EscapesViaReturn | EscapeKind.EscapesViaClosure _ | EscapeKind.EscapesViaByRef ->
-            let count, elemType = extractMemRefShape state.Platform.TargetArch ty
+            let! count, elemType = pMemRefShape nodeId state.Platform.TargetArch ty
             return! pAllocStatic ssa count elemType None
     }
 
@@ -313,8 +311,7 @@ let pDUCaseAt (nodeId: NodeId) (destination: Val) (nativeType: NativeType) (tag:
 
         // Insert payload fields at the settled payload offset (after the tag) via memref.view
         // (different element type: byte buffer → typed payload)
-        let! state = getUserState
-        let payloadByteOffset = unionPayloadOffset state.Graph nativeType
+        let! payloadByteOffset = pUnionPayloadOffset nativeType
         let! payloadOpLists =
             payload
             |> List.mapi (fun i field ->
@@ -423,8 +420,10 @@ let indexCastForRange (range: ValueRange) (result: SSA) (operand: SSA) (operandT
 let private pArrayIndex (nodeId: NodeId) (result: SSA) (operand: SSA) (operandType: MLIRType) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let range = nodeRange state.Graph nodeId |> Option.defaultValue ValueRange.Unbounded
-        return indexCastForRange range result operand operandType
+        match nodeRange state.Graph nodeId with
+        | Some range -> return indexCastForRange range result operand operandType
+        | None ->
+            return! fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the array index operand at node {NodeId.value nodeId} (consumer node {NodeId.value state.Current.Id})")
     }
 
 /// Array.zeroCreate<'T> intrinsic — allocate zeroed array
@@ -465,12 +464,16 @@ let pArrayZeroCreateIntrinsic : PSGParser<MLIROp list * TransferResult> =
                 parser {
                     // Immutable None value shared by initially empty cells. C pointer
                     // words are produced only by the foreign reference adapter.
+                    do! ensure (ssas.Length >= 17) $"PSG settlement (SSA derivation) did not derive the nullable-cell SSA family for Array.zeroCreate at node {NodeId.value node.Id}: expected 17, got {ssas.Length}"
                     let! alloc = pAllocStatic ssas.[4] bytes (TInt (IntWidth 8)) None
                     let! tag = pConstI ssas.[10] 0L (TInt (IntWidth 8))
                     let! tagOps = pTypedInsert ssas.[4] ssas.[10] 0 ssas.[11] ssas.[12] (TInt (IntWidth 8)) elemType
                     let! word = pConstI ssas.[13] 0L TIndex
-                    let inner = match state.Current.Type with NativeType.TApp (_, [elem]) -> elem | _ -> failwith "Expected array type"
-                    let offset = unionPayloadOffset state.Graph inner
+                    let! inner =
+                        match state.Current.Type with
+                        | NativeType.TApp (_, [elem]) -> preturn elem
+                        | other -> fail (Message $"CCS source checking did not settle an array element type for Array.zeroCreate at node {NodeId.value node.Id}: the node type is {formatType other}")
+                    let! offset = pUnionPayloadOffset inner
                     let! payload = pTypedInsertView ssas.[4] ssas.[13] offset ssas.[14] ssas.[15] ssas.[16] TIndex elemType
                     return [alloc; tag; word] @ tagOps @ payload
                 }

@@ -113,7 +113,8 @@ let realize (runtime: LinuxX64Process option) (input: BackEndInput) : Result<Bac
             | MLIROp.SCFOp(While(condition, body)) -> List.iter inspect condition; List.iter inspect body
             | MLIROp.SCFOp(For(_, _, _, body))
             | MLIROp.Block(_, body)
-            | MLIROp.Region body -> List.iter inspect body
+            | MLIROp.Region body
+            | MLIROp.SMTOp(SMTSolver body) -> List.iter inspect body
             | MLIROp.SCFOp(IndexSwitch(_, cases, fallback, _)) ->
                 cases |> List.iter (snd >> List.iter inspect)
                 List.iter inspect fallback
@@ -166,6 +167,10 @@ let realize (runtime: LinuxX64Process option) (input: BackEndInput) : Result<Bac
             | MLIROp.Region body -> MLIROp.Region(map body)
             | MLIROp.HWOp(HWModule(name, inputs, outputs, body)) ->
                 MLIROp.HWOp(HWModule(name, inputs, outputs, map body))
+            | MLIROp.SMTOp(SMTSolver body) -> MLIROp.SMTOp(SMTSolver(map body))
+            // Every operation kind that carries a body is traversed above, so
+            // no required assertion can survive unrealized (as a stock
+            // cf.assert) inside an untraversed region. Remaining kinds are leaves.
             | _ -> operation
         let transformed = List.map transform input.Operations
         if definitions.Count = 0 then Ok input

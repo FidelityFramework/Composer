@@ -162,6 +162,9 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
         // Use findLastValueNode to handle Sequential conditions (e.g., TupleGet + boolean ops)
         let condValueNodeId = findLastValueNode condId ctx.Graph
         match if visitedCondition then MLIRAccumulator.recallNode condValueNodeId ctx.Accumulator else None with
+        | None when not visitedCondition ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "ControlFlow") (Some "IfThenElse condition")
+                $"PSG settlement did not place condition {NodeId.value condId} of IfThenElse {NodeId.value node.Id} in the graph as a declared child of its occurrence"
         | None ->
             trace "[ControlFlowWitness] IfThenElse: ERROR - Condition %A (value node %A) witnessed but no result" (NodeId.value condId) (NodeId.value condValueNodeId)
             WitnessOutput.error "IfThenElse: Condition witnessed but no result"
@@ -188,15 +191,20 @@ let private witnessControlFlowWith (getCombinator: unit -> (WitnessContext -> Se
                     | _ -> XParsec.Parsers.fail (XParsec.Message "Sequence conditional requires both settled branches.")
                 else
                     let isUnit = Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id
-                    let result =
-                        if isUnit then None
-                        else
-                            let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-                            match tryMatch (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                            | Some (ssas, _) when ssas.Length >= 1 -> Some (ssas.[0], resultType)
-                            | _ -> None
-                    let conditional = pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result node.Id
-                    if isUnit then Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id conditional else conditional
+                    let build result = pBuildConditional condSSA thenOps elseOps thenValueNodeId elseValueNodeIdOpt result node.Id
+                    if isUnit then Alex.Patterns.LiteralPatterns.pWithUnitResult node.Id (build None)
+                    else
+                        let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                        // A valued conditional carries its derived result value; an absent one is
+                        // a settlement defect, never a unit conditional.
+                        XParsec.Combinators.parser {
+                            let! ssas = getNodeSSAs node.Id
+                            match ssas with
+                            | ssa :: _ -> return! build (Some (ssa, resultType))
+                            | [] ->
+                                return! XParsec.Parsers.fail (XParsec.Message
+                                    $"PSG settlement did not derive a result value for valued IfThenElse {NodeId.value node.Id}")
+                        }
             match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
             | Result.Ok ((ops, transferResult), _) ->
                 trace "[ControlFlowWitness] IfThenElse: Built conditional with %d ops" (List.length ops)

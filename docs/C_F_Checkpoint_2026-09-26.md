@@ -3,7 +3,7 @@
 **Scoped integration checkpoint, 2026-09-26.** This
 records delivered changes and their actual source, tooling and native cohorts.
 **It does not mark any C PRD Complete.**
-The latest HEAD audit records 27/51 compilations, 23 compilation errors, one
+The latest recorded implementation audit reports 27/51 compilations, 23 compilation errors, one
 300-second timeout, and a runtime mismatch in 04c. The earlier 21/48 cohort below
 had 27 compilation failures. This checkpoint is not evidence of a clean F/C
 regression handoff.
@@ -19,6 +19,60 @@ linked from the [master PRD index](PRDs/README.md) and the
 The ledger is an implementation inventory, not an additional source of language
 requirements or a separately authorized prerequisite project. The correction
 changes no compiler behavior, acceptance result or feature status.
+
+## Documentation ownership cleanup — September 26
+
+**Completed: removal of vestigial architectural instructions from 102
+documentation files across four repositories.** These were obsolete notes to
+remove, not competing architectures or decisions to reopen.
+
+| Repository | Documentation files changed |
+|---|---:|
+| Composer | 47 |
+| Clef (`docs`) | 10 |
+| clef-lang-spec | 17 |
+| clef-lang-site | 28 |
+
+The cleanup removed prescriptions, examples, checklists and diagrams assigning
+analysis, inference or semantic construction to Alex, including its Patterns.
+This covers numeric/width selection, purity and execution-strategy selection,
+escape/lifetime analysis, layout, declaration/ABI settlement, continuation and
+actor construction, cleanup insertion, platform decisions and emitter queries
+of joint constraints. Obsolete custom-plugin retention and delayed-retirement
+instructions were also removed.
+
+The surviving contract is explicit: **CCS/Baker owns source semantics,
+elaboration, saturation and settlement**, preserving ingredients/recipes,
+scope, ordered joint incidence, complete premises and the intermediate rewrite
+record. **Alex passively composes Huet Elements/Patterns/Witnesses from immutable
+settled facts.** Target-specific realization belongs to **Composer's backend**.
+Clef's native dimensional types and lazy-default semantics remain authoritative.
+
+Representative corrected references:
+[coeffect ownership](Coeffect_Analysis_Architecture.md),
+[native type settlement](NTU_Architecture.md),
+[partial application](Partial_Application_Closure_Reification.md),
+[PSG publication](../../clef-lang-spec/spec/program-semantic-graph.md),
+[plugin retirement](../../clef/docs/fidelity/phg/Closure_Retooling_Plan.md), and
+[site nanopass guidance](../../clef-lang-site/hugo/content/docs/internals/concepts/nanopass-navigation.md).
+
+**Verification:** documentation diffs were reviewed and documentation-scoped
+`git diff --check` passed in all four repositories. A second documentation review
+caught and removed remaining Pattern-owned load inference and simplified
+escape-proof prescriptions. Recorded failures, exact observations and historical
+cohort results were preserved.
+
+**Acceptance remains open.** This cleanup inspected and changed documentation
+only: no implementation inspection, Python automation, builds or tests. It does
+not establish compiler repair, plugin removal from implementation, or new F/C
+acceptance. Revision hashes and results below identify their original tested
+cohorts; no new implementation cohort was run.
+
+Resume from the corrected PRDs and specification. Implementation inspection or
+changes require explicit owner authorization; the repair inventory below is not
+permission to start source scraping. When implementation work is authorized,
+retain the failing cases and repair their owning source contracts rather than
+restoring a vestige or weakening an oracle.
 
 ## Reassessment after the completed independent sweeps
 

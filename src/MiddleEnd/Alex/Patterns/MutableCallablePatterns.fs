@@ -49,8 +49,12 @@ let private pValue (ctx: WitnessContext) (storage: MutableCallableStorage) (writ
                 "Callable write lost its exact physical operands."
     // This first retained-environment admission is program-long storage. Local
     // retained views require the complete covering proof, never a stack label.
-    do! ensure (Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph
-                |> Result.toOption |> Option.exists (fun projection -> projection.MutableRetentions.Contains write.Value))
+    let! retentions =
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable state.Graph with
+        | Result.Ok projection -> preturn projection.MutableRetentions
+        | Result.Error reason ->
+            fail (Message $"PSG settlement (WitnessEmission callable) did not publish mutable callable retentions for write value node {NodeId.value write.Value}: {reason}")
+    do! ensure (retentions.Contains write.Value)
             "Mutable callable environment retention requires a covering source lifetime proof."
     return value
 }
@@ -150,7 +154,10 @@ let pReadMutableCallable (ctx: WitnessContext) binding occurrence = parser {
                 match state.Graph.Codata.Value.CallableCarriers.TryFind source with
                 | Some carrier -> preturn carrier
                 | None -> fail (Message "Mutable callable dispatch lost an exact source alternative.")
-            let implementation = state.Graph.Nodes[carrier.Implementation]
+            let! implementation =
+                match state.Graph.Nodes.TryFind carrier.Implementation with
+                | Some implementation -> preturn implementation
+                | None -> fail (Message $"Codata (CallableCarriers) did not settle a present implementation for mutable callable alternative {alternative} at node {NodeId.value occurrence}: implementation node {NodeId.value carrier.Implementation} is absent from the graph")
             let symbol = Alex.CodeGeneration.CallableSymbols.lambda state.Graph implementation false
             let value = { SSA = Values.callableAlternative occurrence alternative; Type = code.Type }
             let! constant = pFuncConstant value.SSA symbol value.Type
@@ -159,6 +166,8 @@ let pReadMutableCallable (ctx: WitnessContext) binding occurrence = parser {
     // Initialization and every admitted write supply one listed tag. The last
     // alternative is the default of that closed source dispatch, not an unknown
     // callable fallback. Added writes invalidate pStorage before commitment.
+    do! ensure (not alternatives.IsEmpty)
+            $"Codata (MutableCallableStorage) did not settle any source alternative for the mutable callable read at node {NodeId.value occurrence}"
     let! dispatch = pBuildIndexSwitch selector (alternatives |> List.take (alternatives.Length - 1))
                                        (alternatives |> List.last |> snd) [code]
     let! value =

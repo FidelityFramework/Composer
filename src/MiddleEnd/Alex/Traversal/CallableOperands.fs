@@ -65,13 +65,18 @@ let rec private projectSeen (ctx: WitnessContext) seen occurrence : Result<Shape
         | Some declaration when declaration.Captures.IsEmpty && declaration.Parameters = carrier.Parameters && declaration.Result = carrier.Result ->
             let parameters, body = declaration.Parameters, declaration.Result
             let sourceShape id = projection.ValueShapes.TryFind id
+            let omittedFormals =
+                Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph
+                |> Result.mapError (fun reason ->
+                    sprintf "PSG settlement (WitnessEmission.Ordinary) did not publish the demand projection for callable occurrence %d: %s" (NodeId.value occurrence) reason)
+                |> Result.map (fun demand -> demand.Parameters.TryFind carrier.Implementation |> Option.defaultValue Set.empty)
             let shapesAgree =
                 (parameters |> List.map (fun (_, _, id) -> sourceShape id)) = (carrier.ParameterShapes |> List.map Some) &&
                 sourceShape body = Some carrier.ResultShape &&
-                (match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary ctx.Graph with
-                 | Result.Ok projection ->
-                     carrier.OmittedParameters = (projection.Parameters.TryFind carrier.Implementation |> Option.defaultValue Set.empty)
-                 | Result.Error _ -> false)
+                omittedFormals = Result.Ok carrier.OmittedParameters
+            match omittedFormals with
+            | Result.Error reason -> Result.Error reason
+            | Result.Ok _ ->
             if not shapesAgree then Result.Error "Callable component references do not match its exact formal and body participants."
             else
             let permitted id = projection.SignatureData.TryFind carrier.Implementation |> Option.exists (Set.contains id)
@@ -157,14 +162,31 @@ let resultTypes shape = shape.ResultTypes
 /// Baker's lazy code declaration is an actual Lambda, not a synthetic source
 /// binding. Projection validates its current lazy layout and physical formals
 /// before either a direct call or code-value occurrence may name its symbol.
+/// Ok None: the implementation is not a capture-free lazy thunk declaration.
+/// Error: it is one, but its settled boundary cannot be projected; that
+/// refusal belongs to the thunk and is never read as "not a thunk".
+let thunkDeclaration (ctx: WitnessContext) implementation =
+    match Emission.tryCallable ctx.Graph with
+    | Result.Error reason ->
+        Result.Error (sprintf "PSG settlement (WitnessEmission.Callable) did not publish the callable projection for declaration %d: %s" (NodeId.value implementation) reason)
+    | Result.Ok projection ->
+        match projection.Declarations.TryFind implementation with
+        | Some { Context = LambdaContext.LazyThunk; Captures = []; Parameters = parameters; Result = body } ->
+            match project ctx implementation with
+            | Result.Ok shape when (environmentType shape).IsNone ->
+                Result.Ok(Some(Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph ctx.Graph.Nodes[implementation] false, parameters, body))
+            | Result.Ok _ ->
+                Result.Error (sprintf "Baker lazy thunk settlement published declaration %d with an environment operand; a direct thunk declaration carries none" (NodeId.value implementation))
+            | Result.Error reason ->
+                Result.Error (sprintf "Baker lazy thunk settlement did not settle the physical boundary of declaration %d: %s" (NodeId.value implementation) reason)
+        | _ -> Result.Ok None
+
+/// Option view for callers without a diagnostic channel. A thunk that owns the
+/// declaration but cannot be projected raises its located reason.
 let tryThunkDeclaration (ctx: WitnessContext) implementation =
-    match Emission.tryCallable ctx.Graph |> Result.toOption |> Option.bind (fun projection -> projection.Declarations.TryFind implementation) with
-    | Some { Context = LambdaContext.LazyThunk; Captures = []; Parameters = parameters; Result = body } ->
-        match project ctx implementation with
-        | Result.Ok shape when (environmentType shape).IsNone ->
-            Some(Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph ctx.Graph.Nodes[implementation] false, parameters, body)
-        | _ -> None
-    | _ -> None
+    match thunkDeclaration ctx implementation with
+    | Result.Ok declaration -> declaration
+    | Result.Error reason -> invalidOp reason
 
 /// The caller supplies values it actually witnessed at this occurrence. Equal
 /// implementation identities never justify replacing the environment operand.
@@ -207,11 +229,15 @@ let reproject (ctx: WitnessContext) source destination =
                     (sources |> List.forall (fun source -> destinations |> List.exists (sameExact source)))
                 | _ -> false
             let actualTransport =
-                Emission.tryCallable ctx.Graph |> Result.toOption |> Option.exists (fun projection ->
-                    projection.Transports.TryFind destination |> Option.exists (Set.contains source))
-            if not sameOrigin || not actualTransport then
+                Emission.tryCallable ctx.Graph
+                |> Result.mapError (fun reason ->
+                    sprintf "PSG settlement (WitnessEmission.Callable) did not publish the transport projection for callable copy %d -> %d: %s" (NodeId.value source) (NodeId.value destination) reason)
+                |> Result.map (fun projection -> projection.Transports.TryFind destination |> Option.exists (Set.contains source))
+            match actualTransport with
+            | Result.Error reason -> Result.Error reason
+            | Result.Ok transported when not sameOrigin || not transported ->
                 Result.Error "Callable copy does not preserve its settled code, environment owner, and source type."
-            else create shape value.Code value.Environment)
+            | Result.Ok _ -> create shape value.Code value.Environment)
 
 let copy (ctx: WitnessContext) source destination =
     reproject ctx source destination

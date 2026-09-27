@@ -67,9 +67,12 @@ let pBuildContinuationDispatch (nodeId: NodeId) (selectorId: NodeId)
             | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
             | TInt (IntWidth width) when width > 0 ->
                 let indexSSA = Alex.Traversal.Values.value nodeId 1
-                let range = nodeRange state.Graph selectorId |> Option.defaultValue ValueRange.Unbounded
-                let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range indexSSA selectorSSA selectorType
-                preturn ([operation], { SSA = indexSSA; Type = TIndex })
+                (match nodeRange state.Graph selectorId with
+                 | Some range ->
+                     let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range indexSSA selectorSSA selectorType
+                     preturn ([operation], { SSA = indexSSA; Type = TIndex })
+                 | None ->
+                     fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the ContinuationDispatch selector (node {NodeId.value selectorId}) at node {NodeId.value nodeId}"))
             | _ -> fail (Message $"ContinuationDispatch selector {NodeId.value selectorId} has unsupported carrier {selectorType}")
         let arm bodyId operations = parser {
             match result with
@@ -142,6 +145,10 @@ let pBuildConditional (condSSA: SSA)
         | FPGA, Some (resultSSA, resultType) ->
             match elseValueNodeIdOpt with
             | Some elseValueNodeId ->
+                let! elseBranchOps =
+                    match elseOps with
+                    | Some ops -> preturn ops
+                    | None -> fail (Message $"FPGA conditional at node {NodeId.value nodeId} has an else value (node {NodeId.value elseValueNodeId}) but no witnessed else operations")
                 let! (thenSSA, thenTy) = pRecallNode thenValueNodeId
                 let! (elseSSA, elseTy) = pRecallNode elseValueNodeId
 
@@ -152,6 +159,9 @@ let pBuildConditional (condSSA: SSA)
                 let elseBits = match elseTy with | TInt (IntWidth b) -> b | _ -> 0
                 let needThenHarm = resBits > 0 && thenBits > 0 && thenBits <> resBits
                 let needElseHarm = resBits > 0 && elseBits > 0 && elseBits <> resBits
+                // A branch carrier that is not harmonized must already be the result carrier.
+                do! ensure ((needThenHarm || thenTy = resultType) && (needElseHarm || elseTy = resultType))
+                        $"PSG settlement (RangeAnalysis) did not settle harmonizable branch carriers for the FPGA conditional at node {NodeId.value nodeId}: then {thenTy}, else {elseTy}, result {resultType}"
 
                 if needThenHarm || needElseHarm then
                     let! allSSAs = getNodeSSAs nodeId
@@ -170,11 +180,11 @@ let pBuildConditional (condSSA: SSA)
                         if needElseHarm then ([ harmonize allSSAs.[2] elseSSA elseTy elseBits elseValueNodeId ], allSSAs.[2])
                         else ([], elseSSA)
                     let! muxOp = pCombMux resultSSA condSSA effThenSSA effElseSSA resultType
-                    let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ thenHarmOps @ elseHarmOps @ [muxOp]
+                    let allOps = thenOps @ elseBranchOps @ thenHarmOps @ elseHarmOps @ [muxOp]
                     return (allOps, TRValue { SSA = resultSSA; Type = resultType })
                 else
                     let! muxOp = pCombMux resultSSA condSSA thenSSA elseSSA resultType
-                    let allOps = thenOps @ (elseOps |> Option.defaultValue []) @ [muxOp]
+                    let allOps = thenOps @ elseBranchOps @ [muxOp]
                     return (allOps, TRValue { SSA = resultSSA; Type = resultType })
             | None ->
                 return! fail (Message "FPGA comb.mux requires both branches")
@@ -187,18 +197,24 @@ let pBuildConditional (condSSA: SSA)
         // to the join's width by the meet SSAAssignment derived for (if, arm), inside its region ───
         | _, Some (resultSSA, resultType) ->
             let! (rawThenSSA, rawThenTy) = pRecallNode thenValueNodeId
-            let! (thenMeetOps, thenSSA, _) = pAdapt nodeId thenValueNodeId rawThenSSA rawThenTy
+            let! (thenMeetOps, thenSSA, thenTy) = pAdapt nodeId thenValueNodeId rawThenSSA rawThenTy
+            do! ensure (thenTy = resultType)
+                    $"PSG settlement (SSAAssignment) did not settle the meet of the then-branch (node {NodeId.value thenValueNodeId}) to the result carrier of the conditional at node {NodeId.value nodeId}: branch {thenTy}, result {resultType}"
             let thenYield = MLIROp.SCFOp (SCFOp.Yield [(thenSSA, resultType)])
             let thenOpsWithYield = thenOps @ thenMeetOps @ [thenYield]
-            match elseValueNodeIdOpt with
-            | Some elseValueNodeId ->
+            match elseValueNodeIdOpt, elseOps with
+            | Some elseValueNodeId, Some elseBranchOps ->
                 let! (rawElseSSA, rawElseTy) = pRecallNode elseValueNodeId
-                let! (elseMeetOps, elseSSA, _) = pAdapt nodeId elseValueNodeId rawElseSSA rawElseTy
+                let! (elseMeetOps, elseSSA, elseTy) = pAdapt nodeId elseValueNodeId rawElseSSA rawElseTy
+                do! ensure (elseTy = resultType)
+                        $"PSG settlement (SSAAssignment) did not settle the meet of the else-branch (node {NodeId.value elseValueNodeId}) to the result carrier of the conditional at node {NodeId.value nodeId}: branch {elseTy}, result {resultType}"
                 let elseYield = MLIROp.SCFOp (SCFOp.Yield [(elseSSA, resultType)])
-                let elseOpsWithYield = elseOps |> Option.map (fun ops -> ops @ elseMeetOps @ [elseYield])
+                let elseOpsWithYield = Some (elseBranchOps @ elseMeetOps @ [elseYield])
                 let! ifOp = pSCFIf condSSA thenOpsWithYield elseOpsWithYield (Some (resultSSA, resultType))
                 return ([ifOp], TRValue { SSA = resultSSA; Type = resultType })
-            | None ->
+            | Some elseValueNodeId, None ->
+                return! fail (Message $"Expression-valued if at node {NodeId.value nodeId} has an else value (node {NodeId.value elseValueNodeId}) but no witnessed else region")
+            | None, _ ->
                 return! fail (Message "Expression-valued if requires else branch")
 
         // ─── CPU void: scf.if with empty yield terminators ───
@@ -340,8 +356,12 @@ let private pBuildMultipleMatchElimination
                                     let (_, armValueNodeId, _) = arms.[idx]
                                     let extOp = extensionOp state.Graph armValueNodeId harmSSA armSSA armTy resultType
                                     harmonize (idx + 1) (harmSSA :: accSSAs) ([extOp] :: accOps)
-                            else
+                            elif armTy = resultType then
                                 harmonize (idx + 1) (armSSA :: accSSAs) ([] :: accOps)
+                            else
+                                // A carrier that is not harmonized must already be the result carrier.
+                                let (_, armValueNodeId, _) = arms.[idx]
+                                fail (Message $"PSG settlement (RangeAnalysis) did not settle a harmonizable carrier for arm {idx} (node {NodeId.value armValueNodeId}) of the FPGA match at node {NodeId.value nodeId}: arm {armTy}, result {resultType}")
                     harmonize 0 [] []
 
                 // Phase 2: Tag comparisons (fold over non-last arms, composing Elements)
@@ -395,120 +415,10 @@ let private pBuildMultipleMatchElimination
                     | _ -> false)
 
             if isRecordMatch then
-                // ── Record match path: no DU tag extraction ──
-                // Selection is by guard evaluation (or passthrough for single arm)
-
-                // Recall all arm value SSAs upfront, each brought to the join's width by the meet
-                // SSAAssignment derived for (match, arm); the meet ops join the arm's ops
-                let! armValueSSAs =
-                    match result with
-                    | Some _ ->
-                        let rec recallAll idx acc =
-                            if idx >= numArms then preturn (List.rev acc)
-                            else
-                                let (_, armValueNodeId, _) = arms.[idx]
-                                parser {
-                                    let! (rawSSA, rawTy) = pRecallNode armValueNodeId
-                                    let! (meetOps, armSSA, _) = pAdapt nodeId armValueNodeId rawSSA rawTy
-                                    return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
-                                }
-                        recallAll 0 []
-                    | None -> preturn []
-                let arms = arms |> List.mapi (fun i (armOps, v, arm) -> (armOps @ (match List.tryItem i armValueSSAs with Some (_, ops) -> ops | None -> []), v, arm))
-                let armValueSSAs = armValueSSAs |> List.map fst
-
-                if numArms = 1 then
-                    // Single arm: passthrough — just emit arm ops and use arm value directly
-                    let (armOps, _, _) = arms.[0]
-                    match result with
-                    | Some (_, resultType) ->
-                        let armSSA = armValueSSAs.[0]
-                        return (armOps, TRValue { SSA = armSSA; Type = resultType })
-                    | None ->
-                        return (armOps, TRVoid)
-                else
-                    // Multi-arm record match with guards: nested scf.if chain by guard evaluation
-                    // Guards were already walked by MatchWitness — recall their SSAs from accumulator
-                    let! graph = getGraph
-
-                    // Pre-recall guard SSAs for non-default arms
-                    let! guardSSAs =
-                        let rec recallGuards idx acc =
-                            if idx >= numArms - 1 then preturn (List.rev acc)
-                            else
-                                let (_, _, arm) = arms.[idx]
-                                match arm.Guard with
-                                | Some guardId ->
-                                    parser {
-                                        let guardValueNodeId = findLastValueNode guardId graph
-                                        let! (guardSSA, _) = pRecallNode guardValueNodeId
-                                        return! recallGuards (idx + 1) (guardSSA :: acc)
-                                    }
-                                | None ->
-                                    // No guard on non-last arm — shouldn't happen but handle gracefully
-                                    recallGuards (idx + 1) (Alex.Traversal.Values.undefined :: acc)
-                        recallGuards 0 []
-
-                    // Build nested scf.if from inside-out using recursive builder
-                    // Last arm is the exhaustive default (else body)
-                    let (lastArmOps, _, _) = arms.[numArms - 1]
-                    let lastArmElseOps =
-                        match result with
-                        | Some (_, resultType) ->
-                            let lastSSA = armValueSSAs.[numArms - 1]
-                            lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(lastSSA, resultType)])]
-                        | None ->
-                            lastArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
-
-                    // Recursive builder: returns ops for else region content (WITH trailing yield)
-                    let rec buildElseContent armIndex =
-                        if armIndex >= numArms - 1 then
-                            lastArmElseOps  // Already has yield
-                        else
-                            let (armOps, _, _) = arms.[armIndex]
-                            let condSSA = guardSSAs.[armIndex]
-                            let thenOps =
-                                match result with
-                                | Some (_, resultType) ->
-                                    armOps @ [MLIROp.SCFOp (SCFOp.Yield [(armValueSSAs.[armIndex], resultType)])]
-                                | None ->
-                                    armOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
-                            let innerElse = buildElseContent (armIndex + 1)
-                            let ifOp =
-                                match result with
-                                | Some (resultSSA, resultType) ->
-                                    MLIROp.SCFOp (SCFOp.If (condSSA, thenOps, Some innerElse, Some (resultSSA, resultType)))
-                                | None ->
-                                    MLIROp.SCFOp (SCFOp.If (condSSA, thenOps, Some innerElse, None))
-                            // Append yield to propagate inner scf.if result in the else region
-                            match result with
-                            | Some (resultSSA, resultType) ->
-                                [ifOp; MLIROp.SCFOp (SCFOp.Yield [(resultSSA, resultType)])]
-                            | None ->
-                                [ifOp; MLIROp.SCFOp (SCFOp.Yield [])]
-
-                    // Build outermost if (no trailing yield — this is top-level)
-                    let (firstArmOps, _, _) = arms.[0]
-                    let firstCondSSA = guardSSAs.[0]
-                    let firstThenOps =
-                        match result with
-                        | Some (_, resultType) ->
-                            firstArmOps @ [MLIROp.SCFOp (SCFOp.Yield [(armValueSSAs.[0], resultType)])]
-                        | None ->
-                            firstArmOps @ [MLIROp.SCFOp (SCFOp.Yield [])]
-                    let elseContent = buildElseContent 1
-                    let outerIfOp =
-                        match result with
-                        | Some (resultSSA, resultType) ->
-                            MLIROp.SCFOp (SCFOp.If (firstCondSSA, firstThenOps, Some elseContent, Some (resultSSA, resultType)))
-                        | None ->
-                            MLIROp.SCFOp (SCFOp.If (firstCondSSA, firstThenOps, Some elseContent, None))
-
-                    match result with
-                    | Some (resultSSA, resultType) ->
-                        return ([outerIfOp], TRValue { SSA = resultSSA; Type = resultType })
-                    | None ->
-                        return ([outerIfOp], TRVoid)
+                // An ordered irrefutable (record/tuple/wildcard) match reaches composition only
+                // after Baker settles its arms and guards into the selected body; pBuildMatchElimination
+                // admits no multi-arm irrefutable match, so no guard is recalled or invented here.
+                return! fail (Message $"Baker match recipe did not settle the ordered irrefutable arms and guards of the match at node {NodeId.value nodeId} before composition")
             else
 
             // Detect constant match (arms are Const/Wildcard/Var — scrutinee IS the discriminant)
@@ -539,14 +449,16 @@ let private pBuildMultipleMatchElimination
                 // Step 1: Recall all arm value SSAs upfront, each at the join's width (its meet)
                 let! armValueSSAs =
                     match result with
-                    | Some _ ->
+                    | Some (_, resultType) ->
                         let rec recallAll idx acc =
                             if idx >= numArms then preturn (List.rev acc)
                             else
                                 let (_, armValueNodeId, _) = arms.[idx]
                                 parser {
                                     let! (rawSSA, rawTy) = pRecallNode armValueNodeId
-                                    let! (meetOps, armSSA, _) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    let! (meetOps, armSSA, armTy) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    do! ensure (armTy = resultType)
+                                            $"PSG settlement (SSAAssignment) did not settle the meet of arm {idx} (node {NodeId.value armValueNodeId}) to the result carrier of the match at node {NodeId.value nodeId}: arm {armTy}, result {resultType}"
                                     return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
                                 }
                         recallAll 0 []
@@ -624,7 +536,7 @@ let private pBuildMultipleMatchElimination
                 let tagTy = TInt (IntWidth 8)
 
                 // Index 0 is reserved for the result SSA — tag extraction starts at index 1
-                let tagExtractOps, tagSSA, tagExtractEnd =
+                let! tagExtractOps, tagSSA, tagExtractEnd =
                     match scrutineeType with
                     | TIndex ->
                         let indexZeroSSA = allSSAs.[1]
@@ -632,8 +544,8 @@ let private pBuildMultipleMatchElimination
                         let memrefI8Ty = TMemRef (TInt (IntWidth 8))
                         let indexZeroOp = MLIROp.ArithOp (ArithOp.ConstI (indexZeroSSA, 0L, TIndex))
                         let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, scrutineeSSA, [indexZeroSSA], tagTy, memrefI8Ty))
-                        [indexZeroOp; loadOp], tagSSA, 3
-                    | _ ->
+                        preturn ([indexZeroOp; loadOp], tagSSA, 3)
+                    | TMemRef _ | TMemRefStatic _ | TStruct (_, Some _) ->
                         let castSSA = allSSAs.[1]
                         let zeroSSA = allSSAs.[2]
                         let tagSSA = allSSAs.[3]
@@ -641,19 +553,23 @@ let private pBuildMultipleMatchElimination
                         let castOp = MLIROp.MemRefOp (MemRefOp.ReinterpretCast (castSSA, scrutineeSSA, 0, 1, scrutineeType, memrefI8Ty))
                         let zeroOp = MLIROp.ArithOp (ArithOp.ConstI (zeroSSA, 0L, TIndex))
                         let loadOp = MLIROp.MemRefOp (MemRefOp.Load (tagSSA, castSSA, [zeroSSA], tagTy, memrefI8Ty))
-                        [castOp; zeroOp; loadOp], tagSSA, 4
+                        preturn ([castOp; zeroOp; loadOp], tagSSA, 4)
+                    | other ->
+                        fail (Message $"PSG settlement (Layouts) did not settle a byte-addressable union carrier for the scrutinee (node {NodeId.value scrutineeNodeId}) of the match at node {NodeId.value nodeId}: got {other}")
 
                 // Step 2: Recall all arm value SSAs upfront, each at the join's width (its meet)
                 let! armValueSSAs =
                     match result with
-                    | Some _ ->
+                    | Some (_, resultType) ->
                         let rec recallAll idx acc =
                             if idx >= numArms then preturn (List.rev acc)
                             else
                                 let (_, armValueNodeId, _) = arms.[idx]
                                 parser {
                                     let! (rawSSA, rawTy) = pRecallNode armValueNodeId
-                                    let! (meetOps, armSSA, _) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    let! (meetOps, armSSA, armTy) = pAdapt nodeId armValueNodeId rawSSA rawTy
+                                    do! ensure (armTy = resultType)
+                                            $"PSG settlement (SSAAssignment) did not settle the meet of arm {idx} (node {NodeId.value armValueNodeId}) to the result carrier of the match at node {NodeId.value nodeId}: arm {armTy}, result {resultType}"
                                     return! recallAll (idx + 1) ((armSSA, meetOps) :: acc)
                                 }
                         recallAll 0 []

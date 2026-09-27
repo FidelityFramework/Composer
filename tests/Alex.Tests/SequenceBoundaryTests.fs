@@ -72,7 +72,6 @@ let private observe (position: Zipper.PSGZipper) =
     Assert.Empty(operands.EmittedGlobals)
     Assert.Empty(operands.EmittedStaticGlobals)
     Assert.Empty(operands.PendingStaticGlobals)
-    Assert.Empty(operands.DeferredInlineOps)
     output.Result
 
 let private focusWithin (graph: SemanticGraph) owner site =

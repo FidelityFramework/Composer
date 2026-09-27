@@ -50,10 +50,14 @@ let pBorrowedViewIntrinsic : PSGParser<MLIROp list * TransferResult> = parser {
                  MLIROp.ArithOp (ArithOp.CmpI (s 24, ICmpPred.Ule, index, s 23, indexTy))
                  MLIROp.Assert (s 24, "BorrowedView index cannot be represented in the mapped address space")]
             | _ -> []
-        let indexOps, index =
-            if indexTy = TIndex then [], index
-            else [Alex.Patterns.MemoryPatterns.indexCastForRange
-                    (nodeRange state.Graph args.[1] |> Option.defaultValue ValueRange.Unbounded) (s 6) index indexTy], s 6
+        let! indexOps, index =
+            if indexTy = TIndex then preturn ([], index)
+            else
+                match nodeRange state.Graph args.[1] with
+                | Some indexRange ->
+                    preturn ([Alex.Patterns.MemoryPatterns.indexCastForRange indexRange (s 6) index indexTy], s 6)
+                | None ->
+                    fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the BorrowedView.{operation} index (node {NodeId.value args.[1]}) at node {NodeId.value node.Id}")
         let valid = MLIROp.ArithOp (ArithOp.CmpI (s 7, ICmpPred.Ult, index, s 5, TIndex))
         let prefix = dataOps @ [zero; length] @ beforeIndexCast @ indexOps @ [valid; MLIROp.Assert (s 7, "BorrowedView index is outside the mapped extent")]
         let elementTy = TInt (IntWidth layout.ElementBits)
@@ -68,7 +72,11 @@ let pBorrowedViewIntrinsic : PSGParser<MLIROp list * TransferResult> = parser {
                 match ValueRange.endpoints layout.Range with
                 | Some (ValueRange.Endpoint.Finite lo, ValueRange.Endpoint.Finite hi) -> preturn (lo, hi)
                 | _ -> fail (Message "BorrowedView.set requires finite schema bounds")
-            let sourceRange = nodeRange state.Graph args.[2] |> Option.defaultValue ValueRange.Unbounded
+            let! sourceRange =
+                match nodeRange state.Graph args.[2] with
+                | Some range -> preturn range
+                | None ->
+                    fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the BorrowedView.set value (node {NodeId.value args.[2]}) at node {NodeId.value node.Id}")
             let unsigned = ValueRange.isNonNegative sourceRange
             let checkBits = max (bits + (if unsigned then 1 else 0))
                                 (layout.ElementBits + (if ValueRange.isNonNegative layout.Range then 1 else 0))

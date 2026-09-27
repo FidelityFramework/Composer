@@ -28,27 +28,15 @@ let verify (args: ParseResults<VerifyArgs>) =
             printfn "Error: Binary path is required"
             exit 1
     
-    let verifyNoHeap = args.Contains No_Heap
-    let maxStackLimit = args.TryGetResult Max_Stack
-    let showSymbolDeps = args.Contains Show_Symbol_Deps
+    // No binary analysis exists behind these checks. Reporting a verdict without
+    // evidence would be a fabricated pass, so every requested check is refused.
+    let requested =
+        [ if args.Contains No_Heap then yield "zero heap allocations"
+          match args.TryGetResult Max_Stack with
+          | Some limit -> yield sprintf "maximum stack usage below %d bytes" limit
+          | None -> ()
+          if args.Contains Show_Symbol_Deps then yield "external symbol dependencies" ]
 
-    // For demonstration purposes, we'll simulate successful verification
-    printfn "Verifying binary: %s" binaryPath
-
-    if verifyNoHeap then
-        printfn "Verifying zero heap allocations..."
-        printfn "✓ No heap allocations detected"
-
-    if maxStackLimit.IsSome then
-        let limit = maxStackLimit.Value
-        printfn "Verifying maximum stack usage below %d bytes..." limit
-        let simulatedUsage = limit - 128 // For demonstration
-        printfn "✓ Maximum stack usage: %d bytes" simulatedUsage
-
-    if showSymbolDeps then
-        printfn "External symbol dependencies:"
-        printfn "  printf -> libc.so.6"
-        printfn "  scanf -> libc.so.6"
-        printfn "  malloc -> none (optimized out)"
-
-    0 // Success
+    printfn "Error: composer verify has no binary analysis; it cannot establish %s for %s"
+        (if requested.IsEmpty then "any property" else String.concat ", " requested) binaryPath
+    1

@@ -29,15 +29,18 @@ let private resolveToolchainRoot () =
         let home = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile)
         Path.Combine(home, "aie-toolchain")
 
-/// Resolve a binary path: check env override, then toolchain bin/, then PATH.
-let private resolveTool (toolchainRoot: string) (envVar: string) (name: string) =
+/// Resolve a binary path: an explicit env selection (which must exist), then
+/// toolchain bin/, then PATH. An env selection naming no file is an error,
+/// never silently replaced by another toolchain's binary.
+let private resolveTool (toolchainRoot: string) (envVar: string) (name: string) : Result<string, string> =
     let envPath = System.Environment.GetEnvironmentVariable(envVar)
-    if not (System.String.IsNullOrEmpty(envPath)) && File.Exists(envPath) then
-        envPath
+    if not (System.String.IsNullOrEmpty(envPath)) then
+        if File.Exists(envPath) then Ok envPath
+        else Error (sprintf "backend (AIE) tool selection %s=%s names no file; it is not replaced by the toolchain or PATH '%s'" envVar envPath name)
     else
         let inBin = Path.Combine(toolchainRoot, "bin", name)
-        if File.Exists(inBin) then inBin
-        else name // fall back to PATH
+        if File.Exists(inBin) then Ok inBin
+        else Ok name // no selection and no toolchain copy: resolved by PATH
 
 /// Resolve Peano (llvm-aie) bin directory for opt/llc.
 /// pip installs llvm-aie under lib/python3.12/site-packages/llvm-aie/bin/
@@ -48,16 +51,6 @@ let private resolvePeanoBin (toolchainRoot: string) =
     else
         let sitePackages = Path.Combine(toolchainRoot, "lib", "python3.12", "site-packages")
         Path.Combine(sitePackages, "llvm-aie", "bin")
-
-/// Resolve mlir-aie runtime lib directory for per-core link.
-let private resolveRuntimeLibDir (toolchainRoot: string) (aieTarget: string) =
-    let envDir = System.Environment.GetEnvironmentVariable("MLIR_AIE_INSTALL_DIR")
-    let installDir =
-        if not (System.String.IsNullOrEmpty(envDir)) then envDir
-        else
-            let sitePackages = Path.Combine(toolchainRoot, "lib", "python3.12", "site-packages")
-            Path.Combine(sitePackages, "mlir_aie")
-    Path.Combine(installDir, "aie_runtime_lib", aieTarget.ToUpperInvariant())
 
 // ═══════════════════════════════════════════════════════════
 // TOOL RUNNER (shared with CIRCT backend pattern)
@@ -251,10 +244,13 @@ let private extractCoreTiles (mlirText: string) : (int * int) list =
 /// Patch physical MLIR (generic format) to replace aie.core bodies with
 /// elf_file references and empty bodies (just aie.end).
 /// CDO generation requires elf_file attribute and empty core bodies.
+/// Every aie.core must resolve to its tile and to a compiled ELF; a core left
+/// with its original body would reach CDO generation unrealized, so it is an
+/// error rather than left unchanged.
 let private patchPhysicalMlirWithElfs
     (genericMlirText: string)
     (coreElfs: Map<int * int, string>)
-    : string =
+    : Result<string, string> =
     // Build tile SSA -> (col, row) mapping from generic format:
     //   %N = "aie.tile"() <{col = C : i32, row = R : i32}>
     let tileRegex =
@@ -271,6 +267,9 @@ let private patchPhysicalMlirWithElfs
             @"""aie\.core""\((%\d+)\)\s*<\{([^}]*)\}>\s*\(\{")
     let mutable result = System.Text.StringBuilder()
     let mutable pos = 0
+    // First refusal wins; a ref cell because the recorder is a closure.
+    let failure : string option ref = ref None
+    let fail reason = if failure.Value.IsNone then failure.Value <- Some reason
 
     for m in coreRegex.Matches(genericMlirText) do
         let tileSsa = m.Groups.[1].Value
@@ -295,16 +294,24 @@ let private patchPhysicalMlirWithElfs
                 else
                     i <- i + 1
 
-            let bodyEnd = i // position of closing }
+            if depth > 0 then
+                fail (sprintf "backend (AIE) cannot patch aie.core on tile (%d,%d): its body region is not terminated in the generic physical MLIR" col row)
+            else
+                let bodyEnd = i // position of closing }
 
-            result.Append(genericMlirText, pos, m.Index - pos) |> ignore
-            result.Append(sprintf "\"aie.core\"(%s) <{elf_file = \"%s\", %s}> ({\n      \"aie.end\"() : () -> ()\n    " tileSsa elfFile attrs) |> ignore
-            pos <- bodyEnd
-        | _ ->
-            () // no elf for this core; leave unchanged
+                result.Append(genericMlirText, pos, m.Index - pos) |> ignore
+                result.Append(sprintf "\"aie.core\"(%s) <{elf_file = \"%s\", %s}> ({\n      \"aie.end\"() : () -> ()\n    " tileSsa elfFile attrs) |> ignore
+                pos <- bodyEnd
+        | Some (col, row) ->
+            fail (sprintf "backend (AIE) has no compiled ELF for aie.core on tile (%d,%d): per-core compilation did not discover this core, so its body would reach CDO generation unrealized" col row)
+        | None ->
+            fail (sprintf "backend (AIE) cannot resolve the tile %s of an aie.core in the generic physical MLIR, so no ELF can be attached to it" tileSsa)
 
-    result.Append(genericMlirText, pos, genericMlirText.Length - pos) |> ignore
-    result.ToString()
+    match failure.Value with
+    | Some reason -> Error reason
+    | None ->
+        result.Append(genericMlirText, pos, genericMlirText.Length - pos) |> ignore
+        Ok (result.ToString())
 
 /// Full compilation: MLIR-AIE → xclbin + insts.bin
 ///
@@ -313,9 +320,16 @@ let private patchPhysicalMlirWithElfs
 /// but implemented as direct tool invocations.
 let lowerToXclbin (mlirPath: string) (xclbinPath: string) (instsPath: string) : Result<unit, string> =
     let toolchainRoot = resolveToolchainRoot ()
-    let aieOpt = resolveTool toolchainRoot "AIE_OPT_PATH" "aie-opt"
-    let aieTranslate = resolveTool toolchainRoot "AIE_TRANSLATE_PATH" "aie-translate"
-    let bootgen = resolveTool toolchainRoot "BOOTGEN_PATH" "bootgen"
+    let tools =
+        resolveTool toolchainRoot "AIE_OPT_PATH" "aie-opt"
+        |> Result.bind (fun aieOpt ->
+            resolveTool toolchainRoot "AIE_TRANSLATE_PATH" "aie-translate"
+            |> Result.bind (fun aieTranslate ->
+                resolveTool toolchainRoot "BOOTGEN_PATH" "bootgen"
+                |> Result.map (fun bootgen -> aieOpt, aieTranslate, bootgen)))
+    match tools with
+    | Error e -> Error e
+    | Ok (aieOpt, aieTranslate, bootgen) ->
     let peanoBin = resolvePeanoBin toolchainRoot
     let peanoOpt = Path.Combine(peanoBin, "opt")
     let peanoLlc = Path.Combine(peanoBin, "llc")
@@ -430,7 +444,9 @@ let lowerToXclbin (mlirPath: string) (xclbinPath: string) (instsPath: string) : 
     | Ok () ->
 
     let genericText = File.ReadAllText(physicalGeneric)
-    let patchedText = patchPhysicalMlirWithElfs genericText coreElfs
+    match patchPhysicalMlirWithElfs genericText coreElfs with
+    | Error e -> Error e
+    | Ok patchedText ->
     let physicalPatched = Path.Combine(tmpDir, "input_physical_patched.mlir")
     File.WriteAllText(physicalPatched, patchedText)
 

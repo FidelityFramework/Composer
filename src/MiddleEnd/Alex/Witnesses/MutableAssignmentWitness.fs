@@ -56,9 +56,8 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
             | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
             | Result.Error reason -> WitnessOutput.error $"Mutable callable assignment: {reason}"
         | Some (bindingId, bindingNode), None ->
-            match MLIRAccumulator.recallNode valueId ctx.Accumulator with
-            | Some (rawSSA, rawTy) ->
-                let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> "value"
+            match bindingNode.Kind, MLIRAccumulator.recallNode valueId ctx.Accumulator with
+            | SemanticKind.Binding (bindingName, _, _, _), Some (rawSSA, rawTy) ->
                 // the slot at the binding's width; the value adapted to it by its derived meet
                 let valueTy = mapType bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
                 let (meetOps, valueSSA, _) = adaptOperand ctx.Coeffects ctx.Graph node.Id valueId rawSSA rawTy
@@ -67,7 +66,11 @@ let private witnessMutableAssignment (ctx: WitnessContext) (node: SemanticNode) 
                               ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                 | Result.Ok ((ops, result), _) -> { InlineOps = meetOps @ ops; TopLevelOps = []; Result = result }
                 | Result.Error diagnostic -> WitnessOutput.error $"Module value assignment: {diagnostic}"
-            | None -> WitnessOutput.error "Module value assignment: Value not yet witnessed"
+            | SemanticKind.Binding _, None -> WitnessOutput.error "Module value assignment: Value not yet witnessed"
+            | _ ->
+                WitnessOutput.errorDiag (
+                    Diagnostic.error (Some node.Id) (Some "MutableAssignment") (Some "module value slot")
+                        $"PSG settlement (WitnessEmission storage) admitted node {NodeId.value bindingId} as a module value slot, but it is not a named Binding; the slot symbol for assignment node {NodeId.value node.Id} is unsettled")
         | None, None ->
 
         let memrefResult =

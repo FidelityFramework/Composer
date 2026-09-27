@@ -1,7 +1,7 @@
 /// LLVM Lowering - MLIR dialect lowering to LLVM dialect
 ///
 /// This module handles MLIR-to-LLVM IR conversion:
-/// - Dialect lowering via mlir-opt (vector, scf, cf, func, arith → llvm)
+/// - Dialect lowering via mlir-opt (memref, scf, cf, index, func, arith → llvm)
 /// - mlir-translate to LLVM IR
 ///
 /// When Composer becomes self-hosted, this module gets replaced with
@@ -12,10 +12,14 @@ open System.IO
 
 /// Lower MLIR to LLVM IR using mlir-opt and mlir-translate
 let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerBits: int option) : Result<unit, string> =
+    // Set index width BEFORE converting memrefs/functions. A late LLVM
+    // target triple cannot repair already materialized i64 descriptors.
+    // The width is the declared core's Pointer dimension, never assumed.
+    match pointerBits with
+    | None ->
+        Error (sprintf "PSG settlement (platform resolution) did not settle the Pointer width for LLVM lowering of target %s: the declared core has no Pointer dimension, so no index bitwidth can be selected" triple)
+    | Some width ->
     try
-        // Set index width BEFORE converting memrefs/functions. A late LLVM
-        // target triple cannot repair already materialized i64 descriptors.
-        let width = pointerBits |> Option.defaultValue 64
         let isCortexM = triple.StartsWith("thumbv8m.main-") || triple.StartsWith("thumbv7em-")
         let isXtensa = triple.StartsWith("xtensa")
         if (isCortexM || isXtensa) && width <> 32 then failwith "This MCU target requires a declared 32-bit Pointer dimension."
@@ -38,8 +42,8 @@ let lowerToLLVM (mlirPath: string) (llvmPath: string) (triple: string) (pointerB
         // Target realization uses stock dialect conversions. Callable and FFI
         // semantics must already be settled in the PSG and witnessed faithfully.
         let passes =
-            [ "expand-strided-metadata"; "memref-expand"; indexPass "finalize-memref-to-llvm"
-              "convert-vector-to-llvm"; "convert-scf-to-cf"; "convert-cf-to-llvm"
+            [ "expand-strided-metadata"; indexPass "finalize-memref-to-llvm"
+              "convert-scf-to-cf"; "convert-cf-to-llvm"
               indexPass "convert-index-to-llvm"; indexPass "convert-func-to-llvm"
               indexPass "convert-arith-to-llvm"
               "reconcile-unrealized-casts"; "canonicalize" ]

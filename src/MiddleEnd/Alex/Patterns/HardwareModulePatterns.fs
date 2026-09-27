@@ -75,12 +75,15 @@ let outputExtractions (pinAttrs: Map<string, string list>) (outputType: MLIRType
                 | Some [ single ] -> acc @ [ step (Some single) ]
                 | Some multiple ->
                     match fieldTy with
-                    | TStruct (tupleFields, _) ->
+                    | TStruct (tupleFields, _) when tupleFields.Length = multiple.Length ->
                         let acc' = acc @ [ step None ]
                         let idx = acc'.Length - 1
                         acc' @ (List.zip multiple tupleFields |> List.map (fun (pinName, (elemField, elemTy)) ->
                             { Parent = Some idx; Field = elemField; ParentType = fieldTy; FieldType = elemTy; Pin = Some pinName }))
-                    | _ -> acc @ [ step (Some (List.head multiple)) ]
+                    | _ ->
+                        // No pin is chosen for the field: its pins must name its tuple elements one to one.
+                        failwithf "Codata (Pins) did not settle one pin per element for output field '%s': %d pins %A for carrier %A"
+                            fieldName multiple.Length multiple fieldTy
                 | None ->
                     match fieldTy with
                     | TStruct _ ->
@@ -300,16 +303,20 @@ let buildFlatPortMealyModule
                 match Map.tryFind fieldName pinAttrs with
                 | Some [pinName] -> [(pinName, fieldTy)]
                 | Some pinNames ->
-                    // Multi-pin input field
+                    // Multi-pin input field: its pins name its tuple elements one to one
                     match fieldTy with
-                    | TStruct (tupleFields, _) ->
+                    | TStruct (tupleFields, _) when tupleFields.Length = pinNames.Length ->
                         List.zip pinNames tupleFields
                         |> List.map (fun (pn, (_, eTy)) -> (pn, eTy))
-                    | _ -> [((List.head pinNames), fieldTy)]
+                    | _ ->
+                        failwithf "Codata (Pins) did not settle one pin per element for input field '%s' of %s: %d pins %A for carrier %A"
+                            fieldName info.ModuleName pinNames.Length pinNames fieldTy
                 | None ->
-                    // No pin attr — use field name as-is (shouldn't happen for pin-mapped types)
-                    [(fieldName, fieldTy)])
-        | _ -> []
+                    // A top-level input port is a physical pin; no port name is invented for a field
+                    failwithf "Codata (Pins) did not settle a pin for input field '%s' of the top-level module %s" fieldName info.ModuleName)
+        | Some other ->
+            failwithf "PSG settlement (type mapping) did not settle a record input for the flat-port module %s: its input carrier is %A" info.ModuleName other
+        | None -> []
 
     // ── Reset infrastructure ──
     // External: rst is a top-level port (Arg 1). Flat inputs start at Arg 2.

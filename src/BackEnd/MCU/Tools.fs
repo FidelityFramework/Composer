@@ -25,25 +25,23 @@ let run tool (args: string list) log =
     output
 
 let private environment name = Environment.GetEnvironmentVariable name |> Option.ofObj |> Option.filter (String.IsNullOrWhiteSpace >> not)
-let private home = Environment.GetFolderPath Environment.SpecialFolder.UserProfile
-let private installed root file =
-    if Directory.Exists root then Directory.GetFiles(root, file, SearchOption.AllDirectories) |> Array.sort |> Array.tryLast
-    else None
 
+/// The binutils directory is an explicit selection (embedded.tool_directory or
+/// COMPOSER_ARM_GNU_BIN) or the one on PATH. No vendor install tree is scanned
+/// for whichever version happens to sort last.
 let armToolDirectory configured =
     let selected = configured |> Option.orElseWith (fun () -> environment "COMPOSER_ARM_GNU_BIN")
     match selected with
     | Some path -> Path.GetFullPath path
     | None ->
-        let onPath =
-            (environment "PATH" |> Option.defaultValue "").Split(Path.PathSeparator)
-            |> Array.tryFind (fun p -> File.Exists(Path.Combine(p, "arm-none-eabi-as")))
-        onPath |> Option.orElseWith (fun () ->
-            installed (Path.Combine(home, ".local/share/renesas/e2_studio/toolchains/gcc_arm")) "arm-none-eabi-as"
-            |> Option.map Path.GetDirectoryName)
-        |> Option.defaultWith (fun () -> failwith "Install ARM GNU binutils or set COMPOSER_ARM_GNU_BIN")
+        (environment "PATH" |> Option.defaultValue "").Split(Path.PathSeparator)
+        |> Array.tryFind (fun p -> File.Exists(Path.Combine(p, "arm-none-eabi-as")))
+        |> Option.defaultWith (fun () ->
+            failwith "backend (MCU Cortex-M) did not receive an ARM GNU binutils selection: declare embedded.tool_directory, set COMPOSER_ARM_GNU_BIN, or put arm-none-eabi-as on PATH")
 
+/// The J-Link library is an explicit selection (embedded.probe_library or
+/// COMPOSER_JLINK_LIBRARY). No IDE install tree is scanned for one.
 let probeLibrary configured =
     configured |> Option.orElseWith (fun () -> environment "COMPOSER_JLINK_LIBRARY")
-    |> Option.orElseWith (fun () -> installed (Path.Combine(home, ".eclipse")) "libjlinkarm.so")
-    |> Option.defaultWith (fun () -> failwith "Set COMPOSER_JLINK_LIBRARY to the installed SEGGER J-Link shared library")
+    |> Option.defaultWith (fun () ->
+        failwith "backend (MCU Cortex-M probe) did not receive a SEGGER J-Link library selection: declare embedded.probe_library or set COMPOSER_JLINK_LIBRARY")

@@ -46,13 +46,15 @@ let undefined : SSA = V (-1, -1)
 let isModuleValueSlot (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (node: SemanticNode) : bool =
     let projection =
         Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph
-        |> Result.defaultWith (fun reason -> invalidOp ("Source storage projection: " + reason))
+        |> Result.defaultWith (fun reason ->
+            invalidOp (sprintf "PSG settlement (WitnessEmission.Storage) did not publish the storage projection for binding %d: %s" (NodeId.value node.Id) reason))
     projection.Startup
     |> Option.exists (fun plan -> plan.ValueBindings.Contains node.Id)
 
 let private callableFacts graph =
     Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable graph
-    |> Result.defaultWith (fun reason -> invalidOp ("Source value projection: " + reason))
+    |> Result.defaultWith (fun reason ->
+        invalidOp ("PSG settlement (WitnessEmission.Callable) did not publish the callable value projection: " + reason))
 
 /// Name the source-admitted alias endpoint or formal. Resolving aliases and
 /// classifying parameter/environment conventions belong to source settlement.
@@ -61,22 +63,22 @@ let private callableFacts graph =
 let valuesOf (_platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (owners: NodeId list) (nodeId: NodeId) : SSA list =
     let facts = callableFacts graph
     match facts.AliasTargets.TryFind nodeId with
-    | None -> invalidOp (sprintf "Source value %d has no admitted alias endpoint." (NodeId.value nodeId))
+    | None -> invalidOp (sprintf "PSG settlement (WitnessEmission.Callable AliasTargets) did not settle an alias endpoint for source value %d" (NodeId.value nodeId))
     | Some target ->
         let components =
             owners |> List.tryHead |> Option.bind (fun owner -> facts.Arguments.TryFind owner |> Option.bind (Map.tryFind target))
         match components with
         | Some ordinals -> List.map Arg ordinals
         | None when facts.Arguments.Values |> Seq.exists (Map.containsKey target) ->
-            invalidOp (sprintf "Source formal %d has no admitted owner at this Huet occurrence." (NodeId.value target))
+            invalidOp (sprintf "PSG settlement (WitnessEmission.Callable Arguments) did not settle an owner for source formal %d at this Huet occurrence (value %d)" (NodeId.value target) (NodeId.value nodeId))
         | None -> values target
 
 /// The result value of a node: the last of its values.
 let resultOf (platform: Core.Types.Dialects.TargetPlatform) (graph: SemanticGraph) (owners: NodeId list) (nodeId: NodeId) : SSA =
     match valuesOf platform graph owners nodeId with
-    | [] -> invalidOp "A source-omitted formal has no physical operand."
+    | [] -> invalidOp (sprintf "PSG settlement (OrdinaryDemand) omitted formal %d, which has no physical operand to recall" (NodeId.value nodeId))
     | [Arg ordinal] -> Arg ordinal
-    | Arg _ :: _ -> invalidOp "A multi-component formal must be recalled with all of its physical operands."
+    | Arg _ :: _ -> invalidOp (sprintf "Alex recalled multi-component formal %d as one value; all of its physical operands must be recalled" (NodeId.value nodeId))
     | values -> List.last values
 
 /// A unit-typed body: the function returns no value and its return needs a zero constant.

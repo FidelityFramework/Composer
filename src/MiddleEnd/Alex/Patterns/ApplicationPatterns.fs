@@ -119,8 +119,15 @@ let pDirectCall (nodeId: NodeId) (funcName: string) (args: (SSA * MLIRType) list
         let! targetPlatform = getTargetPlatform
         match targetPlatform with
         | FPGA ->
-            // FPGA: hw.instance (spatial instantiation) instead of func.call (temporal)
-            let names = paramNames |> Option.defaultValue (args |> List.mapi (fun i _ -> sprintf "in%d" i))
+            // FPGA: hw.instance (spatial instantiation) instead of func.call (temporal).
+            // The port names are the callee's declared parameter names; none are invented here.
+            let! names =
+                match paramNames with
+                | Some names when names.Length = finalVals.Length -> preturn names
+                | Some names ->
+                    fail (Message $"CCS source checking did not settle one declared port name per argument for hw.instance of '{funcName}' at node {NodeId.value nodeId}: {names.Length} names for {finalVals.Length} arguments")
+                | None ->
+                    fail (Message $"CCS source checking did not settle the declared port names for hw.instance of '{funcName}' at node {NodeId.value nodeId}")
             let inputs = List.map2 (fun pname (v: Val) -> (pname, v.SSA, v.Type)) names finalVals
             let outputs = [("result", retType)]
             let instName = funcName.Replace(".", "_") + "_inst"
@@ -158,22 +165,33 @@ let private pFpgaCombOp (operation: string) (resultSSA: SSA) (lhs: SSA) (rhs: SS
 
 /// The width a node's value is held at, read from the node (the exact width of its range on
 /// fabric; its selected representation on a core), for an operation that must have one.
-let private heldBits (graph: SemanticGraph) (nodeId: NodeId) (what: string) : int =
+let private pHeldBits (graph: SemanticGraph) (nodeId: NodeId) (what: string) : PSGParser<int> =
     match nodeWidth graph nodeId with
-    | Some (IntWidth b) -> b
+    | Some (IntWidth b) -> preturn b
     | None ->
         // a boolean or a char result has its fixed representation
         match Clef.Compiler.PSGSaturation.SemanticGraph.Core.SemanticGraph.tryGetNode nodeId graph |> Option.bind (fun n -> Types.tryGetNTUKind n.Type) with
-        | Some NTUKind.NTUbool -> 1
-        | Some NTUKind.NTUchar -> 32
-        | _ -> failwithf "%s (node %d) has no held width: it is not a word integer or its range has no width (CCS8011)" what (NodeId.value nodeId)
+        | Some NTUKind.NTUbool -> preturn 1
+        | Some NTUKind.NTUchar -> preturn 32
+        | _ ->
+            fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle a held width for %s (node %d): it is not a word integer or its range has no width (CCS8011)"
+                               what (NodeId.value nodeId)))
 
 /// The width a settled range is held at (`RangeAnalysis.heldWidthOf`: the range's own width on
 /// fabric, its selected representation on a core).
-let private heldBitsOf (graph: SemanticGraph) (range: ValueRange) (what: string) : int =
+let private pHeldBitsOf (graph: SemanticGraph) (nodeId: NodeId) (range: ValueRange) (what: string) : PSGParser<int> =
     match Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis.heldWidthOf graph range with
-    | Some b -> b
-    | None -> failwithf "%s has the range %s, which has no width on this substrate (CCS8011)" what (ValueRange.render range)
+    | Some b -> preturn b
+    | None ->
+        fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle a held width for %s at node %d: the range %s has no width on this substrate (CCS8011)"
+                           what (NodeId.value nodeId) (ValueRange.render range)))
+
+/// The range CCS settled on an operand node, read for an operation that requires one.
+let private pSettledRange (graph: SemanticGraph) (id: NodeId) (what: string) : PSGParser<ValueRange> =
+    match nodeRange graph id with
+    | Some r -> preturn r
+    | None ->
+        fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle a value range for %s (node %d)" what (NodeId.value id)))
 
 /// The width of an integer operand as it arrives; zero for an operand that is no sized integer
 /// (an index, a tag), which keeps its own type and is not extended.
@@ -245,26 +263,27 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
             // modulus or right shift takes its unsigned form when the join is non-negative.
             // The shift amount is an operand like any other. Nothing is decided here: the
             // ranges are CCS's.
-            let physical (side: string) (ty: MLIRType) =
+            let physical (side: string) (ty: MLIRType) : PSGParser<int> =
                 match ty with
-                | TInt (IntWidth b) when b > 0 -> b
-                | other -> failwithf "pBinaryArithOp: the %s operand of '%s' is %A, not an integer of settled width" side operation other
-            let lhsBits = physical "left" lhsType
-            let rhsBits = physical "right" rhsType
-            let rangeOf (id: NodeId) (what: string) =
-                match nodeRange state.Graph id with
-                | Some r -> r
-                | None -> failwithf "pBinaryArithOp: %s of '%s' (node %d) has no analysed range" what operation (NodeId.value id)
-            let lhsRange = rangeOf argIds.[0] "the left operand"
-            let rhsRange = rangeOf argIds.[1] "the right operand"
+                | TInt (IntWidth b) when b > 0 -> preturn b
+                | other ->
+                    fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle an integer width for the %s operand of '%s' at node %d: its carrier is %A"
+                                       side operation (NodeId.value nodeId) other))
+            let! lhsBits = physical "left" lhsType
+            let! rhsBits = physical "right" rhsType
+            let! lhsRange = pSettledRange state.Graph argIds.[0] (sprintf "the left operand of '%s'" operation)
+            let! rhsRange = pSettledRange state.Graph argIds.[1] (sprintf "the right operand of '%s'" operation)
             // The operation's range is CCS's settled fact, read, not joined here (the standing rule:
             // a witness computes no range).
-            let joined =
+            let! joined =
                 match Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis.operationRange state.Graph nodeId with
-                | Some r -> r
-                | None -> failwithf "pBinaryArithOp: '%s' (node %d) has an unannotated operand or result" operation (NodeId.value nodeId)
-            let resBits = heldBits state.Graph nodeId (sprintf "the result of '%s'" operation)
-            let opBits = List.max [ lhsBits; rhsBits; resBits; heldBitsOf state.Graph joined (sprintf "the join of the operands of '%s'" operation) ]
+                | Some r -> preturn r
+                | None ->
+                    fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle the operation range of '%s' (node %d): an operand or the result is unannotated"
+                                       operation (NodeId.value nodeId)))
+            let! resBits = pHeldBits state.Graph nodeId (sprintf "the result of '%s'" operation)
+            let! joinBits = pHeldBitsOf state.Graph nodeId joined (sprintf "the join of the operands of '%s'" operation)
+            let opBits = List.max [ lhsBits; rhsBits; resBits; joinBits ]
             let opTy = TInt (IntWidth opBits)
             let signed = not (ValueRange.isNonNegative joined)
             let needExtLhs = lhsBits < opBits
@@ -317,28 +336,32 @@ let pBinaryArithOp (nodeId: NodeId) (operation: string)
                 return (lhsLoadOps @ rhsLoadOps @ extOps @ [op], TRValue { SSA = opResultSSA; Type = opTy })
 
         | _ ->
-            // CPU/MCU: a real, or an index (an address held by a handle): the operand's own type
+            // CPU/MCU: a real, or an index (an address held by a handle): the operand's own type.
+            // Both operands must arrive on that one carrier; nothing else is admitted here.
+            do! ensure (lhsType = rhsType && (match lhsType with TFloat _ | TIndex -> true | _ -> false))
+                    (sprintf "PSG settlement (type mapping) did not settle one real or index carrier for both operands of '%s' at node %d: left %A, right %A"
+                         operation (NodeId.value nodeId) lhsType rhsType)
             let resultSSA = ssas.[0]
             let! op =
                 match operation, lhsType with
                 | "add", TFloat _ -> pAddF resultSSA lhsSSA rhsSSA lhsType
-                | "add", _ -> pAddI resultSSA lhsSSA rhsSSA lhsType
+                | "add", TIndex -> pAddI resultSSA lhsSSA rhsSSA lhsType
                 | "sub", TFloat _ -> pSubF resultSSA lhsSSA rhsSSA lhsType
-                | "sub", _ -> pSubI resultSSA lhsSSA rhsSSA lhsType
+                | "sub", TIndex -> pSubI resultSSA lhsSSA rhsSSA lhsType
                 | "mul", TFloat _ -> pMulF resultSSA lhsSSA rhsSSA lhsType
-                | "mul", _ -> pMulI resultSSA lhsSSA rhsSSA lhsType
+                | "mul", TIndex -> pMulI resultSSA lhsSSA rhsSSA lhsType
                 | "div", TFloat _ -> pDivF resultSSA lhsSSA rhsSSA lhsType
-                | "div", _ -> pDivSI resultSSA lhsSSA rhsSSA lhsType
-                | "rem", _ -> pRemSI resultSSA lhsSSA rhsSSA lhsType
-                | "andi", _ -> pAndI resultSSA lhsSSA rhsSSA lhsType
-                | "ori", _ -> pOrI resultSSA lhsSSA rhsSSA lhsType
-                | "xori", _ -> pXorI resultSSA lhsSSA rhsSSA lhsType
-                | "shli", _ -> pShLI resultSSA lhsSSA rhsSSA lhsType
-                | "shrui", _ -> pShRUI resultSSA lhsSSA rhsSSA lhsType
-                | "shrsi", _ -> pShRSI resultSSA lhsSSA rhsSSA lhsType
-                | "divu", _ -> pDivUI resultSSA lhsSSA rhsSSA lhsType
-                | "remu", _ -> pRemUI resultSSA lhsSSA rhsSSA lhsType
-                | _ -> fail (Message $"Unknown binary arithmetic operation: {operation} on {lhsType}")
+                | "div", TIndex -> pDivSI resultSSA lhsSSA rhsSSA lhsType
+                | "rem", TIndex -> pRemSI resultSSA lhsSSA rhsSSA lhsType
+                | "andi", TIndex -> pAndI resultSSA lhsSSA rhsSSA lhsType
+                | "ori", TIndex -> pOrI resultSSA lhsSSA rhsSSA lhsType
+                | "xori", TIndex -> pXorI resultSSA lhsSSA rhsSSA lhsType
+                | "shli", TIndex -> pShLI resultSSA lhsSSA rhsSSA lhsType
+                | "shrui", TIndex -> pShRUI resultSSA lhsSSA rhsSSA lhsType
+                | "shrsi", TIndex -> pShRSI resultSSA lhsSSA rhsSSA lhsType
+                | "divu", TIndex -> pDivUI resultSSA lhsSSA rhsSSA lhsType
+                | "remu", TIndex -> pRemUI resultSSA lhsSSA rhsSSA lhsType
+                | _ -> fail (Message $"backend (CPU) has no arithmetic element for '{operation}' on {lhsType} at node {NodeId.value nodeId}")
             return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = lhsType })
     }
 
@@ -386,16 +409,18 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
             return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = ssas.[0]; Type = TInt (IntWidth 1) })
         | _, TFloat _ when targetPlatform <> FPGA ->
             // CPU: a real
+            do! ensure (rhsType = lhsType)
+                    $"PSG settlement (type mapping) did not settle one real carrier for both operands of '{predName}' at node {NodeId.value nodeId}: left {lhsType}, right {rhsType}"
             let resultSSA = ssas.[0]
-            let fcmpPred =
+            let! fcmpPred =
                 match predName with
-                | "eq" -> FCmpPred.OEq
-                | "ne" -> FCmpPred.ONe
-                | "lt" -> FCmpPred.OLt
-                | "le" -> FCmpPred.OLe
-                | "gt" -> FCmpPred.OGt
-                | "ge" -> FCmpPred.OGe
-                | _ -> failwith $"Unknown float comparison predicate: {predName}"
+                | "eq" -> preturn FCmpPred.OEq
+                | "ne" -> preturn FCmpPred.ONe
+                | "lt" -> preturn FCmpPred.OLt
+                | "le" -> preturn FCmpPred.OLe
+                | "gt" -> preturn FCmpPred.OGt
+                | "ge" -> preturn FCmpPred.OGe
+                | _ -> fail (Message $"backend (CPU) has no real comparison predicate '{predName}' at node {NodeId.value nodeId}")
             let! op = pCmpF resultSSA fcmpPred lhsSSA rhsSSA lhsType
             return (lhsLoadOps @ rhsLoadOps @ [op], TRValue { SSA = resultSSA; Type = TInt (IntWidth 1) })
         | _, (TMemRef _ | TMemRefStatic _) when targetPlatform <> FPGA && (predName = "eq" || predName = "ne") ->
@@ -410,19 +435,19 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
             // not extended.
             let lhsBits = physicalBits lhsType
             let rhsBits = physicalBits rhsType
-            let rangeOf (id: NodeId) =
-                match nodeRange state.Graph id with
-                | Some r -> r
-                | None -> failwithf "pComparisonOp: an operand of '%s' (node %d) has no analysed range" predName (NodeId.value id)
-            let lhsRange = rangeOf argIds.[0]
-            let rhsRange = rangeOf argIds.[1]
+            let! lhsRange = pSettledRange state.Graph argIds.[0] (sprintf "the left operand of '%s'" predName)
+            let! rhsRange = pSettledRange state.Graph argIds.[1] (sprintf "the right operand of '%s'" predName)
             // The comparison works in the join of its operands' ranges, CCS's settled facts read as
             // one (the comparison node's own range is [0, 1] and is not part of it).
-            let joined =
+            let! joined =
                 match Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis.operandRange state.Graph nodeId with
-                | Some r -> r
-                | None -> failwithf "pComparisonOp: '%s' (node %d) has an unannotated operand" predName (NodeId.value nodeId)
-            let joinBits = if lhsBits > 0 || rhsBits > 0 then heldBitsOf state.Graph joined (sprintf "the operands of '%s'" predName) else 0
+                | Some r -> preturn r
+                | None ->
+                    fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle the operand range of '%s' (node %d): an operand is unannotated"
+                                       predName (NodeId.value nodeId)))
+            let! joinBits =
+                if lhsBits > 0 || rhsBits > 0 then pHeldBitsOf state.Graph nodeId joined (sprintf "the operands of '%s'" predName)
+                else preturn 0
             let opBits = List.max [ lhsBits; rhsBits; joinBits ]
             let opTy = if lhsBits > 0 || rhsBits > 0 then TInt (IntWidth opBits) else lhsType
             let signed = not (ValueRange.isNonNegative joined)
@@ -431,23 +456,23 @@ let pComparisonOp (nodeId: NodeId) (predName: string)
             | TFloat _ ->
                 return! fail (Message $"FPGA does not support float comparison: {predName}")
             | _ ->
-                let icmpPred =
+                let! icmpPred =
                     match predName, signed with
-                    | "eq", _ -> ICmpPred.Eq
-                    | "ne", _ -> ICmpPred.Ne
-                    | "lt", true -> ICmpPred.Slt
-                    | "le", true -> ICmpPred.Sle
-                    | "gt", true -> ICmpPred.Sgt
-                    | "ge", true -> ICmpPred.Sge
-                    | "lt", false -> ICmpPred.Ult
-                    | "le", false -> ICmpPred.Ule
-                    | "gt", false -> ICmpPred.Ugt
-                    | "ge", false -> ICmpPred.Uge
-                    | "ult", _ -> ICmpPred.Ult
-                    | "ule", _ -> ICmpPred.Ule
-                    | "ugt", _ -> ICmpPred.Ugt
-                    | "uge", _ -> ICmpPred.Uge
-                    | _ -> failwith $"Unknown comparison predicate: {predName}"
+                    | "eq", _ -> preturn ICmpPred.Eq
+                    | "ne", _ -> preturn ICmpPred.Ne
+                    | "lt", true -> preturn ICmpPred.Slt
+                    | "le", true -> preturn ICmpPred.Sle
+                    | "gt", true -> preturn ICmpPred.Sgt
+                    | "ge", true -> preturn ICmpPred.Sge
+                    | "lt", false -> preturn ICmpPred.Ult
+                    | "le", false -> preturn ICmpPred.Ule
+                    | "gt", false -> preturn ICmpPred.Ugt
+                    | "ge", false -> preturn ICmpPred.Uge
+                    | "ult", _ -> preturn ICmpPred.Ult
+                    | "ule", _ -> preturn ICmpPred.Ule
+                    | "ugt", _ -> preturn ICmpPred.Ugt
+                    | "uge", _ -> preturn ICmpPred.Uge
+                    | _ -> fail (Message $"backend (CPU/FPGA) has no integer comparison predicate '{predName}' at node {NodeId.value nodeId}")
 
                 let needExtLhs = lhsBits > 0 && lhsBits < opBits
                 let needExtRhs = rhsBits > 0 && rhsBits < opBits
@@ -493,6 +518,9 @@ let pUnaryNot (nodeId: NodeId)
 
         // PULL model: Recall operand SSA and type, automatically loading from TMemRef
         let! (loadOps, operandSSA, operandType) = pRecallArgWithLoad argIds.[0]
+        // Boolean NOT is xori with an i1 one; the operand must be the canonical Boolean carrier.
+        do! ensure (operandType = TInt (IntWidth 1))
+                $"PSG settlement (type mapping) did not settle the Boolean i1 carrier for the operand of 'not' at node {NodeId.value nodeId}: got {operandType}"
 
         // Extract SSAs from coeffects
         let! ssas = getNodeSSAs nodeId
@@ -522,16 +550,18 @@ let private pUnaryAtJoin (nodeId: NodeId) (operandId: NodeId) (operandSSA: SSA) 
         do! ensure (ssas.Length >= 4) $"unary operation: Expected 4 SSAs, got {ssas.Length}"
         let! state = getUserState
         let operandBits = physicalBits operandType
-        let operandRange =
-            match nodeRange state.Graph operandId with
-            | Some r -> r
-            | None -> failwithf "unary operation: the operand (node %d) has no analysed range" (NodeId.value operandId)
-        let joined =
+        do! ensure (operandBits > 0)
+                $"PSG settlement (RangeAnalysis) did not settle an integer width for the operand of the unary operation at node {NodeId.value nodeId}: its carrier is {operandType}"
+        let! operandRange = pSettledRange state.Graph operandId "the operand of the unary operation"
+        let! joined =
             match Clef.Compiler.PSGSaturation.SemanticGraph.RangeAnalysis.operationRange state.Graph nodeId with
-            | Some r -> r
-            | None -> failwithf "unary operation: node %d has an unannotated operand or result" (NodeId.value nodeId)
-        let resBits = heldBits state.Graph nodeId "the result of the unary operation"
-        let opBits = List.max [ operandBits; resBits; heldBitsOf state.Graph joined "the join of the unary operation" ]
+            | Some r -> preturn r
+            | None ->
+                fail (Message (sprintf "PSG settlement (RangeAnalysis) did not settle the operation range of the unary operation (node %d): an operand or the result is unannotated"
+                                   (NodeId.value nodeId)))
+        let! resBits = pHeldBits state.Graph nodeId "the result of the unary operation"
+        let! joinBits = pHeldBitsOf state.Graph nodeId joined "the join of the unary operation"
+        let opBits = List.max [ operandBits; resBits; joinBits ]
         let opTy = TInt (IntWidth opBits)
         let! (extOps, effOperand) =
             if operandBits < opBits then
@@ -564,7 +594,7 @@ let pBitwiseNot (nodeId: NodeId)
         let! targetPlatform = getTargetPlatform
 
         match targetPlatform, operandType with
-        | FPGA, _ | _, TIndex ->
+        | FPGA, TInt _ | _, TIndex ->
             let! ssas = getNodeSSAs nodeId
             do! ensure (ssas.Length >= 2) $"pBitwiseNot: Expected 2 SSAs, got {ssas.Length}"
             let constSSA = ssas.[0]
@@ -575,9 +605,11 @@ let pBitwiseNot (nodeId: NodeId)
             let! xorOp = pXorI resultSSA operandSSA constSSA operandType
 
             return (loadOps @ [constOp; xorOp], TRValue { SSA = resultSSA; Type = operandType })
-        | _ ->
+        | _, TInt _ ->
             let! (ops, result) = pUnaryAtJoin nodeId argIds.[0] operandSSA operandType -1L (fun result constant operand opTy -> pXorI result operand constant opTy)
             return (loadOps @ ops, result)
+        | _, other ->
+            return! fail (Message $"PSG settlement (type mapping) did not settle an integer or index carrier for the operand of '~~~' at node {NodeId.value nodeId}: got {other}")
     }
 
 /// Unary negation pattern (op_UnaryNegation, design (c) `κ<'u> -> κ<'u>`) — PULL model.
@@ -701,39 +733,22 @@ let pTypeConversion (nodeId: NodeId)
 // COMPOSED INTRINSIC PARSERS (per-operation, self-contained)
 // ═══════════════════════════════════════════════════════════
 
-/// Parser that succeeds only when the current node's Clef type is unsigned (NTUuint / NTUsize).
-/// Fails otherwise, enabling <|> composition with the signed variant.
-/// This is the XParsec monadic encoding of DTS signedness: the type IS the selector.
-let private pRequireUnsigned : PSGParser<unit> =
+/// Whether the current node's Clef type is unsigned (NTUuint / NTUsize).
+/// This is the XParsec monadic encoding of DTS signedness: the type IS the selector,
+/// read once and dispatched on directly, so the selected operation's own refusal is
+/// reported rather than replaced by the other signedness.
+let private pIsUnsigned : PSGParser<bool> =
     parser {
         let! state = getUserState
         match Types.tryGetNTUKind state.Current.Type with
-        | Some (NTUKind.NTUuint _) | Some NTUKind.NTUsize -> return ()
-        | _ -> return! fail (Message "Not unsigned type")
-    }
-
-/// Unsigned-guarded binary arith: succeeds only for NTUuint, emitting the unsigned op.
-/// Composes with pBinaryArithOp (signed) via <|> in pBinaryArithIntrinsic.
-let private pIfUnsignedArith (nodeId: NodeId) (unsignedOp: string)
-                              : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        do! pRequireUnsigned
-        return! pBinaryArithOp nodeId unsignedOp
-    }
-
-/// Unsigned-guarded comparison: succeeds only for NTUuint, emitting the unsigned predicate.
-let private pIfUnsignedCmp (nodeId: NodeId) (unsignedPred: string)
-                            : PSGParser<MLIROp list * TransferResult> =
-    parser {
-        do! pRequireUnsigned
-        return! pComparisonOp nodeId unsignedPred
+        | Some (NTUKind.NTUuint _) | Some NTUKind.NTUsize -> return true
+        | _ -> return false
     }
 
 /// Binary arithmetic intrinsic — folds over classifyAtomicOp via XParsec catamorphism.
 ///
-/// Signedness-sensitive operations use <|> composition:
-///   pIfUnsignedArith (succeeds for NTUuint, fails otherwise)
-///   <|> pBinaryArithOp (signed/float — tried on failure of unsigned guard)
+/// Signedness-sensitive operations select their variant from pIsUnsigned and dispatch to
+/// exactly that variant; a failure of the selected variant is the diagnostic.
 ///
 /// The Clef Dimensional Type System flows through to MLIR operation variants:
 ///   NTUuint → shrui / divu / remu / ult,ule,ugt,uge
@@ -744,20 +759,19 @@ let pBinaryArithIntrinsic : PSGParser<MLIROp list * TransferResult> =
         let! (info, argIds) = pIntrinsicApplication IntrinsicModule.Operators
         do! ensure (argIds.Length >= 2) "Not binary arith (need 2 args)"
         let! node = getCurrentNode
+        let! isUnsigned = pIsUnsigned
+        let signedness unsignedForm signedForm = if isUnsigned then unsignedForm else signedForm
         let category = classifyAtomicOp info
         match category with
-        | BinaryArith "shr" ->
-            return! (pIfUnsignedArith node.Id "shrui" <|> pBinaryArithOp node.Id "shrsi")
-        | BinaryArith "div" ->
-            return! (pIfUnsignedArith node.Id "divu" <|> pBinaryArithOp node.Id "div")
-        | BinaryArith "rem" ->
-            return! (pIfUnsignedArith node.Id "remu" <|> pBinaryArithOp node.Id "rem")
+        | BinaryArith "shr" -> return! pBinaryArithOp node.Id (signedness "shrui" "shrsi")
+        | BinaryArith "div" -> return! pBinaryArithOp node.Id (signedness "divu" "div")
+        | BinaryArith "rem" -> return! pBinaryArithOp node.Id (signedness "remu" "rem")
         | BinaryArith op ->
             return! pBinaryArithOp node.Id op
-        | Comparison "lt" -> return! (pIfUnsignedCmp node.Id "ult" <|> pComparisonOp node.Id "lt")
-        | Comparison "le" -> return! (pIfUnsignedCmp node.Id "ule" <|> pComparisonOp node.Id "le")
-        | Comparison "gt" -> return! (pIfUnsignedCmp node.Id "ugt" <|> pComparisonOp node.Id "gt")
-        | Comparison "ge" -> return! (pIfUnsignedCmp node.Id "uge" <|> pComparisonOp node.Id "ge")
+        | Comparison "lt" -> return! pComparisonOp node.Id (signedness "ult" "lt")
+        | Comparison "le" -> return! pComparisonOp node.Id (signedness "ule" "le")
+        | Comparison "gt" -> return! pComparisonOp node.Id (signedness "ugt" "gt")
+        | Comparison "ge" -> return! pComparisonOp node.Id (signedness "uge" "ge")
         | Comparison pred ->
             return! pComparisonOp node.Id pred  // eq/ne are sign-agnostic
         | _ -> return! fail (Message $"Not binary arith: {info.Operation}")

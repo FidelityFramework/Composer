@@ -48,21 +48,24 @@ let private witnessBranchScope (rootId: NodeId) (ctx: WitnessContext) (combinato
 
 /// A terminal refutable arm is selected only after Baker's requirement in this
 /// exact frontier occurrence. A declaration's Parent field cannot establish it.
-let private terminalAdmitted (ctx: WitnessContext) (node: SemanticNode) arms =
+let private terminalAdmitted (ctx: WitnessContext) (node: SemanticNode) arms : Result<bool, string> =
     match arms with
     | [{ Pattern = Pattern.Const _ | Pattern.Union _ }] ->
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+        | Result.Error reason ->
+            Result.Error $"PSG settlement (WitnessEmission storage) did not publish the pattern requirement projection for CaseElimination node {NodeId.value node.Id}: {reason}"
+        | Result.Ok projection ->
         let requirement =
-            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
-            |> Result.toOption |> Option.bind (fun projection ->
-                projection.PatternRequirements.TryFind node.Id |> Option.bind projection.Requirements.TryFind)
+            projection.PatternRequirements.TryFind node.Id |> Option.bind projection.Requirements.TryFind
         match requirement, ctx.Zipper.Path with
         | Some contract, step :: _ ->
-            step.Parent.Id = contract.Frontier && step.LeftSiblings = [contract.Site] && step.RightSiblings.IsEmpty
-            && Set.contains contract.Site ctx.TraversalVisited.Value
-            && (MLIRAccumulator.recallNode contract.Site ctx.Accumulator |> Option.exists (fun (_, ty) ->
-                ty = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType NTUKind.NTUunit))
-        | _ -> false
-    | _ -> true
+            Result.Ok (
+                step.Parent.Id = contract.Frontier && step.LeftSiblings = [contract.Site] && step.RightSiblings.IsEmpty
+                && Set.contains contract.Site ctx.TraversalVisited.Value
+                && (MLIRAccumulator.recallNode contract.Site ctx.Accumulator |> Option.exists (fun (_, ty) ->
+                    ty = Alex.CodeGeneration.TypeMapping.mapNTUKindToMLIRType NTUKind.NTUunit)))
+        | _ -> Result.Ok false
+    | _ -> Result.Ok true
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MATCH WITNESS
@@ -75,10 +78,14 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
     | Some ((_, arms), _) when arms |> List.exists (fun arm -> not arm.Bindings.IsEmpty || arm.Guard.IsSome) ->
         WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "selected scope")
             "Baker must settle pattern bindings and guards inside the selected body before witnessing"
-    | Some ((_, arms), _) when not (terminalAdmitted ctx node arms) ->
-        WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "terminal requirement")
-            "The terminal pattern decision is outside its validated requirement frontier"
     | Some ((scrutineeId, arms), _) ->
+        match terminalAdmitted ctx node arms with
+        | Result.Error reason ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "terminal requirement") reason
+        | Result.Ok false ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "terminal requirement")
+                "The terminal pattern decision is outside its validated requirement frontier"
+        | Result.Ok true ->
 
         // Step 1: Visit scrutinee in CURRENT scope (like ControlFlowWitness condition)
         visitChild scrutineeId ctx combinator
@@ -97,20 +104,29 @@ let private witnessMatchWith (getCombinator: unit -> (WitnessContext -> Semantic
                     let armValueNodeId = findLastValueNode arm.Body ctx.Graph
                     (armOps, armValueNodeId, arm))
 
-            // Step 3: Determine if expression-valued
-            // TVar means CCS didn't resolve the match result type — treat as void
-            // (if arms are side-effect-only, the match result type stays unresolved)
+            // Step 3: Determine if expression-valued. A result type CCS left as an
+            // unresolved type variable is not a unit result; it is reported.
             let isUnit = Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id
-            let isExpressionValued =
-                not isUnit && (match node.Type with NativeType.TVar _ -> false | _ -> true)
 
             let result =
-                if isExpressionValued then
-                    let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-                    match tryMatch (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Some (ssas, _) when ssas.Length >= 1 -> Some (ssas.[0], resultType)
-                    | _ -> None
-                else None
+                if isUnit then Result.Ok None
+                else
+                    match Clef.Compiler.NativeTypedTree.UnionFind.applySubst node.Type with
+                    | NativeType.TVar _ ->
+                        Result.Error $"CCS source checking did not settle the result type for CaseElimination node {NodeId.value node.Id}: it remains an unresolved type variable"
+                    | _ ->
+                        let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                        match tryMatchWithDiagnostics (getNodeSSAs node.Id) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok (ssa :: _, _) -> Result.Ok (Some (ssa, resultType))
+                        | Result.Ok ([], _) ->
+                            Result.Error $"PSG settlement (SSA assignment) did not settle a result value for expression-valued CaseElimination node {NodeId.value node.Id}"
+                        | Result.Error reason ->
+                            Result.Error $"PSG settlement (SSA assignment) did not settle a result value for expression-valued CaseElimination node {NodeId.value node.Id}: {reason}"
+
+            match result with
+            | Result.Error reason ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "CaseElimination") (Some "result value") reason
+            | Result.Ok result ->
 
             // Step 4: Delegate to pattern for elision — diagnostic error flow preserved
             let elimination = pBuildMatchElimination scrutineeSSA scrutineeMLIRType scrutineeId armResults result node.Id

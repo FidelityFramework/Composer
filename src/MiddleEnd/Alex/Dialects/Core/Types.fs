@@ -46,12 +46,10 @@ type MLIRType =
     | TMemRefScalar of MLIRType             // Scalar MemRef type (0D)
     | TVector of int * MLIRType             // Vector type (SIMD)
     | TIndex                                // Index type
-    | TUnit                                 // Unit type (represented as i32 0)
     | TVoid                                 // Foreign ABI: no returned value
     | TStruct of (string * MLIRType) list * StructBytes option   // Named struct type (record fields) and, on a core, its settled bytes
     | TSeqClock                             // CIRCT !seq.clock type (clock signal for registers)
     | TTag of int                           // DU tag discriminant (case count). Platform elision decides concrete width.
-    | TError of string                      // Error type
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PLATFORM TYPES
@@ -117,15 +115,17 @@ let rec mlirTypeSizeWith (pointer: Result<int, string>) (ty: MLIRType) : int =
     | TFloat F32 -> 4 | TFloat F64 -> 8
     | TFunc _ -> failwith "mlirTypeSize: a function code SSA has no admitted data-storage layout; settle callable storage before sizing it"
     | TMemRef _ | TMemRefStatic _ | TMemRefScalar _ -> 5 * pointerBytes ()
-    | TVector (_, elemTy) -> mlirTypeSizeWith pointer elemTy
+    | TVector (count, _) ->
+        failwithf "mlirTypeSize: PSG settlement (Layouts) did not settle a storage size for a vector of %d lanes; no size is read for it" count
     | TIndex -> pointerBytes ()
     | TStruct (_, Some bytes) -> bytes.Size
     | TStruct (fields, None) ->
         failwithf "mlirTypeSize: the struct {%s} has no settled layout to read its size from (a fabric struct, or a field the placement could not settle)"
             (fields |> List.map fst |> String.concat ", ")
-    | TSeqClock -> 1
-    | TTag _ -> 1  // Tag is at least 1 byte; platform elision determines actual width
-    | TUnit | TVoid -> 0 | TError _ -> 0
+    | TSeqClock -> failwith "mlirTypeSize: a clock signal (!seq.clock) has no byte storage; a fabric value reached a size read"
+    | TTag caseCount ->
+        failwithf "mlirTypeSize: backend (CIRCT) did not settle a byte size for the abstract tag of %d cases: a fabric tag's width is the hw backend's, and a core holds a tag as a byte memref" caseCount
+    | TVoid -> failwith "mlirTypeSize: TVoid marks a foreign function with no result; it is not a value and has no size"
 
 /// The settled byte offset of a struct's field, read from the layout CCS settled; a struct with
 /// no settled layout, or a field outside it, is a stop.
@@ -242,8 +242,6 @@ type MemRefOp =
     | ReinterpretCast of SSA * SSA * int * int * MLIRType * MLIRType   // result, source, byteOffset, size, srcType, destType
     | ReinterpretCastDynamic of SSA * SSA * int * SSA * MLIRType * MLIRType  // result, source, offset, sizeSSA, srcType, destType (dynamic size for memref reconstruction)
     | View of SSA * SSA * SSA * MLIRType * MLIRType                   // result, source, offsetSSA, srcType, destType (different element type: byte buffer → typed view)
-    | IndexToMemRef of SSA * SSA * MLIRType                            // result, sourceIndex, destMemRefType (internal index→memref seam: TNativePtr-as-index at closure/seq/FFI boundaries)
-    | MemRefToIndex of SSA * SSA * MLIRType                            // result, sourceMemRef, srcMemRefType (internal memref→index seam at FFI boundaries)
 
 /// Arithmetic dialect operations
 type ArithOp =

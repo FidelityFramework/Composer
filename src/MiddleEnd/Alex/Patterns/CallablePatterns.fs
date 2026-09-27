@@ -120,7 +120,10 @@ let pProgramCallableReference (ctx: WitnessContext) binding = parser {
           }
         | None, None -> preturn ([], None)
         | _ -> fail (Message "Program callable instance and physical environment convention disagree.")
-    let code = state.Graph.Nodes[instance.Carrier.Implementation]
+    let! code =
+        match state.Graph.Nodes.TryFind instance.Carrier.Implementation with
+        | Some code -> preturn code
+        | None -> fail (Message $"Baker callable transport did not settle the implementation node {NodeId.value instance.Carrier.Implementation} for program callable reference at node {NodeId.value occurrence}")
     let symbol = Alex.CodeGeneration.CallableSymbols.lambda state.Graph code false
     let! callableOps, value = pCallableValue occurrence shape symbol environment
     return operations @ callableOps, value
@@ -137,7 +140,10 @@ let pNamedCallable (ctx: WitnessContext) : PSGParser<MLIROp list * TransferResul
         | Result.Ok shape when (Operands.environmentType shape).IsNone -> preturn shape
         | Result.Ok _ -> fail (Message "A capturing callable requires its actual witnessed environment.")
         | Result.Error reason -> fail (Message reason)
-    let carrier = state.Graph.Codata.Value.CallableCarriers[state.Current.Id]
+    let! carrier =
+        match state.Graph.Codata.Value.CallableCarriers.TryFind state.Current.Id with
+        | Some carrier -> preturn carrier
+        | None -> fail (Message $"Codata (CallableCarriers) did not settle the carrier of named callable occurrence {NodeId.value state.Current.Id}")
     let! symbol =
         match Alex.CodeGeneration.CallableSymbols.tryBinding state.Graph carrier.Implementation with
         | Some symbol -> preturn symbol

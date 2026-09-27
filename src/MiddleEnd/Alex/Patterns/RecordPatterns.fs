@@ -65,22 +65,28 @@ let pBuildRecord
             // extension of field i where one is needed (the per-field SSAs the CPU layout derives).
             let resultSSA = ssas.[0]
             let! state = getUserState
-            let declared =
+            let! declared =
                 match structTy with
-                | TStruct (fields, _) -> fields
-                | other -> failwithf "pBuildRecord: the record type on fabric is %A, not a struct" other
+                | TStruct (fields, _) -> preturn fields
+                | other -> fail (Message $"PSG settlement (Layouts) did not settle a struct type for the record construction at node {NodeId.value nodeId} on fabric: its type is {other}")
             let bits (ty: MLIRType) = match ty with TInt (IntWidth b) -> b | _ -> 0
-            let placed =
+            let! placed =
                 List.zip fieldValues fieldNodes
                 |> List.mapi (fun i ((name, valueSSA, valueTy), valueNode) ->
-                    let fieldTy = declared |> List.tryFind (fun (n, _) -> n = name) |> Option.map snd |> Option.defaultValue valueTy
-                    match bits valueTy, bits fieldTy with
-                    | v, f when v > 0 && f > 0 && v < f ->
-                        let extSSA = ssas.[1 + 3 * i]
-                        ([ extensionOp state.Graph valueNode extSSA valueSSA valueTy fieldTy ], (extSSA, fieldTy))
-                    | v, f when v > 0 && f > 0 && v > f ->
-                        failwithf "pBuildRecord: field '%s' is %d bits but its value (node %d) is %d bits; the field's range is the join of every construction's" name f (NodeId.value valueNode) v
-                    | _ -> ([], (valueSSA, valueTy)))
+                    parser {
+                        let! fieldTy =
+                            match declared |> List.tryFind (fun (n, _) -> n = name) with
+                            | Some (_, fieldTy) -> preturn fieldTy
+                            | None -> fail (Message $"PSG settlement (FieldRanges) did not settle field '{name}' for the record construction at node {NodeId.value nodeId} on fabric: the settled struct has no such field")
+                        match bits valueTy, bits fieldTy with
+                        | v, f when v > 0 && f > 0 && v < f ->
+                            let extSSA = ssas.[1 + 3 * i]
+                            return ([ extensionOp state.Graph valueNode extSSA valueSSA valueTy fieldTy ], (extSSA, fieldTy))
+                        | v, f when v > 0 && f > 0 && v > f ->
+                            return! fail (Message $"PSG settlement (FieldRanges) did not settle field '{name}' wide enough for the record construction at node {NodeId.value nodeId}: the field is {f} bits but its value (node {NodeId.value valueNode}) is {v} bits; the field's range is the join of every construction's")
+                        | _ -> return ([], (valueSSA, valueTy))
+                    })
+                |> Alex.XParsec.Extensions.sequence
             let extOps = placed |> List.collect fst
             let fieldVals = placed |> List.map snd
             let actualStructTy = TStruct (List.zip fieldValues fieldVals |> List.map (fun ((name, _, _), (_, ty)) -> (name, ty)), None)
@@ -93,7 +99,7 @@ let pBuildRecord
             // the meet SSAAssignment derived for (record, value) (the fabric rule, now both legs)
             let! state = getUserState
             let arch = state.Platform.TargetArch
-            let (count, elemType) = extractMemRefShape arch structTy
+            let! (count, elemType) = pMemRefShape nodeId arch structTy
             let memrefTy = TMemRefStatic (count, elemType)
             let allocSSA = ssas.[0]
             let! allocOp = pAllocValue nodeId allocSSA memrefTy
@@ -172,7 +178,7 @@ let pBuildRecordCopyWith
             // CPU: alloca + memcpy from original + overwrite updated fields
             let! state = getUserState
             let arch = state.Platform.TargetArch
-            let (count, elemType) = extractMemRefShape arch structTy
+            let! (count, elemType) = pMemRefShape nodeId arch structTy
             let memrefTy = TMemRefStatic (count, elemType)
             let totalBytes = count
             let allocSSA = ssas.[0]

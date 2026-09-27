@@ -3,6 +3,7 @@
 /// publication graph through ordinary control-flow and application witnesses.
 module Alex.Witnesses.LazyWitness
 
+open Clef.Compiler.NativeTypedTree.NativeTypes
 open Clef.Compiler.PSGSaturation.SemanticGraph.Types
 open Alex.Traversal.TransferTypes
 open Alex.Traversal.NanopassArchitecture
@@ -74,7 +75,12 @@ let private witness (ctx: WitnessContext) (node: SemanticNode) =
             let layout = Operands.contract shape
             if layout.Thunk <> thunk then failure node "thunk identity" "Lazy value and settled thunk disagree."
             else
-                let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph ctx.Graph.Nodes[thunk] false
+            match ctx.Graph.Nodes.TryFind thunk with
+            | None ->
+                failure node "thunk identity"
+                    $"Baker lazy memoization did not keep thunk {NodeId.value thunk} of lazy value {NodeId.value node.Id} resident in the graph"
+            | Some thunkNode ->
+                let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph thunkNode false
                 observe ctx node (parser {
                     let! operations, result = pRecallLazyEnvironment environment layout
                     match result with

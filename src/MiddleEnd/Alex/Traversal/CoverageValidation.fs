@@ -31,14 +31,13 @@ let private validateCoverageWith
         |> Seq.filter (fun node -> node.IsReachable)
         |> Seq.toList
 
-    // Find unwitnessed nodes (reachable but not visited)
-    // TypeDef nodes are compile-time type definitions — they never produce MLIR ops
-    // on any platform. Skip them to avoid false positives.
+    // Find unwitnessed nodes (reachable but not visited). No node kind is exempt:
+    // StructuralWitness claims TypeDef, so a reachable TypeDef the traversal never
+    // reached is a placement gap like any other.
     let unwitnessedNodes =
         reachableNodes
         |> List.filter (fun node ->
-            not (Set.contains node.Id allVisited) && not (deferred.Contains node.Id) &&
-            match node.Kind with SemanticKind.TypeDef _ -> false | _ -> true)
+            not (Set.contains node.Id allVisited) && not (deferred.Contains node.Id))
 
     // Generate error diagnostics for each unwitnessed node
     unwitnessedNodes
@@ -53,7 +52,7 @@ let private validateCoverageWith
             (Some node.Id)
             (Some "CoverageValidation")
             (Some "Unwitnessed reachable node")
-            (sprintf "PSG node '%s' (ID %d) is reachable but no witness handles it. This is a compiler bug - a witness should be implemented for this node kind." kindSummary (NodeId.value node.Id)))
+            (sprintf "Alex traversal did not witness reachable PSG node '%s' (ID %d): no declaration root or structural parent placed it, or no witness claims its kind." kindSummary (NodeId.value node.Id)))
 
 let validateCoverage (graph: SemanticGraph) (allVisited: Set<NodeId>) : Diagnostic list =
     match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary graph with

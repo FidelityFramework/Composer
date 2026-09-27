@@ -164,13 +164,13 @@ let private resolveComputeFunctionName (graph: SemanticGraph) (computeNodeId: No
 
 /// Resolve the arith operation from the Compute function body via classifyAtomicOp.
 ///
-/// Walks VarRef → Binding → Lambda → body, then uses tryMatch with
-/// pIntrinsicApplication to identify the intrinsic monadically through
-/// the XParsec combinator layer. classifyAtomicOp maps the IntrinsicInfo
-/// to the MLIR arith operation string.
+/// Walks VarRef → Binding → Lambda → body to the intrinsic application, and
+/// classifyAtomicOp maps the IntrinsicInfo to the MLIR arith operation string,
+/// suffixed for the settled element type. A Compute body that is not one
+/// supported binary arithmetic intrinsic is reported, never replaced by a default.
 ///
-/// Returns (mlirOpName, isFloat) or None.
-let private resolveComputeOp (ctx: WitnessContext) (computeNodeId: NodeId) : (string * bool) option =
+/// Returns the arith operation name or the reason it cannot be read.
+let private resolveComputeOp (ctx: WitnessContext) (computeNodeId: NodeId) (elemType: string) : Result<string, string> =
     let graph = ctx.Graph
 
     // Walk VarRef → Binding target → Lambda → body → find Application with Intrinsic
@@ -207,6 +207,7 @@ let private resolveComputeOp (ctx: WitnessContext) (computeNodeId: NodeId) : (st
             | _ -> None
         | None -> None
 
+    let computeId = NodeId.value computeNodeId
     // Follow VarRef → Binding → Lambda → body
     match SemanticGraph.tryGetNode computeNodeId graph with
     | Some { Kind = SemanticKind.VarRef (_, Some defId) } ->
@@ -219,33 +220,36 @@ let private resolveComputeOp (ctx: WitnessContext) (computeNodeId: NodeId) : (st
                     // Use classifyAtomicOp to map to MLIR arith operation
                     match classifyAtomicOp info with
                     | BinaryArith op ->
-                        // Determine int/float suffix from element type
-                        let isFloat =
-                            match resolveElementType ctx computeNodeId with
-                            | Some s when s.StartsWith("f") -> true
-                            | _ -> false
+                        // Determine int/float suffix from the settled element type
+                        let isFloat = elemType.StartsWith("f")
                         let suffixed =
                             if isFloat then
                                 match op with
-                                | "mul" -> "mulf"
-                                | "add" -> "addf"
-                                | "sub" -> "subf"
-                                | "div" -> "divf"
-                                | other -> other
+                                | "mul" -> Some "mulf"
+                                | "add" -> Some "addf"
+                                | "sub" -> Some "subf"
+                                | "div" -> Some "divf"
+                                | _ -> None
                             else
                                 match op with
-                                | "mul" -> "muli"
-                                | "add" -> "addi"
-                                | "sub" -> "subi"
-                                | "div" -> "divi"
-                                | "rem" -> "remi"
-                                | other -> other + "i"
-                        Some (suffixed, isFloat)
-                    | _ -> None
-                | None -> None
-            | _ -> None
-        | None -> None
-    | _ -> None
+                                | "mul" -> Some "muli"
+                                | "add" -> Some "addi"
+                                | "sub" -> Some "subi"
+                                | "div" -> Some "divi"
+                                | "rem" -> Some "remi"
+                                | _ -> None
+                        match suffixed with
+                        | Some name -> Result.Ok name
+                        | None ->
+                            Result.Error $"backend (npu) has no element-wise kernel operation for intrinsic %A{info.Module}.{info.Operation} on element type {elemType}"
+                    | _ ->
+                        Result.Error $"backend (npu) has no element-wise kernel operation for intrinsic %A{info.Module}.{info.Operation}: Compute must be a binary arithmetic intrinsic"
+                | None ->
+                    Result.Error $"PSG settlement did not settle Compute {computeId} as a lambda whose body is an intrinsic application"
+            | children ->
+                Result.Error $"PSG settlement did not bind Compute {computeId} to a single-valued declaration: declaration {NodeId.value defId} has {children.Length} children"
+        | None -> Result.Error $"PSG settlement did not keep the Compute declaration {NodeId.value defId} resident in the graph"
+    | _ -> Result.Error $"PSG settlement did not resolve Compute {computeId} to a reference to its declaration"
 
 // ═══════════════════════════════════════════════════════════
 // MLIR-AIE TEXT GENERATION
@@ -429,10 +433,11 @@ let private witnessKernelModule
         | Some elemType ->
 
         // ── 5. Resolve arithmetic operation via classifyAtomicOp ──
-        let (arithOp, _isFloat) =
-            match resolveComputeOp ctx computeNodeId with
-            | Some op -> op
-            | None -> ("muli", false)  // Default to multiply for hello world
+        match resolveComputeOp ctx computeNodeId elemType with
+        | Result.Error reason ->
+            WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "KernelModule") (Some "Compute operation")
+                $"KernelModule '{name}': {reason}"
+        | Result.Ok arithOp ->
 
         // ── 6. Generate MLIR-AIE module ──
         let aieModule = generateAIEModule tileCount grain elemType arithOp totalElems

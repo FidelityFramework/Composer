@@ -42,16 +42,28 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                     let ops, result = stringPoolView pool entry (Alex.Traversal.Values.values node.Id)
                     // All pool obligations travel on the single allocation, including those
                     // for duplicate literals; no witness ordering can drop an anchor.
-                    let anchors =
+                    // A literal without anchor metadata carries no obligation; a pool member
+                    // absent from the graph or a malformed anchor record is a settlement defect.
+                    let anchorReadings =
                         pool.Entries
                         |> List.collect (fun entry -> entry.NodeIds)
-                        |> List.collect (fun id ->
+                        |> List.map (fun id ->
                             match ctx.Graph.Nodes.TryFind id with
                             | Some literal ->
                                 match literal.Metadata.TryFind ObligationMetadata.Anchors with
-                                | Some (MetadataValue.StringList names) -> names
-                                | _ -> []
-                            | None -> [])
+                                | None -> Result.Ok []
+                                | Some (MetadataValue.StringList names) -> Result.Ok names
+                                | Some _ ->
+                                    Result.Error $"PSG settlement did not settle obligation anchors for pooled literal {NodeId.value id}: its anchor metadata is not a name list"
+                            | None ->
+                                Result.Error $"PSG settlement (StaticStringPool) did not keep pooled literal {NodeId.value id} resident in the graph")
+                    match anchorReadings |> List.tryPick (function Result.Error reason -> Some reason | Result.Ok _ -> None) with
+                    | Some reason ->
+                        WitnessOutput.errorDiag (Diagnostic.error (Some node.Id) (Some "Literal") (Some "StaticStringPool") reason)
+                    | None ->
+                    let anchors =
+                        anchorReadings
+                        |> List.collect (function Result.Ok names -> names | Result.Error _ -> [])
                         |> List.distinct
                     let globals =
                         if Set.contains pool.Symbol ctx.Accumulator.EmittedGlobals then []
@@ -69,10 +81,11 @@ let private witnessLiteralNode (ctx: WitnessContext) (node: SemanticNode) : Witn
                     return! pBuildLiteral lit ssa arch
                 }
 
-            match tryMatch literalPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | None ->
-                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildLiteral") "Literal pattern emission failed"
+            match tryMatchWithDiagnostics literalPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+            | Result.Error reason ->
+                let diag = Diagnostic.error (Some node.Id) (Some "Literal") (Some "pBuildLiteral")
+                                ($"Literal pattern emission failed for literal {NodeId.value node.Id}: {reason}")
                 WitnessOutput.errorDiag diag
 
     | None -> WitnessOutput.skip

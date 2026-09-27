@@ -184,7 +184,9 @@ let private setupContext (options: CompilationOptions) (project: ProjectCheckRes
 
 let compileProject (options: CompilationOptions) : int =
     if options.Deploy && (options.EmitMLIROnly || options.EmitLLVMOnly) then
-        invalidArg "Deploy" "Deployment requires a complete build; remove intermediate-only flags"
+        printfn "Error: Deployment requires a complete build; remove intermediate-only flags"
+        1
+    else
     // Setup
     let timing = Core.Timing.create options.ShowTiming
     disableEmission()
@@ -224,7 +226,8 @@ let compileProject (options: CompilationOptions) : int =
             ctx.IntermediatesDir |> Option.iter (fun directory ->
                 Core.DeviceAccessEvidence.write (Path.Combine(directory, "device-access.json")) project.CheckResult.Graph)
             if options.Deploy && ctx.TargetPlatform <> Core.Types.Dialects.TargetPlatform.MCU then
-                failwith "Composer-managed deployment is currently implemented for MCU images only"
+                Error (sprintf "backend (%A) has no Composer-managed deployment: --deploy is implemented for MCU images only" ctx.TargetPlatform)
+            else
 
             // Resolve backend from target platform (assembly time — once, not dispatch)
             let backEnd = PlatformPipeline.resolveBackEnd ctx.TargetPlatform
@@ -302,24 +305,21 @@ let compileProject (options: CompilationOptions) : int =
                             Ok ()
                         | Verilog path ->
                             printfn "Verilog generated: %s" path
-                            // Copy XDC constraints alongside .sv, then verify consistency
-                            match ctx.IntermediatesDir with
-                            | Some dir ->
-                                let xdcSrc = Path.Combine(dir, "constraints.xdc")
-                                if File.Exists xdcSrc then
+                            // Constraints are the graph's settled pin facts (Codata.Pins), written
+                            // alongside the .sv and verified against it. They never depend on
+                            // whether diagnostic intermediates were kept. A design that declares
+                            // no pins has no constraints.
+                            match project.CheckResult.Graph.Codata.Value.Pins with
+                            | None -> Ok ()
+                            | Some mapping ->
+                                Alex.Traversal.XDCTransfer.transfer mapping
+                                |> Result.bind (fun xdcText ->
                                     let xdcDst = Path.ChangeExtension(path, ".xdc")
-                                    File.Copy(xdcSrc, xdcDst, true)
+                                    File.WriteAllText(xdcDst, xdcText)
                                     printfn "XDC constraints: %s" xdcDst
                                     // Closed-loop: verify HDL ports match constraint ports
-                                    match BackEnd.ArtifactVerification.verifyArtifacts path xdcDst with
-                                    | Ok summary ->
-                                        printfn "%s" summary
-                                        Ok ()
-                                    | Error diag ->
-                                        Error diag
-                                else
-                                    Ok ()
-                            | None -> Ok ()
+                                    BackEnd.ArtifactVerification.verifyArtifacts path xdcDst
+                                    |> Result.map (fun summary -> printfn "%s" summary))
                         | Xclbin (xclbinPath, instsPath) ->
                             printfn "Xclbin generated: %s" xclbinPath
                             printfn "NPU instructions: %s" instsPath
@@ -348,8 +348,10 @@ let compileProject (options: CompilationOptions) : int =
 let deviceProject projectPath action seconds =
     match runFrontEnd (Core.Timing.silent()) (Path.GetFullPath projectPath) |> Result.bind (requireCleanDiagnostics false) with
     | Error e -> eprintfn "%s" e; 1
+    | Ok project when project.Options.TargetPlatform <> TargetPlatform.MCU ->
+        eprintfn "Device commands require an MCU project; '%s' targets %A" projectPath project.Options.TargetPlatform
+        1
     | Ok project ->
-        if project.Options.TargetPlatform <> TargetPlatform.MCU then failwith "Device commands require an MCU project"
         let target = BackEnd.MCU.Target.resolve project.Options.ProjectPath project.CheckResult.Graph
         let output = Path.Combine(project.Options.ProjectDirectory, "targets", project.Options.OutputName |> Option.defaultValue project.Options.Name)
         BackEnd.MCU.Probe.device action seconds target output

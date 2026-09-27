@@ -9,17 +9,29 @@ open System.Runtime.InteropServices
 open Core.Types.Dialects
 open Core.Types.Pipeline
 
-let getDefaultTarget() =
+/// The build host's triple, when its architecture and OS have an established
+/// spelling. Used only to recognise that the selected target IS the host (so
+/// host runtime files may be admitted); never a compilation default.
+let private hostTriple () =
     let arch =
         match RuntimeInformation.ProcessArchitecture with
-        | Architecture.X64 -> "x86_64"
-        | Architecture.Arm64 -> "aarch64"
-        | Architecture.X86 -> "i386"
-        | Architecture.Arm -> "arm"
-        | other -> other.ToString().ToLowerInvariant()
-    if RuntimeInformation.IsOSPlatform(OSPlatform.Linux) then arch + "-unknown-linux-gnu"
-    elif RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then arch + "-pc-windows-gnu"
-    else arch + "-apple-darwin"
+        | Architecture.X64 -> Some "x86_64"
+        | Architecture.Arm64 -> Some "aarch64"
+        | Architecture.X86 -> Some "i386"
+        | Architecture.Arm -> Some "arm"
+        | _ -> None
+    arch |> Option.bind (fun arch ->
+        if RuntimeInformation.IsOSPlatform(OSPlatform.Linux) then Some (arch + "-unknown-linux-gnu")
+        elif RuntimeInformation.IsOSPlatform(OSPlatform.Windows) then Some (arch + "-pc-windows-gnu")
+        elif RuntimeInformation.IsOSPlatform(OSPlatform.OSX) then Some (arch + "-apple-darwin")
+        else None)
+
+/// The build host's triple for host-native test harnesses. An unrecognised
+/// host is an error, not a guessed spelling.
+let getDefaultTarget() =
+    hostTriple () |> Option.defaultWith (fun () ->
+        failwithf "backend (LLVM) has no established triple for build host %O on %s"
+            RuntimeInformation.ProcessArchitecture RuntimeInformation.OSDescription)
 
 let private run tool (arguments: string list) =
     let start = ProcessStartInfo(tool)
@@ -48,7 +60,7 @@ let private linkArguments target mode libraries (options: NativeLinkOptions) bit
         match root with
         | Some basePath -> Path.Combine(basePath, path.TrimStart('/'))
         | None -> path
-    let nativeLinux = target = getDefaultTarget() && RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+    let nativeLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && hostTriple () = Some target
     let linux = target.Contains("linux")
     let multiarch =
         let i = target.IndexOf("linux", StringComparison.Ordinal)
@@ -109,7 +121,8 @@ let private linkArguments target mode libraries (options: NativeLinkOptions) bit
     let libraries = if mode = Console then Set.add "c" libraries else libraries
     ["--lto-O0"; "--lto-CGO0"; "--fatal-warnings"; "-o"; Path.GetFullPath output]
     @ (root |> Option.map (fun path -> "--sysroot=" + path) |> Option.toList)
-    @ (if nativeLinux && root.IsNone then ["--plugin-opt=mcpu=native"] else [])
+    // No host-CPU default: the CPU is the declared core's CpuModel (passed by
+    // the caller), and a core that declares none gets the triple's generic CPU.
     @ modeArguments
     @ (options.LinkerScript |> Option.map (fun path -> "--script=" + Path.GetFullPath path) |> Option.toList)
     @ (directories |> List.map (fun path -> "-L" + path))

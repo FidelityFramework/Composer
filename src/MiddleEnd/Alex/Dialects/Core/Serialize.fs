@@ -63,7 +63,6 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
     | TVector (count, elemTy) ->
         sprintf "vector<%dx%s>" count (typeToString pointer elemTy)
     | TIndex -> "index"
-    | TUnit -> "i32"  // Unit represented as i32 (value 0)
     | TVoid -> "()"  // Empty MLIR result list at a foreign function boundary
     | TStruct (_, Some bytes) ->
         // TStruct serializes as !hw.struct for CIRCT (FPGA) or memref for CPU.
@@ -80,7 +79,6 @@ let rec typeToString (pointer: Result<int, string>) (ty: MLIRType) : string =
         elif caseCount <= 256 then "i8"
         elif caseCount <= 65536 then "i16"
         else "i32"
-    | TError msg -> sprintf "<<ERROR: %s>>" msg
 
 /// Function results are a list. A sole function-typed result still needs the
 /// enclosing result-list parentheses so its own arrow is unambiguous.
@@ -449,7 +447,7 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
         let elemType =
             match sourceType with
             | TMemRef t | TMemRefStatic (_, t) | TMemRefScalar t -> t
-            | t -> t
+            | t -> failwithf "memref.subview: Alex emission did not supply a memref source for SSA %s: the source is typed %A" (ssaToString result) t
         let elemStr = typeToString pointer elemType
         let sizeStr =
             match sizes with
@@ -476,7 +474,7 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
         let elemType =
             match sourceType with
             | TMemRef t | TMemRefStatic (_, t) | TMemRefScalar t -> t
-            | t -> t
+            | t -> failwithf "memref.subview copy: Alex emission did not supply a memref source for SSA %s: the source is typed %A" (ssaToString result) t
         let elemStr = typeToString pointer elemType
         let sizeStr =
             match sizes with
@@ -510,7 +508,6 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
         sprintf "%s\n    %s\n    %s\n    %s\n    %s" subviewLine allocLine c0Line c1Line forLoop
     | MemRefOp.ExtractBasePtr (result, memref, ty) ->
         // Extract pointer as platform word (index type) - PORTABLE!
-        // This replaces the old LLVM-specific unrealized_conversion_cast
         // Returns index (platform word size), caller must cast to target type if needed
         sprintf "%s = memref.extract_aligned_pointer_as_index %s : %s -> index"
             (ssaToString result) (ssaToString memref) (typeToString pointer ty)
@@ -532,6 +529,8 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
             | TMemRef e | TMemRefStatic (_, e) | TMemRefScalar e -> Some e
             | _ -> None
         match getElemType srcType, getElemType destType with
+        | None, _ | _, None ->
+            failwithf "memref.reinterpret_cast: Alex emission did not supply memref types for SSA %s: %A to %A" (ssaToString result) srcType destType
         | Some srcElem, Some destElem when srcElem <> destElem || (srcElem = TInt (IntWidth 8) && byteOffset <> 0) ->
             // A byte-buffer field view shifts the base pointer and keeps offset0,
             // including i8 fields. reinterpret_cast with a nonzero descriptor
@@ -555,16 +554,6 @@ let memrefOpToString (pointer: Result<int, string>) (op: MemRefOp) : string =
         // Portable across all targets: CPU (→ GEP), FPGA (→ typed memory port), NPU (→ typed channel)
         sprintf "%s = memref.view %s[%s][] : %s to %s"
             (ssaToString result) (ssaToString source) (ssaToString offsetSSA) (typeToString pointer srcType) (typeToString pointer destType)
-    | MemRefOp.IndexToMemRef (result, source, destType) ->
-        // builtin.unrealized_conversion_cast: FFI boundary crossing (raw pointer → memref)
-        // Internal index→memref seam (platform pointer as index → memref for typed access)
-        sprintf "%s = builtin.unrealized_conversion_cast %s : index to %s"
-            (ssaToString result) (ssaToString source) (typeToString pointer destType)
-    | MemRefOp.MemRefToIndex (result, source, srcType) ->
-        // builtin.unrealized_conversion_cast: memref → raw pointer (index)
-        // Internal memref→index seam (stack alloc → index for FFI boundary crossing)
-        sprintf "%s = builtin.unrealized_conversion_cast %s : %s to index"
-            (ssaToString result) (ssaToString source) (typeToString pointer srcType)
 
 /// Serialize top-level MLIROp to MLIR text
 let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
@@ -648,7 +637,11 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
         // point of the lifetime lattice). Not `constant`: the closure struct is written into
         // this storage at construction. `uninitialized` is correct because every read is
         // preceded by the construction store; a heap-free target places this in .bss/Sram.
-        let alignment = authority |> Option.map (fun entry -> sprintf " {alignment = %d : i64}" entry.Alignment) |> Option.defaultValue ""
+        let alignment =
+            match authority with
+            | Some entry -> sprintf " {alignment = %d : i64}" entry.Alignment
+            | None ->
+                failwithf "PSG settlement (program storage) did not settle a storage entry for the writable global @%s: an unowned global has no alignment to write" name
         sprintf "memref.global \"private\" @%s : %s = uninitialized%s" name (typeToString pointer memrefType) alignment
     | MLIROp.IndexOp iop ->
         match iop with
@@ -673,7 +666,7 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
         | IndexOp.IndexAdd (result, lhs, rhs) ->
             sprintf "%s = index.add %s, %s" (ssaToString result) (ssaToString lhs) (ssaToString rhs)
         | _ ->
-            sprintf "// TODO: Serialize IndexOp %A" iop
+            failwithf "backend (MLIR text) has no serialization for the index operation %A; it was emitted without one and is never written as a comment" iop
     | MLIROp.Assert (condition, message) ->
         sprintf "cf.assert %s, \"%s\"" (ssaToString condition) (stringAttributeValue message)
     | MLIROp.SCFOp scfOp ->
@@ -732,8 +725,8 @@ let rec opToString (pointer: Result<int, string>) (op: MLIROp) : string =
     | MLIROp.SMTOp sop -> smtOpToString pointer (opToString pointer) sop
     | MLIROp.RawMLIR text -> text
     | _ ->
-        // Placeholder for operations with no serializer yet (Block, Region)
-        sprintf "// TODO: Serialize %A" op
+        // Block and Region have no text form here: reaching one is a stop, never a comment.
+        failwithf "backend (MLIR text) has no serialization for the operation %A; it was emitted without one and is never written as a comment" op
 
 /// Serialize a list of operations with proper indentation
 /// Serialize one op; a width failure inside it is re-raised naming the op, so that the

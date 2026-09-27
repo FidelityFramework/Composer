@@ -53,32 +53,21 @@ let private isScopeBoundary (node: SemanticNode) : bool =
 /// Debug tracing flag for visitAllNodes — set to true for detailed traversal logging
 let private traceTraversal = System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1"
 
-/// Check if a binding is a function definition (first child is a Lambda).
-/// Used on FPGA to distinguish function bindings (compiled once as hw.module)
-/// from value bindings (re-emitted per hw.module scope).
-let private callableFacts graph =
-    Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable graph
-    |> Result.defaultWith (fun reason -> invalidOp ("Source declaration projection: " + reason))
-
-let private isFunctionBinding (bindingId: NodeId) (graph: SemanticGraph) : bool =
-    (callableFacts graph).FunctionBindings.Contains bindingId
-
-/// A direct function declaration contributes only a module-level definition.
-/// Closure-valued and mutable bindings also form local values, so their global
-/// coverage does not make their construction available in another occurrence.
-let private isDefinitionOnlyBinding (bindingId: NodeId) (graph: SemanticGraph) : bool =
-    (callableFacts graph).DefinitionOnlyBindings.Contains bindingId
-
 /// A materialized code Lambda can be a structural child of its source
 /// ClosureValue as well as its canonical named declaration. Local body walks
 /// must still observe each value occurrence, but this exact code identity emits
 /// one module definition. Legacy closure Lambdas also construct a value and do
-/// not qualify for this reuse.
-let private isDefinitionOnlyLambda (node: SemanticNode) (graph: SemanticGraph) : bool =
-    let storage =
-        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph
-        |> Result.defaultWith (fun reason -> invalidOp ("Source thunk projection: " + reason))
-    (callableFacts graph).DefinitionOnlyLambdas.Contains node.Id || storage.DefinitionOnlyThunks.Contains node.Id
+/// not qualify for this reuse. An unpublished projection is reported at the
+/// occurrence, never read as "not definition-only".
+let private definitionOnlyLambda (node: SemanticNode) (graph: SemanticGraph) : Result<bool, string> =
+    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable graph,
+          Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph with
+    | Result.Error reason, _ ->
+        Result.Error (sprintf "PSG settlement (WitnessEmission.Callable) did not publish the callable projection for node %d: %s" (NodeId.value node.Id) reason)
+    | _, Result.Error reason ->
+        Result.Error (sprintf "PSG settlement (WitnessEmission.Storage) did not publish the storage projection for node %d: %s" (NodeId.value node.Id) reason)
+    | Result.Ok callable, Result.Ok storage ->
+        Result.Ok (callable.DefinitionOnlyLambdas.Contains node.Id || storage.DefinitionOnlyThunks.Contains node.Id)
 
 /// Visit all nodes in post-order (children before parents)
 /// PUBLIC: Used by Lambda/ControlFlow witnesses for sub-graph traversal
@@ -96,6 +85,9 @@ let rec visitAllNodes
     // This lookup reads an eagerly settled CCS projection for this exact graph;
     // it performs no source incidence analysis or hyperedge query.
     let demand = Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryOrdinary visitedCtx.Graph
+    let definitionReuse =
+        if Set.contains currentNode.Id !(visitedCtx.GlobalVisited) then definitionOnlyLambda currentNode visitedCtx.Graph
+        else Result.Ok false
     if currentNode.Id <> visitedCtx.Zipper.Focus.Id
        || not (obj.ReferenceEquals(visitedCtx.Graph, visitedCtx.Zipper.Graph)) then
         Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "zipper occurrence")
@@ -107,13 +99,16 @@ let rec visitAllNodes
         |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
     elif demand |> Result.exists (fun projection -> projection.DeferredOnly.Contains currentNode.Id) then
         ()
-    elif Set.contains currentNode.Id !visited
-       || (Set.contains currentNode.Id !(visitedCtx.GlobalVisited)
-           && isDefinitionOnlyLambda currentNode visitedCtx.Graph) then
+    elif Set.contains currentNode.Id !visited then
+        ()
+    elif Result.isError definitionReuse then
+        let reason = match definitionReuse with Result.Error reason -> reason | Result.Ok _ -> invalidOp "Expected absent definition projection"
+        Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "definition-only lambda projection") reason
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
+    elif definitionReuse = Result.Ok true then
         ()
     else
         let priorErrors = visitedCtx.Accumulator.Errors
-        let priorDeferredEmission = visitedCtx.Accumulator.DeferredEmissionStamp
         MLIRAccumulator.forgetVoid currentNode.Id visitedCtx.Accumulator
         // Mark as visited in traversal scope
         visited := Set.add currentNode.Id !visited
@@ -159,57 +154,17 @@ let rec visitAllNodes
                     |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
             )
 
-        // POST-ORDER Phase 2: Visit VarRef binding targets (reference edges)
-        // These are cross-references, not structural children. Re-root the zipper
-        // at the binding node — it lives in a different part of the tree, so the
-        // current zipper path is not applicable.
-        //
-        // FPGA scoping: On FPGA, `visited` is per-function (local). Value bindings from
-        // other modules are NOT in the local set, so they're naturally re-emitted in each
-        // hw.module scope. Function bindings (Lambdas) are compiled once — check globalVisited
-        // to prevent duplicate hw.module emission.
-        match currentNode.Kind with
-        | SemanticKind.VarRef (_, Some bindingId) ->
-            let alreadyHandled =
-                Set.contains bindingId !visited
-                || (SemanticGraph.tryGetNode bindingId visitedCtx.Graph
-                    |> Option.exists (ModuleValues.isSlotBinding visitedCtx.Coeffects.TargetPlatform visitedCtx.Graph))
-                || // A nested function can discover a definition after the
-                   // caller's local visited snapshot was taken. Definitions
-                   // remain global even though their body values are local.
-                   (Set.contains bindingId !(visitedCtx.GlobalVisited)
-                    && (if visitedCtx.Coeffects.TargetPlatform = Core.Types.Dialects.FPGA then
-                            isFunctionBinding bindingId visitedCtx.Graph
-                        else
-                            isDefinitionOnlyBinding bindingId visitedCtx.Graph))
-            if not alreadyHandled then
-                match SemanticGraph.tryGetNode bindingId visitedCtx.Graph with
-                | Some bindingNode ->
-                    // Re-root zipper at binding — cross-reference, not tree child
-                    match PSGZipper.create visitedCtx.Zipper.Graph bindingId with
-                    | Some bindingZipper ->
-                        let bindingCtx = { visitedCtx with Zipper = bindingZipper }
-                        visitAllNodes witness bindingCtx bindingNode visited
-                    | None -> ()
-                | None -> ()
-        | _ -> ()
+        // A reference never places or emits its binding. The binding is witnessed at its own
+        // settled structural position; a reference that reaches an unwitnessed binding is a
+        // settlement gap reported by the reference witness, never repaired here.
 
-        // THEN witness current node (after ALL dependencies - children AND references)
+        // THEN witness current node (after its structural children)
         let output = witness visitedCtx currentNode
         if traceTraversal then printfn "[visitAllNodes] Node %A: witness returned %A" currentNode.Id output.Result
 
-        // Add operations to appropriate scope contexts (principled accumulation)
-        // InlineOps go to current scope (may be nested function body)
-        // EXCEPTION: Deferred arg nodes (partial app arguments) have their InlineOps
-        // stored in the accumulator for re-emission at the saturated call site.
-        // This prevents MLIR region isolation violations when partial app is at module
-        // scope but saturated call is inside a function body.
-        let isDeferredArg = Set.contains currentNode.Id visitedCtx.Graph.Codata.Value.Curry.DeferredArgNodes
-        if isDeferredArg && not (List.isEmpty output.InlineOps) then
-            MLIRAccumulator.deferInlineOps currentNode.Id output.InlineOps visitedCtx.Accumulator
-        else
-            let updatedCurrentScope = ScopeContext.addOps output.InlineOps !visitedCtx.ScopeContext
-            visitedCtx.ScopeContext := updatedCurrentScope
+        // InlineOps belong to the current scope, exactly where the settled graph places the node.
+        let updatedCurrentScope = ScopeContext.addOps output.InlineOps !visitedCtx.ScopeContext
+        visitedCtx.ScopeContext := updatedCurrentScope
 
         // TopLevelOps go to ROOT scope (module level: GlobalString, nested FuncDef)
         if not (List.isEmpty output.TopLevelOps) then
@@ -259,14 +214,17 @@ let rec visitAllNodes
             | Result.Error reason ->
                 Diagnostic.error (Some currentNode.Id) (Some "Lazy") (Some "operand transport") reason
                 |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
-        | TRVoid when obj.ReferenceEquals(priorErrors, visitedCtx.Accumulator.Errors)
-                      && obj.ReferenceEquals(priorDeferredEmission, visitedCtx.Accumulator.DeferredEmissionStamp)
-                      && not (isDeferredArg && not output.InlineOps.IsEmpty) ->
+        | TRVoid when obj.ReferenceEquals(priorErrors, visitedCtx.Accumulator.Errors) ->
             MLIRAccumulator.completeVoid visitedCtx.Zipper visitedCtx.ScopeContext visitedCtx.Accumulator
         | TRVoid -> ()
         | TRError diag ->
             MLIRAccumulator.addError diag visitedCtx.Accumulator
-        | TRSkip -> ()  // Should never reach here (combineWitnesses filters out TRSkip)
+        | TRSkip ->
+            // A combined witness never returns TRSkip; a traversal witness that does
+            // left this node unclaimed, which is a coverage gap, not a no-op.
+            Diagnostic.error (Some currentNode.Id) (Some "Traversal") (Some "witness coverage")
+                (sprintf "Alex witness coverage did not claim node %d: the traversal witness returned skip" (NodeId.value currentNode.Id))
+            |> fun diagnostic -> MLIRAccumulator.addError diagnostic visitedCtx.Accumulator
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NANOPASS REGISTRY
@@ -355,7 +313,10 @@ let runAllNanopasses
             | Some node when node.IsReachable ->
                 if traceTraversal then printfn "[DEBUG] Processing root node %d (%A)" (NodeId.value nodeId) node.Kind
                 match PSGZipper.create graph nodeId with
-                | None -> ()
+                | None ->
+                    Diagnostic.error (Some nodeId) (Some "Traversal") (Some "root occurrence")
+                        (sprintf "Alex traversal could not focus declared root %d in the current graph" (NodeId.value nodeId))
+                    |> fun diagnostic -> MLIRAccumulator.addError diagnostic sharedAcc
                 | Some initialZipper ->
                     let nodeCtx = {
                         Graph = graph
@@ -369,7 +330,13 @@ let runAllNanopasses
                         TraversalVisited = globalVisited  // Default: same as global; LambdaWitness overrides on FPGA
                     }
                     visitAllNodes combinedWitness nodeCtx node globalVisited
-            | _ -> ()
+            | Some _ ->
+                // Reachability is CCS's decision: an unreachable root is not witnessed.
+                ()
+            | None ->
+                Diagnostic.error (Some nodeId) (Some "Traversal") (Some "root occurrence")
+                    (sprintf "PSG settlement (DeclarationRoots/ModuleClassifications) names root %d, which is absent from the current graph" (NodeId.value nodeId))
+                |> fun diagnostic -> MLIRAccumulator.addError diagnostic sharedAcc
 
     // The graph's declaration roots own execution. In particular, Baker's
     // startup root contains its ordered initializer spine; a witness never
@@ -390,7 +357,12 @@ let executeNanopasses
     : MLIRAccumulator =
 
     if List.isEmpty registry.Nanopasses then
-        MLIRAccumulator.empty()
+        // An empty registry would witness nothing and skip coverage validation.
+        let accumulator = MLIRAccumulator.empty()
+        Diagnostic.error None (Some "Traversal") (Some "witness registry")
+            "Alex witness registry is empty for this target: no witness can claim any node"
+        |> fun diagnostic -> MLIRAccumulator.addError diagnostic accumulator
+        accumulator
     else
         // Create SINGLE shared accumulator for ALL nanopasses
         let sharedAcc = MLIRAccumulator.empty()

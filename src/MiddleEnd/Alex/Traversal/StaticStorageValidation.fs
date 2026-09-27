@@ -84,10 +84,11 @@ let validateWritable arch (graph: SemanticGraph) (ops: MLIROp list) =
     let observed = ResizeArray<string * ProgramStorageEntry>()
     let current =
         Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage graph
-        |> Result.toOption |> Option.map _.ProgramStorage
+        |> Result.map _.ProgramStorage
     match current with
-    | None -> errors.Add "the source program-storage inventory is stale"
-    | Some inventory ->
+    | Result.Error reason ->
+        errors.Add ("PSG settlement (WitnessEmission.Storage) did not publish the program-storage inventory: " + reason)
+    | Result.Ok inventory ->
         for KeyValue(_, reason) in inventory.Unresolved do errors.Add reason
         let mutable names = Set.empty
         let mutable identities = Set.empty

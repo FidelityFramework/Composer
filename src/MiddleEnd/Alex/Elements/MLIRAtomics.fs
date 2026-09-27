@@ -11,15 +11,6 @@ open Alex.Dialects.Core.Types
 // Elements accept type from caller - patterns know the type and pass it explicitly
 
 // ═══════════════════════════════════════════════════════════
-// STRUCT OFFSET COMPUTATION
-// ═══════════════════════════════════════════════════════════
-
-/// SCAB REMOVED: This function should not exist - callers must use coeffect-provided SSAs directly
-/// Keeping as compiler error signal - if called, tells us where pattern needs refactoring
-let private computeStructOffset (indices: int list) : SSA =
-    failwith "ARCHITECTURAL ERROR: computeStructOffset called - this function should have been removed entirely. Caller must use coeffects."
-
-// ═══════════════════════════════════════════════════════════
 // PORTABLE MLIR STRUCT OPERATIONS (MemRef-based)
 // ═══════════════════════════════════════════════════════════
 

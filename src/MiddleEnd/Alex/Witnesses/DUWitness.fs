@@ -54,34 +54,25 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
     | Some ((duValueId, caseIndex, _caseName, psgPayloadType), _) ->
         match MLIRAccumulator.recallNode duValueId ctx.Accumulator with
         | Some (duSSA, duType) ->
-            let unionNativeType =
-                match SemanticGraph.tryGetNode duValueId ctx.Graph with
-                | Some scrutinee -> scrutinee.Type
-                | None -> node.Type
-            // Use the payload type from the PSG node (CCS-resolved).
-            // Fall back to the DUEliminate node's own type only if PSG type is TVar
-            // (which happens when the binding is unused and CCS didn't resolve it).
-            let payloadType =
-                let mapped =
-                    match psgPayloadType with
-                    | NativeType.TVar _ ->
-                        // TVar — try to derive from scrutinee's type args
-                        match SemanticGraph.tryGetNode duValueId ctx.Graph with
-                        | Some scrutineeNode ->
-                            match scrutineeNode.Type with
-                            | NativeType.TApp (_, typeArgs) when typeArgs.Length > 0 ->
-                                // Use min(caseIndex, length-1) since case index doesn't always
-                                // equal type arg index (e.g. Option.Some=case1 but typeArgs[0])
-                                mapType typeArgs.[min caseIndex (typeArgs.Length - 1)] ctx
-                            | _ -> mapType node.Type ctx
-                        | None -> mapType node.Type ctx
-                    | _ -> mapType psgPayloadType ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
-                mapped
-            match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType unionNativeType payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-            | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-            | Result.Error diagnostic ->
+            // The union and payload types are CCS-resolved facts on the graph; an
+            // absent scrutinee or an unresolved payload type is a settlement defect.
+            match SemanticGraph.tryGetNode duValueId ctx.Graph, psgPayloadType with
+            | None, _ ->
                 WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "DUEliminate")
-                    (sprintf "DUEliminate case %d: %s" caseIndex diagnostic)
+                    (sprintf "PSG settlement did not settle the union type for DUEliminate %d case %d: scrutinee node %d is absent from the graph"
+                        (NodeId.value node.Id) caseIndex (NodeId.value duValueId))
+            | Some _, NativeType.TVar _ ->
+                WitnessOutput.errorCoded AX1001 (Some node.Id) (Some "DU") (Some "DUEliminate")
+                    (sprintf "CCS source checking did not settle the payload type for DUEliminate %d case %d: payload type is an unresolved type variable"
+                        (NodeId.value node.Id) caseIndex)
+            | Some scrutinee, _ ->
+                let unionNativeType = scrutinee.Type
+                let payloadType = mapType psgPayloadType ctx |> narrowType ctx.Coeffects ctx.Graph node.Id
+                match tryMatchWithDiagnostics (pBuildDUEliminate node.Id duSSA duType unionNativeType payloadType) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                | Result.Error diagnostic ->
+                    WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "DU") (Some "DUEliminate")
+                        (sprintf "DUEliminate case %d: %s" caseIndex diagnostic)
         | None ->
             WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "DU") (Some "DUEliminate")
                 (sprintf "DU scrutinee node %d not yet witnessed" (NodeId.value duValueId))
@@ -92,16 +83,24 @@ let private witnessDU (ctx: WitnessContext) (node: SemanticNode) : WitnessOutput
     match tryMatch pDUConstruct ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
     | Some ((_caseName, caseIndex, payloadOpt, _arenaHintOpt), _) ->
         let tag = int64 caseIndex
-        // the payload at its slot's width (its derived meet)
-        let (meetOps, payload) =
+        // the payload at its slot's width (its derived meet); a declared payload
+        // that was never witnessed is a defect, never a payload-free case
+        let payloadReading =
             match payloadOpt with
             | Some payloadId ->
                 match MLIRAccumulator.recallNode payloadId ctx.Accumulator with
                 | Some (ssa, ty) ->
                     let (ops, adapted, adaptedTy) = adaptOperand ctx.Coeffects ctx.Graph node.Id payloadId ssa ty
-                    (ops, [{ SSA = adapted; Type = adaptedTy }])
-                | None -> ([], [])
-            | None -> ([], [])
+                    Result.Ok (ops, [{ SSA = adapted; Type = adaptedTy }])
+                | None -> Result.Error payloadId
+            | None -> Result.Ok ([], [])
+
+        match payloadReading with
+        | Result.Error payloadId ->
+            WitnessOutput.errorCoded AX2001 (Some node.Id) (Some "DU") (Some "DUConstruct")
+                (sprintf "PSG settlement did not witness the payload of DUConstruct %d case %d: payload node %d has no witnessed value"
+                    (NodeId.value node.Id) caseIndex (NodeId.value payloadId))
+        | Result.Ok (meetOps, payload) ->
 
         let duTy = mapType node.Type ctx
 

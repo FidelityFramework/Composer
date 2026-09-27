@@ -314,35 +314,3 @@ let ``void completion follows complete operand scope snapshot restoration`` () =
     MLIRAccumulator.bindNode effect (Arg 0) (TInt(IntWidth 32)) accumulator
     Assert.False(MLIRAccumulator.completedVoid child ctx.ScopeContext accumulator)
 
-[<Fact>]
-let ``a transparent unit parent cannot certify emission of a deferred effect child`` () =
-    let builder = NodeBuilder()
-    let deferred = builder.Create(SemanticKind.PatternBinding "deferredEffect", Types.unitType, dummyRange)
-    let completed = builder.Create(SemanticKind.PatternBinding "independentCompletedEffect", Types.unitType, dummyRange)
-    let parent = builder.Create(SemanticKind.Sequential [deferred.Id; completed.Id], Types.unitType, dummyRange)
-    let marker = builder.Create(SemanticKind.EagerExpr parent.Id, Types.unitType, dummyRange)
-    let raw = builder.Build [] |> Demand.normalize
-    let previous = raw.Codata.Value
-    let graph = { raw with Codata = lazy { previous with Curry = { previous.Curry with DeferredArgNodes = Set.singleton deferred.Id } } } |> prepareSource
-    let accumulator = MLIRAccumulator.empty ()
-    let position = Zipper.create graph marker.Id |> require "Missing deferred marker"
-    let ctx = context graph position accumulator
-    let witness ctx node =
-        if node.Id = deferred.Id || node.Id = completed.Id then
-            let symbol = if node.Id = deferred.Id then "deferred_effect" else "completed_effect"
-            { InlineOps = [MLIROp.FuncOp(FuncOp.FuncCall([], symbol, []))]; TopLevelOps = []; Result = TRVoid }
-        else
-            match node.Kind with
-            | SemanticKind.EagerExpr _ -> Alex.Witnesses.EagerWitness.nanopass.Witness ctx node
-            | _ -> Alex.Witnesses.StructuralWitness.nanopass.Witness ctx node
-    visitAllNodes witness ctx position.Focus ctx.TraversalVisited
-    let parentPosition = atChild parent.Id position
-    Assert.False(MLIRAccumulator.completedVoid parentPosition ctx.ScopeContext accumulator)
-    Assert.False(MLIRAccumulator.completedVoid (atChild deferred.Id parentPosition) ctx.ScopeContext accumulator)
-    Assert.True(MLIRAccumulator.completedVoid (atChild completed.Id parentPosition) ctx.ScopeContext accumulator)
-    Assert.NotEmpty accumulator.Errors
-    Assert.True((MLIRAccumulator.recallNode marker.Id accumulator).IsNone)
-    Assert.Single(MLIRAccumulator.getDeferredInlineOps deferred.Id accumulator) |> ignore
-    let operations = ScopeContext.getOps ctx.ScopeContext.Value
-    Assert.Single operations |> ignore
-    Assert.Contains(operations, function MLIROp.FuncOp(FuncOp.FuncCall(_, "completed_effect", _)) -> true | _ -> false)

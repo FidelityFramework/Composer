@@ -123,11 +123,13 @@ let slotElementType (arch: Architecture) (ty: MLIRType) : MLIRType =
 let pProgramValueAuthority (bindingId: NodeId) : PSGParser<unit> =
     parser {
         let! state = getUserState
-        let admitted =
-            Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph
-            |> Result.toOption |> Option.exists (fun projection -> projection.SlotAuthorities.Contains bindingId)
-        do! ensure admitted $"Program value {NodeId.value bindingId} lacks its settled startup and writable-space authority"
-        return ()
+        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage state.Graph with
+        | Result.Ok projection ->
+            do! ensure (projection.SlotAuthorities.Contains bindingId)
+                    $"Program value {NodeId.value bindingId} lacks its settled startup and writable-space authority"
+            return ()
+        | Result.Error reason ->
+            return! fail (Message $"PSG settlement (WitnessEmission storage) did not publish the startup and writable-space authority for program value {NodeId.value bindingId}: {reason}")
     }
 
 /// Initialize a module-level value slot: declare the one-element memref.global (queued for

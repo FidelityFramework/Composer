@@ -74,7 +74,10 @@ let pProgramSequenceReference (ctx: WitnessContext) binding = parser {
     let! instance, shape = pProgramInstance ctx binding
     let environment = { SSA = Values.value occurrence 0; Type = Operands.environmentType shape }
     let! access = pMemRefGetGlobal environment.SSA (Alex.Patterns.MemoryPatterns.staticValueName instance.Allocation) environment.Type
-    let generator = state.Graph.Nodes[instance.Generator]
+    let! generator =
+        match state.Graph.Nodes.TryFind instance.Generator with
+        | Some generator -> preturn generator
+        | None -> fail (Message $"PSG settlement (WitnessEmission storage) did not settle a present generator for the program sequence reference at node {NodeId.value occurrence}: generator node {NodeId.value instance.Generator} is absent from the graph")
     let symbol = Alex.CodeGeneration.CallableSymbols.lambda state.Graph generator false
     let! operations, value = Alex.Patterns.ContinuationPatterns.pSequenceValue occurrence shape symbol environment
     return access :: operations, value
@@ -130,9 +133,12 @@ let pSequenceDispatch (ctx: WitnessContext) selectorId cases otherwise : PSGPars
         | TIndex -> preturn ([], { SSA = selectorSSA; Type = TIndex })
         | TInt(IntWidth width) when width > 0 ->
             let result = { SSA = Values.value occurrence 2; Type = TIndex }
-            let range = nodeRange state.Graph selectorId |> Option.defaultValue ValueRange.Unbounded
-            let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range result.SSA selectorSSA selectorType
-            preturn ([operation], result)
+            match nodeRange state.Graph selectorId with
+            | Some range ->
+                let operation = Alex.Patterns.MemoryPatterns.indexCastForRange range result.SSA selectorSSA selectorType
+                preturn ([operation], result)
+            | None ->
+                fail (Message $"PSG settlement (RangeAnalysis) did not settle a value range for the sequence dispatch selector at node {NodeId.value selectorId} (dispatch node {NodeId.value occurrence})")
         | _ -> fail (Message "Sequence dispatch selector lacks an admitted index carrier.")
     let branches = cases |> List.map (fun (label, source, operations) -> int64 label, source, operations)
     let! operations, result = pSequenceSwitch ctx selector branches otherwise

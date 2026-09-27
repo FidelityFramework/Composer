@@ -13,12 +13,17 @@ open Clef.Compiler.NativeTypedTree.Infrastructure.PhaseConfig
 let private implementation : BackEnd = {
     Name = "LLVM"
     Compile = fun witnessed ctx ->
+        // The triple is the selected platform's declared core triple (or an
+        // explicit --target). It is never the build host's triple.
+        match ctx.TargetTripleOverride with
+        | None ->
+            Error "PSG settlement (platform resolution) did not settle the target triple for the LLVM backend: the selected platform declares no core triple and no --target was given"
+        | Some targetTriple ->
         // Write MLIR to temp file for mlir-opt input
         let mlirPath =
             match ctx.IntermediatesDir with
             | Some dir -> Path.Combine(dir, artifactFilename ArtifactId.Mlir)
             | None -> Core.Utilities.IntermediateWriter.scratchPath "output.mlir"
-        let targetTriple = ctx.TargetTripleOverride |> Option.defaultValue (Codegen.getDefaultTarget())
         File.WriteAllText(mlirPath, witnessed.Text)
 
         // Phase 1: Lower MLIR → LLVM IR (mlir-opt + mlir-translate)

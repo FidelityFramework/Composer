@@ -36,7 +36,8 @@ let pEagerValue (ctx: WitnessContext) = parser {
                      Ordinal = 0; Sources = [marker; actual] }] -> marker = state.Current.Id && actual = operand
                 | _ -> false)
             "Explicit demand has no unique current expression frontier."
-    if isLazyValue ctx state.Current then
+    let! isLazy = pIsLazyValue ctx state.Current
+    if isLazy then
         return! pLazyForward ctx operand
     elif isSequenceValue ctx state.Current then
         return! pSequenceForward ctx operand

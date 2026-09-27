@@ -12,7 +12,7 @@
 /// the commitment to AMDGPU happens here. Hardware targeting is backend
 /// work; the Alex-witnessed MLIR is what sets the transform up.
 ///
-/// Chip resolved from FIDELITY_GPU_CHIP env, default gfx1151.
+/// Chip resolved from FIDELITY_GPU_CHIP env; unset is an error (no default chip).
 /// Kernel entry resolved from FIDELITY_GPU_KERNEL env, default "kernel"
 /// (matched as a trailing dotted segment of a Clef function name).
 /// mlir-opt is expected on PATH (installed with LLVM/MLIR).
@@ -24,23 +24,28 @@ open System.IO
 // TOOL AND TARGET RESOLUTION
 // ═══════════════════════════════════════════════════════════
 
-/// AMDGPU target chip. Device selection is a backend concern; the
-/// fidproj carries no per-target section, so this is env-driven.
-let private resolveChip () : string =
+/// AMDGPU target chip. No platform declaration settles a GPU core yet, so the
+/// explicit FIDELITY_GPU_CHIP selection is the only admitted source. An absent
+/// selection is an error; no chip is assumed.
+let private resolveChip () : Result<string, string> =
     let fromEnv = System.Environment.GetEnvironmentVariable("FIDELITY_GPU_CHIP")
-    if System.String.IsNullOrEmpty(fromEnv) then "gfx1151" else fromEnv
+    if System.String.IsNullOrEmpty(fromEnv) then
+        Error "PSG settlement (platform resolution) did not settle the AMDGPU target chip for the GPU backend: no declared GPU core supplies one and FIDELITY_GPU_CHIP is unset"
+    else Ok fromEnv
 
 /// Trailing dotted segment identifying the kernel entry function.
 let private resolveKernelName () : string =
     let fromEnv = System.Environment.GetEnvironmentVariable("FIDELITY_GPU_KERNEL")
     if System.String.IsNullOrEmpty(fromEnv) then "kernel" else fromEnv
 
-/// Resolve a tool: env override if it exists on disk, else bare name so
-/// the OS resolves it via PATH.
-let private resolveTool (envVar: string) (name: string) : string =
+/// Resolve a tool: an explicit env selection, which must exist on disk, else
+/// the bare name so the OS resolves it via PATH. A selection naming no file is
+/// an error, never silently replaced by whatever PATH holds.
+let private resolveTool (envVar: string) (name: string) : Result<string, string> =
     let fromEnv = System.Environment.GetEnvironmentVariable(envVar)
-    if not (System.String.IsNullOrEmpty(fromEnv)) && File.Exists(fromEnv) then fromEnv
-    else name
+    if System.String.IsNullOrEmpty(fromEnv) then Ok name
+    elif File.Exists(fromEnv) then Ok fromEnv
+    else Error (sprintf "backend (GPU) tool selection %s=%s names no file; it is not replaced by '%s' from PATH" envVar fromEnv name)
 
 /// Run an external tool with environment augmentation.
 /// Returns Ok(stdout) or Error(message).
@@ -129,19 +134,23 @@ let private parseFunctions (mlirText: string) : DeviceFunc list =
 /// Transitive closure of functions reachable from the kernel entry.
 /// This is device-side tree shaking: the host module carries the entry
 /// point, console I/O and FFI shims, none of which belong on the device.
-let private reachableFrom (entry: string) (funcs: DeviceFunc list) : DeviceFunc list =
+/// A callee with no definition (an FFI declaration or a missing function) has
+/// no device implementation: that is an error here, not a dropped edge that
+/// leaves an undefined reference for the ROCDL pipeline to trip over later.
+let private reachableFrom (entry: string) (funcs: DeviceFunc list) : Result<DeviceFunc list, string> =
     let byName = funcs |> List.map (fun f -> f.Name, f) |> Map.ofList
     let rec walk (seen: Set<string>) (pending: string list) =
         match pending with
-        | [] -> seen
+        | [] -> Ok seen
         | name :: rest ->
             if Set.contains name seen then walk seen rest
             else
                 match Map.tryFind name byName with
                 | Some f -> walk (Set.add name seen) (f.Calls @ rest)
-                | None -> walk seen rest
-    let keep = walk Set.empty [entry]
-    funcs |> List.filter (fun f -> Set.contains f.Name keep)
+                | None ->
+                    Error (sprintf "backend (GPU) device closure: '%s', reached from kernel entry '%s', has no definition in the witnessed module and so no device implementation" name entry)
+    walk Set.empty [entry]
+    |> Result.map (fun keep -> funcs |> List.filter (fun f -> Set.contains f.Name keep))
 
 /// Find the kernel entry by trailing dotted segment.
 let private findKernelEntry (funcs: DeviceFunc list) (kernelName: string) : Result<string, string> =
@@ -204,10 +213,9 @@ let private buildGpuModule (mlirText: string) (kernelName: string) (chip: string
     if List.isEmpty funcs then
         Error "no func.func definitions found in the middle end's output"
     else
-        match findKernelEntry funcs kernelName with
+        match findKernelEntry funcs kernelName |> Result.bind (fun entry -> reachableFrom entry funcs |> Result.map (fun device -> entry, device)) with
         | Error e -> Error e
-        | Ok entry ->
-            let device = reachableFrom entry funcs
+        | Ok (entry, device) ->
             let bodies = device |> List.map (fun f -> f.Text) |> String.concat "\n"
             let sb = System.Text.StringBuilder()
             sb.AppendLine("module attributes {gpu.container_module} {") |> ignore
@@ -223,8 +231,10 @@ let private buildGpuModule (mlirText: string) (kernelName: string) (chip: string
 // ═══════════════════════════════════════════════════════════
 
 /// Decode an MLIR string-attribute literal into the bytes it denotes.
-/// MLIR escapes non-printable bytes as \XX (two hex digits).
-let private decodeMlirBytes (literal: string) : byte[] =
+/// MLIR escapes non-printable bytes as \XX (two hex digits). A dangling
+/// escape or an unescaped non-ASCII character cannot denote exact bytes and
+/// is an error rather than a best-effort byte.
+let private decodeMlirBytes (literal: string) : Result<byte[], string> =
     let out = System.Collections.Generic.List<byte>()
     let hex (c: char) =
         if c >= '0' && c <= '9' then int c - int '0'
@@ -232,22 +242,27 @@ let private decodeMlirBytes (literal: string) : byte[] =
         elif c >= 'A' && c <= 'F' then int c - int 'A' + 10
         else -1
     let mutable i = 0
-    while i < literal.Length do
+    let mutable failure = None
+    while failure.IsNone && i < literal.Length do
         let c = literal.[i]
-        if c = '\\' && i + 2 < literal.Length then
-            let h1 = hex literal.[i + 1]
-            let h2 = hex literal.[i + 2]
-            if h1 >= 0 && h2 >= 0 then
-                out.Add(byte (h1 * 16 + h2))
+        if c = '\\' then
+            if i + 2 < literal.Length && hex literal.[i + 1] >= 0 && hex literal.[i + 2] >= 0 then
+                out.Add(byte (hex literal.[i + 1] * 16 + hex literal.[i + 2]))
                 i <- i + 3
-            else
+            elif i + 1 < literal.Length && int literal.[i + 1] <= 0x7F then
                 // \\ , \" and friends denote the literal second character
                 out.Add(byte literal.[i + 1])
                 i <- i + 2
+            else
+                failure <- Some (sprintf "backend (GPU) cannot decode the gpu.binary object literal: malformed escape at offset %d" i)
+        elif int c > 0x7F then
+            failure <- Some (sprintf "backend (GPU) cannot decode the gpu.binary object literal: unescaped non-ASCII character at offset %d" i)
         else
             out.Add(byte c)
             i <- i + 1
-    out.ToArray()
+    match failure with
+    | Some reason -> Error reason
+    | None -> Ok (out.ToArray())
 
 /// Lift the embedded AMDGPU object out of the gpu.binary attribute.
 let private extractCodeObject (binMlirPath: string) (hsacoPath: string) : Result<unit, string> =
@@ -268,12 +283,13 @@ let private extractCodeObject (binMlirPath: string) (hsacoPath: string) : Result
         if not finished then
             Error "malformed gpu.binary attribute: unterminated object literal"
         else
-            let bytes = decodeMlirBytes (text.Substring(contentStart, i - contentStart))
-            if bytes.Length < 4 || bytes.[0] <> 0x7Fuy || bytes.[1] <> byte 'E' then
-                Error (sprintf "extracted object is not an ELF code object (%d bytes)" bytes.Length)
-            else
-                File.WriteAllBytes(hsacoPath, bytes)
-                Ok ()
+            decodeMlirBytes (text.Substring(contentStart, i - contentStart))
+            |> Result.bind (fun bytes ->
+                if bytes.Length < 4 || bytes.[0] <> 0x7Fuy || bytes.[1] <> byte 'E' then
+                    Error (sprintf "extracted object is not an ELF code object (%d bytes)" bytes.Length)
+                else
+                    File.WriteAllBytes(hsacoPath, bytes)
+                    Ok ())
 
 // ═══════════════════════════════════════════════════════════
 // LOWERING ENTRY POINT
@@ -282,8 +298,9 @@ let private extractCodeObject (binMlirPath: string) (hsacoPath: string) : Result
 /// Lower portable MLIR to an AMD GPU code object.
 let lowerToCodeObject (mlirPath: string) (hsacoPath: string) : Result<unit, string> =
     let workDir = Path.GetDirectoryName(mlirPath)
-    let mlirOpt = resolveTool "FIDELITY_MLIR_OPT" "mlir-opt"
-    let chip = resolveChip ()
+    match resolveTool "FIDELITY_MLIR_OPT" "mlir-opt" |> Result.bind (fun tool -> resolveChip () |> Result.map (fun chip -> tool, chip)) with
+    | Error e -> Error e
+    | Ok (mlirOpt, chip) ->
     let kernelName = resolveKernelName ()
 
     let devicePath = Path.Combine(workDir, "device.mlir")

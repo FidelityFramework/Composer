@@ -35,18 +35,22 @@ let private observeCallable (ctx: WitnessContext) (node: SemanticNode) environme
     match Operands.project ctx node.Id with
     | Result.Error reason -> failure node "callable carrier" reason
     | Result.Ok shape ->
-        let carrier = ctx.Graph.Codata.Value.CallableCarriers[node.Id]
-        let implementation = ctx.Graph.Nodes[carrier.Implementation]
-        let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph implementation false
-        let pattern = parser {
-            let! operations, result = environmentPattern
-            match result with
-            | TRValue environment ->
-                let! code, callable = pCallableValue node.Id shape symbol (Some environment)
-                return operations @ code, callable
-            | _ -> return! fail (Message "Callable formation requires its actual environment operand")
-        }
-        observe ctx node pattern
+        match ctx.Graph.Codata.Value.CallableCarriers.TryFind node.Id
+              |> Option.bind (fun carrier -> ctx.Graph.Nodes.TryFind carrier.Implementation) with
+        | None ->
+            failure node "callable carrier"
+                $"Codata (CallableCarriers) did not settle a carrier with a resident implementation for callable occurrence {NodeId.value node.Id}"
+        | Some implementation ->
+            let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph implementation false
+            let pattern = parser {
+                let! operations, result = environmentPattern
+                match result with
+                | TRValue environment ->
+                    let! code, callable = pCallableValue node.Id shape symbol (Some environment)
+                    return operations @ code, callable
+                | _ -> return! fail (Message "Callable formation requires its actual environment operand")
+            }
+            observe ctx node pattern
 
 let private access (ctx: WitnessContext) (node: SemanticNode) environment slotId borrow write =
     match layoutAt ctx environment with
@@ -67,17 +71,21 @@ let private access (ctx: WitnessContext) (node: SemanticNode) environment slotId
                       Alex.Traversal.SequenceOperands.project ctx node.Id with
                 | Some owner, Result.Ok shape when (Alex.Traversal.SequenceOperands.flow shape).Owners = Set.singleton owner ->
                     let family = Alex.Traversal.SequenceOperands.family shape
-                    let generator = ctx.Graph.Nodes[family.Members[owner].Generator]
-                    let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph generator false
-                    let sequence = parser {
-                        let! operations, result = pattern
-                        match result with
-                        | TRValue environment ->
-                            let! code, value = pSequenceValue node.Id shape symbol environment
-                            return operations @ code, value
-                        | _ -> return! fail (Message "Sequence environment read requires its actual descriptor")
-                    }
-                    observe ctx node sequence
+                    match family.Members.TryFind owner |> Option.bind (fun sequenceMember -> ctx.Graph.Nodes.TryFind sequenceMember.Generator) with
+                    | None ->
+                        failure node "sequence carrier"
+                            $"Codata (SequenceFamilies) did not settle a resident generator for sequence owner {NodeId.value owner} at environment read {NodeId.value node.Id}"
+                    | Some generator ->
+                        let symbol = Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph generator false
+                        let sequence = parser {
+                            let! operations, result = pattern
+                            match result with
+                            | TRValue environment ->
+                                let! code, value = pSequenceValue node.Id shape symbol environment
+                                return operations @ code, value
+                            | _ -> return! fail (Message "Sequence environment read requires its actual descriptor")
+                        }
+                        observe ctx node sequence
                 | _, Result.Error reason -> failure node "sequence carrier" reason
                 | _ -> failure node "sequence capture" "Descriptor-only sequence capture lacks its exact source-proved function half"
             | _ -> observe ctx node pattern

@@ -91,12 +91,11 @@ let pUnwrapOptionArgForFFI
         // 1. Extract tag (i8) from byte offset 0 — pTypedExtract (MLIRAtomics)
         let! tagOps = pTypedExtract tagSSA optionSSA 0 tagViewSSA tagZeroSSA tagTy optionType
 
-        let! state = getUserState
         let! inner =
             match nativeOptionType with
             | NativeType.TApp (tc, [inner]) when tc.Name = "option" || tc.Name = "voption" -> preturn inner
             | _ -> fail (Message "Nullable foreign argument requires a settled option type")
-        let payloadOffset = unionPayloadOffset state.Graph nativeOptionType
+        let! payloadOffset = pUnionPayloadOffset nativeOptionType
         let! payloadOps, nativePayload =
             match Clef.Compiler.NativeTypedTree.NativeTypes.Types.tryGetNTUKind inner with
             | Some NTUKind.NTUptr ->
@@ -133,17 +132,22 @@ let pUnwrapOptionArgForFFI
 // RESOLVED BINDING LOOKUP
 // ═══════════════════════════════════════════════════════════
 
-/// Resolve the target function name for a platform call from pre-computed coeffects.
-/// For LibcCall/ExternCall, returns the target function name.
-/// For Syscall/InlineAsm, falls back to the provided default (inline asm is future work).
-let private resolveCallTarget (nodeId: NodeId) (defaultName: string) (platform: PlatformReads) : string =
-    match Map.tryFind nodeId platform.Bindings.Bindings with
-    | Some binding ->
-        match binding.Resolved with
-        | ResolvedBinding.LibcCall funcName -> funcName
-        | ResolvedBinding.ExternCall (_, symbol) -> symbol
-        | ResolvedBinding.Syscall _ -> defaultName   // the freestanding leg's inline asm is owed
-    | None -> defaultName
+/// Read the target function name for a platform call from the settled binding.
+/// LibcCall/ExternCall name their symbol. A site without a binding, and a Syscall binding
+/// (whose freestanding realization is owed), are reported; no libc name is supplied for them.
+let private pResolveCallTarget (nodeId: NodeId) (operation: string) : PSGParser<string> =
+    parser {
+        let! state = getUserState
+        match Map.tryFind nodeId state.Platform.Bindings.Bindings with
+        | Some binding ->
+            match binding.Resolved with
+            | ResolvedBinding.LibcCall funcName -> return funcName
+            | ResolvedBinding.ExternCall (_, symbol) -> return symbol
+            | ResolvedBinding.Syscall op ->
+                return! fail (Message $"backend (freestanding) did not realize the Syscall binding '{op}' for Sys.{operation} at node {NodeId.value nodeId}: direct syscall emission is not implemented")
+        | None ->
+            return! fail (Message $"PSG settlement (PlatformBindings) did not settle a platform binding for Sys.{operation} at node {NodeId.value nodeId}")
+    }
 
 // ═══════════════════════════════════════════════════════════
 // PLATFORM I/O SYSCALLS
@@ -209,7 +213,7 @@ let pSysWrite (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTy
         let! countCastOp = pIndexCastS count_i64 count_index TIndex platformWordTy
 
         // Resolve target function name from pre-computed binding coeffects
-        let callTarget = resolveCallTarget nodeId "write" state.Platform
+        let! callTarget = pResolveCallTarget nodeId "write"
 
         // Call with extracted i64 pointer and length
         let vals = [
@@ -276,7 +280,7 @@ let pSysRead (nodeId: NodeId) (fdSSA: SSA) (bufferSSA: SSA) (bufferType: MLIRTyp
         let! capacityCastOp = pIndexCastS capacity_i64 capacity_index TIndex platformWordTy
 
         // Resolve target function name from pre-computed binding coeffects
-        let callTarget = resolveCallTarget nodeId "read" state.Platform
+        let! callTarget = pResolveCallTarget nodeId "read"
 
         // Call with extracted i64 pointer and capacity
         let vals = [
@@ -322,10 +326,11 @@ let pSysReadline (node: SemanticNode) (fdSSA: SSA) : PSGParser<MLIROp list * Tra
             match Map.tryFind BufferMetadata.Capacity node.Metadata with
             | Some (MetadataValue.Int64 c) -> Some c
             | _ -> None
-        let trimDelimiter =
+        // Baker annotates the trim with the capacity; its absence is a settlement gap, never "no trim".
+        let! trimDelimiter =
             match Map.tryFind BufferMetadata.TrimDelimiter node.Metadata with
-            | Some (MetadataValue.Bool b) -> b
-            | _ -> false
+            | Some (MetadataValue.Bool b) -> preturn b
+            | _ -> fail (Message $"Baker (obligations) did not settle the Buffer.TrimDelimiter annotation for Sys.readline at node {NodeId.value nodeId}: the platform's consoleReadln framing was not cross-applied")
         do! ensure capacity.IsSome
                 $"pSysReadline: site {NodeId.value nodeId} carries no Buffer.Capacity annotation; the platform's consoleReadln declaration was not cross-applied"
         let capacity = capacity.Value
@@ -350,7 +355,7 @@ let pSysReadline (node: SemanticNode) (fdSSA: SSA) : PSGParser<MLIROp list * Tra
         let bufferType = TMemRef (TInt (IntWidth 8))
 
         // Resolve target function name from pre-computed binding coeffects
-        let callTarget = resolveCallTarget nodeId "read" state.Platform
+        let! callTarget = pResolveCallTarget nodeId "readline"
 
         // 1. Allocate the declared buffer
         let! sizeOp = pConstI sizeConst capacity TIndex
@@ -427,12 +432,15 @@ let private projectScalarReference (graph: SemanticGraph) argId value ty
         let nativeTy = TInt (IntWidth declared.Bits)
         let bufferTy = TMemRef nativeTy
         let unsignedNative = ValueRange.isNonNegative declared.Range
-        let sourceRange =
-            match graph.Nodes.[argId].Type with
-            | NativeType.TApp (_, [elem]) ->
-                Map.tryFind (Clef.Compiler.NativeTypedTree.TypeIdentities.ofType elem) graph.ElementRanges.Value
-                |> Option.defaultValue ValueRange.Unbounded
-            | _ -> ValueRange.Unbounded
+        // The source element range is a settled fact; an absent one is never read as unbounded.
+        let! sourceRange =
+            match Map.tryFind argId graph.Nodes |> Option.map (fun (node: SemanticNode) -> node.Type) with
+            | Some (NativeType.TApp (_, [elem])) ->
+                match Map.tryFind (Clef.Compiler.NativeTypedTree.TypeIdentities.ofType elem) graph.ElementRanges.Value with
+                | Some range -> preturn range
+                | None -> fail (Message $"PSG settlement (RangeAnalysis) did not settle an element range for the foreign reference {declared.Name} argument at node {NodeId.value argId}: element type {formatType elem}")
+            | Some other -> fail (Message $"CCS source checking did not settle an array type for the foreign reference {declared.Name} argument at node {NodeId.value argId}: its type is {formatType other}")
+            | None -> fail (Message $"PSG settlement (PlatformResolution) did not settle a present argument node for the foreign reference {declared.Name}: node {NodeId.value argId} is absent from the graph")
         let unsignedSource = ValueRange.isNonNegative sourceRange
         let! bounds =
             match ValueRange.endpoints declared.Range with
@@ -516,8 +524,14 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                     do! ensure (cursor + 32 <= ssas.Length) "Foreign pointer projection exceeds the node's assigned SSA family"
                     let s i = ssas.[cursor + i]
                     let! state = getUserState
-                    let pointerBytes = PlatformContext.pointerSize state.Graph.Platform.Value |> Result.toOption
-                    do! ensure (pointerBytes = Some (declared.Bits / 8)) "Foreign pointer reference width disagrees with target Pointer dimension"
+                    let! pointerBytes =
+                        match state.Graph.Platform with
+                        | Some platform ->
+                            match PlatformContext.pointerSize platform with
+                            | Result.Ok bytes -> preturn bytes
+                            | Result.Error reason -> fail (Message $"PSG settlement (PlatformContext) did not settle the target Pointer dimension for the foreign pointer reference {declared.Name} at node {NodeId.value argId}: {reason}")
+                        | None -> fail (Message $"PSG settlement (PlatformContext) did not settle a platform for the foreign pointer reference {declared.Name} at node {NodeId.value argId}")
+                    do! ensure (pointerBytes = declared.Bits / 8) "Foreign pointer reference width disagrees with target Pointer dimension"
                     let! optionTy = match ty with TMemRef elem | TMemRefStatic (_, elem) -> preturn elem | _ -> fail (Message "Pointer output reference requires an array")
                     let! optionBytes = match optionTy with TMemRefStatic (n, TInt (IntWidth 8)) -> preturn n | _ -> fail (Message "Pointer output reference requires source option storage")
                     let! zero = pConstI (s 0) 0L TIndex
@@ -525,7 +539,11 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                     let dim = MLIROp.MemRefOp (MemRefOp.Dim(s 2, value, s 0, ty))
                     let! valid = pCmpI (s 3) ICmpPred.Uge (s 2) (s 1) TIndex
                     let! loaded = pLoad (s 4) value [s 0]
-                    let inner = match graph.Nodes.[argId].Type with NativeType.TApp (_, [inner]) -> inner | _ -> failwith "Expected option array"
+                    let! inner =
+                        match Map.tryFind argId graph.Nodes |> Option.map (fun (node: SemanticNode) -> node.Type) with
+                        | Some (NativeType.TApp (_, [inner])) -> preturn inner
+                        | Some other -> fail (Message $"CCS source checking did not settle an option-array type for the foreign pointer reference {declared.Name} at node {NodeId.value argId}: its type is {formatType other}")
+                        | None -> fail (Message $"PSG settlement (PlatformResolution) did not settle a present argument node for the foreign pointer reference {declared.Name}: node {NodeId.value argId} is absent from the graph")
                     let! unpack, raw = pUnwrapOptionArgForFFI inner (s 4) optionTy TIndex ssas (cursor + 5)
                     let! allocate = pAlloca (s 16) 1 TIndex None
                     let nativeTy = TMemRefStatic (1, TIndex)
@@ -536,7 +554,8 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                     let! tag = pExtUI (s 20) (s 19) (TInt (IntWidth 1)) (TInt (IntWidth 8))
                     let! option = pAllocStatic (s 21) optionBytes (TInt (IntWidth 8)) None
                     let! tagOps = pTypedInsert (s 21) (s 20) 0 (s 22) (s 23) (TInt (IntWidth 8)) optionTy
-                    let! payloadOps = pTypedInsertView (s 21) (s 17) (unionPayloadOffset graph inner) (s 24) (s 25) (s 26) TIndex optionTy
+                    let! payloadOffset = pUnionPayloadOffset inner
+                    let! payloadOps = pTypedInsertView (s 21) (s 17) payloadOffset (s 24) (s 25) (s 26) TIndex optionTy
                     let! store = pStore (s 21) value [s 0] optionTy ty
                     let! yieldOp = pSCFYield []
                     let! copyback = pSCFIf (s 18) ([present; tag; option] @ tagOps @ payloadOps @ [store; yieldOp]) None None
@@ -547,20 +566,29 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                 | _, None ->
                     match ty with
                     | TStruct (fields, Some bytes) ->
-                        let name = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some (NominalTypeIdentity.ofConstructor tc) | _ -> None
+                        let! argType =
+                            match Map.tryFind argId graph.Nodes with
+                            | Some (node: SemanticNode) -> preturn node.Type
+                            | None -> fail (Message $"PSG settlement (PlatformResolution) did not settle a present argument node for the foreign record argument: node {NodeId.value argId} is absent from the graph")
+                        let name = match argType with NativeType.TApp (tc, _) -> Some (NominalTypeIdentity.ofConstructor tc) | _ -> None
                         let descriptor = layouts |> List.tryFind (fun d -> d.RecordType = name && name.IsSome)
                         match descriptor with
                         | Some d when d.Size.IsSome && d.Alignment.IsSome && d.PhysicalFields.Length = fields.Length ->
-                            let nativeField (field: Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.DeclaredPhysicalField) =
+                            let nativeFieldOf (field: Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.DeclaredPhysicalField) =
                                 match field.Repr with
-                                | "pointer" -> TIndex
-                                | "f32" -> TFloat F32 | "f64" -> TFloat F64
-                                | "u8" | "i8" -> TInt (IntWidth 8)
-                                | "u16" | "i16" -> TInt (IntWidth 16)
-                                | "u32" | "i32" -> TInt (IntWidth 32)
-                                | "u64" | "i64" -> TInt (IntWidth 64)
-                                | other -> failwithf "Unsupported foreign record field representation '%s'" other
-                            let nativeFields = d.PhysicalFields |> List.map (fun f -> f.Name, nativeField f)
+                                | "pointer" -> Some TIndex
+                                | "f32" -> Some (TFloat F32) | "f64" -> Some (TFloat F64)
+                                | "u8" | "i8" -> Some (TInt (IntWidth 8))
+                                | "u16" | "i16" -> Some (TInt (IntWidth 16))
+                                | "u32" | "i32" -> Some (TInt (IntWidth 32))
+                                | "u64" | "i64" -> Some (TInt (IntWidth 64))
+                                | _ -> None
+                            let! nativeFields =
+                                match d.PhysicalFields |> List.tryFind (fun f -> (nativeFieldOf f).IsNone) with
+                                | Some unsupported ->
+                                    fail (Message $"PSG settlement (PlatformResolution descriptors) did not settle a supported native representation for field '{unsupported.Name}' of foreign record '{d.Name}' at argument node {NodeId.value argId}: representation '{unsupported.Repr}'")
+                                | None ->
+                                    preturn (d.PhysicalFields |> List.choose (fun f -> nativeFieldOf f |> Option.map (fun ty -> f.Name, ty)))
                             let nativeBytes = { Size = d.Size.Value; Align = d.Alignment.Value; Offsets = d.PhysicalFields |> List.map (fun f -> f.Offset) }
                             let nativeTy = TStruct (nativeFields, Some nativeBytes)
                             if ty = nativeTy then
@@ -569,7 +597,10 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                             else
                                 do! ensure (not (Set.contains argId recordReferences) || Set.contains argId readOnlyRecords)
                                         "A writable foreign record requires identical source/native storage or an explicit copy-back adapter"
-                                let sourceFields = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields graph.Nodes[argId].Type graph |> Option.defaultValue []
+                                let! sourceFields =
+                                    match Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstances.tryFields argType graph with
+                                    | Some sourceFields -> preturn sourceFields
+                                    | None -> fail (Message $"PSG settlement (RecordInstances) did not settle source field types for the foreign record '{d.Name}' argument at node {NodeId.value argId}")
                                 do! ensure (sourceFields.Length = fields.Length) "Foreign record projection requires source field types"
                                 do! ensure (cursor + 1 + 20 * fields.Length <= ssas.Length) "Foreign record projection exceeds the node's assigned SSA family"
                                 do! ensure (d.PhysicalFields |> List.forall (fun f -> f.Count = 1)) "Foreign record array fields require an explicit bounded projection"
@@ -584,7 +615,7 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
                                             let start = cursor + 1 + 20*index
                                             let s n = ssas.[start + n]
                                             let! extract = pTypedExtractView (s 0) value bytes.Offsets.[index] (s 1) (s 2) (s 3) sourceTy ty
-                                            let expected = nativeField native
+                                            let expected = snd nativeFields.[index]
                                             let! conversion, stored =
                                                 match sourceTy, expected with
                                                 | TMemRefStatic (_, TInt (IntWidth 8)), TIndex ->
@@ -614,14 +645,18 @@ let private projectForeignArguments (graph: SemanticGraph) funcId argIds argPair
 /// A foreign record must match its measured BAREWire layout. Passing by
 /// reference lends that storage; passing by value additionally requires the
 /// target's declared calling convention and the supported aggregate class.
-let private byvalOf (graph: SemanticGraph) (references: Set<NodeId>) (platformId: string) (argWithIds: (NodeId * (SSA * MLIRType)) list) (isOptionArgument: NodeId -> bool) : ByvalParam list =
+/// Every refusal is returned as the located CCS82xx reason; none is thrown.
+let private byvalOf (graph: SemanticGraph) (references: Set<NodeId>) (platformId: string) (argWithIds: (NodeId * (SSA * MLIRType)) list) (isOptionArgument: NodeId -> bool) : Result<ByvalParam list, string> =
     let layouts = (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.readDescriptors graph).Layouts
     let declaredAbi = Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.cAbiOfGraph graph
     argWithIds
     |> List.mapi (fun i (argId, (_ssa, ty)) ->
         match ty with
         | TStruct (fields, Some bytes) when not (isOptionArgument argId) ->
-            let nativeName = match graph.Nodes.[argId].Type with NativeType.TApp (tc, _) -> Some (NominalTypeIdentity.ofConstructor tc) | _ -> None
+            let nativeName =
+                match Map.tryFind argId graph.Nodes |> Option.map (fun (node: SemanticNode) -> node.Type) with
+                | Some (NativeType.TApp (tc, _)) -> Some (NominalTypeIdentity.ofConstructor tc)
+                | _ -> None
             let layout = layouts |> List.tryFind (fun d -> d.RecordType = nativeName && nativeName.IsSome)
             match layout with
             | Some d when d.Size = Some bytes.Size && d.Alignment = Some bytes.Align && d.PhysicalFields.Length = fields.Length ->
@@ -637,17 +672,26 @@ let private byvalOf (graph: SemanticGraph) (references: Set<NodeId>) (platformId
                             | ("u64" | "i64"), TInt (IntWidth 64) -> true
                             | _ -> false
                         name = declared.Name && offset = declared.Offset && declared.Count = 1 && reprMatches)
-                if not compatible then failwithf "CCS8207: foreign record '%s' storage disagrees with its measured fields" d.Name
-                if Set.contains argId references then None
+                if not compatible then
+                    Result.Error (sprintf "CCS8207: PSG settlement (PlatformResolution descriptors) did not settle storage matching the measured fields of foreign record '%s' at argument node %d" d.Name (NodeId.value argId))
+                elif Set.contains argId references then Result.Ok None
                 else
                     match declaredAbi, graph.Platform |> Option.bind (fun p -> PlatformContext.pointerSize p |> Result.toOption) with
                     | [ ("sysv-amd64", 64, 16) ], Some 8 when bytes.Size > 16 ->
-                        Some { ParamIndex = i; SizeBytes = bytes.Size; AlignBytes = bytes.Align }
-                    | _ -> failwithf "CCS8203: '%s' has no supported C ABI aggregate passing rule for '%s' (%d bytes)" platformId d.Name bytes.Size
-            | _ -> failwithf "CCS8207: foreign record argument %d has no matching measured BAREWire layout (%d bytes, alignment %d)" i bytes.Size bytes.Align
-        | TStruct _ -> failwithf "CCS8203: foreign record argument %d has no settled layout" i
-        | _ -> None)
-    |> List.choose id
+                        Result.Ok (Some { ParamIndex = i; SizeBytes = bytes.Size; AlignBytes = bytes.Align })
+                    | _ ->
+                        Result.Error (sprintf "CCS8203: PSG settlement (PlatformContext C ABI) did not settle an aggregate passing rule on '%s' for foreign record '%s' (%d bytes) at argument node %d" platformId d.Name bytes.Size (NodeId.value argId))
+            | _ ->
+                Result.Error (sprintf "CCS8207: PSG settlement (PlatformResolution descriptors) did not settle a measured BAREWire layout matching foreign record argument %d at node %d (%d bytes, alignment %d)" i (NodeId.value argId) bytes.Size bytes.Align)
+        | TStruct _ ->
+            Result.Error (sprintf "CCS8203: PSG settlement (Layouts) did not settle a layout for foreign record argument %d at node %d" i (NodeId.value argId))
+        | _ -> Result.Ok None)
+    |> List.fold (fun acc item ->
+        match acc, item with
+        | Result.Error reason, _ -> Result.Error reason
+        | Result.Ok _, Result.Error reason -> Result.Error reason
+        | Result.Ok found, Result.Ok (Some param) -> Result.Ok (found @ [param])
+        | Result.Ok found, Result.Ok None -> Result.Ok found) (Result.Ok [])
 
 /// Source `f ()` supplies unit; a C `f(void)` call has no argument.
 let private foreignValues (graph: SemanticGraph) argIds marshaled =
@@ -752,7 +796,14 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
                 | None -> false
             let argWithIds = List.zip argIds argPairs
 
-            let byvalParams = byvalOf state.Graph (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.recordReferenceArguments state.Graph funcId argIds) state.Graph.Platform.Value.PlatformId argWithIds isOptionArgument
+            let! platformId =
+                match state.Graph.Platform with
+                | Some platform -> preturn platform.PlatformId
+                | None -> fail (Message $"PSG settlement (PlatformContext) did not settle a platform for the foreign call '{ffiSymbol}' at node {NodeId.value node.Id}")
+            let! byvalParams =
+                match byvalOf state.Graph (Clef.Compiler.PSGSaturation.SemanticGraph.PlatformResolution.recordReferenceArguments state.Graph funcId argIds) platformId argWithIds isOptionArgument with
+                | Result.Ok byvalParams -> preturn byvalParams
+                | Result.Error reason -> fail (Message $"{reason} (foreign call '{ffiSymbol}' at node {NodeId.value node.Id})")
             do! ensure byvalParams.IsEmpty "Foreign aggregate arguments require a source-settled native ABI realization; portable func declarations cannot realize byval metadata"
 
             // Detect option<T> return type — requires FFI marshaling at the boundary.
@@ -856,7 +907,8 @@ let pExternCallResolved : PSGParser<MLIROp list * TransferResult> =
 
                 // 7. Store payload at offset 1 (always — value is meaningless for None,
                 //    CaseElimination checks tag before reading payload)
-                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA (unionPayloadOffset state.Graph node.Type) payOffsetSSA payViewSSA payZeroSSA cRetType optionType
+                let! payloadOffset = pUnionPayloadOffset node.Type
+                let! payInsertOps = pTypedInsertView allocaSSA rawRetSSA payloadOffset payOffsetSSA payViewSSA payZeroSSA cRetType optionType
 
                 let! guards = referenceGuards state.Graph funcId argIds argPairs ssas 11
                 let allOps = argMeetOps @ guards @ marshalOps @ [declOp; callOp] @ boundaryAfter @ [allocaOp; nullOp; cmpOp; extOp]

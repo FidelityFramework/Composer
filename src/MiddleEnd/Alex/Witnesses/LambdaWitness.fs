@@ -130,6 +130,11 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             WitnessOutput.error "KernelModule Lambda not yet supported"
 
         | None | Some DeclRoot.EntryPoint ->
+            match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph with
+            | Result.Error reason ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Lambda") (Some "declaration symbol")
+                    $"Baker storage projection did not settle the program-initialization relation that names lambda {NodeId.value node.Id}: {reason}"
+            | Result.Ok storage ->
             // Startup is an ordinary graph body with the same passive function
             // witness. Its settled declaration root supplies export visibility.
             let own = Values.values node.Id
@@ -137,8 +142,7 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // Definitions, direct calls and closure code addresses share the same
             // resolved binding identity; equal local source names remain distinct.
             let funcName =
-                match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryStorage ctx.Graph
-                      |> Result.toOption |> Option.bind _.Startup with
+                match storage.Startup with
                 | Some plan when plan.EntryLambda = node.Id -> plan.Symbol
                 | _ -> Alex.CodeGeneration.CallableSymbols.lambda ctx.Graph node false
 
@@ -272,7 +276,12 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
             // the body node's width (the width every caller reads for the call); the last value
             // is brought to it by the return meet SSAAssignment derived, the last value of this
             // scope (an escaping lambda's body sits at the declared Register width, ruling 1).
-            let innerReturnNativeType2 = ctx.Graph.Nodes[bodyId].Type
+            match ctx.Graph.Nodes.TryFind bodyId with
+            | None ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "Lambda") (Some "return type")
+                    $"PSG settlement did not keep the body {NodeId.value bodyId} of lambda {NodeId.value node.Id} resident in the graph; its return type has no source"
+            | Some bodyNode ->
+            let innerReturnNativeType2 = bodyNode.Type
             if System.Environment.GetEnvironmentVariable("COMPOSER_TRACE_TRAVERSAL") = "1" then
                 printfn "[LambdaWitness] %s: body=%d valueNode=%d bodyResult=%A returnNative=%A"
                     funcName (NodeId.value bodyId) (NodeId.value actualValueNode) bodyResult innerReturnNativeType2
@@ -280,9 +289,6 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 match bodyComponents with
                 | Some values -> (List.head values).Type
                 | None -> mapTypeAt bodyId innerReturnNativeType2 ctx
-            let nativeVoid =
-                Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
-                |> Result.toOption |> Option.exists (fun projection -> projection.VoidCallbacks.Contains node.Id)
             let returnMeet = Map.tryFind node.Id ctx.Graph.Codata.Value.ReturnMeets |> Option.map (fun m -> m, Values.returnMeetValue node.Id)
             let returnType =
                 match bodyComponents, returnMeet, bodyResult with
@@ -350,19 +356,27 @@ let private witnessLambdaWith (getCombinator: unit -> (WitnessContext -> Semanti
                 let updatedRootScope = ScopeContext.addOp funcDefOp !ctx.RootScopeContext
                 ctx.RootScopeContext := updatedRootScope
 
-                if nativeVoid then
-                    let entry =
-                        match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
-                        | Result.Ok projection when projection.NativeEntries.ContainsKey node.Id -> projection.NativeEntries[node.Id]
-                        | _ -> invalidOp "Native callback lacks its source-published entry symbol."
-                    let arguments = funcParams |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
-                    let call = MLIROp.FuncOp (FuncOp.FuncCall ([{ SSA = own.[0]; Type = returnType }], funcName, arguments))
-                    let body = [call; MLIROp.FuncOp (FuncOp.Return [])]
-                    match tryMatchWithDiagnostics (pFuncDef entry funcParams TVoid body FuncVisibility.Private) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                    | Result.Ok (thunk, _) ->
-                        EmissionCorrespondence.record ctx [thunk]
-                        ctx.RootScopeContext := ScopeContext.addOp thunk !ctx.RootScopeContext
-                    | Result.Error message -> MLIRAccumulator.addError (Diagnostic.error (Some node.Id) (Some "Lambda") (Some "Native callback thunk") message) ctx.Accumulator
+                let nativeCallback phase message =
+                    MLIRAccumulator.addError (Diagnostic.error (Some node.Id) (Some "Lambda") (Some phase) message) ctx.Accumulator
+                match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+                | Result.Error reason ->
+                    nativeCallback "Native callback membership"
+                        $"Baker callable projection did not settle void-callback membership for lambda {NodeId.value node.Id}: {reason}"
+                | Result.Ok projection when projection.VoidCallbacks.Contains node.Id ->
+                    match projection.NativeEntries.TryFind node.Id with
+                    | None ->
+                        nativeCallback "Native callback entry"
+                            $"Baker callable projection did not settle the native entry symbol for void callback lambda {NodeId.value node.Id}"
+                    | Some entry ->
+                        let arguments = funcParams |> List.map (fun (ssa, ty) -> { SSA = ssa; Type = ty })
+                        let call = MLIROp.FuncOp (FuncOp.FuncCall ([{ SSA = own.[0]; Type = returnType }], funcName, arguments))
+                        let body = [call; MLIROp.FuncOp (FuncOp.Return [])]
+                        match tryMatchWithDiagnostics (pFuncDef entry funcParams TVoid body FuncVisibility.Private) ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok (thunk, _) ->
+                            EmissionCorrespondence.record ctx [thunk]
+                            ctx.RootScopeContext := ScopeContext.addOp thunk !ctx.RootScopeContext
+                        | Result.Error message -> nativeCallback "Native callback thunk" message
+                | Result.Ok _ -> ()
 
                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }
 

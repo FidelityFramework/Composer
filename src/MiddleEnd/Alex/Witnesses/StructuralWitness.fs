@@ -69,9 +69,13 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
                 // Forward last child's result as this Sequential's result
                 MLIRAccumulator.bindNode node.Id ssa ty ctx.Accumulator
                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }
-            | None ->
-                // Last child didn't produce a value (e.g., unit expression, void statement)
+            | None when Alex.Traversal.Values.isUnitTyped ctx.Graph node.Id ->
+                // A unit-typed block's last child produces no value
                 { InlineOps = []; TopLevelOps = []; Result = TRVoid }
+            | None ->
+                WitnessOutput.errorDiag (
+                    Diagnostic.error (Some node.Id) (Some "Structural") (Some "Sequential")
+                        $"Sequential node {NodeId.value node.Id} of non-unit type {node.Type}: its final child {NodeId.value lastChildId} produced no witnessed value to forward")
 
     | SemanticKind.PatternBinding _ ->
         // Function parameter binding - SSA pre-assigned in coeffects (no MLIR generation)
@@ -108,6 +112,10 @@ let private witnessStructural (ctx: WitnessContext) (node: SemanticNode) : Witne
                     { InlineOps = meetOps; TopLevelOps = []; Result = TRValue { SSA = readSSA; Type = readTy } }
                 | None ->
                     WitnessOutput.error (sprintf "TupleGet: element %d (node %d) not in accumulator" index (NodeId.value elementId))
+            | SemanticKind.TupleExpr elements ->
+                WitnessOutput.errorDiag (
+                    Diagnostic.error (Some node.Id) (Some "Structural") (Some "TupleGet")
+                        $"CCS source checking did not settle TupleGet node {NodeId.value node.Id}: index {index} lies outside the {List.length elements}-element tuple node {NodeId.value tupleId}")
             | _ ->
                 // Path 2: Non-TupleExpr — extract field from materialized TStruct
                 match MLIRAccumulator.recallNode tupleId ctx.Accumulator with

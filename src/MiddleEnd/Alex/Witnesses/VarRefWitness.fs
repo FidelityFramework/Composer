@@ -55,6 +55,8 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
     | Some ((name, bindingIdOpt), _) ->
         match bindingIdOpt with
         | Some bindingId ->
+            let valueShape = Alex.Traversal.CallableOperands.valueShape ctx node.Id
+            let shapeError = match valueShape with Result.Error reason -> Some reason | Result.Ok _ -> None
             // Check if the binding references a function (Lambda node)
             match SemanticGraph.tryGetNode bindingId ctx.Graph with
             | Some bindingNode when isLazyValue ctx node ->
@@ -79,7 +81,10 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                     match tryMatchWithDiagnostics pattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
                     | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
                     | Result.Error reason -> WitnessOutput.error $"Sequence reference '{name}': {reason}"
-            | Some bindingNode when Alex.Traversal.CallableOperands.valueShape ctx node.Id = Result.Ok(CallableValueShape.Callable node.Id) ->
+            | Some _ when shapeError.IsSome ->
+                WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "VarRef") (Some "value shape")
+                    $"PSG settlement (WitnessEmission callable) did not settle the value shape for VarRef '{name}' at node {NodeId.value node.Id}: {shapeError.Value}"
+            | Some bindingNode when valueShape = Result.Ok(CallableValueShape.Callable node.Id) ->
                 let declaration =
                     match bindingNode.Kind, bindingNode.Children with
                     | SemanticKind.Binding(_, false, _, _), [implementation] ->
@@ -144,16 +149,21 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                                 return (meetOps, TRValue { SSA = readSSA; Type = readTy })
                             }
 
-                        match tryMatch patternBindingPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
-                        | Some ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
-                        | None -> WitnessOutput.error $"VarRef '{name}': PatternBinding has no SSA in coeffects"
+                        match tryMatchWithDiagnostics patternBindingPattern ctx.Graph node ctx.Zipper ctx.Coeffects ctx.Accumulator with
+                        | Result.Ok ((ops, result), _) -> { InlineOps = ops; TopLevelOps = []; Result = result }
+                        | Result.Error reason ->
+                            WitnessOutput.errorCoded AX3002 (Some node.Id) (Some "VarRef") (Some "PatternBinding")
+                                $"PSG settlement (SSA assignment) did not settle a value for PatternBinding {NodeId.value bindingId} read by VarRef '{name}' at node {NodeId.value node.Id}: {reason}"
 
-                | SemanticKind.Binding (_, isMut, _, _) ->
+                | SemanticKind.Binding (bindingName, isMut, _, _) ->
                     // Immutable Lambda bindings forward their function value. A mutable
                     // binding's initializer does not change the cell-load contract.
-                    let isFunctionBinding =
-                        Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph
-                        |> Result.toOption |> Option.exists (fun projection -> projection.FunctionBindings.Contains bindingId)
+                    match Clef.Compiler.PSGSaturation.SemanticGraph.WitnessEmission.tryCallable ctx.Graph with
+                    | Result.Error reason ->
+                        WitnessOutput.errorCoded AX4001 (Some node.Id) (Some "VarRef") (Some "function binding")
+                            $"PSG settlement (WitnessEmission callable) did not publish the function-binding projection for VarRef '{name}' at node {NodeId.value node.Id}: {reason}"
+                    | Result.Ok projection ->
+                    let isFunctionBinding = projection.FunctionBindings.Contains bindingId
 
                     if not isMut && isFunctionBinding then
                         if directCallee ctx.Zipper then
@@ -161,7 +171,6 @@ let private witnessVarRef (ctx: WitnessContext) (node: SemanticNode) : WitnessOu
                         else WitnessOutput.error $"Callable reference '{name}' has no concrete settled value carrier."
                     elif ModuleValues.isSlotBinding ctx.Coeffects.TargetPlatform ctx.Graph bindingNode then
                         // Module-level value: reload from its slot (valid in any function)
-                        let bindingName = match bindingNode.Kind with SemanticKind.Binding (n, _, _, _) -> n | _ -> name
                         // the slot's element type at the binding's range width on fabric
                         let valueTy = mapTypeAt bindingId bindingNode.Type ctx |> narrowType ctx.Coeffects ctx.Graph bindingId
                         let globalName = ModuleValues.globalName bindingName bindingId

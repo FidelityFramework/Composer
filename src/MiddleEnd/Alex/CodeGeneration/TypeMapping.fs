@@ -34,9 +34,9 @@ module RecordInstances = Clef.Compiler.PSGSaturation.SemanticGraph.RecordInstanc
 // TYPE MAPPING DIAGNOSTIC COLLECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Collects AX1001 diagnostics during type mapping so compilation can continue
-/// and report ALL unbound type variables, not just the first one.
-/// Drained by mapType after each call.
+/// Retained only for TransferTypes.mapType's drain. No mapping writes here: an unbound type
+/// variable is a stop at its site (AX1001), never an index type carried on while errors collect.
+/// Delete this collector together with that drain.
 let private typeMappingErrors = System.Collections.Generic.List<string>()
 
 /// Drain collected type mapping errors. Returns the list and clears the collector.
@@ -55,13 +55,20 @@ let mutable private currentTargetPlatform : TargetPlatform option = None
 let setTargetPlatform (platform: TargetPlatform) : unit =
     currentTargetPlatform <- Some platform
 
+/// The target platform MLIRGeneration set; a mapping reached before it is a stop, never CPU.
+let private requireTargetPlatform (what: string) : TargetPlatform =
+    match currentTargetPlatform with
+    | Some platform -> platform
+    | None ->
+        failwithf "Composer MLIRGeneration did not settle the target platform for type mapping: %s was mapped before setTargetPlatform" what
+
 /// Representation of a nullary-cases-only DU (an enumeration) for the current target.
 /// FPGA: abstract TTag (platform elision picks the width). CPU/MCU: a one-byte memref,
 /// the same shape every other DU has, so construction, tag extraction and field storage
 /// share one path.
-let private enumTagRepresentation (caseCount: int) : MLIRType =
-    match currentTargetPlatform with
-    | Some FPGA -> TTag caseCount
+let private enumTagRepresentation (platform: TargetPlatform) (caseCount: int) : MLIRType =
+    match platform with
+    | FPGA -> TTag caseCount
     | _ -> TMemRefStatic (1, TInt (IntWidth 8))
 
 /// Identify the source option used for nullable C data pointers. Its interior
@@ -212,17 +219,17 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
                 failwithf "mapNativeTypeForArch: '%s' is an aggregate whose element and payload widths and size are settled on the graph; map it through mapNativeTypeForTarget" (formatType ty)
             | _ ->
                 match TypeLayout.baseLayout tycon.Layout with
-                | TypeLayout.Union when currentTargetPlatform = Some FPGA ->
+                | TypeLayout.Union when requireTargetPlatform (sprintf "the union '%s'" tycon.Name) = FPGA ->
                     // The fabric leg holds a union as its tag (an enumeration; a payload union is
                     // not yet supported there, DUPatterns): the abstract tag the platform elides
-                    enumTagRepresentation tycon.CaseCount
+                    enumTagRepresentation FPGA tycon.CaseCount
                 | TypeLayout.Record | TypeLayout.Union ->
                     failwithf "mapNativeTypeForArch: the %s '%s' has its layout settled on the graph; map it through mapNativeTypeForTarget"
                         (match tycon.Layout with TypeLayout.Record -> "record" | _ -> "union") tycon.Name
                 | TypeLayout.Inline (size, _) when size > 0 && tycon.CaseCount = 0 ->
                     // A C-style enum, declared at four bytes (NativeService): an integer of that width
                     TInt (IntWidth (size * 8))
-                | TypeLayout.Inline _ when tycon.CaseCount > 0 -> enumTagRepresentation tycon.CaseCount
+                | TypeLayout.Inline _ when tycon.CaseCount > 0 -> enumTagRepresentation (requireTargetPlatform (sprintf "the enumeration '%s'" tycon.Name)) tycon.CaseCount
                 | TypeLayout.PlatformWord -> TIndex
                 | TypeLayout.NTUCompound n ->
                     // Arena<'lifetime> and similar compound types: N platform words
@@ -249,11 +256,9 @@ let rec mapNativeTypeForArch (arch: Architecture) (ty: NativeType) : MLIRType =
         match find tvar with
         | (_, Some boundTy) -> mapNativeTypeForArch arch boundTy
         | (root, None) ->
-            // AX1001: Unbound type variable at MLIR generation time.
-            // All type variables must be resolved by CCS/Baker before Alex runs.
-            // Collect diagnostic and continue with TIndex so all errors are reported.
-            typeMappingErrors.Add(sprintf "AX1001: Unbound type variable '%s' — CCS/Baker must resolve all type variables before MLIR generation" root.Name)
-            TIndex
+            // AX1001: a type variable reached MLIR generation unresolved. That is a settlement
+            // gap in CCS; it stops here, never continues as an invented index type.
+            failwithf "AX1001: CCS source checking did not settle the type variable '%s' before MLIR generation: every type variable is resolved before Alex runs" root.Name
     | NativeType.TByref _ -> TIndex
     | NativeType.TNativePtr _ -> TIndex
     | NativeType.TForall (_, body) -> mapNativeTypeForArch arch body
@@ -309,10 +314,10 @@ let rec private settledStruct (platform: TargetPlatform) (arch: Architecture) (g
         | _ -> failwithf "TypeMapping: %s has no settled layout on the graph (Placement settles every reachable record, tuple, option and Result; an unreachable or generic instance reaches this)" describe
 
 /// A union, option or Result at its settled size: a byte memref of the tag and the widest payload.
-and private settledUnion (describe: string) (layout: SettledLayout option) (caseCount: int) : MLIRType =
+and private settledUnion (platform: TargetPlatform) (describe: string) (layout: SettledLayout option) (caseCount: int) : MLIRType =
     match layout with
     | Some (SettledLayout.Union (cases, _, Some size, _)) ->
-        if cases |> List.forall (fun (_, slot) -> slot.IsNone) then enumTagRepresentation caseCount
+        if cases |> List.forall (fun (_, slot) -> slot.IsNone) then enumTagRepresentation platform caseCount
         else TMemRefStatic (size, TInt (IntWidth 8))
     | Some (SettledLayout.Union (cases, _, None, _)) ->
         failwithf "TypeMapping: %s has a settled union layout with no size: a case payload the placement could not settle (%s)" describe
@@ -378,7 +383,7 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
                 match tryGetUnionCases ty graph with
                 | Some cases when not (List.isEmpty cases) ->
                     // User union: its settled size, or an enumeration tag
-                    settledUnion (sprintf "the union '%s'" tycon.Name) (layoutOf ty) cases.Length
+                    settledUnion platform (sprintf "the union '%s'" tycon.Name) (layoutOf ty) cases.Length
                 | _ ->
                 // CPU/MCU containers: element/payload types are the graph-aware PHYSICAL types,
                 // so an array of records or an option of a record agrees with the record's storage.
@@ -389,8 +394,8 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
                         | TInt (IntWidth 0) -> TInt (elementWidth graph elemTy)
                         | mapped -> physicalStorageType arch mapped
                     TMemRef elem
-                | ("option" | "voption"), [_] -> settledUnion (sprintf "the option '%s'" (formatType ty)) (layoutOf ty) 2
-                | ("Result" | "result"), [_; _] -> settledUnion (sprintf "the Result '%s'" (formatType ty)) (layoutOf ty) 2
+                | ("option" | "voption"), [_] -> settledUnion platform (sprintf "the option '%s'" (formatType ty)) (layoutOf ty) 2
+                | ("Result" | "result"), [_; _] -> settledUnion platform (sprintf "the Result '%s'" (formatType ty)) (layoutOf ty) 2
                 | _ -> mapNativeTypeForArch arch ty
     | NativeType.TTuple(elements, _) ->
         // Tuples are materialized as TStruct with positional field names on all platforms.
@@ -402,7 +407,7 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
         // Anonymous records → TStruct with named fields (no settled layout: a stop where sized)
         TStruct (fields |> List.map (fun (name, fieldTy) -> (name, recurse fieldTy)), None)
     | NativeType.TUnion (tycon, cases) ->
-        settledUnion (sprintf "the union '%s'" tycon.Name) (layoutOf ty) cases.Length
+        settledUnion platform (sprintf "the union '%s'" tycon.Name) (layoutOf ty) cases.Length
     | NativeType.TLazy _ ->
         failwithf "Lazy carrier '%s' requires its actual source occurrence and separate thunk/environment operands" (formatType ty)
     | NativeType.TSeq _ | NativeType.TSeqEnumerator _ ->
@@ -412,11 +417,9 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
         match find tvar with
         | (_, Some boundTy) -> recurse boundTy
         | (root, None) ->
-            // AX1001: Unbound type variable at MLIR generation time.
-            // All type variables must be resolved by CCS/Baker before Alex runs.
-            // Collect diagnostic and continue with TIndex so all errors are reported.
-            typeMappingErrors.Add(sprintf "AX1001: Unbound type variable '%s' — CCS/Baker must resolve all type variables before MLIR generation" root.Name)
-            TIndex
+            // AX1001: a type variable reached MLIR generation unresolved. That is a settlement
+            // gap in CCS; it stops here, never continues as an invented index type.
+            failwithf "AX1001: CCS source checking did not settle the type variable '%s' before MLIR generation: every type variable is resolved before Alex runs" root.Name
     | NativeType.TForall (_, body) -> recurse body
     | _ ->
         // Leaf types: a scalar, a handle, a function value
@@ -425,7 +428,7 @@ and mapNativeTypeForTarget (platform: TargetPlatform) (arch: Architecture) (grap
 /// The graph-aware mapping for the current target (set once by MLIRGeneration): the entry point
 /// of the patterns that map a node's type on the leg being compiled.
 let mapNativeTypeWithGraphForArch (arch: Architecture) (graph: SemanticGraph) (ty: NativeType) : MLIRType =
-    mapNativeTypeForTarget (currentTargetPlatform |> Option.defaultValue CPU) arch graph ty
+    mapNativeTypeForTarget (requireTargetPlatform (sprintf "'%s'" (formatType ty))) arch graph ty
 
 /// The element type of an array node's type, at its settled element width (an array of the bare
 /// kind) or its physical storage: what an allocation, a store and a load of its elements use.

@@ -48,11 +48,11 @@ let pLoad (ssa: SSA) (memref: SSA) (indices: SSA list) : PSGParser<MLIROp> =
         let! state = getUserState
         match MLIRAccumulator.recallSSAType memref state.Accumulator with
         | Some memrefType ->
-            let elemType =
-                match memrefType with
-                | TMemRef elem | TMemRefStatic (_, elem) | TMemRefScalar elem -> elem
-                | other -> failwithf "pLoad: memref SSA %A is registered as %A, not a memref" memref other
-            return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
+            match memrefType with
+            | TMemRef elemType | TMemRefStatic (_, elemType) | TMemRefScalar elemType ->
+                return MLIROp.MemRefOp (MemRefOp.Load (ssa, memref, indices, elemType, memrefType))
+            | other ->
+                return! fail (Message (sprintf "Alex emission did not register a memref type for the loaded value at node %d: SSA %s is registered as %A, not a memref" (Clef.Compiler.NativeTypedTree.NativeTypes.NodeId.value state.Current.Id) (Alex.Dialects.Core.Serialize.ssaToString memref) other))
         | None ->
             return! fail (Message $"pLoad: memref SSA {memref} has no registered type in accumulator")
     }
@@ -131,13 +131,13 @@ let pMemRefView (result: SSA) (source: SSA) (byteOffset: SSA) (sourceType: MLIRT
 let pSubView (ssa: SSA) (source: SSA) (offsets: SSA list) : PSGParser<MLIROp> =
     parser {
         let! state = getUserState
-        let ty = mapNativeTypeWithGraphForArch state.Platform.TargetArch state.Graph state.Current.Type
+        let ty = mapNativeTypeForTarget state.Coeffects.TargetPlatform state.Platform.TargetArch state.Graph state.Current.Type
         let memrefType = TMemRef ty
         return MLIROp.MemRefOp (MemRefOp.SubView (ssa, source, offsets, memrefType))
     }
 
 /// Extract base pointer from memref for FFI boundaries
-/// Uses builtin.unrealized_conversion_cast - standard MLIR operation for boundary crossings
+/// Emits memref.extract_aligned_pointer_as_index, a standard MLIR operation.
 /// This is for cases where portable memref needs to be passed to external C functions (syscalls, FFI)
 let pExtractBasePtr (result: SSA) (memref: SSA) (memrefTy: MLIRType) : PSGParser<MLIROp> =
     parser {

@@ -81,13 +81,7 @@ let private invoke (ctx: WitnessContext) (node: SemanticNode) invocation sources
             let agrees = expected |> Option.forall (fun types -> types = List.map (fun (value: Val) -> value.Type) actuals)
             if not agrees then failure node "parameter boundary" "Direct invocation operands disagree with its settled physical parameter components"
             else
-            let activated =
-                sources |> List.indexed |> List.choose (fun (ordinal, source) ->
-                    match projection with
-                    | Some proof when proof.Omitted.Contains ordinal && not (proof.Eager.Contains ordinal) -> None
-                    | _ -> Some source)
-            let deferred = activated |> List.collect (fun source -> MLIRAccumulator.getDeferredInlineOps source ctx.Accumulator)
-            let prefix = deferred @ meets
+            let prefix = meets
             match Operands.valueShape ctx node.Id with
             | Result.Error reason -> failure node "result boundary" reason
             | Result.Ok(CallableValueShape.Callable _) ->
@@ -103,13 +97,15 @@ let private invoke (ctx: WitnessContext) (node: SemanticNode) invocation sources
                 | Result.Error reason -> failure node "lazy result" reason
                 | Result.Ok shape -> observe ctx node prefix (pLazyApplication node.Id invocation actuals shape)
             | _ ->
-                let resultType =
-                    mapTypeAt node.Id node.Type ctx
-                    |> narrowType ctx.Coeffects ctx.Graph (Option.defaultValue node.Id body)
-                match invocation with
-                | Direct symbol ->
+                match invocation, body with
+                | Direct symbol, Some body ->
+                    // The call's result is held at its declaration body's settled width.
+                    let resultType = mapTypeAt node.Id node.Type ctx |> narrowType ctx.Coeffects ctx.Graph body
                     observe ctx node prefix (pDirectCall node.Id symbol (actuals |> List.map (fun value -> value.SSA, value.Type)) resultType names)
-                | Indirect code ->
+                | Direct _, None ->
+                    failure node "result boundary"
+                        $"Baker callable projection did not settle the declaration body for direct call {NodeId.value node.Id}: its result width has no settled source"
+                | Indirect code, _ ->
                     match code.Type with
                     | TFunc(_, [actualResult]) -> observe ctx node prefix (pIndirectApplication node.Id code actuals actualResult)
                     | _ -> failure node "result boundary" "Scalar application requires exactly one result in its witnessed function signature"
